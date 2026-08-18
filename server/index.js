@@ -9,15 +9,28 @@ const { Server } = require('socket.io');
 const { RoomManager, fullRoomView } = require('./rooms');
 const { listGames, getGame } = require('./games');
 const { syncTurnTimer, clearTurnTimer } = require('./turnTimer');
-const {
-  LanDiscovery,
-  listLanIPv4,
-  pickPrimaryLanIP,
-} = require('./discovery');
 const { MqttBulletin } = require('./mqttBulletin');
 const { QuickTunnel } = require('./tunnel');
 const crypto = require('crypto');
 const pathRoot = path.join(__dirname, '..');
+
+function listLanIPv4() {
+  const ips = [];
+  const ifaces = require('os').networkInterfaces();
+  for (const name of Object.keys(ifaces)) {
+    for (const info of ifaces[name] || []) {
+      if (info.family === 'IPv4' && !info.internal) {
+        ips.push(info.address);
+      }
+    }
+  }
+  return ips;
+}
+
+function pickPrimaryLanIP() {
+  const ips = listLanIPv4();
+  return ips[0] || '127.0.0.1';
+}
 
 const PORT = Number(process.env.PORT) || 3000;
 const INSTANCE_ID = crypto.randomUUID();
@@ -31,10 +44,14 @@ const io = new Server(server, {
 });
 
 const rooms = new RoomManager();
-let discovery = null;
 let mqttBulletin = null;
 let tunnel = null;
-let hostDisplayName = '';
+
+/** 实例对外展示名：取大厅内第一个玩家，无玩家则为空（空实例不出现在他人大厅） */
+function currentDisplayName() {
+  const first = [...rooms.players.values()][0];
+  return (first && first.name) || '';
+}
 
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
@@ -89,34 +106,11 @@ function beaconRooms() {
   }));
 }
 
-/** 多源合并：靠后的源覆盖 host（房间统一走公网隧道） */
-function mergeRemoteSources(groups, keyFn) {
-  const map = new Map();
-  for (const group of groups || []) {
-    const viaDefault = group.via || 'remote';
-    for (const item of group.items || []) {
-      const key = keyFn(item);
-      const via = item.via || viaDefault;
-      const prev = map.get(key);
-      if (!prev) {
-        map.set(key, { ...item, via });
-        continue;
-      }
-      const vias = new Set(
-        String(prev.via || '')
-          .split(/[+|,]/)
-          .map((s) => s.trim())
-          .filter(Boolean)
-      );
-      vias.add(via);
-      map.set(key, {
-        ...item,
-        via: [...vias].join('+'),
-        publicHost: prev.publicHost || prev.host,
-      });
-    }
-  }
-  return [...map.values()];
+/** 远端房间解析：统一走 MQTT 广播（host 为 Cloudflare 隧道地址） */
+function resolveRoomRemote(roomId) {
+  const id = String(roomId || '').toUpperCase();
+  if (!id) return null;
+  return mqttBulletin ? mqttBulletin.resolveRoom(id) : null;
 }
 
 function buildLobbyPayload() {
@@ -127,40 +121,15 @@ function buildLobbyPayload() {
     local: true,
   }));
 
-  const remoteRooms = mergeRemoteSources(
-    [
-      {
-        items: mqttBulletin ? mqttBulletin.getPublicRooms() : [],
-        via: 'mqtt',
-      },
-    ],
-    (r) => `${r.instanceId || r.creatorId || ''}:${r.id}`
-  );
-
-  const peers = mergeRemoteSources(
-    [
-      {
-        items: mqttBulletin ? mqttBulletin.getOnlinePeers() : [],
-        via: 'mqtt',
-      },
-    ],
-    (p) => p.instanceId
-  );
+  const remoteRooms = mqttBulletin ? mqttBulletin.getPublicRooms() : [];
+  const peers = mqttBulletin ? mqttBulletin.getOnlinePeers() : [];
 
   const localPeople = rooms.listLobbyPeople().map((p) => ({
     ...p,
     local: true,
     host: localHost,
   }));
-  const remotePeople = mergeRemoteSources(
-    [
-      {
-        items: mqttBulletin ? mqttBulletin.getRemotePeople() : [],
-        via: 'mqtt',
-      },
-    ],
-    (p) => p.id
-  );
+  const remotePeople = mqttBulletin ? mqttBulletin.getRemotePeople() : [];
   const people = mergeLobbyPeople(localPeople, remotePeople);
 
   return {
@@ -174,7 +143,7 @@ function buildLobbyPayload() {
   };
 }
 
-/** 合并本机+局域网人员：同 session 只保留一条，优先「对局/房间」且偏本机 */
+/** 合并本机+远端人员：同 session 只保留一条，优先「对局/房间」且偏本机 */
 function mergeLobbyPeople(localPeople, remotePeople) {
   const rank = (status) => {
     if (status === 'playing') return 3;
@@ -211,24 +180,10 @@ function mergeLobbyPeople(localPeople, remotePeople) {
   for (const p of localPeople || []) put(p);
   for (const p of remotePeople || []) put(p);
 
-  // 无 session 时的兜底：只要某昵称已经以「房间中/对局中」出现，
-  // 就丢掉同名的「空闲」残影（常见于 MQTT 仅知道登录在线、不知道已进房）
-  const busyNames = new Set(
-    [...byKey.values()]
-      .filter((p) => rank(p.status) >= 2)
-      .map((p) => String(p.name || ''))
-  );
-  for (const [key, person] of [...byKey.entries()]) {
-    if (rank(person.status) === 1) {
-      if (busyNames.has(String(person.name || ''))) byKey.delete(key);
-    }
-  }
-
-  // 终合并：远端同一实例的同名同尾缀人物，LAN / MQTT 只保留一条
+  // 终合并：同一「机器 id + 玩家 id」只保留一条（sessionId 即机器+本 id 组合）
   const collapsed = new Map();
   const sourceRank = (person) => {
     const via = String((person && person.via) || '');
-    if (via.includes('lan')) return 3;
     if (via.includes('mqtt')) return 1;
     return 0;
   };
@@ -237,7 +192,7 @@ function mergeLobbyPeople(localPeople, remotePeople) {
       collapsed.set(`local:${person && person.id ? person.id : Math.random()}`, person);
       continue;
     }
-    const key = `remote:${person.instanceId || ''}:${labelKey(person)}`;
+    const key = `remote:${person.instanceId || ''}:${person.sessionId || labelKey(person)}`;
     const prev = collapsed.get(key);
     if (!prev) {
       collapsed.set(key, person);
@@ -261,14 +216,6 @@ function dropIdleSessionGhosts(sessionId, keepId) {
   for (const id of dropped) {
     const stale = io.sockets.sockets.get(id);
     if (stale) stale.disconnect(true);
-  }
-}
-
-function syncDiscoveryPresence() {
-  const hasLobbyPlayers = rooms.players.size > 0;
-  if (discovery) {
-    discovery.setAdvertising(hasLobbyPlayers);
-    if (hasLobbyPlayers) discovery.broadcastNow();
   }
 }
 
@@ -305,7 +252,6 @@ async function ensurePublicTunnelUrl() {
 
 function emitLobbyUpdate() {
   io.emit('lobby:update', buildLobbyPayload());
-  if (discovery) discovery.broadcastNow();
 }
 
 function emitPlayerMe(socket, player, fallbackName) {
@@ -321,7 +267,6 @@ function emitRoomUpdate(room) {
   if (!room) return;
   const payload = { room: fullRoomView(room) };
   io.to(room.id).emit('room:update', payload);
-  if (discovery) discovery.broadcastNow();
 }
 
 function publicStateForRoom(room, viewerId) {
@@ -422,9 +367,7 @@ io.on('connection', (socket) => {
       });
       socket.join(reclaimed.room.id);
       socket.data.playerName = player.name;
-      hostDisplayName = player.name;
       mqttOnLogin();
-      syncDiscoveryPresence();
       emitLobbyUpdate();
       emitPlayerMe(socket, player, data.playerName);
       socket.emit('session:reclaimed', {
@@ -448,9 +391,7 @@ io.on('connection', (socket) => {
         playerTag,
       });
       socket.data.playerName = player.name;
-      if (data.playerName) hostDisplayName = player.name;
       if (data.playerName) mqttOnLogin();
-      syncDiscoveryPresence();
       emitLobbyUpdate();
       emitPlayerMe(socket, player, data.playerName);
       socket.emit('session:reclaim-failed', {
@@ -460,7 +401,7 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // 清掉同 session 仍停在大厅的旧连接（localhost / 局域网 IP 双连）
+    // 清掉同 session 仍停在大厅的旧连接（localhost 双连）
     const dropped = rooms.evictIdleSessionDuplicates(sessionId, socket.id);
     for (const id of dropped) {
       const stale = io.sockets.sockets.get(id);
@@ -472,9 +413,7 @@ io.on('connection', (socket) => {
       playerTag,
     });
     socket.data.playerName = player.name;
-    if (data.playerName) hostDisplayName = player.name;
     if (data.playerName) mqttOnLogin();
-    syncDiscoveryPresence();
     emitLobbyUpdate();
     emitPlayerMe(socket, player, data.playerName);
     const room = rooms.getRoom(player.roomId);
@@ -508,10 +447,7 @@ io.on('connection', (socket) => {
       });
       return;
     }
-    const found =
-      (discovery && discovery.resolveRoom(roomId)) ||
-      (mqttBulletin && mqttBulletin.resolveRoom(roomId)) ||
-      null;
+    const found = resolveRoomRemote(roomId);
     if (!found || !found.room) {
       socket.emit('room:probe-result', {
         ok: false,
@@ -536,7 +472,6 @@ io.on('connection', (socket) => {
   });
 
   socket.on('lobby:refresh', () => {
-    if (discovery) discovery.broadcastNow();
     socket.emit('lobby:update', buildLobbyPayload());
   });
 
@@ -553,22 +488,20 @@ io.on('connection', (socket) => {
       { sessionId: data.sessionId, playerTag: data.playerTag }
     );
     socket.data.playerName = player.name;
-    hostDisplayName = player.name;
     mqttOnLogin();
     emitPlayerMe(socket, player, data.playerName);
     if (room) {
       emitRoomUpdate(room);
       if (room.status === 'playing' && room.game) emitGameState(room);
     }
-    syncDiscoveryPresence();
     emitLobbyUpdate();
   });
 
-  socket.on('discovery:resolve', (data = {}) => {
+  socket.on('room:resolve', (data = {}) => {
     const roomId = String(data.roomId || '').toUpperCase();
     const local = rooms.getRoom(roomId);
     if (local) {
-      socket.emit('discovery:resolved', {
+      socket.emit('room:resolved', {
         ok: true,
         host: localBaseUrl(),
         roomId: local.id,
@@ -577,19 +510,19 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const found = mqttBulletin ? mqttBulletin.resolveRoom(roomId) : null;
+    const found = resolveRoomRemote(roomId);
     if (!found) {
-      socket.emit('discovery:resolved', {
+      socket.emit('room:resolved', {
         ok: false,
         message:
           mqttBulletin && mqttBulletin.enabled
-            ? '未找到该房间码（对方需在线；跨网请确认 MQTT 广播心跳正常）'
+            ? '未找到该房间码（对方需在线并已连接 MQTT 广播）'
             : '未找到该房间码',
       });
       return;
     }
 
-    socket.emit('discovery:resolved', {
+    socket.emit('room:resolved', {
       ok: true,
       host: found.host,
       roomId: found.room.id,
@@ -630,6 +563,7 @@ io.on('connection', (socket) => {
     dropIdleSessionGhosts(me && me.sessionId, socket.id);
     emitRoomUpdate(result.room);
     emitLobbyUpdate();
+    mqttOnLogin();
     mqttAfterRoomChange();
   });
 
@@ -657,6 +591,7 @@ io.on('connection', (socket) => {
     dropIdleSessionGhosts(me && me.sessionId, socket.id);
     emitRoomUpdate(result.room);
     emitLobbyUpdate();
+    mqttOnLogin();
     mqttAfterRoomChange();
   });
 
@@ -677,6 +612,7 @@ io.on('connection', (socket) => {
     }
     emitLobbyUpdate();
     socket.emit('room:left', {});
+    mqttOnLogin();
     mqttAfterRoomChange();
   });
 
@@ -697,6 +633,7 @@ io.on('connection', (socket) => {
     }
     emitRoomUpdate(result.room);
     emitLobbyUpdate();
+    mqttOnLogin();
     syncTurnTimer(result.room, { onTimeout: handleTurnTimeout });
     emitGameStarted(result.room);
   });
@@ -744,13 +681,7 @@ io.on('connection', (socket) => {
         emitGameState(result.room);
       }
     }
-    if (rooms.players.size === 0) {
-      hostDisplayName = '';
-    } else {
-      const first = [...rooms.players.values()][0];
-      if (first) hostDisplayName = first.name;
-    }
-    syncDiscoveryPresence();
+    mqttOnLogin();
     emitLobbyUpdate();
   });
 });
@@ -759,25 +690,15 @@ function onRosterChange() {
   io.emit('lobby:update', buildLobbyPayload());
 }
 
-discovery = new LanDiscovery({
-  httpPort: PORT,
-  instanceId: INSTANCE_ID,
-  getBeaconPayload: () => ({
-    displayName: hostDisplayName,
-    rooms: beaconRooms(),
-    people: rooms.listLobbyPeople(),
-  }),
-  onChange: onRosterChange,
-});
-
 mqttBulletin = new MqttBulletin({
   rootDir: pathRoot,
   instanceId: INSTANCE_ID,
-  getDisplayName: () => hostDisplayName || '',
+  getDisplayName: () => currentDisplayName(),
   getDisplayTag: () => {
     const first = [...rooms.players.values()][0];
     return (first && first.tag) || null;
   },
+  getLobbyPeople: () => rooms.listLobbyPeople(),
   getHostedRooms: () => hostedBeaconRooms(),
   ensureTunnelUrl: ensurePublicTunnelUrl,
   onChange: onRosterChange,
@@ -808,11 +729,6 @@ function shutdownCleanup() {
   } catch (_) {
     /* ignore */
   }
-  try {
-    if (discovery) discovery.stop();
-  } catch (_) {
-    /* ignore */
-  }
 }
 
 process.on('exit', shutdownCleanup);
@@ -826,23 +742,18 @@ process.on('SIGTERM', () => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  const ips = listLanIPv4();
   const localUrl = `http://localhost:${PORT}`;
   console.log(`联机服务已启动: ${localUrl}`);
-  if (ips.length) {
-    console.log(`局域网地址: ${ips.map((ip) => `http://${ip}:${PORT}`).join(', ')}`);
-  }
-  console.log('局域网发现：进入大厅后才会对外广播；可发现其他已进大厅的实例');
   if (mqttBulletin && mqttBulletin.enabled) {
     console.log(
       `跨网广播: MQTT 已启用（固定地址 broker.emqx.io，频道 ${mqttBulletin.channel}；登录心跳 10s，房间心跳 5s）`
     );
   }
   if (!(mqttBulletin && mqttBulletin.enabled)) {
-    console.log('跨网: MQTT 广播已关闭，仅局域网可用（创建 mqtt.off 可关闭）');
+    console.log('跨网: MQTT 广播已关闭，仅本机可用（创建 mqtt.off 可关闭）');
   }
+  console.log('联机方式：统一走 MQTT 广播 + Cloudflare 隧道（已取消局域网发现）');
   console.log('可选游戏:', listGames().map((g) => g.label).join(', '));
-  discovery.start();
   if (mqttBulletin && mqttBulletin.enabled) {
     mqttBulletin.start().catch((err) => {
       console.warn('[mqtt] 启动失败:', err && err.message ? err.message : err);

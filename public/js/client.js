@@ -74,7 +74,7 @@ window.PlayerNick = (function () {
 })();
 
 /**
- * Socket.IO client: can switch host when joining a LAN-discovered room.
+ * Socket.IO client: can switch host when joining a remote room.
  */
 window.GameNet = (function () {
   let socket = null;
@@ -107,10 +107,10 @@ window.GameNet = (function () {
       'room:error',
       'room:left',
       'room:probe-result',
+      'room:resolved',
       'game:started',
       'game:state',
       'game:error',
-      'discovery:resolved',
     ];
     for (const event of events) {
       s.on(event, (data) => emitLocal(event, data));
@@ -182,6 +182,21 @@ window.GameNet = (function () {
     return socket;
   }
 
+  /** 按候选地址逐个尝试连接，全部失败才抛错（当前候选为公网隧道地址） */
+  async function connectAny(candidates) {
+    const list = (candidates || []).filter(Boolean);
+    if (!list.length) list.push(localOrigin);
+    let lastErr = null;
+    for (const target of list) {
+      try {
+        return await connect(target);
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr || new Error('无法连接房主');
+  }
+
   function joinLobby(playerName, opts = {}) {
     ensureSocket().emit('lobby:join', {
       playerName,
@@ -221,7 +236,7 @@ window.GameNet = (function () {
     });
   }
 
-  /** 查询房间是否仍活跃（本机或局域网发现） */
+  /** 查询房间是否仍活跃（本机或跨网 MQTT 查询） */
   function probeRoom(roomId) {
     return new Promise((resolve) => {
       const s = ensureSocket();
@@ -268,32 +283,16 @@ window.GameNet = (function () {
 
   /**
    * Join a room on a possibly remote host. Switches Socket.IO connection when needed.
-   * 本机房间请传 local:true 或 preferLocal，避免 localhost↔局域网IP 双连接造成重复玩家。
+   * 本机房间请传 local:true 或 preferLocal；远端房间统一走公网隧道 host。
    */
   async function joinRoomOnHost(roomId, playerName, host, opts = {}) {
-    let target = host ? normalizeUrl(host) : currentUrl || localOrigin;
+    let candidates = [];
     if (opts.local || opts.preferLocal) {
-      target = localOrigin;
+      candidates = [localOrigin];
     } else if (host) {
-      // 同端口且目标是本机常见别名时，也留在当前页源，避免双连接
-      try {
-        const want = new URL(target);
-        const here = new URL(localOrigin);
-        const loopbacks = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
-        const samePort =
-          (want.port || defaultPort(want.protocol)) ===
-          (here.port || defaultPort(here.protocol));
-        if (
-          samePort &&
-          (loopbacks.has(want.hostname) || loopbacks.has(here.hostname))
-        ) {
-          target = localOrigin;
-        }
-      } catch (_) {
-        /* keep target */
-      }
+      candidates = [normalizeUrl(host)];
     }
-    await connect(target);
+    await connectAny(candidates);
     await joinLobbyAndWait(playerName, {
       sessionId: opts.sessionId || null,
       roomId: opts.roomId || null,
@@ -301,26 +300,22 @@ window.GameNet = (function () {
     joinRoom(roomId, playerName, opts);
   }
 
-  function defaultPort(protocol) {
-    return protocol === 'https:' ? '443' : '80';
-  }
-
   function resolveRoom(roomId) {
     return new Promise((resolve) => {
       const s = ensureSocket();
       const timer = setTimeout(() => {
-        s.off('discovery:resolved', onResolved);
+        s.off('room:resolved', onResolved);
         resolve({ ok: false, message: '查找房间超时' });
       }, 4000);
 
       function onResolved(data) {
         clearTimeout(timer);
-        s.off('discovery:resolved', onResolved);
+        s.off('room:resolved', onResolved);
         resolve(data);
       }
 
-      s.on('discovery:resolved', onResolved);
-      s.emit('discovery:resolve', { roomId });
+      s.on('room:resolved', onResolved);
+      s.emit('room:resolve', { roomId });
     });
   }
 
@@ -359,6 +354,7 @@ window.GameNet = (function () {
 
   return {
     connect,
+    connectAny,
     reconnect,
     on,
     joinLobby,

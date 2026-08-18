@@ -513,11 +513,7 @@
     if (!room || !room.host) return '';
     if (room.local) return '本机';
     const viaRaw = String(room.via || '');
-    return viaRaw.includes('mqtt')
-      ? '广播'
-      : viaRaw.includes('lan')
-          ? '局域网'
-          : '远端';
+    return viaRaw.includes('mqtt') ? '公网隧道' : '远端';
   }
 
   function remoteBadge(person) {
@@ -665,17 +661,15 @@
     const list = peers || [];
     const n = list.length;
     const mqttN = list.filter((p) => String(p.via || '').includes('mqtt')).length;
-    const lanN = list.filter((p) => String(p.via || '').includes('lan')).length;
     if (n === 0) {
       el.peersLabel.textContent =
         state.mqttBulletin
           ? '在线：暂未发现其他实例（双方需保持心跳）'
-          : '局域网：暂未发现其他实例（跨网默认走 MQTT 广播，无需填地址）';
+          : '广播：MQTT 未启用，无法跨实例联机';
       return;
     }
     const bits = [];
     if (mqttN) bits.push(`广播 ${mqttN}`);
-    if (lanN) bits.push(`局域网 ${lanN}`);
     el.peersLabel.textContent =
       `在线：发现 ${n} 个实例` + (bits.length ? `（${bits.join(' · ')}）` : '');
   }
@@ -961,14 +955,19 @@
   async function joinDiscoveredRoom(room) {
     const name = state.playerName || el.playerName.value.trim() || '玩家';
     try {
-      // 本机房间始终走当前页源，避免因 host 是局域网 IP 而另开一条连接
+      // 本机房间始终走当前页源；远端房间统一走公网隧道地址
       await net.joinRoomOnHost(room.id, name, room.host, {
         ...lobbyJoinOpts(),
         local: room.local === true,
         preferLocal: room.local === true,
       });
     } catch (err) {
-      showToast(err.message || '无法连接房主');
+      const base = (err && err.message) || '无法连接房主';
+      showToast(
+        room && room.local === true
+          ? base
+          : `${base}（若持续失败，请以管理员身份运行 修复DNS.bat 后重开浏览器）`
+      );
     }
   }
 
@@ -1127,7 +1126,7 @@
   async function maybeOfferRejoin() {
     const archive = loadGameArchive() || loadActivePlay();
     if (!archive || !archive.roomId) return;
-    // 等局域网发现刷一轮，避免刚进大厅时 probe 过早
+    // 等 MQTT 广播刷一轮，避免刚进大厅时 probe 过早
     await new Promise((r) => setTimeout(r, 800));
     try {
       let probe = await net.probeRoom(archive.roomId);
@@ -1164,11 +1163,13 @@
     try {
       const host = probe.host || null;
       const isLocal = probe.local === true;
+      const candidates = [];
       if (isLocal || !host) {
-        await net.connect(net.getLocalOrigin());
+        candidates.push(net.getLocalOrigin());
       } else {
-        await net.connect(host);
+        candidates.push(host);
       }
+      await net.connectAny(candidates);
       await net.joinLobbyAndWait(name, opts);
 
       const ok = await waitForSessionRestore(4000);
@@ -1433,7 +1434,12 @@
         }
       );
     } catch (err) {
-      showToast(err.message || '加入失败');
+      const base = (err && err.message) || '加入失败';
+      showToast(
+        base.indexOf('websocket error') >= 0
+          ? `${base}（若持续失败，请以管理员身份运行 修复DNS.bat 后重开浏览器）`
+          : base
+      );
     }
   });
 

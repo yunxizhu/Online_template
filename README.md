@@ -3,8 +3,7 @@
 Node.js + Socket.IO 回合制联机骨架，支持：
 
 - 大厅 / 公开房间 / 隐藏房间（房间码）
-- **局域网 UDP 自动发现**：谁开了服务谁在线广播；创建房间后自动出现在其他人的列表里，**无需手填 IP**
-- **跨网联机（默认）**：MQTT 固定广播 + Cloudflare 隧道进房，见 [`docs/mqtt-bulletin-README.md`](docs/mqtt-bulletin-README.md)
+- **跨网联机（唯一联机方式）**：MQTT 固定广播 + Cloudflare 隧道进房（已取消局域网 UDP 发现，本机/局域网同样走隧道），见 [`docs/mqtt-bulletin-README.md`](docs/mqtt-bulletin-README.md)
 - 谁建房，房间就开在谁的进程上（房主即主机）
 - **五子棋**：创建房间时选择游戏；大厅列表显示游戏类型；15 路棋盘，五子连珠获胜
 - **印加宝藏**：3–8 人；同时抉择「继续/返回」，全员锁定后才揭晓并翻牌结算（选择彼此不可见）
@@ -42,7 +41,7 @@ npm start
 
 - A 打开 `http://localhost:3000`
 - B 打开 `http://localhost:3001`
-- A 创建公开房间 → 约 1～2 秒后 B 的「局域网房间」列表会出现该房间 → 点加入（会自动连到 A，不用填 IP）
+- A 创建公开房间 → 约 1～2 秒后 B 的「公开房间」列表会出现该房间 → 点加入（自动经 Cloudflare 隧道连到 A）
 
 PowerShell：
 
@@ -52,27 +51,20 @@ $env:PORT=3000; npm start
 $env:PORT=3001; npm start
 ```
 
-### 两台电脑（同一 WiFi）
+### 同一 WiFi / 不同网段 / 外网好友（同一套机制）
 
-两边都 `npm start`（默认端口 3000），各自打开本机 `http://localhost:3000`。创建公开房后，另一台应自动看到并加入。
-
-> 若路由器开了「访客网络隔离」或防火墙拦 UDP `41234`，发现会失败。
-
-### 不同网段 / 外网好友
-
-启动后自动连 `broker.emqx.io`，登录即上报在线，建房后同步隧道地址；加入房间与对局均走 Cloudflare 隧道。详见 [`docs/mqtt-bulletin-README.md`](docs/mqtt-bulletin-README.md)。
+所有实例统一走 MQTT 广播 + Cloudflare 隧道：启动后自动连 `broker.emqx.io`，登录即上报在线，建房后同步隧道地址；加入房间与对局一律经隧道连接（本机多开、局域网、跨网均相同）。详见 [`docs/mqtt-bulletin-README.md`](docs/mqtt-bulletin-README.md)。
 
 ## 隐藏房
 
-隐藏房不会出现在列表里，但仍会在局域网内广播房间码映射。对方输入房间码即可自动连到房主。
+隐藏房不会出现在列表里，但房间码仍通过 MQTT 广播解析。对方输入房间码即可自动连到房主。
 
 ## 目录
 
 ```
 server/index.js           # Express + Socket.IO
 server/rooms.js           # 房间逻辑
-server/discovery.js       # 局域网 UDP 发现 / 广播
-server/mqttBulletin.js    # 跨网 MQTT 广播
+server/mqttBulletin.js    # MQTT 广播（唯一联机发现通道）
 server/tunnel.js          # Cloudflare 快速隧道
   server/games/             # 游戏注册表 + 各游戏服务端
   index.js                # 统一注册（新增游戏只改这里 + 加文件夹）
@@ -81,7 +73,7 @@ server/tunnel.js          # Cloudflare 快速隧道
   sgs/                    # 三国杀（规则 + 模式 + smoke/）
 public/                   # 大厅壳
   games/<id>/             # 各游戏前端：panel.html / ui.js / style.css / 资源
-scripts/                  # 框架级脚本（如 discovery）；游戏冒烟有兼容转发入口
+scripts/                  # 框架级脚本（冒烟测试等）；游戏冒烟有兼容转发入口
 ```
 
 新增游戏时：在 `server/games/<id>/` 实现规则并导出 `client` 资源路径；在 `public/games/<id>/` 放面板与 UI；冒烟测试放 `server/games/<id>/smoke/`；再在 `server/games/index.js` 注册即可。
@@ -125,4 +117,4 @@ scripts/                  # 框架级脚本（如 discovery）；游戏冒烟有
 
 ## 后续打成 EXE
 
-每个 EXE 启动时附带拉起本进程的 server + discovery；建房方就是主机，其它 EXE 通过 UDP 看到房间并 Socket.IO 连过去。
+每个 EXE 启动时附带拉起本进程的 server；建房方就是主机，其它 EXE 通过 MQTT 看到房间并经 Cloudflare 隧道 Socket.IO 连过去。

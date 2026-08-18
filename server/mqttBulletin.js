@@ -3,7 +3,6 @@
 const fs = require('fs');
 const path = require('path');
 const mqtt = require('mqtt');
-const os = require('os');
 
 const DEFAULT_BROKERS = [
   'wss://broker.emqx.io:8084/mqtt',
@@ -13,8 +12,34 @@ const DEFAULT_CHANNEL = 'lianji-public';
 const APP_SIGNATURE = 'lianji';
 const LOGIN_HB_MS = 10000;
 const ROOM_HB_MS = 10000;
-const LOGIN_OFFLINE_MS = 15000;
-const ROOM_OFFLINE_MS = 15000;
+// 心跳间隔 10s，超时阈值给到 2~3 个周期，避免单次延迟发布导致列表闪跳
+const LOGIN_OFFLINE_MS = 25000;
+const ROOM_OFFLINE_MS = 25000;
+/** 接收端清除超时残留的时长：实例被强杀后 retained 心跳会永久残留，
+ * 超过该阈值直接丢弃，避免「离线幽灵」永远挂在别人大厅里 */
+const STALE_CLEAR_MS =
+  Number(process.env.MQTT_STALE_CLEAR_MS) || 120000;
+const VALID_STATUS = new Set(['idle', 'room', 'playing']);
+
+function sanitizePeople(list) {
+  const out = [];
+  for (const p of list || []) {
+    if (!p) continue;
+    const name = String(p.name || '').trim();
+    if (!name) continue;
+    const status = VALID_STATUS.has(p.status) ? p.status : 'idle';
+    out.push({
+      name,
+      tag: p.tag ? String(p.tag).slice(0, 12) : null,
+      status,
+      roomId: p.roomId ? String(p.roomId).slice(0, 12).toUpperCase() : null,
+      roomName: p.roomName ? String(p.roomName).slice(0, 40) : null,
+      sessionId: p.sessionId ? String(p.sessionId).slice(0, 48) : null,
+    });
+    if (out.length >= 12) break;
+  }
+  return out;
+}
 
 function readOptionalLine(file) {
   try {
@@ -52,6 +77,7 @@ class MqttBulletin {
     getDisplayName,
     getDisplayTag,
     getHostedRooms,
+    getLobbyPeople,
     ensureTunnelUrl,
     onChange,
   }) {
@@ -63,6 +89,7 @@ class MqttBulletin {
     this.getDisplayName = getDisplayName || (() => '');
     this.getDisplayTag = getDisplayTag || (() => null);
     this.getHostedRooms = getHostedRooms || (() => []);
+    this.getLobbyPeople = getLobbyPeople || (() => []);
     this.ensureTunnelUrl = ensureTunnelUrl || (async () => null);
     this.onChange = onChange || (() => {});
     this.loginAt = Date.now();
@@ -109,6 +136,7 @@ class MqttBulletin {
     this._started = false;
     if (this._loginTimer) { clearTimeout(this._loginTimer); this._loginTimer = null; }
     if (this._roomTimer) { clearTimeout(this._roomTimer); this._roomTimer = null; }
+    if (this._roomRetryTimer) { clearTimeout(this._roomRetryTimer); this._roomRetryTimer = null; }
     const c = this.client;
     this.client = null;
     if (!c) return;
@@ -117,6 +145,25 @@ class MqttBulletin {
       c.publish(this.#roomTopic(), '', { qos: 0, retain: true });
     } catch (_) {}
     try { c.end(true); } catch (_) {}
+  }
+
+  /** 清除超时残留的远端心跳/房间（实例死掉后 retained 消息不会自己消失） */
+  #pruneStale() {
+    const now = Date.now();
+    let changed = false;
+    for (const [id, p] of this.logins) {
+      if (!p || !p.updateTime || now - p.updateTime > STALE_CLEAR_MS) {
+        this.logins.delete(id);
+        changed = true;
+      }
+    }
+    for (const [id, r] of this.rooms) {
+      if (!r || !r.updateTime || now - r.updateTime > STALE_CLEAR_MS) {
+        this.rooms.delete(id);
+        changed = true;
+      }
+    }
+    if (changed) this.onChange();
   }
 
   #connect(brokers, index) {
@@ -191,6 +238,16 @@ class MqttBulletin {
     }, ROOM_HB_MS);
   }
 
+  /** 隧道未就绪时的快速重试（1.5s），成功后自动停止 */
+  #scheduleRoomRetry() {
+    if (this._roomRetryTimer || !this._started) return;
+    this._roomRetryTimer = setTimeout(() => {
+      this._roomRetryTimer = null;
+      if (!this._started) return;
+      this.touchRoom().catch((e) => this.#warn(e));
+    }, 1500);
+  }
+
   #pub(topic, obj) {
     const c = this.client;
     if (!c || !c.connected) return;
@@ -201,11 +258,20 @@ class MqttBulletin {
   async touchLogin() {
     if (!this.enabled || !this._started) return;
     const now = Date.now();
+    const people = sanitizePeople(this.getLobbyPeople() || []);
+    // 无大厅玩家：不对外发布，并清掉可能残留的 retained 登录消息，
+    // 避免空实例以主机名形式出现在他人的大厅人员列表里
+    if (!people.length) {
+      this.#pub(this.#loginTopic(), '');
+      return;
+    }
+    const first = people[0];
     this.#pub(this.#loginTopic(), {
       app: APP_SIGNATURE,
       instanceId: this.instanceId,
-      displayName: this.getDisplayName() || os.hostname() || '玩家',
-      displayTag: this.getDisplayTag() || null,
+      displayName: first.name,
+      displayTag: first.tag || null,
+      people,
       loginAt: this.loginAt,
       updateTime: now,
     });
@@ -225,7 +291,12 @@ class MqttBulletin {
     )
       return;
     const tunnelUrl = (await this.ensureTunnelUrl()) || '';
-    if (!tunnelUrl) return;
+    if (!tunnelUrl) {
+      // 隧道还没就绪：短暂重试，尽快把房间广播出去，
+      // 避免远端要等下一个 10s 心跳周期才看到房间
+      this.#scheduleRoomRetry();
+      return;
+    }
     const now = Date.now();
     this.#pub(this.#roomTopic(), {
       app: APP_SIGNATURE,
@@ -265,10 +336,16 @@ class MqttBulletin {
         const p = JSON.parse(text);
         if (!p || p.app !== APP_SIGNATURE) return;
         const updateTime = Number(p.updateTime || 0);
+        const people = Array.isArray(p.people) ? sanitizePeople(p.people) : [];
         this.logins.set(id, {
           instanceId: id,
-          displayName: String(p.displayName || '玩家'),
+          displayName: String(
+            p.displayName ||
+              (people[0] && people[0].name) ||
+              '玩家'
+          ),
           displayTag: p.displayTag ? String(p.displayTag) : null,
+          people,
           loginAt: Number(p.loginAt || 0),
           updateTime,
         });
@@ -323,9 +400,15 @@ class MqttBulletin {
   }
 
   getOnlinePeers() {
+    this.#pruneStale();
     const now = Date.now();
     return [...this.logins.values()]
-      .filter((p) => p.updateTime && now - p.updateTime <= LOGIN_OFFLINE_MS)
+      .filter(
+        (p) =>
+          String(p.displayName || '').trim() &&
+          p.updateTime &&
+          now - p.updateTime <= LOGIN_OFFLINE_MS
+      )
       .map((p) => ({
         instanceId: p.instanceId,
         host: '',
@@ -336,27 +419,43 @@ class MqttBulletin {
   }
 
   getRemotePeople() {
+    this.#pruneStale();
     const now = Date.now();
-    return [...this.logins.values()].map((p) => {
-      const alive = Boolean(p.updateTime && now - p.updateTime <= LOGIN_OFFLINE_MS);
-      return {
-        id: `${p.instanceId}:mqtt`,
-        name: p.displayName,
-        tag: p.displayTag || null,
-        status: alive ? 'idle' : 'offline',
-        roomId: null,
-        roomName: null,
-        instanceId: p.instanceId,
-        host: null,
-        local: false,
-        alive,
-        via: 'mqtt',
-        sessionId: p.instanceId,
-      };
-    });
+    const out = [];
+    for (const p of this.logins.values()) {
+      // 心跳超时的玩家直接剔除，不展示「离线」条目
+      if (!(p.updateTime && now - p.updateTime <= LOGIN_OFFLINE_MS)) continue;
+      const people = Array.isArray(p.people) && p.people.length
+        ? p.people
+        : [{ name: p.displayName, tag: p.displayTag, status: 'idle', roomId: null, roomName: null, sessionId: null }];
+      people.forEach((pp, i) => {
+        const name = String((pp && pp.name) || '').trim();
+        if (!name) return;
+        const roomId = (pp && pp.roomId) || null;
+        const knownRoom = roomId ? this.rooms.get(roomId.toUpperCase()) : null;
+        // 唯一身份 = 机器 id(instanceId) + 玩家本 id(sessionId)，用于跨端去重
+        const sid = (pp && pp.sessionId) ? String(pp.sessionId) : `${name}#${pp && pp.tag || ''}#p${i}`;
+        out.push({
+          id: `${p.instanceId}:p${i}`,
+          name,
+          tag: (pp && pp.tag) || null,
+          status: String(pp.status || 'idle'),
+          roomId,
+          roomName: (pp && pp.roomName) || null,
+          instanceId: p.instanceId,
+          host: (knownRoom && knownRoom.host) || null,
+          local: false,
+          alive: true,
+          via: 'mqtt',
+          sessionId: `${p.instanceId}:${sid}`,
+        });
+      });
+    }
+    return out;
   }
 
   getPublicRooms() {
+    this.#pruneStale();
     const now = Date.now();
     return [...this.rooms.values()].filter(
       (r) =>
