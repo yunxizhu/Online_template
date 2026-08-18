@@ -1,0 +1,14 @@
+node_modules/
+dist/
+dist.zip
+hub.url
+roster.url
+tencent-docs.json
+mqtt.channel
+mqtt.broker
+mqtt.off
+.lianji-machine-id
+.lianji-login-row-*.json
+.lianji-room-row-*.json
+.lianji-tencent-row-*.json
+.tools/

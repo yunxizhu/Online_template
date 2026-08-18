@@ -1,0 +1,30 @@
+<!-- 印加宝藏对局面板 -->
+<div class="panel game-panel incan-panel" id="panel-incan" hidden>
+  <h2>印加宝藏</h2>
+  <p id="incan-temple" class="game-status">神庙 1/5</p>
+  <p id="incan-status" class="muted"></p>
+
+  <div class="incan-path">
+    <div class="incan-meta">
+      <span>通道宝石：<strong id="incan-path-gems">0</strong></span>
+      <span>牌堆剩余：<strong id="incan-deck-left">0</strong></span>
+    </div>
+    <div id="incan-path-artifacts" class="incan-tags"></div>
+    <div id="incan-path-cards" class="incan-cards"></div>
+    <div id="incan-hazards" class="incan-tags"></div>
+  </div>
+
+  <div id="incan-reveal" class="incan-reveal" hidden></div>
+
+  <div class="incan-actions row" id="incan-actions" hidden>
+    <button id="btn-incan-continue" type="button">继续探险</button>
+    <button id="btn-incan-retreat" type="button" class="secondary">返回营地</button>
+  </div>
+  <p id="incan-locked" class="muted" hidden>已锁定选择，等待其他玩家…（彼此看不到对方选择）</p>
+
+  <h3 class="game-sub">玩家</h3>
+  <ul id="incan-players" class="member-list"></ul>
+
+  <h3 class="game-sub">动态</h3>
+  <ul id="incan-log" class="game-log"></ul>
+</div>

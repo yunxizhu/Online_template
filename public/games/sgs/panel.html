@@ -1,0 +1,88 @@
+<!-- 三国杀对局面板（本人正视角 · 90°俯视桌面） -->
+<div class="panel game-panel sgs-panel" id="panel-sgs" hidden>
+  <header class="sgs-topbar">
+    <h2>三国杀 · <span id="sgs-mode-label">标准身份</span></h2>
+    <p id="sgs-status" class="game-status">—</p>
+  </header>
+
+  <div id="sgs-general-select" class="sgs-general-select" hidden>
+    <h3>选择武将</h3>
+    <div id="sgs-general-choices" class="sgs-general-choices"></div>
+  </div>
+
+  <div class="sgs-arena" id="sgs-arena">
+    <div class="sgs-stage">
+      <div class="sgs-felt" id="sgs-felt">
+        <div id="sgs-opponents" class="sgs-opponents"></div>
+      </div>
+      <!-- 牌堆放在透视桌面外，避免 rotateX 裁切只露一半 -->
+      <div class="sgs-center" id="sgs-center">
+        <div class="sgs-pile" id="sgs-draw-pile" title="抽牌堆">
+          <div class="sgs-pile-visual" id="sgs-draw-visual"></div>
+          <div class="sgs-pile-label">抽牌堆 <span id="sgs-draw">0</span></div>
+        </div>
+        <div class="sgs-pile" id="sgs-discard-pile" title="弃牌堆">
+          <div class="sgs-pile-visual" id="sgs-discard-visual"></div>
+          <div class="sgs-pile-label">弃牌堆 <span id="sgs-discard">0</span></div>
+          <div class="sgs-pile-caption" id="sgs-discard-caption"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sgs-self-prompts" id="sgs-self-prompts">
+      <div class="sgs-play-bar row" id="sgs-play-actions">
+        <button id="btn-sgs-play" type="button" hidden>确认出牌</button>
+        <button id="btn-sgs-recast" type="button" class="secondary" hidden>重置</button>
+        <button id="btn-sgs-end-play" type="button" class="secondary" hidden>结束出牌</button>
+      </div>
+      <div class="sgs-ask-bar" id="sgs-ask-bar" hidden>
+        <p class="sgs-ask-msg" id="sgs-ask-msg"></p>
+        <div id="sgs-ask-cards" class="sgs-ask-cards"></div>
+        <div class="row sgs-ask-actions" id="sgs-ask-actions"></div>
+      </div>
+    </div>
+
+    <div class="sgs-self" id="sgs-self">
+      <div class="sgs-self-top">
+        <div class="sgs-self-main">
+          <div class="sgs-self-info" id="sgs-self-info"></div>
+          <div class="sgs-self-side">
+            <div class="sgs-self-side-top">
+              <div class="sgs-skill-bar" id="sgs-skill-bar" aria-label="武将技能"></div>
+              <div class="sgs-self-meta" id="sgs-self-meta"></div>
+            </div>
+            <div id="sgs-hand-wrap" class="sgs-hand-wrap">
+              <div class="sgs-hand-meta">
+                <span>手牌 <span id="sgs-hand-hint" class="muted"></span></span>
+              </div>
+              <div id="sgs-hand" class="sgs-hand sgs-hand-stack"></div>
+              <p id="sgs-target-hint" class="muted"></p>
+            </div>
+          </div>
+        </div>
+        <div class="sgs-self-equips" id="sgs-self-equips"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="sgs-pending" class="sgs-pending" hidden>
+    <p id="sgs-pending-msg"></p>
+    <div id="sgs-pending-cards" class="sgs-hand"></div>
+    <div class="row" id="sgs-pending-actions"></div>
+  </div>
+
+  <div id="sgs-modal" class="sgs-modal" hidden>
+    <div class="sgs-modal-backdrop" data-sgs-modal-dismiss></div>
+    <div class="sgs-modal-panel" id="sgs-modal-panel" role="dialog" aria-modal="true">
+      <h3 id="sgs-modal-title" class="sgs-modal-title"></h3>
+      <p id="sgs-modal-hint" class="muted sgs-modal-hint"></p>
+      <div id="sgs-modal-body" class="sgs-modal-body"></div>
+      <div class="row sgs-modal-actions" id="sgs-modal-actions"></div>
+    </div>
+  </div>
+
+  <details class="sgs-log-wrap">
+    <summary>动态</summary>
+    <ul id="sgs-log" class="game-log"></ul>
+  </details>
+</div>

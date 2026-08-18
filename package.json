@@ -1,0 +1,42 @@
+{
+  "name": "lianji",
+  "version": "1.0.0",
+  "description": "Turn-based multiplayer lobby & room framework",
+  "main": "server/index.js",
+  "bin": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js",
+    "start:a": "node server/index.js",
+    "start:b": "node -e \"process.env.PORT=process.env.PORT||'3001'; require('./server/index.js')\"",
+    "smoke": "node server/games/gomoku/smoke/basic.js && node server/games/incan/smoke/basic.js && node server/games/sgs/smoke/identity.js && node server/games/sgs/smoke/identity-death.js && node server/games/sgs/smoke/h2h.js && node server/games/sgs/smoke/1v2.js",
+    "package": "node scripts/package.js",
+    "package:win": "node scripts/package.js windows"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "mqtt": "^5.15.2",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.22.0"
+  },
+  "pkg": {
+    "targets": [
+      "node18-win-x64",
+      "node18-linux-x64"
+    ],
+    "scripts": [
+      "server/**/*.js",
+      "docs/**/*.js"
+    ],
+    "assets": [
+      "public/**/*",
+      "mqtt.channel"
+    ]
+  }
+}
