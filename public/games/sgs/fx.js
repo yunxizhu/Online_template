@@ -229,6 +229,52 @@ window.SgsFx = (function () {
     el.remove();
   }
 
+  function damageHostEl(playerId) {
+    const seats = document.querySelectorAll('#sgs-opponents .sgs-seat');
+    for (const seat of seats) {
+      if (seat.dataset.playerId === playerId) return seat;
+    }
+    const self = $('sgs-self');
+    if (self && self.dataset.playerId === playerId) {
+      return $('sgs-self-info') || self;
+    }
+    return null;
+  }
+
+  /** 受伤：武将卡抖动；掉血数字先放大，再抖两下，再渐隐 */
+  async function animateDamageHit({ playerId, amount }) {
+    const host = damageHostEl(playerId);
+    const card =
+      (host &&
+        (host.querySelector('.sgs-hero-card--self') ||
+          host.querySelector('.sgs-hero-card'))) ||
+      host;
+    const box = rectBox(card) || rectBox(host);
+    if (host) {
+      host.classList.remove('is-hit');
+      void host.offsetWidth;
+      host.classList.add('is-hit');
+      setTimeout(() => host.classList.remove('is-hit'), 560);
+    }
+    if (!box) return;
+
+    const n = Math.max(1, Math.floor(Number(amount) || 1));
+    const el = document.createElement('div');
+    el.className = 'sgs-fx-hp-loss';
+    el.textContent = `-${n}`;
+    const fontPx = Math.max(36, Math.min(76, Math.round(box.w * 0.58)));
+    el.style.fontSize = fontPx + 'px';
+    el.style.left = box.x + box.w / 2 + 'px';
+    el.style.top = box.y + box.h * 0.42 + 'px';
+    document.body.appendChild(el);
+    requestAnimationFrame(() => {
+      el.classList.add('is-play');
+    });
+    await sleep(1180);
+    el.remove();
+    if (host) host.classList.remove('is-hit');
+  }
+
   function setDiscardCaption(text) {
     const el = $('sgs-discard-caption');
     if (!el) return;
@@ -411,5 +457,6 @@ window.SgsFx = (function () {
     animatePlayToDiscard,
     animateTargetRays,
     animateSeatText,
+    animateDamageHit,
   };
 })();

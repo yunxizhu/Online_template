@@ -119,8 +119,10 @@ window.IncanUi = (function () {
     for (const p of game.players || []) {
       const li = document.createElement('li');
       const isMe = meId && p.id === meId;
+      if (p.left) li.classList.add('is-left');
       let status = p.exploring ? '探险中' : '营地';
-      if (p.exploring && p.locked) status += ' · 已锁定';
+      if (p.left) status = '已离开';
+      else if (p.exploring && p.locked) status += ' · 已锁定';
       if (p.exploring && isMe && p.choice) {
         status += `（你选了${choiceLabel(p.choice)}）`;
       }

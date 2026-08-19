@@ -10,6 +10,26 @@
 <body>
   <main class="app">
     <header class="app-top">
+      <div class="game-menu" id="game-menu" hidden>
+        <button
+          type="button"
+          id="btn-game-menu"
+          class="icon-btn game-menu-btn"
+          title="菜单"
+          aria-label="菜单"
+          aria-expanded="false"
+          aria-haspopup="true"
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path fill="currentColor" d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z"/>
+          </svg>
+        </button>
+        <div class="game-menu-pop" id="game-menu-pop" hidden role="menu">
+          <button type="button" id="btn-quit-game" role="menuitem">
+            退出游戏并返回大厅
+          </button>
+        </div>
+      </div>
       <div class="app-top-mid">
         <div class="app-top-title-row">
           <h1 id="app-phase-title">联机大厅</h1>
@@ -116,9 +136,6 @@
             思考时间 <strong id="turn-timer-sec">—</strong>
           </div>
           <div id="game-panels"></div>
-          <div class="row" style="justify-content: center; margin-top: 0.5rem">
-            <button id="btn-leave-game" type="button" class="secondary">离开房间</button>
-          </div>
         </section>
       </div>
 
@@ -139,6 +156,38 @@
       </aside>
     </div>
   </main>
+
+  <aside class="chat-dock" id="chat-dock" hidden aria-label="聊天室">
+    <div class="chat-panel" id="chat-panel">
+      <header class="chat-head" id="chat-drag-handle">
+        <span class="chat-head-title">
+          <span class="chat-head-channel" id="chat-head-channel">所有人</span>
+          聊天室 <span class="chat-head-unread" id="chat-head-unread" hidden>新消息</span>
+        </span>
+        <div class="chat-tabs" role="tablist">
+          <button type="button" id="chat-tab-all" class="is-on" data-chat-tab="all" role="tab">
+            所有人 <span class="chat-unread" id="chat-unread-all" hidden></span>
+          </button>
+          <button type="button" id="chat-tab-room" data-chat-tab="room" role="tab" hidden>
+            房间 <span class="chat-unread" id="chat-unread-room" hidden></span>
+          </button>
+        </div>
+      </header>
+      <div class="chat-collapsed-preview" id="chat-collapsed-preview">还没有人发言</div>
+      <ul id="chat-log" class="chat-log" aria-live="polite"></ul>
+      <form id="chat-form" class="chat-form">
+        <input
+          id="chat-input"
+          type="text"
+          maxlength="120"
+          autocomplete="off"
+          placeholder="输入消息…"
+          aria-label="聊天内容"
+        />
+        <button type="submit">发送</button>
+      </form>
+    </div>
+  </aside>
 
   <div class="modal" id="create-room-modal" hidden>
     <div class="modal-backdrop" data-close="create"></div>

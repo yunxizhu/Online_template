@@ -111,6 +111,7 @@ function makeEmptyPlayer(p, seat, identity, team) {
     id: p.id,
     name: p.name,
     tag: p.tag || null,
+    left: false,
     seat,
     alive: true,
     identity,
@@ -3826,6 +3827,9 @@ function publicCardOption(game, viewer, owner, cardId, pend) {
 
 function pendingOptionOwner(game, pend) {
   if (!pend) return null;
+  if (pend.skillId === 'fanjian') {
+    return getPlayer(game, pend.playerId);
+  }
   if (pend.targetId) return getPlayer(game, pend.targetId);
   if (pend.dyingId) return getPlayer(game, pend.dyingId);
   if (pend.moreId) return getPlayer(game, pend.moreId);
@@ -3928,6 +3932,15 @@ function publicGameState(game, viewerId) {
           ) {
             const src = getPlayer(game, pend.sourceId);
             optionIds = (pend.heartIds || (src ? src.hand.slice() : [])).slice();
+          }
+          if (
+            (!optionIds || !optionIds.length) &&
+            pend.type === 'skill_effect' &&
+            pend.skillId === 'fanjian' &&
+            pend.step === 'card'
+          ) {
+            const src = getPlayer(game, pend.playerId);
+            optionIds = src ? src.hand.slice() : [];
           }
           const optionOwner = pendingOptionOwner(game, pend);
           return {
@@ -4102,6 +4115,7 @@ function publicGameState(game, viewerId) {
         id: p.id,
         name: p.name,
         tag: p.tag || null,
+        left: Boolean(p.left),
         seat: p.seat,
         seatNo: p.seat + 1,
         alive: p.alive,
@@ -4525,6 +4539,26 @@ function forceTimeout(game, playerId) {
   return { ok: true };
 }
 
+/** 主动退出：视为阵亡（走完整死亡流程） */
+function onPlayerQuit(game, playerId) {
+  if (!game || game.over) return;
+  const p = getPlayer(game, playerId);
+  if (!p || !p.alive) return;
+
+  if (game.pending) {
+    const askId = game.pending.askId || game.pending.playerId;
+    if (askId === playerId) {
+      forceTimeout(game, playerId);
+    }
+  }
+
+  const dead = getPlayer(game, playerId);
+  if (!dead || !dead.alive) return;
+
+  pushLog(game, `${dead.name} 离开了游戏，视为阵亡`);
+  killPlayer(game, dead, { kind: 'quit', sourceId: null, reason: 'quit' });
+}
+
 module.exports = {
   createGameState,
   applyAction,
@@ -4533,4 +4567,5 @@ module.exports = {
   loseHp,
   getActingPlayerIds,
   forceTimeout,
+  onPlayerQuit,
 };

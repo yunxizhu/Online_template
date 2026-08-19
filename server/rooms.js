@@ -49,6 +49,7 @@ function fullRoomView(room) {
       tag: p.tag || null,
       ready: p.ready,
       offline: Boolean(p.offline),
+      left: Boolean(p.left),
     })),
     status: room.status,
     maxPlayers: room.maxPlayers,
@@ -214,12 +215,7 @@ class RoomManager {
       });
     }
 
-    // 同 session 幽灵：只留状态更高的一条（房间/对局优先于空闲）
-    const rank = (status) => {
-      if (status === 'playing') return 3;
-      if (status === 'room') return 2;
-      return 1;
-    };
+    // 同 session 幽灵：只留最后一条（后写入覆盖）
     const bySession = new Map();
     const rest = [];
     for (const person of list) {
@@ -227,14 +223,17 @@ class RoomManager {
         rest.push(person);
         continue;
       }
-      const prev = bySession.get(person.sessionId);
-      if (!prev || rank(person.status) >= rank(prev.status)) {
-        bySession.set(person.sessionId, person);
-      }
+      bySession.set(person.sessionId, person);
     }
     const deduped = [...bySession.values(), ...rest];
-    deduped.sort((a, b) => a.name.localeCompare(b.name, 'zh'));
-    return deduped;
+    const byLabel = new Map();
+    for (const person of deduped) {
+      const label = `${person.name}#${person.tag || ''}`;
+      byLabel.set(label, person);
+    }
+    const unique = [...byLabel.values()];
+    unique.sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+    return unique;
   }
 
   /**
@@ -436,6 +435,74 @@ class RoomManager {
   }
 
   /**
+   * 对局中主动退出：座位保留并标记已离开，按各游戏规则处理；本人回大厅。
+   * 等待房仍走 leaveRoom（房主离开会解散）。
+   */
+  quitPlaying(playerId) {
+    const player = this.players.get(playerId);
+    if (!player || !player.roomId) {
+      return {
+        ok: true,
+        abandoned: false,
+        dissolved: false,
+        room: null,
+        leftRoomId: null,
+        playerName: null,
+        playerTag: null,
+      };
+    }
+    const room = this.getRoom(player.roomId);
+    if (!room || room.status !== 'playing' || !room.game) {
+      return this.leaveRoom(playerId);
+    }
+
+    const seat = room.players.find((p) => p.id === playerId);
+    const playerName = (seat && seat.name) || player.name || '玩家';
+    const playerTag = (seat && seat.tag) || player.tag || null;
+    if (seat) {
+      seat.left = true;
+      seat.leftAt = Date.now();
+      seat.offline = false;
+      delete seat.offlineAt;
+    }
+    if (room.game && Array.isArray(room.game.players)) {
+      const gp = room.game.players.find((p) => p.id === playerId);
+      if (gp) gp.left = true;
+    }
+    if (room.game && Array.isArray(room.game.log)) {
+      room.game.log.push({ at: Date.now(), text: `${playerName} 离开了游戏` });
+    }
+
+    const leftRoomId = player.roomId;
+    player.roomId = null;
+
+    const stillHere = room.players.filter((p) => !p.left);
+    if (!stillHere.length) {
+      clearTurnTimer(room);
+      this.rooms.delete(room.id);
+      return {
+        ok: true,
+        abandoned: true,
+        dissolved: true,
+        room: null,
+        leftRoomId,
+        playerName,
+        playerTag,
+      };
+    }
+
+    return {
+      ok: true,
+      abandoned: true,
+      dissolved: false,
+      room,
+      leftRoomId,
+      playerName,
+      playerTag,
+    };
+  }
+
+  /**
    * 短暂断线：对局中或等待房保留座位；其它情况直接离开。
    */
   markOffline(playerId) {
@@ -460,6 +527,16 @@ class RoomManager {
     }
 
     const seat = room.players.find((p) => p.id === playerId);
+    if (seat && seat.left) {
+      this.players.delete(playerId);
+      return {
+        ok: true,
+        room,
+        leftRoomId: room.id,
+        offline: false,
+        abandoned: true,
+      };
+    }
     if (seat) {
       seat.offline = true;
       seat.offlineAt = Date.now();
@@ -566,7 +643,7 @@ class RoomManager {
     if (savedSeatId) {
       for (const room of reclaimableRooms) {
         const seat = (room.players || []).find((p) => p.id === savedSeatId);
-        if (seat) return bindSeat(room, seat);
+        if (seat && !seat.left) return bindSeat(room, seat);
       }
     }
 
@@ -597,7 +674,7 @@ class RoomManager {
         const offlines = room.players.filter((p) => p.offline);
         if (offlines.length === 1) seat = offlines[0];
       }
-      if (!seat) continue;
+      if (!seat || seat.left) continue;
       return bindSeat(room, seat);
     }
 

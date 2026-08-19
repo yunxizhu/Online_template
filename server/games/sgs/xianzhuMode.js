@@ -21,8 +21,15 @@ function xianzhuDeck(n) {
   throw new Error('先主模式仅支持 5 或 8 人');
 }
 
+/** 黄巾起义所需人数：存活一半向上取整；2 人及以下不起义 */
+function uprisingNeed(aliveCount) {
+  const n = Number(aliveCount) || 0;
+  if (n <= 2) return null;
+  return Math.ceil(n / 2);
+}
+
 function maxHuangjin(n) {
-  return n <= 5 ? 2 : 4;
+  return uprisingNeed(n) || 0;
 }
 
 /** 阵营：lord | rebel | huangjin */
@@ -52,10 +59,9 @@ function countHuangjinAlive(game) {
 
 function shouldUprising(game) {
   const alive = game.players.filter((p) => p.alive).length;
-  if (alive <= 0) return false;
-  const hj = countHuangjinAlive(game);
-  // 一半人数向下取整：达到该数量即起义（5人场 2 人、8人场 4 人可触发）
-  return hj >= Math.floor(alive / 2) && hj >= 1;
+  const need = uprisingNeed(alive);
+  if (need == null) return false;
+  return countHuangjinAlive(game) >= need;
 }
 
 function triggerUprising(game, api) {
@@ -79,8 +85,11 @@ function maybeUprising(game, api) {
 function canConvertToHuangjin(game) {
   if (game.mode !== 'xianzhu') return false;
   if (game.huangjinConvertLocked || game.huangjinUprising) return false;
-  const n = game.players.length;
-  return countHuangjinAlive(game) < maxHuangjin(n);
+  const alive = game.players.filter((p) => p.alive).length;
+  const need = uprisingNeed(alive);
+  // 2 人局身份已明，不起义，但仍允许感染
+  if (need == null) return true;
+  return countHuangjinAlive(game) < need;
 }
 
 /**
@@ -341,6 +350,7 @@ function publicIdentityFor(game, p, viewer) {
 
 module.exports = {
   xianzhuDeck,
+  uprisingNeed,
   maxHuangjin,
   factionOf,
   isHuangjinViewer,

@@ -251,38 +251,109 @@ function resolveLuoshen(game, pend, playerId, payload, api, pass) {
   return { ok: true };
 }
 
+function startFanjianSuit(game, me, target, api) {
+  if (!me.skillStates) me.skillStates = {};
+  me.skillStates.fanjian = true;
+  api.pushLog(game, me.name + ' 对 ' + target.name + ' 发动【反间】');
+  api.setPending(game, {
+    type: 'skill_effect',
+    skillId: 'fanjian',
+    skillName: '反间',
+    playerId: me.id,
+    askId: target.id,
+    targetId: target.id,
+    step: 'suit',
+    message: '反间：请选择一种花色',
+    canPass: false,
+  });
+}
+
 function resolveFanjian(game, pend, playerId, payload, api) {
   const me = api.getPlayer(game, pend.playerId);
-  const target = api.getPlayer(game, pend.targetId);
-  if (pend.step === 'suit') {
-    const suit = payload.suit;
-    if (!suit) return { ok: false, error: '请选择花色' };
+  if (!me) return { ok: false, error: '发动者无效' };
+
+  if (pend.step === 'target') {
+    if (payload.pass) {
+      api.clearPending(game);
+      api.resumeAfterSkill(game);
+      return { ok: true };
+    }
+    const tid =
+      payload.targetId ||
+      (payload.targetIds && payload.targetIds[0]);
+    const target = api.getPlayer(game, tid);
+    if (!target || !target.alive || target.id === me.id) {
+      return { ok: false, error: '请选择一名其他角色' };
+    }
     if (!me.hand.length) {
       api.clearPending(game);
       api.resumeAfterSkill(game);
       return { ok: true };
     }
-    const cid = me.hand[Math.floor(Math.random() * me.hand.length)];
-    const card = api.cardById(game, cid);
-    api.takeFromHand(me, cid);
-    target.hand.push(cid);
-    api.pushLog(
-      game,
-      target.name +
-        ' 反间获得 ' +
-        api.SUIT_LABEL[card.suit] +
-        card.number +
-        '【' +
-        card.name +
-        '】'
-    );
-    if (card.suit !== suit) {
-      api.dealDamage(game, me.id, target.id, 1);
-    }
+    startFanjianSuit(game, me, target, api);
+    return { ok: true };
+  }
+
+  const target = api.getPlayer(game, pend.targetId);
+  if (!target || !target.alive) {
     api.clearPending(game);
     api.resumeAfterSkill(game);
     return { ok: true };
   }
+
+  if (pend.step === 'suit') {
+    const suit =
+      payload.suit ||
+      (payload.pass ? 'heart' : null);
+    if (!suit || !api.SUIT_LABEL[suit]) {
+      return { ok: false, error: '请选择花色' };
+    }
+    if (!me.hand.length) {
+      api.clearPending(game);
+      api.resumeAfterSkill(game);
+      return { ok: true };
+    }
+    const suitLabel = api.SUIT_LABEL[suit];
+    api.setPending(game, {
+      type: 'skill_effect',
+      skillId: 'fanjian',
+      skillName: '反间',
+      playerId: me.id,
+      askId: target.id,
+      targetId: target.id,
+      sourceId: me.id,
+      cardIds: me.hand.slice(),
+      suit,
+      step: 'card',
+      message: '反间：你选择了' + suitLabel + '，请获得发动者一张手牌',
+      canPass: false,
+    });
+    return { ok: true };
+  }
+
+  if (pend.step === 'card') {
+    const cid = payload.cardId || (payload.pass ? (pend.cardIds || [])[0] : null);
+    if (!cid || !(pend.cardIds || []).includes(cid) || !me.hand.includes(cid)) {
+      return { ok: false, error: '请选择发动者的一张手牌' };
+    }
+    const card = api.cardById(game, cid);
+    api.takeFromHand(me, cid);
+    target.hand.push(cid);
+    const shown =
+      (api.SUIT_LABEL[card.suit] || '') +
+      card.number +
+      '【' +
+      card.name +
+      '】';
+    api.pushLog(game, target.name + ' 获得并展示 ' + shown);
+    api.clearPending(game);
+    if (card.suit !== pend.suit) {
+      api.dealDamage(game, me.id, target.id, 1);
+    }
+    if (!game.pending) api.resumeAfterSkill(game);
+    return { ok: true };
+  }
+
   return { ok: false, error: '未知步骤' };
 }
 

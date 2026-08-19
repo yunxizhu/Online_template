@@ -34,6 +34,7 @@ function pickPrimaryLanIP() {
 
 const PORT = Number(process.env.PORT) || 3000;
 const INSTANCE_ID = crypto.randomUUID();
+const HALL_CHAT_ROOM = 'hall';
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -143,69 +144,68 @@ function buildLobbyPayload() {
   };
 }
 
-/** 合并本机+远端人员：同 session 只保留一条，优先「对局/房间」且偏本机 */
-function mergeLobbyPeople(localPeople, remotePeople) {
-  const rank = (status) => {
-    if (status === 'playing') return 3;
-    if (status === 'room') return 2;
-    return 1;
-  };
-  const labelKey = (person) => {
-    const name = String(person && person.name ? person.name : '').trim();
-    const tag = String(person && person.tag ? person.tag : '').trim();
-    return `${name}#${tag}`;
-  };
-  const byKey = new Map();
+function personLabelKey(person) {
+  const name = String(person && person.name ? person.name : '').trim();
+  const tag = String(person && person.tag ? person.tag : '').trim();
+  return `${name}#${tag}`;
+}
 
+/** 兼容旧心跳把 instanceId 拼在 sessionId 前面 */
+function personSessionKey(person) {
+  const raw = String((person && person.sessionId) || '').trim();
+  if (!raw) return '';
+  const idx = raw.indexOf(':');
+  if (idx > 0) {
+    const rest = raw.slice(idx + 1).trim();
+    if (rest) return rest;
+  }
+  return raw;
+}
+
+function personIdentityKey(person) {
+  const sid = personSessionKey(person);
+  if (sid) return `sid:${sid}`;
+  const label = personLabelKey(person);
+  if (label && label !== '#') return `nick:${label}`;
+  return `id:${(person && (person.id || person.socketId)) || Math.random()}`;
+}
+
+function pickLaterPerson(prev, person) {
+  if (!prev) return person;
+  const tNew = Number(person.updateTime || 0);
+  const tOld = Number(prev.updateTime || 0);
+  // 同一玩家只留一条状态：心跳更新时间更晚的覆盖；时间相同则后写入的覆盖
+  return tNew >= tOld ? person : prev;
+}
+
+/** 合并本机+远端人员：同一玩家只出现一次，以最近一次心跳为准 */
+function mergeLobbyPeople(localPeople, remotePeople) {
+  const byKey = new Map();
   const put = (person) => {
     if (!person) return;
-    const key = person.sessionId
-      ? `sid:${person.sessionId}`
-      : person.local === false
-        ? `remote:${person.instanceId || ''}:${labelKey(person) || (person.socketId || person.id)}`
-        : `local:${person.id}`;
-    const prev = byKey.get(key);
-    if (!prev) {
-      byKey.set(key, person);
-      return;
-    }
-    const betterStatus = rank(person.status) > rank(prev.status);
-    const sameStatusPreferLocal =
-      rank(person.status) === rank(prev.status) &&
-      person.local === true &&
-      prev.local === false;
-    if (betterStatus || sameStatusPreferLocal) byKey.set(key, person);
+    const key = personIdentityKey(person);
+    byKey.set(key, pickLaterPerson(byKey.get(key), person));
   };
 
-  for (const p of localPeople || []) put(p);
+  const now = Date.now();
+  for (const p of localPeople || []) {
+    put({ ...p, updateTime: p.updateTime || now });
+  }
   for (const p of remotePeople || []) put(p);
 
-  // 终合并：同一「机器 id + 玩家 id」只保留一条（sessionId 即机器+本 id 组合）
-  const collapsed = new Map();
-  const sourceRank = (person) => {
-    const via = String((person && person.via) || '');
-    if (via.includes('mqtt')) return 1;
-    return 0;
-  };
+  // 再按昵称+尾缀合并：同一个人跨实例（进房后本机空闲残影 vs 房主侧房间中）只留最新
+  const byLabel = new Map();
+  const unlabeled = [];
   for (const person of byKey.values()) {
-    if (!person || person.local !== false) {
-      collapsed.set(`local:${person && person.id ? person.id : Math.random()}`, person);
+    const label = personLabelKey(person);
+    if (!label || label === '#') {
+      unlabeled.push(person);
       continue;
     }
-    const key = `remote:${person.instanceId || ''}:${person.sessionId || labelKey(person)}`;
-    const prev = collapsed.get(key);
-    if (!prev) {
-      collapsed.set(key, person);
-      continue;
-    }
-    const betterStatus = rank(person.status) > rank(prev.status);
-    const sameStatusBetterSource =
-      rank(person.status) === rank(prev.status) &&
-      sourceRank(person) > sourceRank(prev);
-    if (betterStatus || sameStatusBetterSource) collapsed.set(key, person);
+    byLabel.set(label, pickLaterPerson(byLabel.get(label), person));
   }
 
-  return [...collapsed.values()].sort((a, b) =>
+  return [...byLabel.values(), ...unlabeled].sort((a, b) =>
     String(a.name || '').localeCompare(String(b.name || ''), 'zh')
   );
 }
@@ -238,20 +238,72 @@ function hostedBeaconRooms() {
 }
 
 function mqttOnLogin() {
-  if (mqttBulletin && mqttBulletin.enabled) mqttBulletin.touchLogin().catch(() => {});
+  if (mqttBulletin && mqttBulletin.enabled) mqttBulletin.pulseLogin();
 }
 
 function mqttAfterRoomChange() {
-  if (mqttBulletin && mqttBulletin.enabled) mqttBulletin.touchRoom().catch(() => {});
+  if (mqttBulletin && mqttBulletin.enabled) mqttBulletin.pulseRoom();
+}
+
+function sanitizeChatText(raw) {
+  return String(raw || '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
+}
+
+function buildChatMessage(player, channel, text) {
+  return {
+    app: 'lianji',
+    kind: 'chat',
+    channel: channel === 'room' ? 'room' : 'all',
+    roomId: channel === 'room' ? player.roomId || null : null,
+    name: player.name || '玩家',
+    tag: player.tag || null,
+    sessionId: player.sessionId || null,
+    instanceId: INSTANCE_ID,
+    text,
+    at: Date.now(),
+  };
+}
+
+function attachTunnelHooks(t) {
+  if (!t) return t;
+  t.onUrl = (url) => {
+    if (mqttBulletin && mqttBulletin.enabled) {
+      // 公网地址刚到手：MQTT 已连上则立刻广播房间
+      mqttBulletin.flushIfReady(url);
+    }
+  };
+  t.onLost = () => {
+    if (mqttBulletin && mqttBulletin.enabled) mqttBulletin.clearRoomBeacon();
+  };
+  return t;
 }
 
 async function ensurePublicTunnelUrl() {
-  if (!tunnel) tunnel = new QuickTunnel();
-  return tunnel.ensure(PORT);
+  if (!tunnel) tunnel = attachTunnelHooks(new QuickTunnel());
+  await tunnel.ensure(PORT);
+  return tunnel.getPublicUrl() || '';
 }
 
 function emitLobbyUpdate() {
   io.emit('lobby:update', buildLobbyPayload());
+}
+
+/** 进入大厅后统一加入 hall，用于「所有人」频道广播 */
+function joinHallChat(socket) {
+  if (socket) socket.join(HALL_CHAT_ROOM);
+}
+
+function broadcastChatAllLocal(msg) {
+  io.to(HALL_CHAT_ROOM).emit('chat:message', msg);
+}
+
+function emitChatAll(msg) {
+  broadcastChatAllLocal(msg);
+  if (mqttBulletin && mqttBulletin.enabled) mqttBulletin.publishChat(msg);
 }
 
 function emitPlayerMe(socket, player, fallbackName) {
@@ -273,6 +325,17 @@ function publicStateForRoom(room, viewerId) {
   const mod = getGame(room.gameType);
   if (!mod || !room.game) return null;
   const state = mod.publicGameState(room.game, viewerId);
+  if (!state) return null;
+  const leftIds = (room.players || [])
+    .filter((p) => p.left)
+    .map((p) => p.id);
+  state.leftPlayerIds = leftIds;
+  if (Array.isArray(state.players)) {
+    for (const p of state.players) {
+      p.left = Boolean(p.left) || leftIds.includes(p.id);
+    }
+  }
+  if (state.me && leftIds.includes(state.me.id)) state.me.left = true;
   if (state && room.turnTimer) {
     state.turnTimer = {
       actorIds: room.turnTimer.actorIds.slice(),
@@ -286,7 +349,7 @@ function publicStateForRoom(room, viewerId) {
 function emitGameState(room) {
   if (!room) return;
   for (const p of room.players) {
-    if (p.offline) continue;
+    if (p.offline || p.left) continue;
     io.to(p.id).emit('game:state', {
       state: publicStateForRoom(room, p.id),
     });
@@ -296,10 +359,74 @@ function emitGameState(room) {
 function emitGameStarted(room) {
   if (!room) return;
   for (const p of room.players) {
-    if (p.offline) continue;
+    if (p.offline || p.left) continue;
     io.to(p.id).emit('game:started', {
       state: publicStateForRoom(room, p.id),
     });
+  }
+}
+
+function abandonedSig(room, mod, leftIds) {
+  const game = room.game;
+  if (!game) return '';
+  const actors = (mod.getActingPlayerIds(game) || []).filter((id) =>
+    leftIds.has(id)
+  );
+  const pend = game.pending;
+  return [
+    actors.slice().sort().join(','),
+    game.phase || '',
+    game.turnPhase || '',
+    game.turnSeat != null ? game.turnSeat : '',
+    game.currentPlayerId || '',
+    pend && pend.type,
+    pend && (pend.askId || pend.playerId),
+    game.over ? 1 : 0,
+  ].join('|');
+}
+
+function handleAbandonedPlayers(room) {
+  const mod = getGame(room.gameType);
+  if (!mod || !room.game) return;
+  const leftIds = (room.players || []).filter((p) => p.left).map((p) => p.id);
+  if (!leftIds.length) return;
+
+  if (typeof mod.onPlayerQuit === 'function') {
+    for (const id of leftIds) {
+      mod.onPlayerQuit(room.game, id);
+      if (!room.game || room.game.over) break;
+    }
+    return;
+  }
+
+  if (typeof mod.skipAbandoned === 'function') {
+    try {
+      mod.skipAbandoned(room.game, leftIds);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  if (!room.game || room.game.over || typeof mod.forceTimeout !== 'function') {
+    return;
+  }
+  const leftSet = new Set(leftIds);
+  let guard = 0;
+  while (room.game && !room.game.over && guard++ < 48) {
+    const before = abandonedSig(room, mod, leftSet);
+    const actors = (mod.getActingPlayerIds(room.game) || []).filter((id) =>
+      leftSet.has(id)
+    );
+    if (!actors.length) break;
+    for (const id of actors) {
+      try {
+        mod.forceTimeout(room.game, id);
+      } catch (_) {
+        /* ignore */
+      }
+      if (!room.game || room.game.over) break;
+    }
+    const after = abandonedSig(room, mod, leftSet);
+    if (after === before) break;
   }
 }
 
@@ -333,6 +460,7 @@ function handleTurnTimeout(room) {
     }
   }
 
+  handleAbandonedPlayers(room);
   syncTurnTimer(room, { onTimeout: handleTurnTimeout });
   emitGameState(room);
 }
@@ -366,6 +494,7 @@ io.on('connection', (socket) => {
         playerTag,
       });
       socket.join(reclaimed.room.id);
+      joinHallChat(socket);
       socket.data.playerName = player.name;
       mqttOnLogin();
       emitLobbyUpdate();
@@ -391,6 +520,7 @@ io.on('connection', (socket) => {
         playerTag,
       });
       socket.data.playerName = player.name;
+      joinHallChat(socket);
       if (data.playerName) mqttOnLogin();
       emitLobbyUpdate();
       emitPlayerMe(socket, player, data.playerName);
@@ -413,6 +543,7 @@ io.on('connection', (socket) => {
       playerTag,
     });
     socket.data.playerName = player.name;
+    joinHallChat(socket);
     if (data.playerName) mqttOnLogin();
     emitLobbyUpdate();
     emitPlayerMe(socket, player, data.playerName);
@@ -559,6 +690,7 @@ io.on('connection', (socket) => {
     }
 
     socket.join(result.room.id);
+    joinHallChat(socket);
     const me = rooms.getPlayer(socket.id);
     dropIdleSessionGhosts(me && me.sessionId, socket.id);
     emitRoomUpdate(result.room);
@@ -587,6 +719,7 @@ io.on('connection', (socket) => {
     }
 
     socket.join(result.room.id);
+    joinHallChat(socket);
     const me = rooms.getPlayer(socket.id);
     dropIdleSessionGhosts(me && me.sessionId, socket.id);
     emitRoomUpdate(result.room);
@@ -605,13 +738,54 @@ io.on('connection', (socket) => {
       if (otherSocket && result.leftRoomId) {
         otherSocket.leave(result.leftRoomId);
       }
-      io.to(otherId).emit('room:left', {});
+      io.to(otherId).emit('room:left', {
+        reason: result.dissolved ? 'dissolved' : 'kicked',
+        roomId: result.leftRoomId || null,
+      });
     }
     if (result.room) {
       emitRoomUpdate(result.room);
     }
     emitLobbyUpdate();
-    socket.emit('room:left', {});
+    socket.emit('room:left', {
+      reason: result.dissolved ? 'dissolved' : 'left',
+      roomId: result.leftRoomId || null,
+    });
+    mqttOnLogin();
+    mqttAfterRoomChange();
+  });
+
+  socket.on('game:leave', () => {
+    const result = rooms.quitPlaying(socket.id);
+    if (result.leftRoomId) {
+      socket.leave(result.leftRoomId);
+    }
+    if (result.abandoned && result.room) {
+      handleAbandonedPlayers(result.room);
+      io.to(result.room.id).emit('game:player-left', {
+        playerId: socket.id,
+        name: result.playerName,
+        tag: result.playerTag,
+      });
+      emitRoomUpdate(result.room);
+      emitGameState(result.room);
+      if (result.room.status === 'playing' && result.room.game) {
+        syncTurnTimer(result.room, { onTimeout: handleTurnTimeout });
+      }
+    } else if (result.dissolved) {
+      for (const otherId of result.affectedPlayerIds || []) {
+        const otherSocket = io.sockets.sockets.get(otherId);
+        if (otherSocket && result.leftRoomId) {
+          otherSocket.leave(result.leftRoomId);
+        }
+        io.to(otherId).emit('room:left', {
+          reason: 'dissolved',
+          roomId: result.leftRoomId || null,
+        });
+      }
+    }
+    socket.emit('game:quit-ok', {});
+    emitLobbyUpdate();
     mqttOnLogin();
     mqttAfterRoomChange();
   });
@@ -634,6 +808,7 @@ io.on('connection', (socket) => {
     emitRoomUpdate(result.room);
     emitLobbyUpdate();
     mqttOnLogin();
+    mqttAfterRoomChange();
     syncTurnTimer(result.room, { onTimeout: handleTurnTimeout });
     emitGameStarted(result.room);
   });
@@ -667,9 +842,40 @@ io.on('connection', (socket) => {
       return;
     }
 
+    handleAbandonedPlayers(room);
     // 服务端接受的操作视为有效操作，刷新思考时间
     syncTurnTimer(room, { onTimeout: handleTurnTimeout });
     emitGameState(room);
+  });
+
+  socket.on('chat:send', (data = {}) => {
+    const player = rooms.getPlayer(socket.id);
+    if (!player) {
+      socket.emit('chat:error', { message: '请先进入大厅' });
+      return;
+    }
+    const text = sanitizeChatText(data.text);
+    if (!text) {
+      socket.emit('chat:error', { message: '消息不能为空' });
+      return;
+    }
+    const now = Date.now();
+    if (socket.data.lastChatAt && now - socket.data.lastChatAt < 700) {
+      socket.emit('chat:error', { message: '发送太快，请稍候' });
+      return;
+    }
+    socket.data.lastChatAt = now;
+    const channel = data.channel === 'room' ? 'room' : 'all';
+    if (channel === 'room' && !player.roomId) {
+      socket.emit('chat:error', { message: '进入房间后才能使用房间频道' });
+      return;
+    }
+    const msg = buildChatMessage(player, channel, text);
+    if (channel === 'room') {
+      io.to(player.roomId).emit('chat:message', msg);
+      return;
+    }
+    emitChatAll(msg);
   });
 
   socket.on('disconnect', () => {
@@ -682,6 +888,9 @@ io.on('connection', (socket) => {
       }
     }
     mqttOnLogin();
+    if (result.leftRoomId || result.room || result.dissolved) {
+      mqttAfterRoomChange();
+    }
     emitLobbyUpdate();
   });
 });
@@ -701,11 +910,15 @@ mqttBulletin = new MqttBulletin({
   getLobbyPeople: () => rooms.listLobbyPeople(),
   getHostedRooms: () => hostedBeaconRooms(),
   ensureTunnelUrl: ensurePublicTunnelUrl,
+  peekTunnelUrl: () => (tunnel && tunnel.getPublicUrl()) || '',
   onChange: onRosterChange,
+  onChat: (msg) => {
+    broadcastChatAllLocal(msg);
+  },
 });
 
 if (mqttBulletin && mqttBulletin.enabled) {
-  tunnel = new QuickTunnel();
+  tunnel = attachTunnelHooks(new QuickTunnel());
 }
 
 server.on('error', (err) => {

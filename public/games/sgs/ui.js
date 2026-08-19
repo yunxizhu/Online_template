@@ -149,6 +149,45 @@ window.SgsUi = (function () {
     }
   }
 
+  function showFanjianSuitModal(pend, net) {
+    const modal = $('sgs-modal');
+    const panel = $('sgs-modal-panel');
+    const title = $('sgs-modal-title');
+    const hint = $('sgs-modal-hint');
+    const body = $('sgs-modal-body');
+    const actions = $('sgs-modal-actions');
+    if (!modal || !body || !actions) return;
+
+    modal.hidden = false;
+    if (panel) panel.classList.remove('sgs-modal-panel--cards');
+    body.classList.remove('sgs-modal-body--cards');
+    if (title) title.textContent = '反间';
+    if (hint) {
+      hint.textContent = pend.message || '请选择一种花色';
+    }
+    body.innerHTML = '';
+    actions.innerHTML = '';
+
+    const suits = [
+      { id: 'spade', label: '♠ 黑桃', red: false },
+      { id: 'heart', label: '♥ 红桃', red: true },
+      { id: 'club', label: '♣ 梅花', red: false },
+      { id: 'diamond', label: '♦ 方片', red: true },
+    ];
+    for (const s of suits) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className =
+        'sgs-modal-option sgs-suit-btn' + (s.red ? ' is-red' : ' is-black');
+      b.textContent = s.label;
+      b.addEventListener('click', () => {
+        hideSgsModal();
+        net.sendAction('respond', { suit: s.id });
+      });
+      body.appendChild(b);
+    }
+  }
+
   /** 过拆/顺手/反馈等：从他人手牌或区域选牌 */
   function isOpponentZonePickPending(pend) {
     if (!pend) return false;
@@ -157,6 +196,13 @@ window.SgsUi = (function () {
       pend.type === 'choose_gain_target_card' ||
       pend.type === 'qilin' ||
       pend.type === 'hanbing'
+    ) {
+      return true;
+    }
+    if (
+      pend.type === 'skill_effect' &&
+      pend.skillId === 'fanjian' &&
+      pend.step === 'card'
     ) {
       return true;
     }
@@ -447,6 +493,9 @@ window.SgsUi = (function () {
       logLen: (game.log || []).length,
       lastLogs: (game.log || []).slice(-20),
       pendingType: game.pending && game.pending.type,
+      hpById: Object.fromEntries(
+        (game.players || []).map((p) => [p.id, Number(p.hp) || 0])
+      ),
     };
   }
 
@@ -473,6 +522,44 @@ window.SgsUi = (function () {
 
   function findPlayerByName(game, name) {
     return (game.players || []).find((p) => p.name === name);
+  }
+
+  function collectHpHits(prev, next, game, freshLogs) {
+    const byId = new Map();
+    const put = (playerId, amount) => {
+      if (!playerId) return;
+      const n = Math.max(0, Math.floor(Number(amount) || 0));
+      if (n <= 0) return;
+      byId.set(playerId, Math.max(byId.get(playerId) || 0, n));
+    };
+    const prevHp = (prev && prev.hpById) || {};
+    const nextHp = (next && next.hpById) || {};
+    for (const p of game.players || []) {
+      if (prevHp[p.id] == null || nextHp[p.id] == null) continue;
+      if (nextHp[p.id] < prevHp[p.id]) {
+        put(p.id, prevHp[p.id] - nextHp[p.id]);
+      }
+    }
+    if (!byId.size) {
+      for (const row of freshLogs || []) {
+        const t = String((row && row.text) || '');
+        let m = t.match(/对 (.+?) 造成 (\d+) 点(?:火焰|雷电)?伤害/);
+        if (m) {
+          const target = findPlayerByName(game, m[1]);
+          if (target) put(target.id, m[2]);
+          continue;
+        }
+        m = t.match(/^(.+?) 失去 (\d+) 点体力/);
+        if (m) {
+          const target = findPlayerByName(game, m[1]);
+          if (target) put(target.id, m[2]);
+        }
+      }
+    }
+    return [...byId.entries()].map(([playerId, amount]) => ({
+      playerId,
+      amount,
+    }));
   }
 
   function parsePlayLog(text, game) {
@@ -1005,6 +1092,13 @@ window.SgsUi = (function () {
           playerId: target.id,
           text: '无效',
         })
+      );
+    }
+
+    const hpHits = collectHpHits(prev, next, game, freshLogs);
+    if (hpHits.length && fx.animateDamageHit) {
+      tasks.push(() =>
+        Promise.all(hpHits.map((hit) => fx.animateDamageHit(hit)))
       );
     }
 
@@ -1911,6 +2005,7 @@ window.SgsUi = (function () {
     if (pend.type === 'succession') return true;
     if (pend.maxTargets != null && Number(pend.maxTargets) > 0) return true;
     if (pend.type !== 'skill_effect') return false;
+    if (pend.skillId === 'fanjian') return pend.step === 'target';
     const seatSkills = new Set([
       'tuxi',
       'liuli',
@@ -2102,11 +2197,13 @@ window.SgsUi = (function () {
       (p.isTeammate ? ' mate' : '') +
       (isMe ? ' me-seat' : '') +
       (p.turnedOver ? ' is-turned' : '') +
+      (p.left ? ' is-left' : '') +
       (state.selectedTargets.includes(p.id) ? ' targeted' : '');
 
     if (
       !isMe &&
       p.alive &&
+      !p.left &&
       guide &&
       guide.dimUnreachable &&
       (guide.needTargets > 0 || guide.maxTargets > 0)
@@ -2116,7 +2213,7 @@ window.SgsUi = (function () {
     }
 
     // 突袭等：按技能规则高亮可选座位
-    if (!isMe && p.alive && isPendingSeatTargeting(game.pending)) {
+    if (!isMe && p.alive && !p.left && isPendingSeatTargeting(game.pending)) {
       if (isPendingSeatTargetValid(game, game.pending, p)) {
         div.className += ' target-ok';
       } else {
@@ -2310,7 +2407,7 @@ window.SgsUi = (function () {
         }
 
         if (!g.me || !g.me.isMyTurn || g.turnPhase !== 'play') return;
-        if (!p.alive || p.id === g.me.id) return;
+        if (!p.alive || p.left || p.id === g.me.id) return;
         const selectedCard = findSelectedCard(g);
         if (!selectedCard) return;
         const guide = getCardPlayGuide(g, selectedCard);
@@ -2350,6 +2447,12 @@ window.SgsUi = (function () {
         nick.title = p.name || '玩家';
       }
       dist.appendChild(nick);
+      if (p.left) {
+        const leftTag = document.createElement('span');
+        leftTag.className = 'sgs-left-tag';
+        leftTag.textContent = '已离开';
+        dist.appendChild(leftTag);
+      }
       const no = p.seatNo != null ? p.seatNo : Number(p.seat) + 1;
       const noEl = document.createElement('span');
       noEl.className = 'sgs-seat-no';
@@ -2724,12 +2827,30 @@ window.SgsUi = (function () {
     const viewAs = state.pendingViewAs
       ? (state.pendingViewAs.usableCardIds || []).join(',')
       : '';
-    return `${ids}|m${multi ? 1 : 0}|v${viewAs}`;
+    const pend = state.game && state.game.pending;
+    const mode = getOwnHandPickMode(pend);
+    return `${ids}|m${multi ? 1 : 0}|v${viewAs}|p${mode ? mode.id : ''}`;
   }
 
-  function isHandCardRespondPending(pend) {
-    if (!pend || !pend.forMe) return false;
+  function suitMark(suit) {
     return (
+      {
+        spade: '♠',
+        heart: '♥',
+        club: '♣',
+        diamond: '♦',
+      }[suit] || ''
+    );
+  }
+
+  /**
+   * 需要从「自己手牌区」选牌再点上方确认的交互。
+   * 不包含过河拆桥等选别人区域的弹窗。
+   */
+  function getOwnHandPickMode(pend) {
+    if (!pend || !pend.forMe) return null;
+
+    if (
       pend.type === 'respond_shan' ||
       pend.type === 'aoe_shan' ||
       pend.type === 'aoe_sha' ||
@@ -2737,7 +2858,112 @@ window.SgsUi = (function () {
       pend.type === 'jiedao' ||
       pend.type === 'dying' ||
       pend.type === 'wuxie'
-    );
+    ) {
+      const names = handRespondNeedNames(pend);
+      return {
+        id: pend.type,
+        min: 1,
+        max: 1,
+        names,
+        confirmLabel: '确认出牌',
+        passLabel:
+          pend.type === 'dying'
+            ? '不出桃/酒'
+            : pend.type === 'wuxie'
+              ? '不出无懈'
+              : '放弃',
+        canPass: true,
+        action: 'respond',
+        allowViewAs: true,
+      };
+    }
+
+    if (pend.type === 'discard') {
+      const n = Math.max(1, Number(pend.count) || 1);
+      return {
+        id: 'discard',
+        min: n,
+        max: n,
+        confirmLabel: `确认弃 ${n} 张`,
+        passLabel: null,
+        canPass: false,
+        action: 'discard',
+      };
+    }
+
+    if (pend.type === 'huogong_show') {
+      return {
+        id: 'huogong_show',
+        min: 1,
+        max: 1,
+        confirmLabel: '确认展示',
+        canPass: false,
+        action: 'respond',
+      };
+    }
+
+    if (pend.type === 'huogong') {
+      return {
+        id: 'huogong',
+        min: 1,
+        max: 1,
+        suit: pend.suit || null,
+        confirmLabel: '确认弃牌',
+        passLabel: '取消火攻',
+        canPass: true,
+        action: 'respond',
+      };
+    }
+
+    if (pend.type !== 'skill_effect') return null;
+    if (pend.cardOptions && pend.cardOptions.length) return null;
+
+    if (pend.skillId === 'hujia' || pend.skillId === 'jijiang') {
+      const names =
+        pend.purpose === 'shan' || pend.skillId === 'hujia'
+          ? ['闪']
+          : ['杀', '火杀', '雷杀'];
+      return {
+        id: pend.skillId,
+        min: 1,
+        max: 1,
+        names,
+        confirmLabel: '确认打出',
+        passLabel: '不响应',
+        canPass: true,
+        action: 'respond',
+        allowViewAs: true,
+      };
+    }
+
+    const skillMap = {
+      guicai: { passLabel: '取消' },
+      beige: { passLabel: '取消' },
+      lieren: { passLabel: '取消' },
+      tiaoxin: {
+        names: ['杀', '火杀', '雷杀'],
+        passLabel: '不出杀',
+        allowViewAs: true,
+      },
+      tieji: { suit: pend.suit || null, passLabel: '取消' },
+      xiangle: { basicOnly: true, passLabel: '取消' },
+      enyuan: { suit: 'heart', passLabel: '取消' },
+    };
+    const extra = skillMap[pend.skillId];
+    if (!extra) return null;
+    return {
+      id: pend.skillId,
+      min: 1,
+      max: 1,
+      confirmLabel: '确认',
+      canPass: true,
+      action: 'respond',
+      ...extra,
+    };
+  }
+
+  function isHandCardRespondPending(pend) {
+    return Boolean(getOwnHandPickMode(pend));
   }
 
   function handRespondNeedNames(pend) {
@@ -2755,42 +2981,96 @@ window.SgsUi = (function () {
     return null;
   }
 
+  function cardMatchesPickMode(card, mode) {
+    if (!card || !mode) return false;
+    if (mode.names && mode.names.length && !mode.names.includes(card.name)) {
+      return false;
+    }
+    if (mode.suit) {
+      if (card.suit !== mode.suit && card.suitLabel !== suitMark(mode.suit)) {
+        return false;
+      }
+    }
+    if (mode.basicOnly && card.type !== 'basic') return false;
+    return true;
+  }
+
   function listHandRespondOptions(game, pend) {
-    if (!isHandCardRespondPending(pend) || !game.me) return [];
+    const mode = getOwnHandPickMode(pend);
+    if (!mode || !game || !game.me) return [];
     const me = (game.players || []).find((p) => p.id === game.me.id);
     const hand = (me && me.hand) || [];
-    const needNames = handRespondNeedNames(pend);
-    if (!needNames) return [];
-    const viewAsForPend = (game.me.viewAsOptions || []).filter((v) => {
-      if (needNames.includes('闪')) return v.to === 'shan';
-      if (needNames.some((n) => n === '杀' || n === '火杀' || n === '雷杀'))
-        return v.to === 'sha';
-      if (needNames.includes('桃')) return v.to === 'tao';
-      if (needNames.includes('无懈可击')) return v.to === 'wuxie';
-      return false;
-    });
+    const needNames = mode.names || null;
+    const viewAsForPend =
+      mode.allowViewAs && needNames
+        ? (game.me.viewAsOptions || []).filter((v) => {
+            if (needNames.includes('闪')) return v.to === 'shan';
+            if (needNames.some((n) => n === '杀' || n === '火杀' || n === '雷杀'))
+              return v.to === 'sha';
+            if (needNames.includes('桃')) return v.to === 'tao';
+            if (needNames.includes('无懈可击')) return v.to === 'wuxie';
+            return false;
+          })
+        : [];
     const out = [];
     for (const c of hand) {
-      const natural = needNames.includes(c.name);
       const va = viewAsForPend.find((v) => v.cardId === c.id) || null;
-      if (natural || va) out.push({ cardId: c.id, viewAs: va });
+      if (cardMatchesPickMode(c, mode) || va) {
+        out.push({ cardId: c.id, viewAs: va });
+      }
     }
     return out;
   }
 
   function ensureHandRespondSelection(game) {
     const pend = game && game.pending;
-    if (!isHandCardRespondPending(pend)) return null;
+    const mode = getOwnHandPickMode(pend);
+    if (!mode) {
+      if (!state.pendingSkill) state.allowMultiSelect = false;
+      return null;
+    }
     const opts = listHandRespondOptions(game, pend);
     const ids = opts.map((o) => o.cardId);
+    const multi = mode.max > 1;
+    state.allowMultiSelect = multi;
     if (!ids.length) {
       state.selectedCardId = null;
-      return { opts, ids };
+      state.skillCardPick = [];
+      return { mode, opts, ids };
     }
-    if (!ids.includes(state.selectedCardId)) {
-      state.selectedCardId = ids[0];
+    if (multi) {
+      if (!Array.isArray(state.skillCardPick)) state.skillCardPick = [];
+      state.skillCardPick = state.skillCardPick.filter((id) => ids.includes(id));
+      if (state.skillCardPick.length > mode.max) {
+        state.skillCardPick = state.skillCardPick.slice(0, mode.max);
+      }
+      state.selectedCardId =
+        state.skillCardPick[state.skillCardPick.length - 1] || null;
+    } else if (state.selectedCardId && !ids.includes(state.selectedCardId)) {
+      state.selectedCardId = null;
     }
-    return { opts, ids };
+    return { mode, opts, ids };
+  }
+
+  function listSeatSkillHandIds(game) {
+    const pend = game && game.pending;
+    if (!pend || !pend.forMe || pend.type !== 'skill_effect') return null;
+    if (
+      pend.skillId !== 'liuli' &&
+      pend.skillId !== 'tianxiang' &&
+      pend.skillId !== 'jujian' &&
+      pend.skillId !== 'haoshi'
+    ) {
+      return null;
+    }
+    const me = (game.players || []).find((p) => game.me && p.id === game.me.id);
+    const hand = (me && me.hand) || [];
+    if (pend.skillId === 'tianxiang') {
+      return hand
+        .filter((c) => c.suit === 'heart' || c.suitLabel === '♥')
+        .map((c) => c.id);
+    }
+    return hand.map((c) => c.id);
   }
 
   function syncHandSelectionAppearance(game) {
@@ -2801,7 +3081,11 @@ window.SgsUi = (function () {
       ? state.pendingViewAs.usableCardIds || []
       : [];
     const respond = ensureHandRespondSelection(game);
-    const respondIds = respond ? new Set(respond.ids) : null;
+    let respondIds = respond ? new Set(respond.ids) : null;
+    if (!respondIds) {
+      const seatIds = listSeatSkillHandIds(game);
+      if (seatIds && seatIds.length) respondIds = new Set(seatIds);
+    }
     const viewAsArmed = Boolean(state.pendingViewAs) && !respondIds;
     const viewAsSet = viewAsArmed ? new Set(viewAsIds) : null;
     hand.querySelectorAll('.sgs-kapai[data-card-id]').forEach((btn) => {
@@ -2923,44 +3207,51 @@ window.SgsUi = (function () {
 
     if (handRespond) {
       const info = ensureHandRespondSelection(game);
+      const mode = (info && info.mode) || getOwnHandPickMode(pend);
       const ids = (info && info.ids) || [];
+      const multi = Boolean(mode && mode.max > 1);
+      const picked = multi
+        ? (state.skillCardPick || []).filter((id) => ids.includes(id))
+        : state.selectedCardId && ids.includes(state.selectedCardId)
+          ? [state.selectedCardId]
+          : [];
       const canConfirm = Boolean(
-        state.selectedCardId && ids.includes(state.selectedCardId)
+        mode &&
+          picked.length >= (mode.min || 1) &&
+          picked.length <= (mode.max || 1)
       );
       if (hint) {
-        hint.textContent = pend.message || '请响应';
+        hint.textContent = pend.message || '请在手牌区选择';
       }
       const hintEl = $('sgs-target-hint');
       if (hintEl) {
-        hintEl.textContent = pend.message || '请选择手牌响应';
+        hintEl.textContent =
+          (pend.message || '请在下方手牌区选择') +
+          (multi ? `（已选 ${picked.length}/${mode.max}）` : '');
         hintEl.classList.add('is-warn');
       }
       if (btnPlay) {
         btnPlay.hidden = false;
-        btnPlay.textContent = '确认出牌';
+        btnPlay.textContent = (mode && mode.confirmLabel) || '确认';
         btnPlay.disabled = !canConfirm;
         btnPlay.classList.toggle('is-disabled', !canConfirm);
         btnPlay.title = canConfirm
-          ? '打出选中的手牌进行响应'
+          ? '确认打出/弃置选中的手牌'
           : ids.length
-            ? '请点选一张可响应的手牌'
-            : '没有可出的牌，请点放弃';
+            ? '请在下方手牌区点选'
+            : '没有可出的牌' + (mode && mode.canPass ? '，请点放弃' : '');
       }
       if (btnRecast) {
         btnRecast.hidden = true;
         btnRecast.disabled = true;
       }
       if (btnEnd) {
-        btnEnd.hidden = false;
-        btnEnd.textContent =
-          pend.type === 'dying'
-            ? '不出桃/酒'
-            : pend.type === 'wuxie'
-              ? '不出无懈'
-              : '放弃';
+        const canPass = Boolean(mode && mode.canPass);
+        btnEnd.hidden = !canPass;
+        btnEnd.textContent = (mode && mode.passLabel) || '放弃';
         btnEnd.title = '放弃本次响应';
-        btnEnd.disabled = false;
-        btnEnd.classList.remove('is-disabled');
+        btnEnd.disabled = !canPass;
+        btnEnd.classList.toggle('is-disabled', !canPass);
       }
       syncHandSelectionAppearance(game);
       if (opts.rebuildSkills !== false) {
@@ -3066,6 +3357,7 @@ window.SgsUi = (function () {
       return;
     }
 
+    ensureHandRespondSelection(game);
     const multi = Boolean(state.allowMultiSelect);
     const key = handListKey(mePlayer, multi);
     const needRebuild = hand.dataset.handKey !== key;
@@ -3090,25 +3382,27 @@ window.SgsUi = (function () {
           const g = state.game || game;
           const n = state.net || net;
           const pend = g.pending;
-          if (pend && pend.forMe && pend.type === 'huogong_show') {
-            net.sendAction('respond', { cardId: c.id, pass: false });
-            state.selectedCardId = null;
-            state.selectedTargets = [];
-            state.skillCardPick = [];
-            state.allowMultiSelect = false;
-            state.pendingSkill = null;
-            state.pendingViewAs = null;
-            return;
-          }
-          if (pend && pend.forMe && pend.type === 'huogong') {
-            if (pend.suit && c.suit !== pend.suit) return;
-            net.sendAction('respond', { cardId: c.id, pass: false });
-            state.selectedCardId = null;
-            state.selectedTargets = [];
-            state.skillCardPick = [];
-            state.allowMultiSelect = false;
-            state.pendingSkill = null;
-            state.pendingViewAs = null;
+          const pickMode = getOwnHandPickMode(pend);
+          if (pickMode) {
+            const info = ensureHandRespondSelection(g);
+            const ids = (info && info.ids) || [];
+            if (!ids.includes(c.id)) return;
+            if (pickMode.max > 1) {
+              if (!state.skillCardPick) state.skillCardPick = [];
+              const idx = state.skillCardPick.indexOf(c.id);
+              if (idx >= 0) state.skillCardPick.splice(idx, 1);
+              else if (state.skillCardPick.length < pickMode.max) {
+                state.skillCardPick.push(c.id);
+              }
+              state.selectedCardId =
+                state.skillCardPick[state.skillCardPick.length - 1] || null;
+            } else {
+              state.selectedCardId =
+                state.selectedCardId === c.id ? null : c.id;
+              state.skillCardPick = [];
+            }
+            state.allowMultiSelect = pickMode.max > 1;
+            refreshLocalSelection(g, n);
             return;
           }
           if (
@@ -3126,16 +3420,6 @@ window.SgsUi = (function () {
           }
           if (state.pendingViewAs) {
             // 已发动转化技时，非可用牌不可选
-            return;
-          }
-          if (isHandCardRespondPending(pend)) {
-            const info = ensureHandRespondSelection(g);
-            const ids = (info && info.ids) || [];
-            if (!ids.includes(c.id)) return;
-            state.selectedCardId = c.id;
-            state.skillCardPick = [];
-            state.allowMultiSelect = false;
-            refreshLocalSelection(g, n);
             return;
           }
           if (multi) {
@@ -3743,59 +4027,43 @@ window.SgsUi = (function () {
     const n = (state.selectedTargets || []).length;
     const max = pend.maxTargets != null ? Number(pend.maxTargets) : 1;
     const min = pend.minTargets != null ? Number(pend.minTargets) : 1;
-    const { actions, cards } = openPromptBar(
+    const { actions } = openPromptBar(
       (pend.message || '请选择目标') +
-        `（已选 ${n}/${max}，点击座位选择）`
+        `（已选 ${n}/${max}，点击座位选择` +
+        (pend.skillId === 'liuli' ||
+        pend.skillId === 'tianxiang' ||
+        pend.skillId === 'jujian' ||
+        pend.skillId === 'haoshi'
+          ? '；手牌请在下方选择'
+          : '') +
+        '）'
     );
     if (!actions) return;
 
-    // 流离/天香/好施/举荐：可选手牌
-    const me = (game.players || []).find((p) => game.me && p.id === game.me.id);
-    const hand = (me && me.hand) || [];
+    // 流离/天香/好施/举荐：手牌在下方选择，这里只确认目标和张数
     const needOwnCards =
       pend.skillId === 'liuli' ||
       pend.skillId === 'tianxiang' ||
       pend.skillId === 'jujian' ||
       pend.skillId === 'haoshi';
-    if (needOwnCards && cards) {
-      const give = Number(pend.giveCount) || 0;
+    if (needOwnCards) {
       const multi = pend.skillId === 'haoshi' || pend.skillId === 'jujian';
-      const maxPick =
-        pend.skillId === 'haoshi'
-          ? give
-          : pend.skillId === 'jujian'
-            ? 3
-            : 1;
-      if (!state.skillCardPick) state.skillCardPick = [];
-      const list =
-        pend.skillId === 'tianxiang'
-          ? hand.filter((c) => c.suit === 'heart' || c.suitLabel === '♥')
-          : hand;
-      for (const c of list) {
-        const selected = multi
-          ? state.skillCardPick.includes(c.id)
-          : state.selectedCardId === c.id;
-        const btn = makeSelectableCard(
-          c,
-          () => {
-            if (multi) {
-              const i = state.skillCardPick.indexOf(c.id);
-              if (i >= 0) state.skillCardPick.splice(i, 1);
-              else if (state.skillCardPick.length < maxPick) {
-                state.skillCardPick.push(c.id);
-              }
-              state.selectedCardId =
-                state.skillCardPick[state.skillCardPick.length - 1] || null;
-            } else {
-              state.selectedCardId =
-                state.selectedCardId === c.id ? null : c.id;
-            }
-            render(game, net);
-          },
-          selected
+      state.allowMultiSelect = multi;
+      if (multi && !state.skillCardPick) state.skillCardPick = [];
+      if (pend.skillId === 'tianxiang') {
+        const me = (game.players || []).find(
+          (p) => game.me && p.id === game.me.id
         );
-        cards.appendChild(btn);
+        const hand = (me && me.hand) || [];
+        const hearts = hand.filter(
+          (c) => c.suit === 'heart' || c.suitLabel === '♥'
+        );
+        const ids = new Set(hearts.map((c) => c.id));
+        if (state.selectedCardId && !ids.has(state.selectedCardId)) {
+          state.selectedCardId = null;
+        }
       }
+      syncHandSelectionAppearance(game);
     }
 
     const conf = document.createElement('button');
@@ -3855,7 +4123,8 @@ window.SgsUi = (function () {
       pend.skillId === 'tianxiang' ||
       pend.skillId === 'jujian' ||
       (pend.skillId === 'quhu' && pend.step === 'damage') ||
-      (pend.skillId === 'liyu' && pend.step === 'juedou')
+      (pend.skillId === 'liyu' && pend.step === 'juedou') ||
+      (pend.skillId === 'fanjian' && pend.step === 'target')
     ) {
       return true;
     }
@@ -3973,6 +4242,11 @@ window.SgsUi = (function () {
       showQiceTrickModal(pend, net);
       return;
     }
+    if (pend.type === 'skill_effect' && pend.skillId === 'fanjian' && pend.step === 'suit') {
+      clearSkillAskBar();
+      showFanjianSuitModal(pend, net);
+      return;
+    }
     if (pend.type === 'wugu') {
       clearSkillAskBar();
       showWuguModal(pend, net);
@@ -3993,7 +4267,7 @@ window.SgsUi = (function () {
       showSeatTargetAskBar(game, pend, net);
       return;
     }
-    // 出闪/杀/桃等：不弹上方选牌框，改手牌高亮 + 确认出牌
+    // 出闪/杀/桃/弃牌等：不在上方复制手牌，改下方手牌区点选 + 确认
     if (isHandCardRespondPending(pend)) {
       hideSgsModal();
       clearSkillAskBar();
@@ -4115,17 +4389,7 @@ window.SgsUi = (function () {
         return;
       }
       if (pend.skillId === 'fanjian' && pend.step === 'suit') {
-        for (const suit of ['spade', 'heart', 'club', 'diamond']) {
-          const b = document.createElement('button');
-          b.type = 'button';
-          b.textContent = { spade: '♠', heart: '♥', club: '♣', diamond: '♦' }[
-            suit
-          ];
-          b.addEventListener('click', () => {
-            net.sendAction('respond', { suit });
-          });
-          actions.appendChild(b);
-        }
+        showFanjianSuitModal(pend, net);
         return;
       }
       if (pend.skillId === 'liyu' && pend.step === 'juedou') {
@@ -4478,21 +4742,34 @@ window.SgsUi = (function () {
         const pend = game && game.pending;
         if (isHandCardRespondPending(pend)) {
           const info = ensureHandRespondSelection(game);
-          const opt = ((info && info.opts) || []).find(
-            (o) => o.cardId === state.selectedCardId
-          );
-          if (!opt) return;
-          if (opt.viewAs) {
-            net.sendAction('view_as', {
-              skillId: opt.viewAs.skillId,
-              cardId: opt.cardId,
-              to: opt.viewAs.to,
-            });
+          const mode = (info && info.mode) || getOwnHandPickMode(pend);
+          const ids = (info && info.ids) || [];
+          const multi = Boolean(mode && mode.max > 1);
+          const picked = multi
+            ? (state.skillCardPick || []).filter((id) => ids.includes(id))
+            : state.selectedCardId && ids.includes(state.selectedCardId)
+              ? [state.selectedCardId]
+              : [];
+          if (!mode || picked.length < (mode.min || 1)) return;
+          if (mode.action === 'discard') {
+            net.sendAction('respond', { cardIds: picked.slice() });
           } else {
-            net.sendAction('respond', {
-              cardId: opt.cardId,
-              pass: false,
-            });
+            const opt = ((info && info.opts) || []).find(
+              (o) => o.cardId === picked[0]
+            );
+            if (opt && opt.viewAs) {
+              net.sendAction('view_as', {
+                skillId: opt.viewAs.skillId,
+                cardId: opt.cardId,
+                to: opt.viewAs.to,
+              });
+            } else {
+              net.sendAction('respond', {
+                cardId: picked[0],
+                cardIds: picked.slice(),
+                pass: false,
+              });
+            }
           }
           state.selectedCardId = null;
           state.selectedTargets = [];

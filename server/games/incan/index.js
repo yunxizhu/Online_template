@@ -426,6 +426,7 @@ function publicGameState(game, viewerId) {
         id: p.id,
         name: p.name,
         tag: p.tag || null,
+        left: Boolean(p.left),
         exploring: p.exploring,
         tentGems: p.tentGems,
         tentArtifacts: p.tentArtifacts.slice(),
@@ -466,6 +467,30 @@ function getActingPlayerIds(game) {
     .map((p) => p.id);
 }
 
+/** 主动退出：从本局移除；不足 3 人则直接结束 */
+function onPlayerQuit(game, playerId) {
+  if (!game || game.over) return;
+  const idx = game.players.findIndex((p) => p.id === playerId);
+  if (idx < 0) return;
+  const p = game.players[idx];
+  const name = p.name || '玩家';
+  const wasExploring = p.exploring;
+  const hadChoice = Boolean(p.choice);
+
+  game.players.splice(idx, 1);
+  pushLog(game, `${name} 离开了游戏，不再参与本局`);
+
+  if (game.players.length < 3) {
+    pushLog(game, '存活玩家不足 3 人，游戏结束');
+    finishGame(game);
+    return;
+  }
+
+  if (game.phase === 'choosing' && wasExploring && !hadChoice && allExplorersChosen(game)) {
+    resolveChoices(game);
+  }
+}
+
 function forceTimeout(game, playerId) {
   return applyAction(game, playerId, {
     type: 'decide',
@@ -487,6 +512,7 @@ module.exports = {
   applyAction,
   publicGameState,
   getActingPlayerIds,
+  onPlayerQuit,
   forceTimeout,
   HAZARD_LABELS,
 };

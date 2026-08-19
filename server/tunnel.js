@@ -90,25 +90,36 @@ async function ensureCloudflared() {
 
 /**
  * Cloudflare Quick Tunnel for a local HTTP port.
+ * trycloudflare 快速隧道不稳定，进程退出后必须自动拉起并换新域名。
  */
 class QuickTunnel {
-  constructor() {
+  constructor(opts = {}) {
     this.proc = null;
     this.publicUrl = null;
     this._port = null;
     this._starting = null;
+    this._stopped = false;
+    this._gen = 0;
+    this._restartTimer = null;
+    this._backoffMs = 1500;
+    this._logLines = [];
+    this.onUrl = typeof opts.onUrl === 'function' ? opts.onUrl : null;
+    this.onLost = typeof opts.onLost === 'function' ? opts.onLost : null;
   }
 
   /** @returns {Promise<string>} public https URL */
   async ensure(localPort) {
     const port = Number(localPort);
     if (!port) throw new Error('invalid local port');
+    this._stopped = false;
+    this._port = port;
     if (this.proc && this.publicUrl && this._port === port) {
       return this.publicUrl;
     }
     if (this._starting) return this._starting;
 
-    if (this.proc) this.stop();
+    this._clearRestart();
+    if (this.proc) this._killProc();
 
     this._starting = this._start(port).finally(() => {
       this._starting = null;
@@ -118,37 +129,54 @@ class QuickTunnel {
 
   async _start(port) {
     const bin = await ensureCloudflared();
+    if (this._stopped) throw new Error('tunnel stopped');
     this._port = port;
     this.publicUrl = null;
+    const gen = ++this._gen;
 
+    const protocol = String(process.env.TUNNEL_PROTOCOL || 'http2').trim() || 'http2';
     const args = [
       'tunnel',
       '--url',
       `http://127.0.0.1:${port}`,
       '--no-autoupdate',
+      '--protocol',
+      protocol,
     ];
 
     return new Promise((resolve, reject) => {
       let settled = false;
       const failTimer = setTimeout(() => {
-        if (settled) return;
+        if (settled || gen !== this._gen) return;
         settled = true;
-        this.stop();
+        this._killProc();
         reject(new Error('cloudflared 启动超时（未拿到公网 URL）'));
+        this._scheduleRestart();
       }, 90000);
 
       const proc = spawn(bin, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
+        env: { ...process.env, NO_COLOR: '1' },
       });
       this.proc = proc;
 
       const onChunk = (buf) => {
+        if (gen !== this._gen) return;
         const text = buf.toString('utf8');
+        this._rememberLog(text);
         const m = text.match(URL_RE);
         if (m && !this.publicUrl) {
           this.publicUrl = m[0].replace(/\/$/, '');
+          this._backoffMs = 1500;
           console.log('[tunnel] 公网地址:', this.publicUrl);
+          if (typeof this.onUrl === 'function') {
+            try {
+              this.onUrl(this.publicUrl);
+            } catch (_) {
+              /* ignore */
+            }
+          }
           if (!settled) {
             settled = true;
             clearTimeout(failTimer);
@@ -161,32 +189,93 @@ class QuickTunnel {
       proc.stderr.on('data', onChunk);
 
       proc.on('error', (err) => {
-        if (settled) return;
+        if (gen !== this._gen) return;
+        if (this.proc === proc) this.proc = null;
+        if (settled) {
+          this._scheduleRestart();
+          return;
+        }
         settled = true;
         clearTimeout(failTimer);
-        this.proc = null;
         reject(err);
+        this._scheduleRestart();
       });
 
-      proc.on('exit', (code) => {
-        this.proc = null;
-        this.publicUrl = null;
+      proc.on('exit', (code, signal) => {
+        clearTimeout(failTimer);
+        if (gen !== this._gen) return;
+        if (this.proc === proc) {
+          this.proc = null;
+          this.publicUrl = null;
+        }
+        const tail = this._logLines.slice(-6).join(' | ');
+        const why = `code=${code} signal=${signal || '-'}${
+          tail ? ` 日志: ${tail}` : ''
+        }`;
         if (!settled) {
           settled = true;
-          clearTimeout(failTimer);
-          reject(new Error(`cloudflared 退出 code=${code}`));
-        } else {
-          console.log('[tunnel] cloudflared 已退出');
+          reject(new Error(`cloudflared 退出 ${why}`));
+          this._scheduleRestart();
+          return;
         }
+        if (this._stopped) return;
+        console.warn('[tunnel] cloudflared 已退出', why);
+        if (typeof this.onLost === 'function') {
+          try {
+            this.onLost();
+          } catch (_) {
+            /* ignore */
+          }
+        }
+        this._scheduleRestart();
       });
     });
   }
 
-  stop() {
+  _rememberLog(text) {
+    const parts = String(text || '')
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const line of parts) {
+      this._logLines.push(line.slice(0, 240));
+    }
+    if (this._logLines.length > 40) {
+      this._logLines = this._logLines.slice(-40);
+    }
+  }
+
+  _clearRestart() {
+    if (this._restartTimer) {
+      clearTimeout(this._restartTimer);
+      this._restartTimer = null;
+    }
+  }
+
+  _scheduleRestart() {
+    if (this._stopped || this.proc || this._restartTimer) return;
+    const port = this._port;
+    if (!port) return;
+    const delay = this._backoffMs;
+    this._backoffMs = Math.min(Math.round(this._backoffMs * 1.8), 30000);
+    console.log(`[tunnel] ${Math.round(delay / 100) / 10}s 后自动重连…`);
+    this._restartTimer = setTimeout(() => {
+      this._restartTimer = null;
+      if (this._stopped || this.proc || this._starting) return;
+      this.ensure(port).catch((err) => {
+        console.warn(
+          '[tunnel] 重连失败:',
+          err && err.message ? err.message : err
+        );
+      });
+    }, delay);
+  }
+
+  _killProc() {
+    this._gen += 1;
     const proc = this.proc;
     this.proc = null;
     this.publicUrl = null;
-    this._port = null;
     if (!proc) return;
     try {
       proc.kill('SIGTERM');
@@ -200,6 +289,13 @@ class QuickTunnel {
         /* ignore */
       }
     }, 2000);
+  }
+
+  stop() {
+    this._stopped = true;
+    this._clearRestart();
+    this._killProc();
+    this._port = null;
   }
 
   getPublicUrl() {

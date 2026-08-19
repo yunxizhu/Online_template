@@ -23,4 +23,5 @@ module.exports = {
   publicGameState: engine.publicGameState,
   getActingPlayerIds: engine.getActingPlayerIds,
   forceTimeout: engine.forceTimeout,
+  onPlayerQuit: engine.onPlayerQuit,
 };

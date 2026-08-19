@@ -190,6 +190,17 @@ function getActingPlayerIds(game) {
   return game.currentPlayerId ? [game.currentPlayerId] : [];
 }
 
+/** 主动退出：对手直接获胜 */
+function onPlayerQuit(game, playerId) {
+  if (!game || game.over) return;
+  const rest = (game.turnOrder || []).filter((id) => id !== playerId);
+  if (rest.length !== 1) return;
+  game.over = true;
+  game.winnerId = rest[0];
+  game.winLine = null;
+  game.draw = false;
+}
+
 function forceTimeout(game, playerId) {
   if (!game || game.over || playerId !== game.currentPlayerId) {
     return { ok: false, error: '无需操作' };
@@ -226,5 +237,6 @@ module.exports = {
   applyAction,
   publicGameState,
   getActingPlayerIds,
+  onPlayerQuit,
   forceTimeout,
 };

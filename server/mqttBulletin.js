@@ -12,6 +12,8 @@ const DEFAULT_CHANNEL = 'lianji-public';
 const APP_SIGNATURE = 'lianji';
 const LOGIN_HB_MS = 10000;
 const ROOM_HB_MS = 10000;
+const TUNNEL_READY_DELAY_MS =
+  Number(process.env.TUNNEL_READY_DELAY_MS) || 5000;
 // 心跳间隔 10s，超时阈值给到 2~3 个周期，避免单次延迟发布导致列表闪跳
 const LOGIN_OFFLINE_MS = 25000;
 const ROOM_OFFLINE_MS = 25000;
@@ -79,7 +81,9 @@ class MqttBulletin {
     getHostedRooms,
     getLobbyPeople,
     ensureTunnelUrl,
+    peekTunnelUrl,
     onChange,
+    onChat,
   }) {
     const opt = loadOptions(rootDir || process.cwd());
     this.enabled = !opt.disabled;
@@ -91,7 +95,9 @@ class MqttBulletin {
     this.getHostedRooms = getHostedRooms || (() => []);
     this.getLobbyPeople = getLobbyPeople || (() => []);
     this.ensureTunnelUrl = ensureTunnelUrl || (async () => null);
+    this.peekTunnelUrl = peekTunnelUrl || (() => '');
     this.onChange = onChange || (() => {});
+    this.onChat = onChat || (() => {});
     this.loginAt = Date.now();
     this.client = null;
     this._started = false;
@@ -102,6 +108,37 @@ class MqttBulletin {
     this.logins = new Map();
     /** @type {Map<string, object>} */
     this.rooms = new Map();
+    /** @type {object[]} */
+    this._chatQueue = [];
+    this._lastTunnelUrl = '';
+    this._tunnelPublishAfter = 0;
+  }
+
+  #mqttUp() {
+    return Boolean(this.client && this.client.connected);
+  }
+
+  #peekUrl(knownUrl) {
+    const raw =
+      (knownUrl && String(knownUrl)) ||
+      (this.peekTunnelUrl && this.peekTunnelUrl()) ||
+      '';
+    return String(raw).replace(/\/$/, '');
+  }
+
+  /**
+   * 隧道地址 + MQTT 都就绪时立刻发登录/房间心跳。
+   * 任一条件刚满足时调用，不必等下一个周期。
+   */
+  flushIfReady(knownUrl) {
+    if (!this.enabled || !this._started) return false;
+    if (!this.#mqttUp()) return false;
+    if (!this.#peekUrl(knownUrl)) return false;
+    this.touchLogin().catch((e) => this.#warn(e));
+    this.touchRoom().catch((e) => this.#warn(e));
+    this.#scheduleLogin();
+    this.#scheduleRoom();
+    return true;
   }
 
   #prefix() {
@@ -114,6 +151,10 @@ class MqttBulletin {
 
   #roomTopic(id = this.instanceId) {
     return `${this.#prefix()}/room/${id}`;
+  }
+
+  #chatAllTopic() {
+    return `${this.#prefix()}/chat/all`;
   }
 
   #warn(err) {
@@ -188,7 +229,7 @@ class MqttBulletin {
       will: {
         topic: this.#loginTopic(),
         payload: '',
-        qos: 0,
+        qos: 1,
         retain: true,
       },
     });
@@ -200,12 +241,19 @@ class MqttBulletin {
         { qos: 0 },
         (err) => {
           if (err) this.#warn(err);
+          // 订阅完成即视为 MQTT 就绪：若隧道地址已在，立刻发心跳
+          if (!this.flushIfReady()) {
+            this.touchLogin().catch((e) => this.#warn(e));
+            this.touchRoom().catch((e) => this.#warn(e));
+            this.#scheduleLogin();
+            this.#scheduleRoom();
+          }
         }
       );
-      this.touchLogin().catch((e) => this.#warn(e));
-      this.touchRoom().catch((e) => this.#warn(e));
-      this.#scheduleLogin();
-      this.#scheduleRoom();
+      client.subscribe(this.#chatAllTopic(), { qos: 1 }, (err) => {
+        if (err) this.#warn(err);
+        this.#flushChatQueue();
+      });
     });
     client.on('message', (topic, buf) => this.#onMessage(topic, buf));
     client.on('error', (err) => this.#warn(err));
@@ -238,21 +286,78 @@ class MqttBulletin {
     }, ROOM_HB_MS);
   }
 
-  /** 隧道未就绪时的快速重试（1.5s），成功后自动停止 */
+  /** 立刻发一次玩家心跳，并重置 10s 周期 */
+  pulseLogin() {
+    if (!this.enabled || !this._started) return;
+    this.touchLogin().catch((e) => this.#warn(e));
+    this.#scheduleLogin();
+  }
+
+  /** 立刻发一次房间心跳，并重置周期；隧道+MQTT 都就绪时马上发出 */
+  pulseRoom() {
+    if (!this.enabled || !this._started) return;
+    if (this.flushIfReady()) return;
+    this.touchRoom().catch((e) => this.#warn(e));
+    this.#scheduleRoom();
+  }
+
+  /** 隧道掉线时先清掉 retained 房间，避免大厅继续指向已死的旧域名 */
+  clearRoomBeacon() {
+    if (!this.enabled || !this._started) return;
+    this.#pub(this.#roomTopic(), '');
+  }
+
+  /** 隧道/MQTT 未就绪时快速重试，成功发出后自动停止 */
   #scheduleRoomRetry() {
     if (this._roomRetryTimer || !this._started) return;
     this._roomRetryTimer = setTimeout(() => {
       this._roomRetryTimer = null;
       if (!this._started) return;
       this.touchRoom().catch((e) => this.#warn(e));
-    }, 1500);
+    }, 400);
   }
 
   #pub(topic, obj) {
     const c = this.client;
-    if (!c || !c.connected) return;
+    if (!c || !c.connected) return false;
     const payload = obj == null ? '' : JSON.stringify(obj);
-    c.publish(topic, payload, { qos: 0, retain: true });
+    c.publish(topic, payload, { qos: 1, retain: true });
+    return true;
+  }
+
+  /** 跨实例「所有人」聊天：不 retain，避免后进的人刷到旧消息 */
+  #flushChatQueue() {
+    if (!this._chatQueue.length || !this.#mqttUp()) return;
+    const pending = this._chatQueue.splice(0);
+    for (const msg of pending) this.publishChat(msg);
+  }
+
+  publishChat(msg) {
+    if (!this.enabled || !this._started) return false;
+    const c = this.client;
+    if (!c || !c.connected) {
+      this._chatQueue.push(msg);
+      if (this._chatQueue.length > 30) this._chatQueue.shift();
+      return false;
+    }
+    try {
+      c.publish(this.#chatAllTopic(), JSON.stringify(msg), {
+        qos: 1,
+        retain: false,
+      }, (err) => {
+        if (err) {
+          this._chatQueue.push(msg);
+          if (this._chatQueue.length > 30) this._chatQueue.shift();
+          this.#warn(err);
+        }
+      });
+      return true;
+    } catch (err) {
+      this._chatQueue.push(msg);
+      if (this._chatQueue.length > 30) this._chatQueue.shift();
+      this.#warn(err);
+      return false;
+    }
   }
 
   async touchLogin() {
@@ -279,26 +384,67 @@ class MqttBulletin {
 
   async touchRoom() {
     if (!this.enabled || !this._started) return;
-    const rooms = this.getHostedRooms() || [];
-    const room = rooms[0];
-    // 没有有效房间时：彻底不发 room topic
-    // 远端通过 updateTime + ROOM_OFFLINE_MS 自动判定房间消失（不依赖 broker retained 空消息）
-    if (!room || room.hidden) return;
-    if (
-      room.status &&
-      room.status !== 'waiting' &&
-      room.status !== 'playing'
-    )
+    const wantPublish = (room) =>
+      room &&
+      !room.hidden &&
+      (!room.status ||
+        room.status === 'waiting' ||
+        room.status === 'playing');
+
+    // 没有可广播房间时立刻清空 retained，避免别人大厅继续显示旧人数/旧房间
+    if (!wantPublish((this.getHostedRooms() || [])[0])) {
+      if (!this.#pub(this.#roomTopic(), '')) {
+        this.#scheduleRoomRetry();
+        return;
+      }
+      if (this._lastRoomSig) {
+        this._lastRoomSig = '';
+        console.log('[mqtt] 已清除房间广播（房间已解散或不可见）');
+      }
       return;
-    const tunnelUrl = (await this.ensureTunnelUrl()) || '';
+    }
+    if (!this.#mqttUp()) {
+      this.#scheduleRoomRetry();
+      return;
+    }
+    // 地址已经在手里就立刻用，避免再 await 隧道启动
+    const tunnelUrl = this.#peekUrl() || (await this.ensureTunnelUrl()) || '';
     if (!tunnelUrl) {
-      // 隧道还没就绪：短暂重试，尽快把房间广播出去，
-      // 避免远端要等下一个 10s 心跳周期才看到房间
+      this.#scheduleRoomRetry();
+      return;
+    }
+    if (tunnelUrl !== this._lastTunnelUrl) {
+      this._lastTunnelUrl = tunnelUrl;
+      this._tunnelPublishAfter = Date.now() + TUNNEL_READY_DELAY_MS;
+      this.#scheduleRoomRetry();
+      console.log(
+        `[mqtt] 隧道地址已更新，等待 ${TUNNEL_READY_DELAY_MS}ms 后再广播房间`
+      );
+      return;
+    }
+    if (Date.now() < this._tunnelPublishAfter) {
+      this.#scheduleRoomRetry();
+      return;
+    }
+    // 等隧道期间房间可能已变，发出前再读一次
+    const room = (this.getHostedRooms() || [])[0];
+    if (!wantPublish(room)) {
+      if (!this.#pub(this.#roomTopic(), '')) {
+        this.#scheduleRoomRetry();
+        return;
+      }
+      if (this._lastRoomSig) {
+        this._lastRoomSig = '';
+        console.log('[mqtt] 已清除房间广播（房间已解散或不可见）');
+      }
+      return;
+    }
+    if (!this.#mqttUp()) {
       this.#scheduleRoomRetry();
       return;
     }
     const now = Date.now();
-    this.#pub(this.#roomTopic(), {
+    const payload = {
       app: APP_SIGNATURE,
       id: room.id,
       name: room.name || '',
@@ -317,23 +463,61 @@ class MqttBulletin {
       status: room.status || 'waiting',
       createTime: room._createdAt || now,
       updateTime: now,
-    });
+    };
+    if (!this.#pub(this.#roomTopic(), payload)) {
+      this.#scheduleRoomRetry();
+      return;
+    }
+    const sig = `${payload.id}|${payload.host}|${payload.playerCount}|${payload.status}`;
+    if (this._lastRoomSig !== sig) {
+      this._lastRoomSig = sig;
+      console.log(`[mqtt] 已广播房间 ${payload.id} → ${payload.host}`);
+    }
   }
 
   #onMessage(topic, buf) {
-    const text = Buffer.isBuffer(buf) ? buf.toString('utf8') : String(buf || '');
+    const raw = Buffer.isBuffer(buf) ? buf.toString('utf8') : String(buf || '');
+    const chatTopic = this.#chatAllTopic();
+    if (topic === chatTopic || topic.endsWith('/chat/all')) {
+      if (!raw.trim()) return;
+      try {
+        const p = JSON.parse(raw);
+        if (!p || p.app !== APP_SIGNATURE || p.kind !== 'chat') return;
+        if (p.instanceId && p.instanceId === this.instanceId) return;
+        const body = String(p.text || '')
+          .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 120);
+        if (!body) return;
+        const tagDigits = String(p.tag || '').replace(/\D/g, '');
+        this.onChat({
+          app: APP_SIGNATURE,
+          kind: 'chat',
+          channel: 'all',
+          roomId: null,
+          name: String(p.name || '玩家').trim().slice(0, 24),
+          tag: tagDigits ? tagDigits.slice(-5) : null,
+          sessionId: p.sessionId ? String(p.sessionId).slice(0, 48) : null,
+          instanceId: p.instanceId || null,
+          text: body,
+          at: Number(p.at) || Date.now(),
+        });
+      } catch (_) {}
+      return;
+    }
     const loginPrefix = `${this.#prefix()}/login/`;
     const roomPrefix = `${this.#prefix()}/room/`;
     if (topic.startsWith(loginPrefix)) {
       const id = topic.slice(loginPrefix.length);
       if (!id || id === this.instanceId) return;
-      if (!text.trim()) {
+      if (!raw.trim()) {
         this.logins.delete(id);
         this.onChange();
         return;
       }
       try {
-        const p = JSON.parse(text);
+        const p = JSON.parse(raw);
         if (!p || p.app !== APP_SIGNATURE) return;
         const updateTime = Number(p.updateTime || 0);
         const people = Array.isArray(p.people) ? sanitizePeople(p.people) : [];
@@ -356,13 +540,13 @@ class MqttBulletin {
     if (topic.startsWith(roomPrefix)) {
       const id = topic.slice(roomPrefix.length);
       if (!id || id === this.instanceId) return;
-      if (!text.trim()) {
+      if (!raw.trim()) {
         this.rooms.delete(id);
         this.onChange();
         return;
       }
       try {
-        const p = JSON.parse(text);
+        const p = JSON.parse(raw);
         if (!p || p.app !== APP_SIGNATURE) return;
         const updateTime = Number(p.updateTime || 0);
         const host = String(p.host || '').replace(/\/$/, '');
@@ -433,8 +617,10 @@ class MqttBulletin {
         if (!name) return;
         const roomId = (pp && pp.roomId) || null;
         const knownRoom = roomId ? this.rooms.get(roomId.toUpperCase()) : null;
-        // 唯一身份 = 机器 id(instanceId) + 玩家本 id(sessionId)，用于跨端去重
-        const sid = (pp && pp.sessionId) ? String(pp.sessionId) : `${name}#${pp && pp.tag || ''}#p${i}`;
+        // 用玩家自己的 sessionId（跨实例保持同一人）；没有则退回昵称+尾缀
+        const sid = (pp && pp.sessionId)
+          ? String(pp.sessionId)
+          : `${name}#${(pp && pp.tag) || ''}`;
         out.push({
           id: `${p.instanceId}:p${i}`,
           name,
@@ -447,7 +633,8 @@ class MqttBulletin {
           local: false,
           alive: true,
           via: 'mqtt',
-          sessionId: `${p.instanceId}:${sid}`,
+          sessionId: sid,
+          updateTime: p.updateTime,
         });
       });
     }

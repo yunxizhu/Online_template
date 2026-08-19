@@ -124,6 +124,33 @@ function testHuangjinInfect() {
   console.log('OK huangjin infect');
 }
 
+function testThirdInfectTriggersUprising() {
+  const game = engine.createGameState(room5());
+  pickAll(game);
+  const hj = game.players.find((p) => p.identity === 'huangjin');
+  const fans = game.players.filter((p) => p.identity === 'fan');
+  for (const fan of fans) {
+    fan.hp = 4;
+    fan.maxHp = 4;
+    for (let i = 0; i < 3; i++) {
+      engine.dealDamage(game, hj.id, fan.id, 1);
+      if (fan.hp < fan.maxHp) fan.hp = fan.maxHp;
+      if (game.pending && game.pending.type === 'dying') {
+        fan.hp = 1;
+        clearPendingSafe(game);
+      }
+    }
+  }
+  const hjCount = game.players.filter((p) => p.identity === 'huangjin').length;
+  if (hjCount !== 3) {
+    throw new Error('5 人场应能感染到 3 黄巾，got ' + hjCount);
+  }
+  if (!game.huangjinUprising) {
+    throw new Error('3/5 黄巾应起义');
+  }
+  console.log('OK 5p third infect uprising');
+}
+
 function clearPendingSafe(game) {
   while (game.pending && game.pending.type === 'dying') {
     engine.applyAction(game, game.pending.askId, {
@@ -158,26 +185,46 @@ function testWinHuangjin() {
   console.log('OK huangjin win');
 }
 
+function playersOf(alive, hj) {
+  const out = [];
+  for (let i = 0; i < hj; i++) out.push({ alive: true, identity: 'huangjin' });
+  for (let i = hj; i < alive; i++) out.push({ alive: true, identity: 'fan' });
+  return out;
+}
+
 function testUprisingThreshold() {
-  // 5 alive, 2 huangjin → floor(5/2)=2 → uprising
-  if (!xz.shouldUprising({
-    players: [
-      { alive: true, identity: 'huangjin' },
-      { alive: true, identity: 'huangjin' },
-      { alive: true, identity: 'fan' },
-      { alive: true, identity: 'fan' },
-      { alive: true, identity: 'zhong' },
-    ],
-  })) {
-    throw new Error('2/5 黄巾应起义');
+  const cases = [
+    [8, 4, true],
+    [8, 3, false],
+    [7, 4, true],
+    [7, 3, false],
+    [6, 3, true],
+    [6, 2, false],
+    [5, 3, true],
+    [5, 2, false],
+    [4, 2, true],
+    [4, 1, false],
+    [3, 2, true],
+    [3, 1, false],
+    [2, 2, false],
+    [2, 1, false],
+  ];
+  for (const [alive, hj, expect] of cases) {
+    const got = xz.shouldUprising({ players: playersOf(alive, hj) });
+    if (got !== expect) {
+      throw new Error(
+        `${alive} 存活 ${hj} 黄巾：期望起义=${expect} 实际=${got}`
+      );
+    }
   }
-  console.log('OK uprising threshold');
+  console.log('OK uprising threshold ceil(alive/2), skip at 2');
 }
 
 try {
   testDeckAndNoLordBonus();
   testSuccessionZhong();
   testHuangjinInfect();
+  testThirdInfectTriggersUprising();
   testWinHuangjin();
   testUprisingThreshold();
   console.log('ALL XIANZHU SMOKES PASSED');

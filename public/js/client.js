@@ -111,6 +111,10 @@ window.GameNet = (function () {
       'game:started',
       'game:state',
       'game:error',
+      'game:player-left',
+      'game:quit-ok',
+      'chat:message',
+      'chat:error',
     ];
     for (const event of events) {
       s.on(event, (data) => emitLocal(event, data));
@@ -145,7 +149,10 @@ window.GameNet = (function () {
       currentUrl = target;
       const s = io(target, {
         autoConnect: true,
-        transports: ['websocket', 'polling'],
+        forceNew: true,
+        // trycloudflare 上直连 websocket 偶发握手失败；先 polling 再升级更稳
+        transports: ['polling', 'websocket'],
+        upgrade: true,
         reconnection: true,
         reconnectionAttempts: Infinity,
         reconnectionDelay: 500,
@@ -175,6 +182,31 @@ window.GameNet = (function () {
       s.once('connect', onOk);
       s.once('connect_error', onErr);
     });
+  }
+
+  function isRetryableRemoteJoinError(err) {
+    const msg = String(
+      (err && (err.message || err.description || err.type)) || err || ''
+    ).toLowerCase();
+    return (
+      msg.includes('err_name_not_resolved') ||
+      msg.includes('xhr poll error') ||
+      msg.includes('websocket error') ||
+      msg.includes('transport error')
+    );
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function stopAutoReconnect() {
+    if (!socket) return;
+    try {
+      if (socket.io) socket.io.reconnection(false);
+    } catch (_) {
+      /* ignore */
+    }
   }
 
   function ensureSocket() {
@@ -218,6 +250,7 @@ window.GameNet = (function () {
         settled = true;
         clearTimeout(timer);
         s.off('player:me', onMe);
+        s.off('session:reclaimed', onMe);
         resolve();
       };
       const timer = setTimeout(finish, 1200);
@@ -225,6 +258,7 @@ window.GameNet = (function () {
         finish();
       }
       s.once('player:me', onMe);
+      s.once('session:reclaimed', onMe);
       s.emit('lobby:join', {
         playerName,
         playerTag: opts.playerTag || window.PlayerNick.ensureTag(),
@@ -286,18 +320,67 @@ window.GameNet = (function () {
    * 本机房间请传 local:true 或 preferLocal；远端房间统一走公网隧道 host。
    */
   async function joinRoomOnHost(roomId, playerName, host, opts = {}) {
-    let candidates = [];
-    if (opts.local || opts.preferLocal) {
-      candidates = [localOrigin];
-    } else if (host) {
-      candidates = [normalizeUrl(host)];
+    async function doJoin(targetHost) {
+      let candidates = [];
+      if (opts.local || opts.preferLocal) {
+        candidates = [localOrigin];
+      } else if (targetHost) {
+        candidates = [normalizeUrl(targetHost)];
+      }
+      await connectAny(candidates);
+      await joinLobbyAndWait(playerName, {
+        sessionId: opts.sessionId || null,
+        roomId: opts.roomId || roomId || null,
+        oldPlayerId: opts.oldPlayerId || null,
+        rejoin: Boolean(opts.rejoin),
+        playerTag: opts.playerTag || null,
+      });
+      if (!opts.rejoin) {
+        joinRoom(roomId, playerName, opts);
+      }
     }
-    await connectAny(candidates);
-    await joinLobbyAndWait(playerName, {
-      sessionId: opts.sessionId || null,
-      roomId: opts.roomId || null,
-    });
-    joinRoom(roomId, playerName, opts);
+
+    const failedHosts = new Set();
+    if (host) failedHosts.add(normalizeUrl(host));
+
+    try {
+      await doJoin(host);
+      return;
+    } catch (err) {
+      if (host) failedHosts.add(normalizeUrl(host));
+      if (opts.local || opts.preferLocal || !isRetryableRemoteJoinError(err)) {
+        throw err;
+      }
+    }
+
+    // 远端域名刚广播出来或隧道刚重连时，回本地持续重查一小段时间
+    await connect(localOrigin);
+    let lastResolved = null;
+    let lastErr = null;
+    const deadline = Date.now() + 20000;
+    while (Date.now() < deadline) {
+      const resolved = await resolveRoom(roomId);
+      lastResolved = resolved;
+      const nextHost =
+        resolved && resolved.ok && resolved.host
+          ? normalizeUrl(resolved.host)
+          : '';
+      if (nextHost && !failedHosts.has(nextHost)) {
+        try {
+          await doJoin(nextHost);
+          return;
+        } catch (err) {
+          lastErr = err;
+          if (!isRetryableRemoteJoinError(err)) throw err;
+          failedHosts.add(nextHost);
+        }
+      }
+      await sleep(1500);
+    }
+    if (lastErr) throw lastErr;
+    throw new Error(
+      (lastResolved && lastResolved.message) || '未找到可用的房间最新地址'
+    );
   }
 
   function resolveRoom(roomId) {
@@ -336,6 +419,14 @@ window.GameNet = (function () {
     ensureSocket().emit('room:start');
   }
 
+  function quitGame() {
+    ensureSocket().emit('game:leave');
+  }
+
+  function sendChat(channel, text) {
+    ensureSocket().emit('chat:send', { channel, text });
+  }
+
   function sendAction(type, payload) {
     ensureSocket().emit('game:action', { type, payload });
   }
@@ -356,6 +447,7 @@ window.GameNet = (function () {
     connect,
     connectAny,
     reconnect,
+    stopAutoReconnect,
     on,
     joinLobby,
     joinLobbyAndWait,
@@ -370,6 +462,8 @@ window.GameNet = (function () {
     leaveRoom,
     setReady,
     startGame,
+    quitGame,
+    sendChat,
     sendAction,
     getLocalOrigin,
     getCurrentUrl,
