@@ -27,6 +27,11 @@ window.SgsUi = (function () {
   const SELF_TRICKS = new Set(['无中生有', '桃园结义']);
   const DELAYED_TRICKS = new Set(['乐不思蜀', '兵粮寸断', '闪电']);
   const MULTI_SKILL_IDS = new Set(['rende', 'luanji']);
+  /** 展示弹框最短停留时间（毫秒） */
+  const REVEAL_MIN_MS = 3000;
+  /** 发动前需先选座位的主动技 */
+  const SEAT_TARGET_ACTIVE_SKILLS = new Set(['tiaoxin', 'xuanhuo']);
+  const MUNIU_SKILL_ID = 'muniu';
   const MULTI_SKILL_RULES = {
     luanji: {
       min: 2,
@@ -66,6 +71,45 @@ window.SgsUi = (function () {
     return true;
   }
 
+  function isActiveSkillSeatTargeting() {
+    return Boolean(
+      state.pendingSkill &&
+        SEAT_TARGET_ACTIVE_SKILLS.has(state.pendingSkill.skillId) &&
+        state.game &&
+        state.game.me &&
+        state.game.me.isMyTurn &&
+        state.game.turnPhase === 'play' &&
+        !state.game.pending &&
+        state.game.phase === 'playing'
+    );
+  }
+
+  function isActiveSkillSeatTargetValid(game, skillId, p) {
+    if (!p || !p.alive || !game || !game.me || p.id === game.me.id) return false;
+    if (skillId === 'tiaoxin') return Boolean(p.canAttackMe);
+    if (skillId === 'xuanhuo') return hasValidXuanhuoSelection(game);
+    return p.id !== game.me.id;
+  }
+
+  function isXuanhuoSkillPending() {
+    return Boolean(
+      state.pendingSkill && state.pendingSkill.skillId === 'xuanhuo'
+    );
+  }
+
+  function xuanhuoSelectableCardIds(game) {
+    const me = (game && game.players || []).find(
+      (p) => game && game.me && p.id === game.me.id
+    );
+    return ((me && me.hand) || [])
+      .filter((c) => c && c.suit === 'heart')
+      .map((c) => c.id);
+  }
+
+  function hasValidXuanhuoSelection(game) {
+    return xuanhuoSelectableCardIds(game).includes(state.selectedCardId);
+  }
+
   function makeSelectableCard(c, onClick, selected) {
     const faceDown = Boolean(c && (c.back || c.faceDown));
     const el = A().createCardEl(c, {
@@ -87,9 +131,16 @@ window.SgsUi = (function () {
     const modal = $('sgs-modal');
     if (modal) modal.hidden = true;
     const panel = $('sgs-modal-panel');
-    if (panel) panel.classList.remove('sgs-modal-panel--cards');
+    if (panel) {
+      panel.classList.remove('sgs-modal-panel--cards');
+      panel.classList.remove('sgs-modal-panel--judge');
+      panel.classList.remove('sgs-modal-panel--guanxing');
+    }
     const body = $('sgs-modal-body');
-    if (body) body.classList.remove('sgs-modal-body--cards');
+    if (body) {
+      body.classList.remove('sgs-modal-body--cards');
+      delete body.dataset.judgeReveal;
+    }
   }
 
   function hideQiceModal() {
@@ -289,6 +340,7 @@ window.SgsUi = (function () {
         const btn = makeSelectableCard(c, () => {
           if (!multi) {
             hideSgsModal();
+            clearSkillAskBar();
             net.sendAction('respond', { cardId: c.id });
             return;
           }
@@ -384,6 +436,17 @@ window.SgsUi = (function () {
     ) {
       state.pendingViewAs = null;
     }
+    if (
+      state.pendingSkill &&
+      (!game.me ||
+        !game.me.isMyTurn ||
+        game.turnPhase !== 'play' ||
+        game.pending ||
+        game.phase !== 'playing')
+    ) {
+      state.pendingSkill = null;
+      state.selectedTargets = [];
+    }
     const panel = $('panel-sgs');
     if (!panel) return;
     panel.hidden = false;
@@ -449,6 +512,7 @@ window.SgsUi = (function () {
     renderTable(game);
     renderPiles(game);
     renderDeathReveal(game);
+    prepareIncomingHandFx(game);
     renderHand(game, net);
     renderMateHand(game);
     renderLog(game);
@@ -502,6 +566,59 @@ window.SgsUi = (function () {
   function logKey(row) {
     if (!row) return '';
     return `${row.at || ''}|${row.text || ''}`;
+  }
+
+  function parseGainFromPlayerLog(text, game) {
+    const m = String(text || '').match(/^(.+?) 获得了 (.+?) 的一张牌$/);
+    if (!m) return null;
+    const gainer = findPlayerByName(game, m[1]);
+    const target = findPlayerByName(game, m[2]);
+    if (!gainer || !target) return null;
+    return { gainerId: gainer.id, targetId: target.id };
+  }
+
+  /** 顺手牵羊等：先藏入手牌末端的牌，等飞入动画结束再显示 */
+  function prepareIncomingHandFx(game) {
+    state._incomingHandFx = null;
+    const prev = state.prevSnap;
+    if (!prev || !game.me) return;
+    const me = (game.players || []).find((p) => p.id === game.me.id);
+    if (!me || !me.hand) return;
+    const nextSnap = snapshotGame(game);
+    const gainIds = nextSnap.handIds.filter((id) => !prev.handIds.includes(id));
+    if (!gainIds.length) return;
+    if (nextSnap.drawCount < prev.drawCount) return;
+
+    const freshLogs = freshPlayLogs(prev, nextSnap);
+    let fromPlayerId = null;
+    for (const row of freshLogs) {
+      const parsed = parseGainFromPlayerLog(row && row.text, game);
+      if (
+        parsed &&
+        parsed.gainerId === game.me.id &&
+        parsed.targetId !== game.me.id
+      ) {
+        fromPlayerId = parsed.targetId;
+        break;
+      }
+    }
+    if (!fromPlayerId) return;
+
+    state._incomingHandFx = {
+      cardIds: gainIds,
+      cards: nextSnap.handCards.filter((c) => gainIds.includes(c.id)),
+      fromPlayerId,
+    };
+  }
+
+  function revealIncomingHandCards() {
+    state._incomingHandFx = null;
+    const hand = $('sgs-hand');
+    if (!hand) return;
+    hand.querySelectorAll('.sgs-kapai.is-steal-incoming').forEach((el) => {
+      el.classList.remove('is-steal-incoming');
+    });
+    layoutSelfHand(hand, state.handFocusRatio);
   }
 
   function freshPlayLogs(prev, next) {
@@ -986,6 +1103,7 @@ window.SgsUi = (function () {
     }
     if (!fx) {
       state.prevSnap = snapshotGame(game);
+      if (state._incomingHandFx) revealIncomingHandCards();
       return null;
     }
     if (state.fxBusy) {
@@ -1007,16 +1125,40 @@ window.SgsUi = (function () {
 
     // 摸牌：手牌变多且抽牌堆变少
     const handGain = next.handIds.filter((id) => !prev.handIds.includes(id));
+    const stealFx = state._incomingHandFx;
+    const stealGainIds =
+      stealFx && stealFx.cardIds
+        ? handGain.filter((id) => stealFx.cardIds.includes(id))
+        : [];
+    const drawGainIds = handGain.filter((id) => !stealGainIds.includes(id));
     if (
-      handGain.length > 0 &&
+      drawGainIds.length > 0 &&
       next.drawCount < prev.drawCount &&
       game.me &&
       (game.me.isMyTurn || game.turnPhase === 'draw' || !game.pending)
     ) {
-      const newCards = next.handCards.filter((c) => handGain.includes(c.id));
+      const newCards = next.handCards.filter((c) => drawGainIds.includes(c.id));
       tasks.push(() =>
-        fx.animateDraw(handGain.length, newCards[0] || null)
+        fx.animateDraw(drawGainIds.length, newCards[0] || null)
       );
+    }
+    if (
+      stealFx &&
+      stealGainIds.length > 0 &&
+      game.me &&
+      fx.animateGainFromSeat
+    ) {
+      tasks.push(async () => {
+        try {
+          await fx.animateGainFromSeat({
+            card: (stealFx.cards && stealFx.cards[0]) || null,
+            fromPlayerId: stealFx.fromPlayerId,
+            duration: 920,
+          });
+        } finally {
+          revealIncomingHandCards();
+        }
+      });
     }
 
     const resolved = resolvePlayFx(prev, next, game);
@@ -1102,7 +1244,10 @@ window.SgsUi = (function () {
       );
     }
 
-    if (!tasks.length) return null;
+    if (!tasks.length) {
+      if (state._incomingHandFx) revealIncomingHandCards();
+      return null;
+    }
 
     state.fxBusy = true;
     const run = (async () => {
@@ -1649,11 +1794,20 @@ window.SgsUi = (function () {
     );
   }
 
+  function myMuniuCards(game) {
+    return (game.me && game.me.muniuCards) || [];
+  }
+
+  function myPlayableCards(game) {
+    const me = (game.players || []).find((p) => game.me && p.id === game.me.id);
+    return [...(me && me.hand ? me.hand : []), ...myMuniuCards(game)];
+  }
+
   function findSelectedCard(game) {
     if (!state.selectedCardId || !game.me) return null;
-    const me = (game.players || []).find((p) => p.id === game.me.id);
-    if (!me || !me.hand) return null;
-    return me.hand.find((c) => c.id === state.selectedCardId) || null;
+    return (
+      myPlayableCards(game).find((c) => c.id === state.selectedCardId) || null
+    );
   }
 
   function viewAsVirtualCard(card, to) {
@@ -1710,22 +1864,24 @@ window.SgsUi = (function () {
     if (pv) {
       const usable = pv.usableCardIds || [];
       if (!card || !usable.includes(card.id)) {
+        const needsTarget =
+          pv.to === 'sha' ||
+          pv.to === 'guohe' ||
+          pv.to === 'lebu' ||
+          pv.to === 'juedou' ||
+          pv.to === 'bingliang' ||
+          pv.to === 'tiesuo' ||
+          pv.to === 'huogong';
         return {
           ...empty,
           hint: `【${pv.skillName || '技能'}】已准备：请选择可用手牌${
-            pv.to === 'sha' ||
-            pv.to === 'guohe' ||
-            pv.to === 'lebu' ||
-            pv.to === 'juedou' ||
-            pv.to === 'bingliang' ||
-            pv.to === 'tiesuo' ||
-            pv.to === 'huogong'
-              ? '，再选择目标'
-              : ''
+            needsTarget ? '，再选择目标' : ''
           }（再点技能可取消）`,
-          needTargets: 0,
-          maxTargets: 0,
-          dimUnreachable: false,
+          needTargets: needsTarget ? 1 : 0,
+          maxTargets: needsTarget ? 1 : 0,
+          // 先选可用牌：角色目标全部置灰，避免误点
+          dimUnreachable: needsTarget,
+          isTargetValid: () => false,
         };
       }
       card = viewAsVirtualCard(card, pv.to);
@@ -1917,9 +2073,10 @@ window.SgsUi = (function () {
       guide.dimUnreachable = true;
       guide.isTargetValid = (p) => {
         if (!p || !p.alive || p.id === meId) return false;
+        if (selected.includes(p.id)) return true;
         if (selected.length === 0) return Boolean(p.equips && p.equips.weapon);
         if (selected.length === 1) return p.id !== selected[0];
-        return selected.includes(p.id);
+        return false;
       };
       if (selected.length === 0) {
         guide.hint = '请先选择拥有武器的角色（借出刀）';
@@ -1963,6 +2120,7 @@ window.SgsUi = (function () {
     if (name === '铁索连环') {
       guide.needTargets = 0;
       guide.maxTargets = 2;
+      guide.dimUnreachable = true;
       guide.isTargetValid = (p) => Boolean(p && p.alive);
       guide.hint = selected.length
         ? `已选 ${selected.length} 人：对每人横置状态取反（已连↔未连）；或点「重置」摸 1`
@@ -2000,11 +2158,18 @@ window.SgsUi = (function () {
     return guide;
   }
 
+  function isMuniuSkillPending() {
+    return Boolean(
+      state.pendingSkill && state.pendingSkill.skillId === MUNIU_SKILL_ID
+    );
+  }
+
   function isPendingSeatTargeting(pend) {
     if (!pend || !pend.forMe) return false;
     if (pend.type === 'succession') return true;
     if (pend.maxTargets != null && Number(pend.maxTargets) > 0) return true;
     if (pend.type !== 'skill_effect') return false;
+    if (pend.skillId === MUNIU_SKILL_ID && pend.step === 'transfer') return true;
     if (pend.skillId === 'fanjian') return pend.step === 'target';
     const seatSkills = new Set([
       'tuxi',
@@ -2043,10 +2208,16 @@ window.SgsUi = (function () {
     if (pend.skillId === 'haoshi') {
       return (pend.candidateIds || []).includes(p.id);
     }
+    if (pend.skillId === MUNIU_SKILL_ID && pend.step === 'transfer') {
+      return (pend.candidateIds || []).includes(p.id);
+    }
     if (pend.skillId === 'yiji' || pend.allowSelf) {
       return true;
     }
     if (pend.skillId === 'jieming' || pend.skillId === 'ganlu') {
+      return true;
+    }
+    if (pend.skillId === 'qice' && pend.trickId === 'tiesuo') {
       return true;
     }
     if (pend.skillId === 'quhu' && pend.step === 'damage') {
@@ -2058,8 +2229,54 @@ window.SgsUi = (function () {
     return p.id !== meId;
   }
 
+  /** 出牌或 pending 选座时，是否可点自己角色卡作为目标 */
+  function canPickSelfSeatTarget(game, pend, me, guide) {
+    if (!me || !me.alive) return false;
+    if (isPendingSeatTargeting(pend)) {
+      return isPendingSeatTargetValid(game, pend, me);
+    }
+    if (pend) return false;
+    if (!game.me || !game.me.isMyTurn || game.turnPhase !== 'play') return false;
+    if (!guide) return false;
+    if (guide.maxTargets <= 0 && guide.needTargets <= 0) return false;
+    return Boolean(guide.isTargetValid && guide.isTargetValid(me));
+  }
+
+  function toggleSelfSeatTarget(game, pend, guide) {
+    const me = (game.players || []).find((p) => game.me && p.id === game.me.id);
+    if (!me || !canPickSelfSeatTarget(game, pend, me, guide)) return;
+    let max = 1;
+    if (isPendingSeatTargeting(pend)) {
+      max = Math.max(1, Number(pend.maxTargets) || 1);
+    } else if (guide && guide.maxTargets > 0) {
+      max = guide.maxTargets;
+    }
+    const iSel = state.selectedTargets.indexOf(me.id);
+    if (iSel >= 0) {
+      state.selectedTargets.splice(iSel, 1);
+    } else if (max === 1) {
+      state.selectedTargets = [me.id];
+    } else if (state.selectedTargets.length >= max) {
+      state.selectedTargets = state.selectedTargets.slice(1).concat(me.id);
+    } else {
+      state.selectedTargets.push(me.id);
+    }
+    refreshLocalSelection(game, state.net);
+  }
+
   function pruneInvalidTargets(game, guide) {
     if (!guide) return;
+    if (isActiveSkillSeatTargeting()) {
+      const skId = state.pendingSkill.skillId;
+      state.selectedTargets = (state.selectedTargets || []).filter((id) => {
+        const p = (game.players || []).find((x) => x.id === id);
+        return isActiveSkillSeatTargetValid(game, skId, p);
+      });
+      if (state.selectedTargets.length > 1) {
+        state.selectedTargets = state.selectedTargets.slice(0, 1);
+      }
+      return;
+    }
     // 突袭等技能选座位期间，不能按出牌 guide（此时 isTargetValid 恒为 false）清掉已选
     if (isPendingSeatTargeting(game.pending)) {
       const pend = game.pending;
@@ -2133,6 +2350,31 @@ window.SgsUi = (function () {
     );
   }
 
+  function appendTianStack(parent, tianCards) {
+    if (!parent || !tianCards || !tianCards.length || !A() || !A().createCardEl) {
+      return;
+    }
+    const n = tianCards.length;
+    const wrap = document.createElement('div');
+    wrap.className = 'sgs-tian-stack';
+    wrap.title = `田 ×${n}`;
+    const cardsEl = document.createElement('div');
+    cardsEl.className = 'sgs-tian-cards';
+    const show = tianCards.slice(-Math.min(3, n));
+    show.forEach((c, i) => {
+      const el = A().createCardEl(c, { size: 'sm', className: 'is-tian-card' });
+      el.style.zIndex = String(i + 1);
+      if (i > 0) el.style.marginLeft = '-22px';
+      cardsEl.appendChild(el);
+    });
+    wrap.appendChild(cardsEl);
+    const badge = document.createElement('span');
+    badge.className = 'sgs-tian-count';
+    badge.textContent = String(n);
+    wrap.appendChild(badge);
+    parent.appendChild(wrap);
+  }
+
   function skillPilesHtml(piles) {
     if (!piles) return '';
     const bits = [];
@@ -2141,10 +2383,8 @@ window.SgsUi = (function () {
         `<span class="sgs-pile-mark is-buqu" title="不屈×${piles.buqu.length}">不屈${piles.buqu.length}</span>`
       );
     }
-    if (piles.tian && piles.tian.length) {
-      bits.push(
-        `<span class="sgs-pile-mark is-tian" title="田×${piles.tian.length}">田${piles.tian.length}</span>`
-      );
+    if (piles.muniu && piles.muniu.length) {
+      /* 木牛上的牌仅拥有者可见，在本人手牌区展示 */
     }
     if (!bits.length) return '';
     return `<div class="sgs-skill-piles">${bits.join('')}</div>`;
@@ -2205,8 +2445,10 @@ window.SgsUi = (function () {
       p.alive &&
       !p.left &&
       guide &&
-      guide.dimUnreachable &&
-      (guide.needTargets > 0 || guide.maxTargets > 0)
+      (guide.dimUnreachable ||
+        guide.needTargets > 0 ||
+        guide.maxTargets > 0) &&
+      typeof guide.isTargetValid === 'function'
     ) {
       if (guide.isTargetValid(p)) div.className += ' target-ok';
       else div.className += ' target-dim';
@@ -2215,6 +2457,13 @@ window.SgsUi = (function () {
     // 突袭等：按技能规则高亮可选座位
     if (!isMe && p.alive && !p.left && isPendingSeatTargeting(game.pending)) {
       if (isPendingSeatTargetValid(game, game.pending, p)) {
+        div.className += ' target-ok';
+      } else {
+        div.className += ' target-dim';
+      }
+    }
+    if (!isMe && p.alive && !p.left && isActiveSkillSeatTargeting()) {
+      if (isActiveSkillSeatTargetValid(game, state.pendingSkill.skillId, p)) {
         div.className += ' target-ok';
       } else {
         div.className += ' target-dim';
@@ -2324,6 +2573,13 @@ window.SgsUi = (function () {
       else if (hands) div.insertBefore(equipWrap, hands);
       else div.appendChild(equipWrap);
     }
+
+    const heroEl = div.querySelector('.sgs-hero-card:not(.is-back)');
+    if (heroEl) bindPlayerGeneralHoverTip(heroEl, p);
+    const seatMain = div.querySelector('.sgs-seat-main');
+    if (seatMain && p.skillPiles && p.skillPiles.tian && p.skillPiles.tian.length) {
+      appendTianStack(seatMain, p.skillPiles.tian);
+    }
   }
 
   /** 对手人数越多，座位版面等比缩小，避免互相压住 */
@@ -2389,6 +2645,15 @@ window.SgsUi = (function () {
       const onSeatClick = () => {
         const g = state.game || game;
         const pend = g.pending;
+        if (isActiveSkillSeatTargeting()) {
+          const skId = state.pendingSkill.skillId;
+          if (!isActiveSkillSeatTargetValid(g, skId, p)) return;
+          const iSel = state.selectedTargets.indexOf(p.id);
+          if (iSel >= 0) state.selectedTargets.splice(iSel, 1);
+          else state.selectedTargets = [p.id];
+          refreshLocalSelection(g, state.net);
+          return;
+        }
         if (isPendingSeatTargeting(pend)) {
           if (!isPendingSeatTargetValid(g, pend, p)) return;
           const max = Math.max(1, Number(pend.maxTargets) || 1);
@@ -2412,7 +2677,13 @@ window.SgsUi = (function () {
         if (!selectedCard) return;
         const guide = getCardPlayGuide(g, selectedCard);
         if (guide.maxTargets <= 0 && guide.needTargets <= 0) return;
-        if (guide.dimUnreachable && !guide.isTargetValid(p)) return;
+        if (
+          guide.dimUnreachable ||
+          guide.needTargets > 0 ||
+          guide.maxTargets > 0
+        ) {
+          if (!guide.isTargetValid(p)) return;
+        }
         const iSel = state.selectedTargets.indexOf(p.id);
         if (iSel >= 0) {
           state.selectedTargets.splice(iSel, 1);
@@ -2566,29 +2837,27 @@ window.SgsUi = (function () {
         selfInfo.querySelector('.sgs-hero-card--self') ||
         selfInfo.querySelector('.sgs-hero-card');
       if (selfCard) {
+        bindPlayerGeneralHoverTip(selfCard, me);
+        const oldTian = selfInfo.querySelector('.sgs-tian-stack');
+        if (oldTian) oldTian.remove();
+        if (me.skillPiles && me.skillPiles.tian && me.skillPiles.tian.length) {
+          appendTianStack(selfInfo, me.skillPiles.tian);
+        }
         const pend = game.pending;
-        const canPickSelf =
-          isPendingSeatTargeting(pend) &&
-          isPendingSeatTargetValid(game, pend, me);
+        const selfGuide = getCardPlayGuide(game, findSelectedCard(game));
+        const canPickSelf = canPickSelfSeatTarget(game, pend, me, selfGuide);
         selfInfo.classList.toggle('is-seat-target-ok', Boolean(canPickSelf));
         selfInfo.classList.toggle(
           'is-seat-targeted',
           Boolean((state.selectedTargets || []).includes(me.id))
         );
         selfCard.onclick = () => {
-          if (!canPickSelf) return;
-          const max = Math.max(1, Number(pend.maxTargets) || 1);
-          const iSel = state.selectedTargets.indexOf(me.id);
-          if (iSel >= 0) {
-            state.selectedTargets.splice(iSel, 1);
-          } else if (max === 1) {
-            state.selectedTargets = [me.id];
-          } else if (state.selectedTargets.length >= max) {
-            state.selectedTargets = state.selectedTargets.slice(1).concat(me.id);
-          } else {
-            state.selectedTargets.push(me.id);
-          }
-          refreshLocalSelection(game, state.net);
+          const g = state.game || game;
+          toggleSelfSeatTarget(
+            g,
+            g.pending,
+            getCardPlayGuide(g, findSelectedCard(g))
+          );
         };
       }
     }
@@ -2631,7 +2900,15 @@ window.SgsUi = (function () {
       for (const slot of ['weapon', 'armor', 'horseMinus', 'horsePlus', 'treasure']) {
         if (!e[slot]) continue;
         any = true;
-        selfEquips.appendChild(A().createCardEl(e[slot], { size: 'sm' }));
+        const eqEl = A().createCardEl(e[slot], { size: 'sm' });
+        eqEl.dataset.cardId = e[slot].id;
+        eqEl.addEventListener('click', () => {
+          const g = state.game;
+          const n = state.net;
+          if (!g || !n) return;
+          toggleHandPickCard(e[slot].id, g, n);
+        });
+        selfEquips.appendChild(eqEl);
       }
       if (!any) {
         selfEquips.innerHTML = '<span class="muted">无装备</span>';
@@ -2820,16 +3097,23 @@ window.SgsUi = (function () {
   }
 
   /** 手牌列表签名：牌未变时避免整手重建（防图片闪烁） */
-  function handListKey(mePlayer, multi) {
+  function handListKey(mePlayer, multi, game) {
     const ids = (mePlayer && mePlayer.hand ? mePlayer.hand : [])
+      .map((c) => c.id)
+      .join(',');
+    const muniuIds = (game && game.me && game.me.muniuCards
+      ? game.me.muniuCards
+      : []
+    )
       .map((c) => c.id)
       .join(',');
     const viewAs = state.pendingViewAs
       ? (state.pendingViewAs.usableCardIds || []).join(',')
       : '';
+    const armedSkill = state.pendingSkill ? state.pendingSkill.skillId : '';
     const pend = state.game && state.game.pending;
     const mode = getOwnHandPickMode(pend);
-    return `${ids}|m${multi ? 1 : 0}|v${viewAs}|p${mode ? mode.id : ''}`;
+    return `${ids}|m${muniuIds}|n${multi ? 1 : 0}|v${viewAs}|s${armedSkill}|p${mode ? mode.id : ''}`;
   }
 
   function suitMark(suit) {
@@ -2847,8 +3131,33 @@ window.SgsUi = (function () {
    * 需要从「自己手牌区」选牌再点上方确认的交互。
    * 不包含过河拆桥等选别人区域的弹窗。
    */
-  function getOwnHandPickMode(pend) {
+  function ownHandPickIgnoresCardOptions(pend) {
+    if (!pend) return false;
+    if (
+      pend.type === 'guanshi' ||
+      pend.type === 'feiyang' ||
+      pend.type === 'huogong_show'
+    ) {
+      return true;
+    }
+    if (pend.type === 'skill_effect') {
+      return (
+        pend.skillId === 'zhiyu' ||
+        pend.skillId === 'yiji' ||
+        // 恩怨（enyuan）：server 侧会把可交给的红桃牌作为 cardOptions 下发，
+        // 但交互仍希望走「下方手牌区点选」模式（上方仅确认/取消）。
+        pend.skillId === 'enyuan'
+      );
+    }
+    return false;
+  }
+
+  function buildOwnHandPickMode(pend) {
     if (!pend || !pend.forMe) return null;
+
+    if (pend.type === 'wuxie') {
+      if (pend.wuxiePhase === 'reveal' || pend.wuxieSubmitted) return null;
+    }
 
     if (
       pend.type === 'respond_shan' ||
@@ -2891,6 +3200,32 @@ window.SgsUi = (function () {
       };
     }
 
+    if (pend.type === 'guanshi') {
+      return {
+        id: 'guanshi',
+        min: 2,
+        max: 2,
+        includeEquips: true,
+        confirmLabel: '弃 2 张强制命中',
+        passLabel: '放弃强命',
+        canPass: true,
+        action: 'respond',
+      };
+    }
+
+    if (pend.type === 'feiyang' && pend.step === 'discard') {
+      return {
+        id: 'feiyang',
+        min: 2,
+        max: 2,
+        includeEquips: true,
+        confirmLabel: '弃 2 张进入下一步',
+        passLabel: '不发动',
+        canPass: true,
+        action: 'respond',
+      };
+    }
+
     if (pend.type === 'huogong_show') {
       return {
         id: 'huogong_show',
@@ -2916,7 +3251,18 @@ window.SgsUi = (function () {
     }
 
     if (pend.type !== 'skill_effect') return null;
-    if (pend.cardOptions && pend.cardOptions.length) return null;
+    if (pend.skillId === 'tiaoxin' && pend.step === 'discard') return null;
+
+    if (pend.skillId === 'zhiyu') {
+      return {
+        id: 'zhiyu',
+        min: 1,
+        max: 1,
+        confirmLabel: '确认弃置',
+        canPass: false,
+        action: 'respond',
+      };
+    }
 
     if (pend.skillId === 'hujia' || pend.skillId === 'jijiang') {
       const names =
@@ -2942,7 +3288,7 @@ window.SgsUi = (function () {
       lieren: { passLabel: '取消' },
       tiaoxin: {
         names: ['杀', '火杀', '雷杀'],
-        passLabel: '不出杀',
+        passLabel: '取消',
         allowViewAs: true,
       },
       tieji: { suit: pend.suit || null, passLabel: '取消' },
@@ -2960,6 +3306,19 @@ window.SgsUi = (function () {
       action: 'respond',
       ...extra,
     };
+  }
+
+  function getOwnHandPickMode(pend) {
+    const mode = buildOwnHandPickMode(pend);
+    if (!mode) return null;
+    if (
+      pend.cardOptions &&
+      pend.cardOptions.length &&
+      !ownHandPickIgnoresCardOptions(pend)
+    ) {
+      return null;
+    }
+    return mode;
   }
 
   function isHandCardRespondPending(pend) {
@@ -2995,6 +3354,69 @@ window.SgsUi = (function () {
     return true;
   }
 
+  function listPickableOwnCardIds(game, mode) {
+    if (!mode || !game || !game.me) return [];
+    const me = (game.players || []).find((p) => p.id === game.me.id);
+    if (!me) return [];
+    const allowed =
+      mode.allowedIds && mode.allowedIds.length
+        ? new Set(mode.allowedIds)
+        : null;
+    const out = [];
+    for (const c of me.hand || []) {
+      if (allowed && !allowed.has(c.id)) continue;
+      if (
+        cardMatchesPickMode(c, mode) ||
+        (!mode.names && !mode.suit && !mode.basicOnly)
+      ) {
+        out.push(c.id);
+      }
+    }
+    for (const c of myMuniuCards(game)) {
+      if (allowed && !allowed.has(c.id)) continue;
+      if (
+        cardMatchesPickMode(c, mode) ||
+        (!mode.names && !mode.suit && !mode.basicOnly)
+      ) {
+        out.push(c.id);
+      }
+    }
+    if (mode.includeEquips && me.equips) {
+      for (const slot of Object.keys(me.equips)) {
+        const eq = me.equips[slot];
+        if (!eq) continue;
+        if (allowed && !allowed.has(eq.id)) continue;
+        out.push(eq.id);
+      }
+    }
+    return out;
+  }
+
+  function toggleHandPickCard(cardId, game, net) {
+    const pend = game && game.pending;
+    const pickMode = getOwnHandPickMode(pend);
+    if (!pickMode) return false;
+    const ids = listPickableOwnCardIds(game, pickMode);
+    if (!ids.includes(cardId)) return false;
+    if (pickMode.max > 1) {
+      if (!state.skillCardPick) state.skillCardPick = [];
+      const idx = state.skillCardPick.indexOf(cardId);
+      if (idx >= 0) state.skillCardPick.splice(idx, 1);
+      else if (state.skillCardPick.length < pickMode.max) {
+        state.skillCardPick.push(cardId);
+      }
+      state.selectedCardId =
+        state.skillCardPick[state.skillCardPick.length - 1] || null;
+    } else {
+      state.selectedCardId =
+        state.selectedCardId === cardId ? null : cardId;
+      state.skillCardPick = [];
+    }
+    state.allowMultiSelect = pickMode.max > 1;
+    refreshLocalSelection(game, net);
+    return true;
+  }
+
   function listHandRespondOptions(game, pend) {
     const mode = getOwnHandPickMode(pend);
     if (!mode || !game || !game.me) return [];
@@ -3012,11 +3434,27 @@ window.SgsUi = (function () {
             return false;
           })
         : [];
+    const pickIds = new Set(listPickableOwnCardIds(game, mode));
     const out = [];
     for (const c of hand) {
+      if (!pickIds.has(c.id)) continue;
       const va = viewAsForPend.find((v) => v.cardId === c.id) || null;
       if (cardMatchesPickMode(c, mode) || va) {
         out.push({ cardId: c.id, viewAs: va });
+      }
+    }
+    for (const c of myMuniuCards(game)) {
+      if (!pickIds.has(c.id)) continue;
+      const va = viewAsForPend.find((v) => v.cardId === c.id) || null;
+      if (cardMatchesPickMode(c, mode) || va) {
+        out.push({ cardId: c.id, viewAs: va });
+      }
+    }
+    if (mode.includeEquips && me && me.equips) {
+      for (const slot of Object.keys(me.equips)) {
+        const eq = me.equips[slot];
+        if (!eq || !pickIds.has(eq.id)) continue;
+        out.push({ cardId: eq.id, from: 'equip:' + slot });
       }
     }
     return out;
@@ -3059,7 +3497,8 @@ window.SgsUi = (function () {
       pend.skillId !== 'liuli' &&
       pend.skillId !== 'tianxiang' &&
       pend.skillId !== 'jujian' &&
-      pend.skillId !== 'haoshi'
+      pend.skillId !== 'haoshi' &&
+      pend.skillId !== 'yiji'
     ) {
       return null;
     }
@@ -3070,68 +3509,49 @@ window.SgsUi = (function () {
         .filter((c) => c.suit === 'heart' || c.suitLabel === '♥')
         .map((c) => c.id);
     }
+    if (pend.skillId === 'yiji') {
+      const allow = new Set(pend.cardIds || []);
+      return hand.filter((c) => allow.has(c.id)).map((c) => c.id);
+    }
     return hand.map((c) => c.id);
   }
 
-  function syncHandSelectionAppearance(game) {
-    const hand = $('sgs-hand');
-    if (!hand) return;
-    const multi = Boolean(state.allowMultiSelect);
-    const viewAsIds = state.pendingViewAs
-      ? state.pendingViewAs.usableCardIds || []
-      : [];
-    const respond = ensureHandRespondSelection(game);
-    let respondIds = respond ? new Set(respond.ids) : null;
-    if (!respondIds) {
-      const seatIds = listSeatSkillHandIds(game);
-      if (seatIds && seatIds.length) respondIds = new Set(seatIds);
+  function syncSelfEquipPickAppearance(game) {
+    const wrap = $('sgs-self-equips');
+    if (!wrap) return;
+    const pend = game && game.pending;
+    const mode = getOwnHandPickMode(pend);
+    if (!mode || !mode.includeEquips) {
+      wrap.querySelectorAll('.sgs-kapai[data-card-id]').forEach((btn) => {
+        btn.classList.remove('selected', 'is-respond-ok', 'is-respond-dim');
+        btn.style.outline = '';
+      });
+      return;
     }
-    const viewAsArmed = Boolean(state.pendingViewAs) && !respondIds;
-    const viewAsSet = viewAsArmed ? new Set(viewAsIds) : null;
-    hand.querySelectorAll('.sgs-kapai[data-card-id]').forEach((btn) => {
+    const ids = new Set(listPickableOwnCardIds(game, mode));
+    const multi = mode.max > 1;
+    wrap.querySelectorAll('.sgs-kapai[data-card-id]').forEach((btn) => {
       const id = btn.dataset.cardId;
+      const ok = ids.has(id);
       const selected = multi
         ? (state.skillCardPick || []).includes(id)
         : state.selectedCardId === id;
       btn.classList.toggle('selected', selected);
-      if (respondIds) {
-        const ok = respondIds.has(id);
-        btn.classList.toggle('is-respond-ok', ok);
-        btn.classList.toggle('is-respond-dim', !ok);
-        btn.classList.remove('is-viewas-ok', 'is-viewas-dim');
-        if (ok && !selected) {
-          btn.style.outline = '2px solid rgba(94, 207, 152, 0.7)';
-        } else if (!selected) {
-          btn.style.outline = '';
-        } else {
-          btn.style.outline = '';
-        }
-      } else if (viewAsSet) {
-        const ok = viewAsSet.has(id);
-        btn.classList.toggle('is-viewas-ok', ok);
-        btn.classList.toggle('is-viewas-dim', !ok);
-        btn.classList.remove('is-respond-ok', 'is-respond-dim');
-        if (ok && !selected) {
-          btn.style.outline = '2px solid rgba(232, 184, 106, 0.85)';
-        } else if (!selected) {
-          btn.style.outline = '';
-        } else {
-          btn.style.outline = '';
-        }
-      } else {
-        btn.classList.remove(
-          'is-respond-ok',
-          'is-respond-dim',
-          'is-viewas-ok',
-          'is-viewas-dim'
-        );
-        if (!selected) {
-          btn.style.outline = '';
-        } else {
-          btn.style.outline = '';
-        }
-      }
+      btn.classList.toggle('is-respond-ok', ok);
+      btn.classList.toggle('is-respond-dim', !ok);
+      btn.style.outline =
+        ok && !selected ? '2px solid rgba(94, 207, 152, 0.7)' : '';
     });
+  }
+
+  function syncHandSelectionAppearance(game) {
+    const hand = $('sgs-hand');
+    if (hand) syncPlayableStackSelection(game, hand);
+    const muniuStack = document.querySelector(
+      '#sgs-hand-muniu .sgs-hand-muniu-stack'
+    );
+    if (muniuStack) syncPlayableStackSelection(game, muniuStack);
+    syncSelfEquipPickAppearance(game);
   }
 
   function syncOpponentSeatTargetClasses(game) {
@@ -3157,10 +3577,20 @@ window.SgsUi = (function () {
         );
         return;
       }
+      if (isActiveSkillSeatTargeting()) {
+        div.classList.add(
+          isActiveSkillSeatTargetValid(game, state.pendingSkill.skillId, p)
+            ? 'target-ok'
+            : 'target-dim'
+        );
+        return;
+      }
       if (
         guide &&
-        guide.dimUnreachable &&
-        (guide.needTargets > 0 || guide.maxTargets > 0)
+        typeof guide.isTargetValid === 'function' &&
+        (guide.dimUnreachable ||
+          guide.needTargets > 0 ||
+          guide.maxTargets > 0)
       ) {
         div.classList.add(
           guide.isTargetValid(p) ? 'target-ok' : 'target-dim'
@@ -3175,9 +3605,8 @@ window.SgsUi = (function () {
     const me = (game.players || []).find((p) => p.id === game.me.id);
     if (!me) return;
     const pend = game.pending;
-    const canPickSelf =
-      isPendingSeatTargeting(pend) &&
-      isPendingSeatTargetValid(game, pend, me);
+    const guide = getCardPlayGuide(game, findSelectedCard(game));
+    const canPickSelf = canPickSelfSeatTarget(game, pend, me, guide);
     selfInfo.classList.toggle('is-seat-target-ok', Boolean(canPickSelf));
     selfInfo.classList.toggle(
       'is-seat-targeted',
@@ -3188,11 +3617,21 @@ window.SgsUi = (function () {
   /** 仅本地选牌/选目标变化：不整页重建，避免手牌与桌面闪烁 */
   function refreshLocalSelection(game, net) {
     syncHandSelectionAppearance(game);
+    syncSelfEquipPickAppearance(game);
     updateHandPlayChrome(game, net, { rebuildSkills: false });
     syncOpponentSeatTargetClasses(game);
     syncSelfSeatTargetClasses(game);
     const hand = $('sgs-hand');
     if (hand) layoutSelfHand(hand, state.handFocusRatio);
+    const muniuStack = document.querySelector(
+      '#sgs-hand-muniu .sgs-hand-muniu-stack'
+    );
+    if (muniuStack) layoutSelfHand(muniuStack, state.handFocusRatio);
+
+    const pend = game && game.pending;
+    if (pend && pend.forMe && isSeatTargetSkillEffect(pend)) {
+      showSeatTargetAskBar(game, pend, net);
+    }
   }
 
   function updateHandPlayChrome(game, net, opts) {
@@ -3227,7 +3666,8 @@ window.SgsUi = (function () {
       if (hintEl) {
         hintEl.textContent =
           (pend.message || '请在下方手牌区选择') +
-          (multi ? `（已选 ${picked.length}/${mode.max}）` : '');
+          (multi ? `（已选 ${picked.length}/${mode.max}）` : '') +
+          (mode.includeEquips ? '；装备牌可点左侧装备区' : '');
         hintEl.classList.add('is-warn');
       }
       if (btnPlay) {
@@ -3260,6 +3700,93 @@ window.SgsUi = (function () {
       return;
     }
 
+    if (isActiveSkillSeatTargeting()) {
+      const sk = state.pendingSkill;
+      const n = (state.selectedTargets || []).length;
+      const isXuanhuo = sk && sk.skillId === 'xuanhuo';
+      const hasCard = hasValidXuanhuoSelection(game);
+      const hintEl = $('sgs-target-hint');
+      if (hintEl) {
+        hintEl.textContent = isXuanhuo
+          ? `【${sk.skillName || sk.skillId}】：请先选择一张红桃手牌，再选择一名其他角色（已选目标 ${n}/1，再点技能取消）`
+          : `【${sk.skillName || sk.skillId}】：请选择攻击范围内含有你的一名角色（已选 ${n}/1，再点技能取消）`;
+        hintEl.classList.add('is-warn');
+      }
+      if (btnPlay) {
+        btnPlay.hidden = false;
+        btnPlay.textContent = '确认发动';
+        const disabled = isXuanhuo ? !hasCard || n < 1 : n < 1;
+        btnPlay.disabled = disabled;
+        btnPlay.classList.toggle('is-disabled', disabled);
+        btnPlay.title = isXuanhuo
+          ? !hasCard
+            ? '请先选择一张红桃手牌'
+            : n < 1
+              ? '请再选择一名其他角色'
+              : '确认发动技能'
+          : n < 1
+            ? '请先点击一名可选角色'
+            : '确认发动技能';
+      }
+      if (btnRecast) {
+        btnRecast.hidden = true;
+        btnRecast.disabled = true;
+      }
+      if (btnEnd) {
+        btnEnd.hidden = false;
+        btnEnd.textContent = '取消';
+        btnEnd.title = '取消发动技能';
+        btnEnd.disabled = false;
+        btnEnd.classList.remove('is-disabled');
+      }
+      // 预启动技能时同步置灰非法手牌/目标
+      syncHandSelectionAppearance(game);
+      syncOpponentSeatTargetClasses(game);
+      if (opts.rebuildSkills !== false) {
+        renderActiveSkills(game, net, true);
+      }
+      return;
+    }
+
+    if (isMuniuSkillPending()) {
+      const sk = state.pendingSkill;
+      const meHand =
+        ((game.players || []).find((p) => game.me && p.id === game.me.id) || {})
+          .hand || [];
+      const hasCard = Boolean(
+        state.selectedCardId &&
+          meHand.some((c) => c.id === state.selectedCardId)
+      );
+      const hintEl = $('sgs-target-hint');
+      if (hintEl) {
+        hintEl.textContent =
+          `【${sk.skillName || '木牛流马'}】：请选择一张手牌置于木牛流马上（再点技能取消）`;
+        hintEl.classList.add('is-warn');
+      }
+      if (btnPlay) {
+        btnPlay.hidden = false;
+        btnPlay.textContent = '确认发动';
+        btnPlay.disabled = !hasCard;
+        btnPlay.classList.toggle('is-disabled', !hasCard);
+        btnPlay.title = hasCard ? '确认发动' : '请先选择一张手牌';
+      }
+      if (btnRecast) {
+        btnRecast.hidden = true;
+        btnRecast.disabled = true;
+      }
+      if (btnEnd) {
+        btnEnd.hidden = false;
+        btnEnd.textContent = '取消';
+        btnEnd.title = '取消发动技能';
+        btnEnd.disabled = false;
+        btnEnd.classList.remove('is-disabled');
+      }
+      if (opts.rebuildSkills !== false) {
+        renderActiveSkills(game, net, true);
+      }
+      return;
+    }
+
     if (btnPlay) btnPlay.textContent = '确认出牌';
     if (btnEnd) btnEnd.textContent = '结束出牌';
 
@@ -3268,6 +3795,12 @@ window.SgsUi = (function () {
       game.me.isMyTurn &&
       game.turnPhase === 'play' &&
       !game.pending;
+    const canEndPlay = Boolean(
+      game.me &&
+      (game.me.canEndPlay != null
+        ? game.me.canEndPlay
+        : canPlayPhase)
+    );
 
     if (hint) {
       hint.textContent =
@@ -3278,7 +3811,14 @@ window.SgsUi = (function () {
           : '';
     }
     if (btnPlay) btnPlay.hidden = !canPlayPhase;
-    if (btnEnd) btnEnd.hidden = !canPlayPhase;
+    if (btnEnd) {
+      btnEnd.hidden = !canEndPlay;
+      btnEnd.disabled = !canEndPlay;
+      btnEnd.classList.toggle('is-disabled', !canEndPlay);
+      if (canEndPlay) {
+        btnEnd.title = '结束出牌阶段';
+      }
+    }
 
     const selectedCard = findSelectedCard(game);
     const guide = getCardPlayGuide(game, selectedCard);
@@ -3334,6 +3874,241 @@ window.SgsUi = (function () {
     }
   }
 
+  function ensureMuniuHandEl() {
+    let root = $('sgs-hand-muniu');
+    if (root) return root;
+    const wrap = $('sgs-hand-wrap');
+    const hand = $('sgs-hand');
+    if (!wrap || !hand) return null;
+    root = document.createElement('div');
+    root.id = 'sgs-hand-muniu';
+    root.className = 'sgs-hand-muniu';
+    root.hidden = true;
+    root.innerHTML =
+      '<div class="sgs-hand-muniu-label">木牛</div>' +
+      '<div class="sgs-hand-muniu-stack sgs-hand sgs-hand-stack"></div>';
+    hand.insertAdjacentElement('afterend', root);
+    return root;
+  }
+
+  function handleSelfPlayableCardClick(c, game, net, opts) {
+    opts = opts || {};
+    if (opts.fromMuniu && isMuniuSkillPending()) return;
+    if (isXuanhuoSkillPending()) {
+      const allowed = xuanhuoSelectableCardIds(game);
+      if (!allowed.includes(c.id)) return;
+    }
+
+    const g = state.game || game;
+    const n = state.net || net;
+    const pend = g.pending;
+    const pickMode = getOwnHandPickMode(pend);
+    if (pickMode) {
+      if (toggleHandPickCard(c.id, g, n)) return;
+    }
+    if (
+      state.pendingViewAs &&
+      (state.pendingViewAs.usableCardIds || []).includes(c.id)
+    ) {
+      state.selectedCardId =
+        state.selectedCardId === c.id ? null : c.id;
+      state.selectedTargets = [];
+      state.skillCardPick = [];
+      state.allowMultiSelect = false;
+      refreshLocalSelection(g, n);
+      return;
+    }
+    if (state.pendingViewAs) {
+      return;
+    }
+    const multi = Boolean(state.allowMultiSelect);
+    if (multi) {
+      if (!state.skillCardPick) state.skillCardPick = [];
+      const activeRule =
+        (state.pendingSkill && MULTI_SKILL_RULES[state.pendingSkill.skillId]) ||
+        null;
+      const idx = state.skillCardPick.indexOf(c.id);
+      if (idx >= 0) state.skillCardPick.splice(idx, 1);
+      else if (
+        !activeRule ||
+        !activeRule.max ||
+        state.skillCardPick.length < activeRule.max
+      ) {
+        state.skillCardPick.push(c.id);
+      }
+      state.selectedCardId =
+        state.skillCardPick[state.skillCardPick.length - 1] || null;
+    } else {
+      state.skillCardPick = [];
+      const nextId = state.selectedCardId === c.id ? null : c.id;
+      if (
+        nextId !== state.selectedCardId &&
+        !isPendingSeatTargeting(g.pending)
+      ) {
+        state.selectedTargets = [];
+      }
+      state.selectedCardId = nextId;
+    }
+    refreshLocalSelection(g, n);
+  }
+
+  function buildSelfPlayableCardBtn(c, game, net, multi, opts) {
+    const selected = multi
+      ? (state.skillCardPick || []).includes(c.id)
+      : state.selectedCardId === c.id;
+    const card = Object.assign({}, c, {
+      onMuniu: Boolean(opts && opts.fromMuniu),
+      muniuLabel: opts && opts.fromMuniu ? '木牛' : c.muniuLabel,
+    });
+    const btn = A().createCardEl(card, {
+      selectable: true,
+      selected: false,
+      size: 'md',
+      title: '',
+    });
+    if (selected) btn.dataset.pendingSelected = '1';
+    if (
+      state._incomingHandFx &&
+      state._incomingHandFx.cardIds.includes(c.id)
+    ) {
+      btn.classList.add('is-steal-incoming');
+    }
+    btn.addEventListener('click', () => {
+      handleSelfPlayableCardClick(c, game, net, opts);
+    });
+    if (
+      state.pendingViewAs &&
+      (state.pendingViewAs.usableCardIds || []).includes(c.id)
+    ) {
+      btn.style.outline = '2px solid #5ecf98';
+    }
+    if (A().bindCardHoverPreview) A().bindCardHoverPreview(btn, card);
+    return btn;
+  }
+
+  function syncPlayableStackSelection(game, stack) {
+    if (!stack) return;
+    const multi = Boolean(state.allowMultiSelect);
+    const xuanhuoArmed = isXuanhuoSkillPending();
+    const xuanhuoSet = xuanhuoArmed
+      ? new Set(xuanhuoSelectableCardIds(game))
+      : null;
+    const viewAsIds = state.pendingViewAs
+      ? state.pendingViewAs.usableCardIds || []
+      : [];
+    const respond = ensureHandRespondSelection(game);
+    let respondIds = respond ? new Set(respond.ids) : null;
+    if (!respondIds) {
+      const seatIds = listSeatSkillHandIds(game);
+      if (seatIds && seatIds.length) respondIds = new Set(seatIds);
+    }
+    const viewAsArmed = Boolean(state.pendingViewAs) && !respondIds;
+    const viewAsSet = viewAsArmed ? new Set(viewAsIds) : null;
+    stack.querySelectorAll('.sgs-kapai[data-card-id]').forEach((btn) => {
+      const id = btn.dataset.cardId;
+      const selected = multi
+        ? (state.skillCardPick || []).includes(id)
+        : state.selectedCardId === id;
+      btn.classList.toggle('selected', selected);
+      if (respondIds) {
+        const ok = respondIds.has(id);
+        btn.classList.toggle('is-respond-ok', ok);
+        btn.classList.toggle('is-respond-dim', !ok);
+        btn.classList.remove('is-viewas-ok', 'is-viewas-dim');
+        if (ok && !selected) {
+          btn.style.outline = '2px solid rgba(94, 207, 152, 0.7)';
+        } else if (!selected) {
+          btn.style.outline = '';
+        } else {
+          btn.style.outline = '';
+        }
+      } else if (viewAsSet) {
+        const ok = viewAsSet.has(id);
+        btn.classList.toggle('is-viewas-ok', ok);
+        btn.classList.toggle('is-viewas-dim', !ok);
+        btn.classList.remove('is-respond-ok', 'is-respond-dim');
+        if (ok && !selected) {
+          btn.style.outline = '2px solid rgba(232, 184, 106, 0.85)';
+        } else if (!selected) {
+          btn.style.outline = '';
+        } else {
+          btn.style.outline = '';
+        }
+      } else if (xuanhuoSet) {
+        const ok = xuanhuoSet.has(id);
+        btn.classList.remove('is-viewas-ok', 'is-viewas-dim');
+        btn.classList.toggle('is-respond-ok', ok);
+        btn.classList.toggle('is-respond-dim', !ok);
+        if (ok && !selected) {
+          btn.style.outline = '2px solid rgba(94, 207, 152, 0.7)';
+        } else if (!selected) {
+          btn.style.outline = '';
+        } else {
+          btn.style.outline = '';
+        }
+      } else {
+        btn.classList.remove(
+          'is-respond-ok',
+          'is-respond-dim',
+          'is-viewas-ok',
+          'is-viewas-dim'
+        );
+        if (!selected) {
+          btn.style.outline = '';
+        } else {
+          btn.style.outline = '';
+        }
+      }
+    });
+  }
+
+  function renderMuniuHand(game, net, multi, needRebuild) {
+    const root = ensureMuniuHandEl();
+    if (!root) return;
+    const stack = root.querySelector('.sgs-hand-muniu-stack');
+    if (!stack) return;
+    const cards = myMuniuCards(game);
+    if (!cards.length) {
+      root.hidden = true;
+      stack.innerHTML = '';
+      stack.dataset.handKey = '';
+      stack.style.height = '';
+      return;
+    }
+    root.hidden = false;
+    const key =
+      cards.map((c) => c.id).join(',') +
+      `|n${multi ? 1 : 0}|p${(game.pending && getOwnHandPickMode(game.pending)?.id) || ''}`;
+    const rebuild = needRebuild || stack.dataset.handKey !== key;
+    if (!rebuild) {
+      syncPlayableStackSelection(game, stack);
+      layoutSelfHand(stack, state.handFocusRatio);
+      return;
+    }
+    if (A() && A().hideCardPreview) A().hideCardPreview();
+    stack.innerHTML = '';
+    stack.dataset.handKey = key;
+    cards.forEach((c) => {
+      stack.appendChild(
+        buildSelfPlayableCardBtn(c, game, net, multi, { fromMuniu: true })
+      );
+    });
+    bindHandStackInteractions(stack);
+    requestAnimationFrame(() => {
+      layoutSelfHand(stack, state.handFocusRatio);
+      requestAnimationFrame(() => {
+        stack.querySelectorAll('.sgs-kapai[data-pending-selected="1"]').forEach(
+          (el) => {
+            el.classList.add('selected');
+            delete el.dataset.pendingSelected;
+          }
+        );
+        syncPlayableStackSelection(game, stack);
+        layoutSelfHand(stack, state.handFocusRatio);
+      });
+    });
+  }
+
   function renderHand(game, net) {
     const hand = $('sgs-hand');
     const btnPlay = $('btn-sgs-play');
@@ -3344,10 +4119,45 @@ window.SgsUi = (function () {
     );
     if (!hand) return;
 
-    if (!mePlayer || !mePlayer.hand) {
+    if (!mePlayer) {
       if (A() && A().hideCardPreview) A().hideCardPreview();
       hand.innerHTML = '';
       hand.dataset.handKey = '';
+      const muniuRoot = $('sgs-hand-muniu');
+      if (muniuRoot) {
+        muniuRoot.hidden = true;
+        const mStack = muniuRoot.querySelector('.sgs-hand-muniu-stack');
+        if (mStack) {
+          mStack.innerHTML = '';
+          mStack.dataset.handKey = '';
+        }
+      }
+      const hint = $('sgs-hand-hint');
+      if (hint) hint.textContent = '';
+      if (btnPlay) btnPlay.hidden = true;
+      if (btnRecast) btnRecast.hidden = true;
+      if (btnEnd) btnEnd.hidden = true;
+      layoutSelfHand(hand, null);
+      return;
+    }
+
+    const muniuCards = myMuniuCards(game);
+    if (
+      (!mePlayer.hand || !mePlayer.hand.length) &&
+      !muniuCards.length
+    ) {
+      if (A() && A().hideCardPreview) A().hideCardPreview();
+      hand.innerHTML = '';
+      hand.dataset.handKey = '';
+      const muniuRoot = $('sgs-hand-muniu');
+      if (muniuRoot) {
+        muniuRoot.hidden = true;
+        const mStack = muniuRoot.querySelector('.sgs-hand-muniu-stack');
+        if (mStack) {
+          mStack.innerHTML = '';
+          mStack.dataset.handKey = '';
+        }
+      }
       const hint = $('sgs-hand-hint');
       if (hint) hint.textContent = '';
       if (btnPlay) btnPlay.hidden = true;
@@ -3359,102 +4169,15 @@ window.SgsUi = (function () {
 
     ensureHandRespondSelection(game);
     const multi = Boolean(state.allowMultiSelect);
-    const key = handListKey(mePlayer, multi);
+    const key = handListKey(mePlayer, multi, game);
     const needRebuild = hand.dataset.handKey !== key;
 
     if (needRebuild) {
       if (A() && A().hideCardPreview) A().hideCardPreview();
       hand.innerHTML = '';
       hand.dataset.handKey = key;
-      mePlayer.hand.forEach((c) => {
-        const selected = multi
-          ? (state.skillCardPick || []).includes(c.id)
-          : state.selectedCardId === c.id;
-        const btn = A().createCardEl(c, {
-          selectable: true,
-          // 先不带 selected，layout 后再加，才能播上浮过渡
-          selected: false,
-          size: 'md',
-          title: '',
-        });
-        if (selected) btn.dataset.pendingSelected = '1';
-        btn.addEventListener('click', () => {
-          const g = state.game || game;
-          const n = state.net || net;
-          const pend = g.pending;
-          const pickMode = getOwnHandPickMode(pend);
-          if (pickMode) {
-            const info = ensureHandRespondSelection(g);
-            const ids = (info && info.ids) || [];
-            if (!ids.includes(c.id)) return;
-            if (pickMode.max > 1) {
-              if (!state.skillCardPick) state.skillCardPick = [];
-              const idx = state.skillCardPick.indexOf(c.id);
-              if (idx >= 0) state.skillCardPick.splice(idx, 1);
-              else if (state.skillCardPick.length < pickMode.max) {
-                state.skillCardPick.push(c.id);
-              }
-              state.selectedCardId =
-                state.skillCardPick[state.skillCardPick.length - 1] || null;
-            } else {
-              state.selectedCardId =
-                state.selectedCardId === c.id ? null : c.id;
-              state.skillCardPick = [];
-            }
-            state.allowMultiSelect = pickMode.max > 1;
-            refreshLocalSelection(g, n);
-            return;
-          }
-          if (
-            state.pendingViewAs &&
-            (state.pendingViewAs.usableCardIds || []).includes(c.id)
-          ) {
-            // 转化技已准备：只选牌，等确认出牌（带目标）再发送
-            state.selectedCardId =
-              state.selectedCardId === c.id ? null : c.id;
-            state.selectedTargets = [];
-            state.skillCardPick = [];
-            state.allowMultiSelect = false;
-            refreshLocalSelection(g, n);
-            return;
-          }
-          if (state.pendingViewAs) {
-            // 已发动转化技时，非可用牌不可选
-            return;
-          }
-          if (multi) {
-            if (!state.skillCardPick) state.skillCardPick = [];
-            const activeRule =
-              (state.pendingSkill && MULTI_SKILL_RULES[state.pendingSkill.skillId]) ||
-              null;
-            const idx = state.skillCardPick.indexOf(c.id);
-            if (idx >= 0) state.skillCardPick.splice(idx, 1);
-            else if (!activeRule || !activeRule.max || state.skillCardPick.length < activeRule.max) {
-              state.skillCardPick.push(c.id);
-            }
-            state.selectedCardId =
-              state.skillCardPick[state.skillCardPick.length - 1] || null;
-          } else {
-            state.skillCardPick = [];
-            const nextId = state.selectedCardId === c.id ? null : c.id;
-            if (
-              nextId !== state.selectedCardId &&
-              !isPendingSeatTargeting(g.pending)
-            ) {
-              state.selectedTargets = [];
-            }
-            state.selectedCardId = nextId;
-          }
-          refreshLocalSelection(g, n);
-        });
-        if (
-          state.pendingViewAs &&
-          (state.pendingViewAs.usableCardIds || []).includes(c.id)
-        ) {
-          btn.style.outline = '2px solid #5ecf98';
-        }
-        if (A().bindCardHoverPreview) A().bindCardHoverPreview(btn, c);
-        hand.appendChild(btn);
+      (mePlayer.hand || []).forEach((c) => {
+        hand.appendChild(buildSelfPlayableCardBtn(c, game, net, multi));
       });
       bindHandStackInteractions(hand);
       requestAnimationFrame(() => {
@@ -3475,6 +4198,8 @@ window.SgsUi = (function () {
       syncHandSelectionAppearance(game);
       layoutSelfHand(hand, state.handFocusRatio);
     }
+
+    renderMuniuHand(game, net, multi, needRebuild);
 
     updateHandPlayChrome(game, net, { rebuildSkills: true });
   }
@@ -3613,6 +4338,32 @@ window.SgsUi = (function () {
     });
   }
 
+  function playerGeneralForTip(player) {
+    if (!player || player.generalHidden || !player.generalId) return null;
+    return {
+      id: player.generalId,
+      name: player.generalName || player.generalId,
+      country: player.country || '',
+      maxHp: player.maxHp,
+      skills: Array.isArray(player.skills) ? player.skills : [],
+    };
+  }
+
+  function bindPlayerGeneralHoverTip(el, player) {
+    const general = playerGeneralForTip(player);
+    if (el && general) bindGeneralHoverTip(el, general);
+  }
+
+  function guardInactiveSkillBtn(btn) {
+    if (!btn) return;
+    btn.disabled = false;
+    btn.setAttribute('aria-disabled', 'true');
+    btn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+    });
+  }
+
   function bindSkillHoverTip(el, skill) {
     if (!el || !skill) return;
     const key = skill.id || skill.name;
@@ -3699,10 +4450,10 @@ window.SgsUi = (function () {
         const b = document.createElement('button');
         b.type = 'button';
         b.className = 'sgs-skill-btn is-disabled';
-        b.disabled = true;
         b.textContent = sk.name;
         b.removeAttribute('title');
         bindSkillHoverTip(b, sk);
+        guardInactiveSkillBtn(b);
         bar.appendChild(b);
       }
       appendLordSkills();
@@ -3719,12 +4470,15 @@ window.SgsUi = (function () {
           : sk.status === 'used'
             ? ' is-used'
             : ' is-disabled');
-      b.disabled = !sk.canClick;
       b.textContent = sk.name;
       b.removeAttribute('title');
       bindSkillHoverTip(b, sk);
-      if (sk.canClick || (state.pendingViewAs && state.pendingViewAs.skillId === sk.id)) {
+      const canInteract =
+        sk.canClick ||
+        (state.pendingViewAs && state.pendingViewAs.skillId === sk.id);
+      if (canInteract) {
         b.disabled = false;
+        b.setAttribute('aria-disabled', 'false');
         b.addEventListener('click', () => {
           if (sk.type === 'viewAs') {
             const to = sk.viewAsTo;
@@ -3765,6 +4519,60 @@ window.SgsUi = (function () {
               hint.textContent = `【${sk.name}】已准备：请选择可用手牌${
                 to === 'sha' ? '与攻击目标' : ''
               }，再点「确认出牌」（再点技能取消）`;
+              hint.classList.add('is-warn');
+            }
+            render(game, net);
+            return;
+          }
+
+          if (SEAT_TARGET_ACTIVE_SKILLS.has(sk.id)) {
+            if (state.pendingSkill && state.pendingSkill.skillId === sk.id) {
+              state.pendingSkill = null;
+              state.selectedCardId = null;
+              state.selectedTargets = [];
+              if (hint) {
+                hint.textContent = '';
+                hint.classList.remove('is-warn');
+              }
+              render(game, net);
+              return;
+            }
+            state.pendingSkill = { skillId: sk.id, skillName: sk.name };
+            state.pendingViewAs = null;
+            state.allowMultiSelect = false;
+            state.skillCardPick = [];
+            state.selectedCardId = null;
+            state.selectedTargets = [];
+            if (hint) {
+              hint.textContent = sk.id === 'xuanhuo'
+                ? `【${sk.name}】：请选择一张红桃手牌，再选择一名其他角色，最后点「确认发动」（再点技能取消）`
+                : `【${sk.name}】：请选择攻击范围内含有你的一名角色，再点「确认发动」（再点技能取消）`;
+              hint.classList.add('is-warn');
+            }
+            render(game, net);
+            return;
+          }
+
+          if (sk.id === MUNIU_SKILL_ID) {
+            if (state.pendingSkill && state.pendingSkill.skillId === sk.id) {
+              state.pendingSkill = null;
+              state.selectedCardId = null;
+              if (hint) {
+                hint.textContent = '';
+                hint.classList.remove('is-warn');
+              }
+              render(game, net);
+              return;
+            }
+            state.pendingSkill = { skillId: sk.id, skillName: sk.name };
+            state.pendingViewAs = null;
+            state.allowMultiSelect = false;
+            state.skillCardPick = [];
+            state.selectedCardId = null;
+            state.selectedTargets = [];
+            if (hint) {
+              hint.textContent =
+                `【${sk.name}】：请选择一张手牌置于木牛流马上，再点「确认发动」（再点技能取消）`;
               hint.classList.add('is-warn');
             }
             render(game, net);
@@ -3864,8 +4672,14 @@ window.SgsUi = (function () {
           state.pendingSkill = null;
           state.pendingViewAs = null;
         });
+      } else {
+        guardInactiveSkillBtn(b);
       }
       if (state.pendingViewAs && state.pendingViewAs.skillId === sk.id) {
+        b.classList.add('is-armed');
+        b.classList.remove('is-disabled');
+      }
+      if (state.pendingSkill && state.pendingSkill.skillId === sk.id) {
         b.classList.add('is-armed');
         b.classList.remove('is-disabled');
       }
@@ -3875,102 +4689,188 @@ window.SgsUi = (function () {
     appendLordSkills();
   }
 
-  function renderPileReorder(pend, net, cardsEl, actionsEl, msg) {
-    msg.textContent = pend.message || '调整牌堆';
-    const idsKey = (pend.cardIds || []).slice().sort().join(',');
-    if (state._pileKey !== idsKey) {
-      state._pileKey = idsKey;
-      state.pilePool = (pend.cardIds || []).slice();
-      state.pileTop = [];
-      state.pileBottom = [];
-    }
-    if (!state.pilePool) state.pilePool = (pend.cardIds || []).slice();
-    if (!state.pileTop) state.pileTop = [];
-    if (!state.pileBottom) state.pileBottom = [];
+  function resetGuanxingSlots(pend) {
+    const ids = (pend.cardIds || []).slice();
+    const n = ids.length;
+    state._guanxingKey = ids.join(',');
+    state.guanxingTop = ids.slice();
+    while (state.guanxingTop.length < n) state.guanxingTop.push(null);
+    state.guanxingBottom = new Array(n).fill(null);
+    state.guanxingSelected = null;
+  }
 
+  function guanxingZoneSlots(zone) {
+    return zone === 'bottom' ? state.guanxingBottom : state.guanxingTop;
+  }
+
+  function moveGuanxingCard(fromZone, fromIdx, toZone, toIdx) {
+    const fromList = guanxingZoneSlots(fromZone);
+    const toList = guanxingZoneSlots(toZone);
+    const fromId = fromList[fromIdx];
+    if (!fromId) return;
+    const toId = toList[toIdx];
+    fromList[fromIdx] = toId || null;
+    toList[toIdx] = fromId;
+    state.guanxingSelected = null;
+  }
+
+  function showGuanxingModal(pend, net) {
+    const modal = $('sgs-modal');
+    const panel = $('sgs-modal-panel');
+    const title = $('sgs-modal-title');
+    const hint = $('sgs-modal-hint');
+    const body = $('sgs-modal-body');
+    const actions = $('sgs-modal-actions');
+    if (!modal || !body || !actions) return;
+
+    const idsKey = (pend.cardIds || []).join(',');
+    if (state._guanxingKey !== idsKey) resetGuanxingSlots(pend);
+
+    const n = (pend.cardIds || []).length;
     const byId = {};
     for (const c of pend.shown || []) byId[c.id] = c;
 
-    const moveCycle = (id, fromList) => {
-      const i = fromList.indexOf(id);
-      if (i < 0) return;
-      fromList.splice(i, 1);
-      if (fromList === state.pilePool) state.pileTop.push(id);
-      else if (fromList === state.pileTop) state.pileBottom.push(id);
-      else state.pilePool.push(id);
-      paint();
-    };
+    modal.hidden = false;
+    if (panel) {
+      panel.classList.add('sgs-modal-panel--cards');
+      panel.classList.add('sgs-modal-panel--guanxing');
+    }
+    body.classList.add('sgs-modal-body--cards');
+    if (title) {
+      title.textContent = pend.skillName ? `【${pend.skillName}】` : '观星';
+    }
+    if (hint) {
+      hint.textContent =
+        pend.message ||
+        '将上方牌拖至下方空位表示置于牌堆底；留在上方即置于牌堆顶';
+    }
 
     const paint = () => {
-      cardsEl.innerHTML = '';
-      actionsEl.innerHTML = '';
-      const zones = [
-        ['待分配', state.pilePool],
-        ['牌堆顶（先摸到）', state.pileTop],
-        ['牌堆底', state.pileBottom],
-      ];
-      for (const [title, list] of zones) {
+      body.innerHTML = '';
+      actions.innerHTML = '';
+
+      const root = document.createElement('div');
+      root.className = 'sgs-guanxing';
+
+      const buildZone = (zone, label) => {
         const wrap = document.createElement('div');
-        wrap.className = 'sgs-pile-zone';
-        const h = document.createElement('div');
-        h.className = 'sgs-pile-zone-title';
-        h.textContent = `${title}（${list.length}）`;
-        wrap.appendChild(h);
+        wrap.className = 'sgs-guanxing-zone';
+        const tag = document.createElement('div');
+        tag.className = 'sgs-guanxing-zone-title';
+        tag.textContent = label;
+        wrap.appendChild(tag);
+
         const row = document.createElement('div');
-        row.className = 'sgs-hand';
-        list.forEach((id, idx) => {
-          const c = byId[id];
-          if (!c) return;
-          const cell = document.createElement('div');
-          cell.className = 'sgs-pile-card-cell';
-          const btn = makeSelectableCard(c, () => moveCycle(id, list));
-          cell.appendChild(btn);
-          if (list !== state.pilePool) {
-            const up = document.createElement('button');
-            up.type = 'button';
-            up.className = 'sgs-pile-move';
-            up.textContent = '↑';
-            up.title = '上移';
-            up.addEventListener('click', (e) => {
-              e.stopPropagation();
-              if (idx > 0) {
-                const t = list[idx - 1];
-                list[idx - 1] = list[idx];
-                list[idx] = t;
-                paint();
-              }
+        row.className = 'sgs-guanxing-slots';
+        const slots = guanxingZoneSlots(zone);
+        for (let i = 0; i < n; i++) {
+          const slot = document.createElement('div');
+          slot.className = 'sgs-guanxing-slot';
+          slot.dataset.zone = zone;
+          slot.dataset.idx = String(i);
+          const cardId = slots[i];
+          const selected =
+            state.guanxingSelected &&
+            state.guanxingSelected.zone === zone &&
+            state.guanxingSelected.idx === i;
+          if (selected) slot.classList.add('is-selected');
+
+          slot.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            slot.classList.add('is-drag-over');
+          });
+          slot.addEventListener('dragleave', () => {
+            slot.classList.remove('is-drag-over');
+          });
+          slot.addEventListener('drop', (e) => {
+            e.preventDefault();
+            slot.classList.remove('is-drag-over');
+            const drag = state.guanxingDrag;
+            if (!drag) return;
+            moveGuanxingCard(drag.zone, drag.idx, zone, i);
+            paint();
+          });
+          slot.addEventListener('click', () => {
+            const sel = state.guanxingSelected;
+            if (!sel) {
+              if (cardId) state.guanxingSelected = { zone, idx: i };
+              paint();
+              return;
+            }
+            if (sel.zone === zone && sel.idx === i) {
+              state.guanxingSelected = null;
+              paint();
+              return;
+            }
+            moveGuanxingCard(sel.zone, sel.idx, zone, i);
+            paint();
+          });
+
+          if (cardId && byId[cardId]) {
+            const cardEl = makeSelectableCard(byId[cardId], () => {}, selected);
+            cardEl.draggable = true;
+            cardEl.addEventListener('dragstart', (e) => {
+              state.guanxingDrag = { zone, idx: i };
+              e.dataTransfer.effectAllowed = 'move';
             });
-            cell.appendChild(up);
+            cardEl.addEventListener('dragend', () => {
+              state.guanxingDrag = null;
+            });
+            cardEl.addEventListener('click', (e) => {
+              e.stopPropagation();
+              slot.click();
+            });
+            slot.appendChild(cardEl);
+          } else {
+            const empty = document.createElement('div');
+            empty.className = 'sgs-guanxing-slot-empty';
+            empty.textContent = zone === 'top' ? '顶' : '底';
+            slot.appendChild(empty);
           }
-          row.appendChild(cell);
-        });
+          row.appendChild(slot);
+        }
         wrap.appendChild(row);
-        cardsEl.appendChild(wrap);
-      }
-      const hint = document.createElement('p');
-      hint.className = 'muted';
-      hint.textContent =
-        '点击卡牌：待分配 → 堆顶 → 堆底 → 待分配；点 ↑ 调整同区顺序';
-      cardsEl.appendChild(hint);
+        return wrap;
+      };
+
+      root.appendChild(
+        buildZone('top', `牌堆顶（${n} 张，从左到右先摸到）`)
+      );
+      root.appendChild(
+        buildZone('bottom', `牌堆底（${n} 个空位，拖入即置底）`)
+      );
+      body.appendChild(root);
+
+      const tip = document.createElement('p');
+      tip.className = 'muted sgs-guanxing-tip';
+      tip.textContent =
+        '拖拽或点选卡牌后点目标位：上方留牌=牌堆顶，移到下方=牌堆底；同区可换位调整顺序';
+      body.appendChild(tip);
+
       const conf = document.createElement('button');
       conf.type = 'button';
       conf.textContent = '确认放置';
       conf.addEventListener('click', () => {
-        if (state.pilePool.length) {
-          alert('请先分配完全部牌');
+        const topIds = (state.guanxingTop || []).filter(Boolean);
+        const bottomIds = (state.guanxingBottom || []).filter(Boolean);
+        const used = topIds.length + bottomIds.length;
+        if (used !== n) {
+          alert('请分配全部观星牌');
           return;
         }
         net.sendAction('respond', {
-          topIds: state.pileTop.slice(),
-          bottomIds: state.pileBottom.slice(),
+          topIds: topIds.slice(),
+          bottomIds: bottomIds.slice(),
         });
-        state.pilePool = null;
-        state.pileTop = null;
-        state.pileBottom = null;
-        state._pileKey = null;
+        state._guanxingKey = null;
+        state.guanxingTop = null;
+        state.guanxingBottom = null;
+        state.guanxingSelected = null;
+        hideSgsModal();
       });
-      actionsEl.appendChild(conf);
+      actions.appendChild(conf);
     };
+
     paint();
   }
 
@@ -3998,6 +4898,28 @@ window.SgsUi = (function () {
     if (cards) cards.innerHTML = '';
     if (actions) actions.innerHTML = '';
     return { msg, cards, actions };
+  }
+
+  function showBaguaAskBar(pend, net) {
+    const { actions } = openPromptBar(
+      pend.message || '是否发动【八卦阵】进行判定？'
+    );
+    if (!actions) return;
+    const yes = document.createElement('button');
+    yes.type = 'button';
+    yes.textContent = '发动【八卦阵】';
+    yes.addEventListener('click', () => {
+      net.sendAction('respond', { pass: false });
+    });
+    actions.appendChild(yes);
+    const no = document.createElement('button');
+    no.type = 'button';
+    no.className = 'secondary';
+    no.textContent = '不发动';
+    no.addEventListener('click', () => {
+      net.sendAction('respond', { pass: true });
+    });
+    actions.appendChild(no);
   }
 
   function showSkillAskBar(pend, net) {
@@ -4033,7 +4955,8 @@ window.SgsUi = (function () {
         (pend.skillId === 'liuli' ||
         pend.skillId === 'tianxiang' ||
         pend.skillId === 'jujian' ||
-        pend.skillId === 'haoshi'
+        pend.skillId === 'haoshi' ||
+        pend.skillId === 'yiji'
           ? '；手牌请在下方选择'
           : '') +
         '）'
@@ -4045,7 +4968,8 @@ window.SgsUi = (function () {
       pend.skillId === 'liuli' ||
       pend.skillId === 'tianxiang' ||
       pend.skillId === 'jujian' ||
-      pend.skillId === 'haoshi';
+      pend.skillId === 'haoshi' ||
+      pend.skillId === 'yiji';
     if (needOwnCards) {
       const multi = pend.skillId === 'haoshi' || pend.skillId === 'jujian';
       state.allowMultiSelect = multi;
@@ -4075,7 +4999,10 @@ window.SgsUi = (function () {
         ? (state.skillCardPick || []).length === Number(pend.giveCount)
         : pend.skillId === 'jujian'
           ? (state.skillCardPick || []).length >= 1
-          : Boolean(state.selectedCardId));
+          : pend.skillId === 'yiji'
+            ? Boolean(state.selectedCardId) &&
+              (pend.cardIds || []).includes(state.selectedCardId)
+            : Boolean(state.selectedCardId));
     conf.disabled = n < min || (max > 0 && n > max) || !cardOk;
     conf.addEventListener('click', () => {
       if ((state.selectedTargets || []).length < min) {
@@ -4113,6 +5040,8 @@ window.SgsUi = (function () {
 
   function isSeatTargetSkillEffect(pend) {
     if (!pend || pend.type !== 'skill_effect') return false;
+    if (pend.skillId === MUNIU_SKILL_ID && pend.step === 'transfer') return true;
+    if (pend.skillId === 'yiji') return true;
     if (
       pend.skillId === 'tuxi' ||
       pend.skillId === 'liuli' ||
@@ -4185,6 +5114,341 @@ window.SgsUi = (function () {
   }
 
   function showHuogongRevealModal(pend) {
+    showCardRevealModal(pend, state.net, { title: '火攻', hint: '已展示手牌：对所有人明示' });
+  }
+
+  function cardRevealKey(pend) {
+    if (!pend) return '';
+    const ids = (pend.shown || []).map((c) => (c && c.id) || c).join(',');
+    return `${pend.type}:${pend.skillId || ''}:${ids}:${pend.message || ''}`;
+  }
+
+  function clearCardRevealTimers() {
+    (state._cardRevealTimers || []).forEach((t) => clearTimeout(t));
+    state._cardRevealTimers = [];
+    if (state._cardRevealAutoAck) {
+      clearTimeout(state._cardRevealAutoAck);
+      state._cardRevealAutoAck = null;
+    }
+    state._cardRevealKey = null;
+    state._cardRevealSent = false;
+  }
+
+  function revealAckDelayMs(pend, extraMs = 0) {
+    const minMs = (pend && pend.revealMinMs) || REVEAL_MIN_MS;
+    return Math.max(minMs, extraMs);
+  }
+
+  function sendCardRevealAck(net) {
+    if (state._cardRevealSent || !net) return;
+    state._cardRevealSent = true;
+    hideSgsModal();
+    clearCardRevealTimers();
+    net.sendAction('respond', {});
+  }
+
+  /** 统一展示弹框：全员可见，至少停留 REVEAL_MIN_MS */
+  function showCardRevealModal(pend, net, opts = {}) {
+    const modal = $('sgs-modal');
+    const panel = $('sgs-modal-panel');
+    const title = $('sgs-modal-title');
+    const hint = $('sgs-modal-hint');
+    const body = $('sgs-modal-body');
+    const actions = $('sgs-modal-actions');
+    if (!modal || !body || !actions) return;
+
+    const key = cardRevealKey(pend);
+    const resumeSame =
+      state._cardRevealKey === key && body.dataset.cardReveal === key;
+
+    modal.hidden = false;
+    if (panel) panel.classList.add('sgs-modal-panel--cards');
+    body.classList.add('sgs-modal-body--cards');
+    if (title) {
+      title.textContent =
+        opts.title || pend.title || pend.skillName || '展示';
+    }
+    if (hint) {
+      hint.textContent = opts.hint || pend.message || '对所有人明示';
+    }
+
+    if (resumeSame) {
+      return;
+    }
+
+    state._cardRevealKey = key;
+    state._cardRevealSent = false;
+    body.dataset.cardReveal = key;
+    body.innerHTML = '';
+    actions.innerHTML = '';
+
+    const row = document.createElement('div');
+    row.className = 'sgs-modal-zone-cards';
+    for (const c of pend.shown || []) {
+      row.appendChild(makeSelectableCard(c, () => {}, false));
+    }
+    if (!row.childElementCount) {
+      const empty = document.createElement('div');
+      empty.className = 'muted';
+      empty.textContent = '无牌可展示';
+      body.appendChild(empty);
+    } else {
+      body.appendChild(row);
+    }
+
+    const ackDelay = revealAckDelayMs(pend);
+
+    if (pend.forMe) {
+      const conf = document.createElement('button');
+      conf.type = 'button';
+      conf.disabled = true;
+      conf.textContent = '确认';
+      conf.addEventListener('click', () => sendCardRevealAck(net));
+      actions.appendChild(conf);
+      const tEnable = setTimeout(() => {
+        conf.disabled = false;
+      }, ackDelay);
+      state._cardRevealTimers = [tEnable];
+      state._cardRevealAutoAck = setTimeout(() => {
+        state._cardRevealAutoAck = null;
+        if (
+          state.game &&
+          state.game.pending &&
+          state.game.pending.type === 'card_reveal' &&
+          cardRevealKey(state.game.pending) === key &&
+          pend.forMe
+        ) {
+          sendCardRevealAck(net);
+        }
+      }, ackDelay);
+    } else {
+      const tip = document.createElement('p');
+      tip.className = 'muted';
+      tip.textContent = '展示中…';
+      actions.appendChild(tip);
+    }
+  }
+
+  /** 延时锦囊判定展示：左判定牌 → 缓一下 → 翻判定结果 → 显示生效/失效 */
+  function showJudgeRevealModal(game, pend, net) {
+    const modal = $('sgs-modal');
+    const panel = $('sgs-modal-panel');
+    const title = $('sgs-modal-title');
+    const hint = $('sgs-modal-hint');
+    const body = $('sgs-modal-body');
+    const actions = $('sgs-modal-actions');
+    if (!modal || !body || !actions) return;
+
+    const animKey = `${pend.cardId || ''}:${pend.resultCardId || ''}:${pend.outcomeKind || ''}`;
+    const resumeSame =
+      state._judgeRevealKey === animKey && body.dataset.judgeReveal === animKey;
+
+    modal.hidden = false;
+    if (panel) {
+      panel.classList.add('sgs-modal-panel--cards');
+      panel.classList.add('sgs-modal-panel--judge');
+    }
+    body.classList.add('sgs-modal-body--cards');
+    if (title) {
+      title.textContent =
+        pend.judgeKind === 'skill' && (pend.skillName || pend.cardName)
+          ? `判定【${pend.skillName || pend.cardName}】`
+          : pend.cardName
+            ? `判定【${pend.cardName}】`
+            : '判定';
+    }
+    if (hint) {
+      hint.textContent = pend.message || '判定中…';
+    }
+
+    if (resumeSame) {
+      const shown = body.querySelector('.sgs-judge-outcome:not(.is-pending)');
+      if (shown) {
+        actions.innerHTML = '';
+        appendJudgeRevealActions(actions, pend, net);
+      }
+      return;
+    }
+
+    state._judgeRevealKey = animKey;
+    state._judgeRevealSent = false;
+    body.dataset.judgeReveal = animKey;
+    body.innerHTML = '';
+    actions.innerHTML = '';
+
+    const stage = document.createElement('div');
+    stage.className = 'sgs-judge-reveal';
+    const leftCol = document.createElement('div');
+    leftCol.className = 'sgs-judge-reveal-col';
+    const leftLabel = document.createElement('div');
+    leftLabel.className = 'sgs-judge-reveal-label';
+    leftLabel.textContent =
+      pend.judgeKind === 'skill'
+        ? pend.skillName || pend.cardName || '技能'
+        : pend.judgeKind === 'bagua'
+          ? '八卦阵'
+          : '判定牌';
+    leftCol.appendChild(leftLabel);
+    const delayed = pend.triggerCard || null;
+    if (delayed) {
+      leftCol.appendChild(makeSelectableCard(delayed, () => {}, false));
+    } else if (pend.judgeKind === 'skill') {
+      const skillTag = document.createElement('div');
+      skillTag.className = 'sgs-judge-skill-tag';
+      skillTag.textContent = pend.skillName || pend.cardName || '技能判定';
+      leftCol.appendChild(skillTag);
+    } else {
+      const empty = document.createElement('div');
+      empty.className = 'muted';
+      empty.textContent = pend.cardName || '—';
+      leftCol.appendChild(empty);
+    }
+
+    const rightCol = document.createElement('div');
+    rightCol.className = 'sgs-judge-reveal-col';
+    const rightLabel = document.createElement('div');
+    rightLabel.className = 'sgs-judge-reveal-label';
+    rightLabel.textContent = '判定结果';
+    rightCol.appendChild(rightLabel);
+
+    const resultSlot = document.createElement('div');
+    resultSlot.className = 'sgs-judge-reveal-result';
+    const back = document.createElement('div');
+    back.className = 'sgs-judge-card-back is-waiting';
+    back.textContent = '牌堆';
+    resultSlot.appendChild(back);
+    rightCol.appendChild(resultSlot);
+
+    stage.appendChild(leftCol);
+    stage.appendChild(rightCol);
+    body.appendChild(stage);
+
+    const outcomeEl = document.createElement('div');
+    outcomeEl.className = 'sgs-judge-outcome is-pending';
+    outcomeEl.textContent = '翻开判定牌…';
+    body.appendChild(outcomeEl);
+
+    const resultCard = pend.resultCard || (pend.shown && pend.shown[0]) || null;
+    const revealDelay = 900;
+    const outcomeDelay = 700;
+    const ackDelay = revealAckDelayMs(pend, revealDelay + outcomeDelay);
+
+    const timers = state._judgeRevealTimers || [];
+    timers.forEach((t) => clearTimeout(t));
+    state._judgeRevealTimers = [];
+
+    const t1 = setTimeout(() => {
+      resultSlot.innerHTML = '';
+      if (resultCard) {
+        const face = makeSelectableCard(resultCard, () => {}, false);
+        face.classList.add('sgs-judge-flip-in');
+        resultSlot.appendChild(face);
+      } else {
+        const miss = document.createElement('div');
+        miss.className = 'muted';
+        miss.textContent = '无牌';
+        resultSlot.appendChild(miss);
+      }
+      if (hint) {
+        const suit =
+          resultCard &&
+          (resultCard.suitLabel ||
+            (resultCard.suit && String(resultCard.suit)) ||
+            '');
+        const num = resultCard && resultCard.number != null ? resultCard.number : '';
+        hint.textContent =
+          (pend.message || '判定') +
+          (suit || num ? ` → ${suit}${num}` : '');
+      }
+    }, revealDelay);
+    state._judgeRevealTimers.push(t1);
+
+    const t2 = setTimeout(() => {
+      outcomeEl.classList.remove('is-pending');
+      outcomeEl.classList.toggle('is-effective', Boolean(pend.outcomeEffective));
+      outcomeEl.classList.toggle('is-fail', pend.outcomeEffective === false);
+      outcomeEl.textContent =
+        pend.outcomeMessage ||
+        (pend.outcomeEffective ? '判定生效' : '判定失效');
+      appendJudgeRevealActions(actions, pend, net, ackDelay);
+    }, ackDelay);
+    state._judgeRevealTimers.push(t2);
+  }
+
+  function appendJudgeRevealActions(actions, pend, net, ackDelay) {
+    if (!actions) return;
+    actions.innerHTML = '';
+    const delay = ackDelay != null ? ackDelay : revealAckDelayMs(pend, 1600);
+    if (pend.forMe) {
+      const conf = document.createElement('button');
+      conf.type = 'button';
+      conf.disabled = true;
+      conf.textContent = '确认';
+      conf.addEventListener('click', () => {
+        if (state._judgeRevealSent) return;
+        state._judgeRevealSent = true;
+        hideSgsModal();
+        clearJudgeRevealTimers();
+        net.sendAction('respond', {});
+      });
+      actions.appendChild(conf);
+      const tEnable = setTimeout(() => {
+        conf.disabled = false;
+      }, delay);
+      state._judgeRevealTimers = (state._judgeRevealTimers || []).concat(tEnable);
+      if (!state._judgeRevealAutoAck) {
+        state._judgeRevealAutoAck = setTimeout(() => {
+          state._judgeRevealAutoAck = null;
+          if (state._judgeRevealSent) return;
+          if (
+            state.game &&
+            state.game.pending &&
+            state.game.pending.type === 'judge_reveal' &&
+            state.game.pending.forMe
+          ) {
+            state._judgeRevealSent = true;
+            hideSgsModal();
+            clearJudgeRevealTimers();
+            net.sendAction('respond', {});
+          }
+        }, delay);
+      }
+    } else {
+      const tip = document.createElement('p');
+      tip.className = 'muted';
+      tip.textContent = '等待判定展示结束…';
+      actions.appendChild(tip);
+    }
+  }
+
+  function clearJudgeRevealTimers() {
+    (state._judgeRevealTimers || []).forEach((t) => clearTimeout(t));
+    state._judgeRevealTimers = [];
+    if (state._judgeRevealAutoAck) {
+      clearTimeout(state._judgeRevealAutoAck);
+      state._judgeRevealAutoAck = null;
+    }
+    state._judgeRevealKey = null;
+  }
+
+  function showWuxieWaitingBar(pend) {
+    const box = $('sgs-pending');
+    if (box) {
+      box.hidden = false;
+      box.innerHTML =
+        `<div class="sgs-pending-inner">` +
+        `<p class="muted">${escapeHtml(pend.message || '无懈询问中…')}</p>` +
+        `<p><strong>已选择，等待其他玩家…</strong></p>` +
+        (pend.wuxieWaitingCount != null
+          ? `<p class="muted">尚有 ${pend.wuxieWaitingCount} 人未决定</p>`
+          : '') +
+        `</div>`;
+    }
+    hideSgsModal();
+    clearSkillAskBar();
+  }
+
+  function showWuxieRevealModal(pend, net) {
     const modal = $('sgs-modal');
     const panel = $('sgs-modal-panel');
     const title = $('sgs-modal-title');
@@ -4196,19 +5460,64 @@ window.SgsUi = (function () {
     modal.hidden = false;
     if (panel) panel.classList.add('sgs-modal-panel--cards');
     body.classList.add('sgs-modal-body--cards');
-    if (title) title.textContent = '火攻';
-    if (hint) {
-      hint.textContent = '已展示手牌：对所有人明示';
-    }
+    if (title) title.textContent = pend.countering ? '无懈响应结果' : '无懈询问结果';
+    if (hint) hint.textContent = pend.message || '全员决定完毕';
+
     body.innerHTML = '';
     actions.innerHTML = '';
 
-    const row = document.createElement('div');
-    row.className = 'sgs-modal-zone-cards';
-    for (const c of pend.shown || []) {
-      row.appendChild(makeSelectableCard(c, () => {}, false));
+    const list = document.createElement('ul');
+    list.className = 'sgs-wuxie-result-list';
+    for (const row of pend.wuxieResults || []) {
+      const li = document.createElement('li');
+      let text = row.playerName || '—';
+      if (row.pass) {
+        text += row.auto ? '：无法无懈' : '：不出无懈';
+      } else if (row.asWuxie && row.skillName) {
+        text += `：发动【${row.skillName}】当无懈`;
+      } else {
+        text += '：打出【无懈可击】';
+      }
+      li.textContent = text;
+      list.appendChild(li);
     }
-    body.appendChild(row);
+    body.appendChild(list);
+
+    const delay = revealAckDelayMs(pend, 1600);
+    if (pend.forMe) {
+      const conf = document.createElement('button');
+      conf.type = 'button';
+      conf.disabled = true;
+      conf.textContent = '确认';
+      conf.addEventListener('click', () => {
+        hideSgsModal();
+        net.sendAction('respond', {});
+      });
+      actions.appendChild(conf);
+      setTimeout(() => {
+        conf.disabled = false;
+      }, delay);
+      if (!state._wuxieRevealAutoAck) {
+        state._wuxieRevealAutoAck = setTimeout(() => {
+          state._wuxieRevealAutoAck = null;
+          if (
+            state.game &&
+            state.game.pending &&
+            state.game.pending.type === 'wuxie' &&
+            state.game.pending.wuxiePhase === 'reveal' &&
+            state.game.pending.forMe
+          ) {
+            hideSgsModal();
+            net.sendAction('respond', {});
+          }
+        }, delay);
+      }
+    } else {
+      const tip = document.createElement('p');
+      tip.className = 'muted';
+      tip.textContent = '等待结果展示结束…';
+      actions.appendChild(tip);
+    }
   }
 
   function renderPending(game, net) {
@@ -4218,19 +5527,56 @@ window.SgsUi = (function () {
     if (!pend) {
       hideSgsModal();
       clearSkillAskBar();
+      clearJudgeRevealTimers();
+      clearCardRevealTimers();
+      state._guanxingKey = null;
+      state.guanxingTop = null;
+      state.guanxingBottom = null;
+      state.guanxingSelected = null;
+      if (state.game && state.net) {
+        updateHandPlayChrome(state.game, state.net, { rebuildSkills: false });
+      }
       return;
     }
-    const keepHuogongRevealModal =
-      pend.type === 'huogong' && Boolean((pend.shown || []).length);
-    if (keepHuogongRevealModal) {
-      showHuogongRevealModal(pend);
-    } else if (!pend.forMe) {
-      hideSgsModal();
+    if (pend.type === 'card_reveal') {
       clearSkillAskBar();
+      showCardRevealModal(pend, net);
       return;
     }
+    if (pend.type === 'wuxie' && pend.wuxiePhase === 'reveal') {
+      clearSkillAskBar();
+      showWuxieRevealModal(pend, net);
+      return;
+    }
+    if (pend.type === 'wuxie' && pend.wuxieSubmitted) {
+      showWuxieWaitingBar(pend);
+      return;
+    }
+    const keepJudgeRevealModal = pend.type === 'judge_reveal';
+    if (keepJudgeRevealModal) {
+      clearSkillAskBar();
+      showJudgeRevealModal(game, pend, net);
+      return;
+    }
+    hideSgsModal();
+    clearCardRevealTimers();
     if (!pend.forMe) {
       clearSkillAskBar();
+      clearJudgeRevealTimers();
+      if (pend.type === 'wuxie' && pend.wuxiePhase === 'collect') {
+        const box = $('sgs-pending');
+        if (box) {
+          box.hidden = false;
+          box.innerHTML =
+            `<div class="sgs-pending-inner"><p class="muted">${escapeHtml(
+              pend.message || '无懈询问中…'
+            )}</p>` +
+            (pend.wuxieWaitingCount != null
+              ? `<p class="muted">等待 ${pend.wuxieWaitingCount} 人决定…</p>`
+              : '') +
+            `</div>`;
+        }
+      }
       return;
     }
     const isQicePick =
@@ -4252,9 +5598,19 @@ window.SgsUi = (function () {
       showWuguModal(pend, net);
       return;
     }
+    if (pend.type === 'pile_reorder' && pend.forMe) {
+      clearSkillAskBar();
+      showGuanxingModal(pend, net);
+      return;
+    }
     if (isOpponentZonePickPending(pend)) {
       clearSkillAskBar();
       showOpponentZonePickModal(game, pend, net);
+      return;
+    }
+    if (pend.type === 'bagua_ask') {
+      hideSgsModal();
+      showBaguaAskBar(pend, net);
       return;
     }
     if (pend.type === 'skill_ask') {
@@ -4275,7 +5631,7 @@ window.SgsUi = (function () {
       updateHandPlayChrome(game, net, { rebuildSkills: true });
       return;
     }
-    if (!keepHuogongRevealModal) hideSgsModal();
+    hideSgsModal();
     const prompt = openPromptBar(pend.message || '请响应');
     const msg = prompt.msg || { textContent: '' };
     const cards = prompt.cards || document.createElement('div');
@@ -4294,11 +5650,6 @@ window.SgsUi = (function () {
       });
       actions.appendChild(b);
     };
-
-    if (pend.type === 'pile_reorder') {
-      renderPileReorder(pend, net, cards, actions, msg);
-      return;
-    }
 
     if (pend.type === 'succession') {
       msg.textContent = pend.message || '请选择传位对象（点击座位后确认）';
@@ -4361,19 +5712,6 @@ window.SgsUi = (function () {
         return;
       }
       if (pend.skillId === 'hujia' || pend.skillId === 'jijiang') {
-        const need =
-          pend.purpose === 'shan' || pend.skillId === 'hujia'
-            ? ['闪']
-            : ['杀', '火杀', '雷杀'];
-        for (const c of hand) {
-          if (!need.includes(c.name)) continue;
-          cards.appendChild(
-            makeSelectableCard(c, () => {
-              net.sendAction('respond', { cardId: c.id, pass: false });
-            })
-          );
-        }
-        addPass('不响应');
         return;
       }
       if (pend.skillId === 'rende') {
@@ -4397,9 +5735,6 @@ window.SgsUi = (function () {
         return;
       }
       if (pend.skillId === 'luoyi' || pend.skillId === 'luoying') {
-        for (const c of pend.shown || pend.cardOptions || []) {
-          cards.appendChild(makeSelectableCard(c, () => {}));
-        }
         const conf = document.createElement('button');
         conf.type = 'button';
         conf.textContent = pend.skillId === 'luoyi' ? '确认裸衣' : '获得这些牌';
@@ -4468,40 +5803,14 @@ window.SgsUi = (function () {
         addPass('取消');
         return;
       }
-      // 鬼才/天香等：从自己手牌选一张打出/弃置
-      const selfPickSkills = new Set([
-        'guicai',
-        'beige',
-        'tieji',
-        'xiangle',
-        'lieren',
-        'tiaoxin',
-        'enyuan',
-      ]);
-      if (selfPickSkills.has(pend.skillId) && !(pend.cardOptions || []).length) {
-        let list = hand.slice();
-        if (pend.skillId === 'enyuan') {
-          list = hand.filter((c) => c.suit === 'heart' || c.suitLabel === '♥');
-        }
-        if (pend.skillId === 'xiangle') {
-          list = hand.filter((c) => c.type === 'basic');
-        }
-        for (const c of list) {
-          cards.appendChild(
-            makeSelectableCard(c, () => {
-              net.sendAction('respond', { cardId: c.id, pass: false });
-            })
-          );
-        }
-        addPass('取消');
-        return;
-      }
+      // 鬼才/天香等已由下方手牌区接管
       if (pend.shown && pend.shown.length) {
         for (const c of pend.shown) {
           cards.appendChild(makeSelectableCard(c, () => {}));
         }
       }
       if (pend.cardOptions && pend.cardOptions.length) {
+        if (getOwnHandPickMode(pend)) return;
         for (const c of pend.cardOptions) {
           cards.appendChild(
             makeSelectableCard(c, () => {
@@ -4513,30 +5822,6 @@ window.SgsUi = (function () {
             })
           );
         }
-      }
-      if (pend.skillId === 'yiji') {
-        msg.textContent =
-          (pend.message || '') + '（选手牌中遗计牌，再点目标座位）';
-        for (const id of pend.cardIds || []) {
-          const c = hand.find((h) => h.id === id);
-          if (!c) continue;
-          cards.appendChild(
-            makeSelectableCard(c, () => {
-              state.selectedCardId = c.id;
-              render(game, net);
-            })
-          );
-        }
-        const conf = document.createElement('button');
-        conf.type = 'button';
-        conf.textContent = '交给选中目标';
-        conf.addEventListener('click', () => {
-          net.sendAction('respond', {
-            cardId: state.selectedCardId,
-            targetId: state.selectedTargets[0],
-          });
-        });
-        actions.appendChild(conf);
       }
       // 通用：仅展示 shown 时提供确认（裸衣类兜底）
       if (
@@ -4556,112 +5841,28 @@ window.SgsUi = (function () {
       return;
     }
 
-    const addHandPick = (list, onPick, multi, max) => {
-      let picked = [];
-      for (const c of list) {
-        const btn = makeSelectableCard(c, () => {
-          if (!multi) {
-            onPick(c);
-            return;
-          }
-          const i = picked.indexOf(c.id);
-          if (i >= 0) {
-            picked.splice(i, 1);
-            btn.classList.remove('selected');
-          } else if (picked.length < max) {
-            picked.push(c.id);
-            btn.classList.add('selected');
-          }
-        });
-        cards.appendChild(btn);
-      }
-      return () => picked.slice();
-    };
-
-    if (pend.type === 'discard') {
+    if (pend.type === 'feiyang' && pend.step === 'judge') {
       msg.textContent = pend.message;
-      const getPicked = addHandPick(hand, null, true, pend.count);
-      const conf = document.createElement('button');
-      conf.type = 'button';
-      conf.textContent = `确认弃 ${pend.count} 张`;
-      conf.addEventListener('click', () => {
-        net.sendAction('respond', { cardIds: getPicked() });
-      });
-      actions.appendChild(conf);
-      return;
-    }
-
-    if (pend.type === 'wugu') {
-      // 已改到中央弹窗 showWuguModal
-      return;
-    }
-
-    if (pend.type === 'guanshi') {
-      addPass('放弃强命');
-      const getPicked = addHandPick(hand, null, true, 2);
-      const conf = document.createElement('button');
-      conf.type = 'button';
-      conf.textContent = '弃 2 张强制命中';
-      conf.addEventListener('click', () => {
-        net.sendAction('respond', { cardIds: getPicked() });
-      });
-      actions.appendChild(conf);
-      return;
-    }
-
-    if (pend.type === 'feiyang') {
-      msg.textContent = pend.message;
-      if (pend.step === 'judge') {
-        let pickedJudge = null;
-        for (const c of pend.cardOptions || []) {
-          const btn = makeSelectableCard(c, () => {
-            pickedJudge = c.id;
-            cards.querySelectorAll('.sgs-kapai').forEach((el) => {
-              el.classList.remove('selected');
-            });
-            btn.classList.add('selected');
-          });
-          cards.appendChild(btn);
-        }
-        const conf = document.createElement('button');
-        conf.type = 'button';
-        conf.textContent = '弃置判定牌';
-        conf.addEventListener('click', () => {
-          net.sendAction('respond', {
-            judgeId: pickedJudge,
-          });
-        });
-        actions.appendChild(conf);
-        return;
-      }
-      let pickedCards = [];
-      const stageOneCards = [
-        ...((me && me.hand) || []),
-        ...Object.values((me && me.equips) || {}).filter(Boolean),
-      ];
-      for (const c of stageOneCards) {
+      let pickedJudge = null;
+      for (const c of pend.cardOptions || []) {
         const btn = makeSelectableCard(c, () => {
-          const i = pickedCards.indexOf(c.id);
-          if (i >= 0) {
-            pickedCards.splice(i, 1);
-            btn.classList.remove('selected');
-          } else if (pickedCards.length < 2) {
-            pickedCards.push(c.id);
-            btn.classList.add('selected');
-          }
+          pickedJudge = c.id;
+          cards.querySelectorAll('.sgs-kapai').forEach((el) => {
+            el.classList.remove('selected');
+          });
+          btn.classList.add('selected');
         });
         cards.appendChild(btn);
       }
       const conf = document.createElement('button');
       conf.type = 'button';
-      conf.textContent = '弃 2 张进入下一步';
+      conf.textContent = '弃置判定牌';
       conf.addEventListener('click', () => {
         net.sendAction('respond', {
-          cardIds: pickedCards,
+          judgeId: pickedJudge,
         });
       });
       actions.appendChild(conf);
-      addPass('不发动');
       return;
     }
 
@@ -4681,33 +5882,6 @@ window.SgsUi = (function () {
         net.sendAction('respond', { choice: 'heal' });
       });
       actions.appendChild(h);
-      return;
-    }
-
-    if (pend.type === 'huogong_show') {
-      msg.textContent = pend.message;
-      for (const c of pend.cardOptions || []) {
-        cards.appendChild(
-          makeSelectableCard(c, () => {
-            net.sendAction('respond', { cardId: c.id, pass: false });
-          })
-        );
-      }
-      return;
-    }
-
-    if (pend.type === 'huogong') {
-      msg.textContent = pend.message;
-      const suit = pend.suit;
-      for (const c of hand) {
-        if (suit && c.suit !== suit) continue;
-        cards.appendChild(
-          makeSelectableCard(c, () => {
-            net.sendAction('respond', { cardId: c.id, pass: false });
-          })
-        );
-      }
-      addPass('取消火攻');
       return;
     }
   }
@@ -4737,9 +5911,54 @@ window.SgsUi = (function () {
     if (play) {
       play.onclick = () => {
         if (play.disabled) return;
-        if (!state.selectedCardId) return;
         const game = state.game;
         const pend = game && game.pending;
+        if (isActiveSkillSeatTargeting()) {
+          const sk = state.pendingSkill;
+          if (sk && sk.skillId === 'xuanhuo') {
+            if (!hasValidXuanhuoSelection(game)) return;
+            if (!(state.selectedTargets || []).length) return;
+            net.sendAction('use_skill', {
+              skillId: sk.skillId,
+              cardId: state.selectedCardId,
+              cardIds: [state.selectedCardId],
+              targetId: state.selectedTargets[0],
+              targetIds: state.selectedTargets.slice(),
+            });
+            state.pendingSkill = null;
+            state.selectedCardId = null;
+            state.selectedTargets = [];
+            state.skillCardPick = [];
+            state.allowMultiSelect = false;
+            return;
+          }
+          if (!(state.selectedTargets || []).length) return;
+          net.sendAction('use_skill', {
+            skillId: sk.skillId,
+            targetId: state.selectedTargets[0],
+            targetIds: state.selectedTargets.slice(),
+          });
+          state.pendingSkill = null;
+          state.selectedCardId = null;
+          state.selectedTargets = [];
+          state.skillCardPick = [];
+          state.allowMultiSelect = false;
+          return;
+        }
+        if (isMuniuSkillPending()) {
+          if (!state.selectedCardId) return;
+          net.sendAction('use_skill', {
+            skillId: MUNIU_SKILL_ID,
+            cardId: state.selectedCardId,
+            cardIds: [state.selectedCardId],
+          });
+          state.pendingSkill = null;
+          state.selectedCardId = null;
+          state.selectedTargets = [];
+          state.skillCardPick = [];
+          state.allowMultiSelect = false;
+          return;
+        }
         if (isHandCardRespondPending(pend)) {
           const info = ensureHandRespondSelection(game);
           const mode = (info && info.mode) || getOwnHandPickMode(pend);
@@ -4797,6 +6016,7 @@ window.SgsUi = (function () {
           state.allowMultiSelect = false;
           return;
         }
+        if (!state.selectedCardId) return;
         const card = findSelectedCard(game || {});
         const guide = getCardPlayGuide(game || {}, card);
         if (!guide.canConfirm) return;
@@ -4837,8 +6057,37 @@ window.SgsUi = (function () {
     }
     if (end) {
       end.onclick = () => {
+        if (end.disabled) return;
         const game = state.game;
         const pend = game && game.pending;
+        if (isActiveSkillSeatTargeting()) {
+          state.pendingSkill = null;
+          state.selectedCardId = null;
+          state.selectedTargets = [];
+          state.skillCardPick = [];
+          state.allowMultiSelect = false;
+          const hintEl = $('sgs-target-hint');
+          if (hintEl) {
+            hintEl.textContent = '';
+            hintEl.classList.remove('is-warn');
+          }
+          render(game, net);
+          return;
+        }
+        if (isMuniuSkillPending()) {
+          state.pendingSkill = null;
+          state.selectedCardId = null;
+          state.selectedTargets = [];
+          state.skillCardPick = [];
+          state.allowMultiSelect = false;
+          const hintEl = $('sgs-target-hint');
+          if (hintEl) {
+            hintEl.textContent = '';
+            hintEl.classList.remove('is-warn');
+          }
+          render(game, net);
+          return;
+        }
         if (isHandCardRespondPending(pend)) {
           net.sendAction('respond', { pass: true });
           state.selectedCardId = null;
@@ -4847,6 +6096,15 @@ window.SgsUi = (function () {
           state.allowMultiSelect = false;
           return;
         }
+        const canEndPlay =
+          game &&
+          game.me &&
+          (game.me.canEndPlay != null
+            ? game.me.canEndPlay
+            : game.me.isMyTurn &&
+              game.turnPhase === 'play' &&
+              !game.pending);
+        if (!canEndPlay) return;
         net.sendAction('end_play', {});
         state.selectedCardId = null;
         state.selectedTargets = [];
@@ -4858,6 +6116,12 @@ window.SgsUi = (function () {
     const panel = $('panel-sgs');
     if (panel) panel.hidden = true;
   }
+
+  window.addEventListener('i18n:change', () => {
+    if (window.I18n && window.I18n.applyDom) {
+      window.I18n.applyDom(document.getElementById('panel-sgs'));
+    }
+  });
 
   return { render, bindButtons, hide };
 })();

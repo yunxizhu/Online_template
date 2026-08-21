@@ -5,6 +5,9 @@
  * 由 engine 注入依赖后挂到流程上。
  */
 
+const REVEAL_MIN_MS = 3000;
+const WUXIE_CHAIN_PAUSE_MS = 1000;
+
 function createTrickFlow(E) {
   function isDelayedTrick(card) {
     if (!card) return false;
@@ -44,15 +47,22 @@ function createTrickFlow(E) {
     const from = E.getPlayer(game, fromPlayerId);
     if (!from) return [];
     const order = [];
-    let seat = E.nextAliveSeat(game, from.seat);
+    let seat = E.prevAliveSeat(game, from.seat);
+    const home = from.seat;
     let guard = 0;
-    while (guard++ < 20) {
-      if (seat === from.seat) break;
+    while (guard++ <= game.players.length + 1) {
+      if (seat === home) break;
       const p = game.players.find((x) => x.seat === seat);
       if (p && p.alive) order.push(p.id);
-      seat = E.nextAliveSeat(game, seat);
+      seat = E.prevAliveSeat(game, seat);
     }
     return order;
+  }
+
+  function seatOrderFromSelf(game, fromPlayerId) {
+    const from = E.getPlayer(game, fromPlayerId);
+    if (!from || !from.alive) return seatOrderFromNext(game, fromPlayerId);
+    return [from.id].concat(seatOrderFromNext(game, fromPlayerId));
   }
 
   function helpersFromNext(game, lordId, country) {
@@ -65,7 +75,6 @@ function createTrickFlow(E) {
   function shouldSkipWuxie(game, sourceId, card) {
     const src = E.getPlayer(game, sourceId);
     if (!src) return false;
-    // 奇才：本回合第一张锦囊不可被无懈
     for (const q of E.skillBus.query(game, src, 'firstTrickUncounterable', {
       card,
     })) {
@@ -74,96 +83,161 @@ function createTrickFlow(E) {
     return false;
   }
 
-  function beginWuxieWindow(game, meta) {
-    const order = seatOrderFromNext(game, meta.sourceId);
-    E.setPending(game, {
-      type: 'wuxie',
-      sourceId: meta.sourceId,
-      cardId: meta.cardId || null,
-      cardName: meta.cardName || '锦囊',
-      targetIds: meta.targetIds || [],
-      countering: Boolean(meta.countering),
-      // 结算载荷
-      effect: meta.effect || null,
-      // 若本窗是对上一张无懈的无懈，命中后应执行 parentEffect
-      parentEffect: meta.parentEffect || null,
-      order,
-      index: 0,
-      askId: null,
-      message: '',
-    });
-    advanceWuxie(game);
+  function canViewAsWuxie(game, player) {
+    if (!E.skillBus || typeof E.skillBus.listViewAs !== 'function') return false;
+    const opts = E.skillBus.listViewAs(game, player, 'wuxie', 'respond');
+    return opts.length > 0;
   }
 
-  function advanceWuxie(game) {
+  function playerCanWuxie(game, playerId) {
+    const p = E.getPlayer(game, playerId);
+    if (!p || !p.alive) return false;
+    const hasCard = p.hand.some((id) => {
+      const c = E.cardById(game, id);
+      return c && c.name === '无懈可击';
+    });
+    return hasCard || canViewAsWuxie(game, p);
+  }
+
+  function buildWuxieResults(game, pend) {
+    const results = [];
+    for (const id of pend.order) {
+      const p = E.getPlayer(game, id);
+      if (!p || !p.alive) continue;
+      const r = pend.responses[id] || { pass: true, auto: true };
+      results.push({
+        playerId: id,
+        playerName: p.name,
+        pass: Boolean(r.pass),
+        auto: Boolean(r.auto),
+        cardId: r.cardId || null,
+        asWuxie: Boolean(r.asWuxie),
+        skillId: r.skillId || null,
+        skillName: r.skillName || null,
+      });
+    }
+    return results;
+  }
+
+  function applyStoredWuxiePlay(game, player, resp) {
+    const cardId = resp.cardId;
+    if (!cardId || !player.hand.includes(cardId)) return false;
+    const c = E.cardById(game, cardId);
+    if (!c) return false;
+    if (resp.asWuxie && resp.skillId) {
+      E.pushLog(
+        game,
+        `${player.name} 发动【${resp.skillName || resp.skillId}】将牌当【无懈可击】`
+      );
+    } else {
+      E.pushLog(game, `${player.name} 打出【无懈可击】`);
+    }
+    E.discardCard(game, player, cardId, 'hand');
+    notifyAfterRespond(game, player, c);
+    if (resp.asWuxie) {
+      notifyAfterUseCard(game, player, {
+        ...c,
+        name: '无懈可击',
+        type: 'trick',
+        subtype: 'wuxie',
+      });
+    } else {
+      notifyAfterUseCard(game, player, c);
+    }
+    return true;
+  }
+
+  function startWuxieReveal(game) {
     const pend = game.pending;
     if (!pend || pend.type !== 'wuxie') return;
-    while (pend.index < pend.order.length) {
-      const id = pend.order[pend.index];
-      const p = E.getPlayer(game, id);
-      if (p && p.alive) {
-        pend.askId = id;
-        pend.message = pend.countering
-          ? `${p.name}：是否打出【无懈可击】响应上一次无懈？`
-          : `${p.name}：是否对【${pend.cardName}】使用【无懈可击】？`;
-        return;
-      }
-      pend.index += 1;
-    }
-    // 无人再无懈
-    E.clearPending(game);
-    if (pend.countering) {
-      // 无懈生效 → 取消原锦囊
-      E.pushLog(game, `【无懈可击】生效，【${pend.cardName}】被取消`);
-      // parentEffect 不执行；若还有更外层，此处简化为取消即可
-      if (typeof E.resumeAfterSkill === 'function') E.resumeAfterSkill(game);
-      return;
-    }
-    // 原锦囊未被无懈 → 执行效果
-    if (pend.effect) runTrickEffect(game, pend.effect);
-    else if (typeof E.resumeAfterSkill === 'function') E.resumeAfterSkill(game);
+    pend.results = buildWuxieResults(game, pend);
+    const hasPlayedWuxie = pend.results.some((row) => !row.pass && row.cardId);
+    pend.phase = 'reveal';
+    pend.revealStartedAt = Date.now();
+    pend.revealMinMs =
+      REVEAL_MIN_MS + (hasPlayedWuxie ? WUXIE_CHAIN_PAUSE_MS : 0);
+    pend.message = pend.countering
+      ? '【无懈可击】响应结果'
+      : `对【${pend.cardName}】的无懈响应结果`;
+    pend.askId = pend.sourceId;
+    pend.waiting = [];
   }
 
-  function onWuxieResponse(game, playerId, cardId, pass) {
+  function finishWuxieReveal(game, playerId, opts = {}) {
     const pend = game.pending;
-    if (!pend || pend.type !== 'wuxie' || pend.askId !== playerId) {
-      return { ok: false, error: '当前不是无懈响应' };
+    if (!pend || pend.type !== 'wuxie' || pend.phase !== 'reveal') {
+      return { ok: false, error: '当前不是无懈展示' };
     }
-    const p = E.getPlayer(game, playerId);
-    if (pass) {
-      pend.index += 1;
-      advanceWuxie(game);
-      return { ok: true };
+    if (pend.askId && pend.askId !== playerId) {
+      return { ok: false, error: '未轮到你' };
     }
-    if (!cardId || !p.hand.includes(cardId)) {
-      return { ok: false, error: '请选择【无懈可击】' };
-    }
-    const c = E.cardById(game, cardId);
-    if (!c || c.name !== '无懈可击') {
-      return { ok: false, error: '必须是【无懈可击】' };
-    }
-    E.discardCard(game, p, cardId, 'hand');
-    E.pushLog(game, `${p.name} 打出【无懈可击】`);
-    notifyAfterRespond(game, p, c);
-    notifyAfterUseCard(game, p, c);
-
-    if (pend.countering) {
-      // 无懈被无懈 → 原锦囊继续
-      E.pushLog(game, `无懈被无懈，【${pend.cardName}】继续结算`);
-      const effect = pend.parentEffect;
-      E.clearPending(game);
-      if (effect) runTrickEffect(game, effect);
-      return { ok: true };
+    const minMs = pend.revealMinMs || REVEAL_MIN_MS;
+    if (!opts.force && pend.revealStartedAt && Date.now() - pend.revealStartedAt < minMs) {
+      return { ok: false, error: '展示中…' };
     }
 
-    // 对原锦囊的无懈：开启「无懈无懈」窗；原 effect 挂到 parentEffect
+    let wuxiePlayer = null;
+    for (const id of pend.order) {
+      const r = pend.responses[id];
+      if (r && !r.pass && r.cardId) {
+        wuxiePlayer = E.getPlayer(game, id);
+        break;
+      }
+    }
+
+    for (const row of pend.results || []) {
+      if (row.pass) {
+        E.pushLog(
+          game,
+          `${row.playerName}${row.auto ? '（无法无懈）' : ''} 不出无懈`
+        );
+      }
+    }
+
+    const countering = pend.countering;
     const effect = pend.effect;
+    const parentEffect = pend.parentEffect;
     const cardName = pend.cardName;
+    const cardId = pend.cardId;
+    const targetIds = pend.targetIds;
+
+    if (wuxiePlayer) {
+      const r = pend.responses[wuxiePlayer.id];
+      applyStoredWuxiePlay(game, wuxiePlayer, r);
+    }
+
+    E.clearPending(game);
+
+    if (!wuxiePlayer) {
+      if (countering) {
+        E.pushLog(game, `【无懈可击】生效，【${cardName}】被取消`);
+        if (
+          parentEffect &&
+          parentEffect.type === 'delayed_judge' &&
+          typeof E.cancelDelayedJudge === 'function'
+        ) {
+          E.cancelDelayedJudge(game, parentEffect);
+          return { ok: true };
+        }
+        if (typeof E.resumeAfterSkill === 'function') E.resumeAfterSkill(game);
+        return { ok: true };
+      }
+      if (effect) runTrickEffect(game, effect);
+      else if (typeof E.resumeAfterSkill === 'function') E.resumeAfterSkill(game);
+      return { ok: true };
+    }
+
+    if (countering) {
+      E.pushLog(game, `无懈被无懈，【${cardName}】继续结算`);
+      if (parentEffect) runTrickEffect(game, parentEffect);
+      return { ok: true };
+    }
+
     beginWuxieWindow(game, {
-      sourceId: playerId,
+      sourceId: wuxiePlayer.id,
       cardName,
-      cardId: pend.cardId,
-      targetIds: pend.targetIds,
+      cardId,
+      targetIds,
       countering: true,
       parentEffect: effect,
       effect: null,
@@ -171,15 +245,122 @@ function createTrickFlow(E) {
     return { ok: true };
   }
 
+  function beginWuxieWindow(game, meta) {
+    const order =
+      meta.order ||
+      (meta.includeSource
+        ? seatOrderFromSelf(game, meta.sourceId)
+        : seatOrderFromNext(game, meta.sourceId));
+
+    const responses = {};
+    const waiting = [];
+    for (const id of order) {
+      const p = E.getPlayer(game, id);
+      if (!p || !p.alive) continue;
+      if (playerCanWuxie(game, id)) {
+        waiting.push(id);
+      } else {
+        responses[id] = { pass: true, auto: true };
+      }
+    }
+
+    E.setPending(game, {
+      type: 'wuxie',
+      phase: waiting.length ? 'collect' : 'reveal',
+      sourceId: meta.sourceId,
+      cardId: meta.cardId || null,
+      cardName: meta.cardName || '锦囊',
+      targetIds: meta.targetIds || [],
+      countering: Boolean(meta.countering),
+      effect: meta.effect || null,
+      parentEffect: meta.parentEffect || null,
+      order,
+      waiting: waiting.slice(),
+      responses,
+      results: null,
+      askId: null,
+      message: meta.countering
+        ? '是否打出【无懈可击】响应上一次无懈？（全员同时询问）'
+        : `是否对【${meta.cardName || '锦囊'}】使用【无懈可击】？（全员同时询问）`,
+    });
+
+    if (!waiting.length) {
+      startWuxieReveal(game);
+      return finishWuxieReveal(game, meta.sourceId, { force: true });
+    }
+  }
+
+  function onWuxieResponse(game, playerId, cardId, pass, extra = {}) {
+    const pend = game.pending;
+    if (!pend || pend.type !== 'wuxie') {
+      return { ok: false, error: '当前不是无懈响应' };
+    }
+
+    if (pend.phase === 'reveal') {
+      return finishWuxieReveal(game, playerId, extra);
+    }
+
+    if (pend.phase !== 'collect') {
+      return { ok: false, error: '当前不是无懈响应' };
+    }
+
+    if (!pend.waiting.includes(playerId)) {
+      return { ok: false, error: '你无需响应无懈' };
+    }
+    if (pend.responses[playerId]) {
+      return { ok: false, error: '你已作出选择' };
+    }
+
+    const p = E.getPlayer(game, playerId);
+    if (!p || !p.alive) return { ok: false, error: '角色无效' };
+
+    if (pass) {
+      pend.responses[playerId] = { pass: true };
+    } else {
+      if (!cardId || !p.hand.includes(cardId)) {
+        return { ok: false, error: '请选择【无懈可击】或发动转化技能' };
+      }
+      const c = E.cardById(game, cardId);
+      const asWuxie = Boolean(extra.asWuxie);
+      if (!c) return { ok: false, error: '牌无效' };
+      if (!asWuxie && c.name !== '无懈可击') {
+        return { ok: false, error: '必须是【无懈可击】' };
+      }
+      if (asWuxie) {
+        const opts = E.skillBus.listViewAs(game, p, 'wuxie', 'respond');
+        const ok = opts.some((o) => o.cardId === cardId);
+        if (!ok) return { ok: false, error: '该牌不能当【无懈可击】' };
+      }
+      pend.responses[playerId] = {
+        pass: false,
+        cardId,
+        asWuxie,
+        skillId: extra.skillId || null,
+        skillName: extra.skillName || null,
+      };
+    }
+
+    pend.waiting = pend.waiting.filter((id) => id !== playerId);
+    if (!pend.waiting.length) {
+      startWuxieReveal(game);
+    }
+    return { ok: true };
+  }
+
   function runTrickEffect(game, effect) {
     if (!effect || !effect.type) return;
     if (effect.type === 'juedou') {
       startJuedouFight(game, effect.a, effect.b, effect.opts || {});
+      return;
+    }
+    if (effect.type === 'delayed_judge') {
+      if (typeof E.beginDelayedJudgeReveal === 'function') {
+        E.beginDelayedJudgeReveal(game, effect.playerId, effect.cardId);
+      }
     }
   }
 
   function juedouNeedForAsker(game, askerId, opponentId) {
-    // 与拥有无双者决斗时，你每次须打出两张杀
     let need = 1;
     const opp = E.getPlayer(game, opponentId);
     if (opp) {
@@ -216,13 +397,6 @@ function createTrickFlow(E) {
     return { ok: true };
   }
 
-  /**
-   * 使用实体或虚拟【决斗】
-   * @param opts.noWuxie 不可被无懈（离间）
-   * @param opts.virtual 虚拟牌（利驭等）
-   * @param opts.skipNotify 已通知过使用
-   * @param opts.card 实体牌（可空）
-   */
   function startJuedou(game, sourceId, targetId, opts = {}) {
     const source = E.getPlayer(game, sourceId);
     const target = E.getPlayer(game, targetId);
@@ -305,7 +479,6 @@ function createTrickFlow(E) {
     for (const id of used) {
       if (!pool.includes(id)) return { ok: false, error: '含非法牌' };
     }
-    // 观看时已从牌堆顶抽出；放回：顶 + 剩余牌堆 + 底
     game.drawPile = top.concat(game.drawPile).concat(bottom);
     return { ok: true };
   }
@@ -315,10 +488,11 @@ function createTrickFlow(E) {
     notifyAfterUseCard,
     notifyAfterRespond,
     seatOrderFromNext,
+    seatOrderFromSelf,
     helpersFromNext,
     beginWuxieWindow,
-    advanceWuxie,
     onWuxieResponse,
+    finishWuxieReveal,
     startJuedou,
     startJuedouFight,
     juedouNeedForAsker,

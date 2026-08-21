@@ -2,9 +2,10 @@
 module.exports = {
   id: 'jilei',
   name: '鸡肋',
-  desc: '若一个锦囊指定了包括你在内的多个目标，则你可以选择不接受这个锦囊的效果并摸一张牌。',
+  desc: '当你成为锦囊牌的目标，且该锦囊指定了除你以外的至少一名角色为目标时，你可以摸一张牌，然后该锦囊对你无效。',
   type: 'trigger',
   triggers: ['whenTrickTarget'],
+  askMessage: '鸡肋：是否摸一张牌，并使此锦囊对你无效？',
   filter(ctx) {
     const targets = ctx.targets || ctx.targetIds || [];
     return (
@@ -19,7 +20,7 @@ module.exports = {
     ctx.player.skillStates.jileiSkip = ctx.cardId || true;
     ctx.game._jileiSkip = ctx.game._jileiSkip || {};
     ctx.game._jileiSkip[ctx.player.id] = ctx.cardId || true;
-    ctx.log(ctx.player.name + ' 发动鸡肋，不接受此锦囊效果并摸一张牌');
+    ctx.log(`${ctx.player.name} 发动【鸡肋】，摸 1 张且此锦囊对其无效`);
     return { ok: true, skipEffect: true };
   },
   canBeTarget(ctx) {

@@ -185,7 +185,7 @@ class RoomManager {
   listLobbyRooms() {
     const list = [];
     for (const room of this.rooms.values()) {
-      if (!room.hidden && room.status === 'waiting') {
+      if (!room.hidden && !room.pendingLobby && room.status === 'waiting') {
         list.push(publicRoomView(room));
       }
     }
@@ -197,11 +197,14 @@ class RoomManager {
     for (const p of this.players.values()) {
       let status = 'idle';
       let roomName = null;
+      let roomId = null;
       if (p.roomId) {
         const room = this.getRoom(p.roomId);
-        if (room) {
+        // pending 创建中：对外仍算在大厅空闲，避免列表提前显示「在房间」
+        if (room && !room.pendingLobby) {
           status = room.status === 'playing' ? 'playing' : 'room';
           roomName = room.name;
+          roomId = p.roomId;
         }
       }
       list.push({
@@ -209,7 +212,7 @@ class RoomManager {
         name: p.name,
         tag: p.tag || null,
         status,
-        roomId: p.roomId || null,
+        roomId,
         roomName,
         sessionId: p.sessionId || null,
       });
@@ -284,6 +287,10 @@ class RoomManager {
         max = mode.seats.includes(seat) ? seat : mode.seats[0];
         min = max; // 身份局凑齐人数再开
       }
+    } else {
+      // 无多模式的游戏统一记为标准模式
+      modeId = 'standard';
+      modeLabel = '标准模式';
     }
 
     const roomName =
@@ -316,11 +323,21 @@ class RoomManager {
       turnTimer: null,
       game: null,
       createdAt: Date.now(),
+      // 隧道就绪并房主进房前：不进大厅列表、人员仍显示空闲、不广播房间
+      pendingLobby: true,
     };
 
     this.rooms.set(id, room);
     player.roomId = id;
     return { ok: true, room };
+  }
+
+  /** 创建流程完成：对外公开房间（大厅列表 / 人员状态 / MQTT） */
+  clearPendingLobby(roomId) {
+    const room = this.getRoom(roomId);
+    if (!room) return null;
+    room.pendingLobby = false;
+    return room;
   }
 
   joinRoom(playerId, roomId) {

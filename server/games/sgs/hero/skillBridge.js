@@ -47,6 +47,28 @@ function installSkillBridge(E) {
       case 'after_sha_skills':
         E.continueShaAfterSkills(game);
         break;
+      case 'after_trick_targets': {
+        const r =
+          typeof E.advanceWhenTrickTarget === 'function'
+            ? E.advanceWhenTrickTarget(game)
+            : { pending: false };
+        if (r.pending) return;
+        if (typeof E.continueTrickAfterTargets === 'function') {
+          E.continueTrickAfterTargets(game);
+        }
+        break;
+      }
+      case 'after_delayed_judge_skills':
+        if (typeof E.openJudgeRevealPending === 'function') {
+          E.openJudgeRevealPending(game);
+        }
+        break;
+      case 'after_skill_judge_skills':
+        if (typeof E.openSkillJudgeRevealPending === 'function') {
+          E.openSkillJudgeRevealPending(game);
+          game._skillJudgeRevealMeta = null;
+        }
+        break;
       default:
         E.resumeAfterPending(game);
     }
@@ -146,6 +168,7 @@ function installSkillBridge(E) {
     loseHp: E.loseHp,
     recoverHp: E.recoverHp,
     drawJudgeCard: E.drawJudgeCard,
+    beginSkillJudgeReveal: E.beginSkillJudgeReveal,
     setPending: E.setPending,
     clearPending: E.clearPending,
     alivePlayers: E.alivePlayers,
@@ -155,6 +178,7 @@ function installSkillBridge(E) {
     SUIT_LABEL: E.SUIT_LABEL,
     currentPlayer: E.currentPlayer,
     resumeAfterSkill,
+    resumeAfterPending: E.resumeAfterPending,
     startJuedou: E.startJuedou,
     helpersFromNext: E.helpersFromNext,
     playWanjian: E.playWanjian,

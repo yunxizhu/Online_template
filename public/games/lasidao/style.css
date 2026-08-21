@@ -1,0 +1,1604 @@
+.lasidao-panel {
+  position: relative;
+  text-align: left;
+  /* ????????? 1/4 ?????? 3/4 ???? */
+  --las-card-w: 6.3rem;
+  --las-card-h: 8.7rem;
+  --las-slot-pad: 0.26rem;
+  --las-card-gap: 0.26rem;
+  --las-num-share: 25%;
+  --las-divider: rgba(232, 212, 139, 0.42);
+  --las-side-rail-min-h: 12rem;
+}
+
+.lasidao-panel h2,
+.lasidao-panel .game-status {
+  text-align: center;
+}
+
+.lasidao-panel > h2 {
+  padding: 0 5.5rem;
+  box-sizing: border-box;
+}
+
+.las-meta {
+  justify-content: center;
+  margin-bottom: 0.5rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* ????=?????????????=??????=???? */
+.las-playfield {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  column-gap: 0.75rem;
+  align-items: start;
+  margin: 0 0 1rem;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.las-side-rail {
+  grid-column: 1;
+  justify-self: stretch;
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0.5rem;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--las-side-rail-min-h);
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.las-side-rail .las-roll-wrap,
+.las-side-rail .las-dice-wrap,
+.las-side-rail .las-init-wrap {
+  margin-bottom: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.las-side-rail .las-actions,
+.las-side-rail .las-side-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  margin: 0.35rem 0 0;
+}
+
+.las-side-rail .game-sub {
+  text-align: left;
+  margin: 0 0 0.35rem;
+}
+
+.las-side-rail .las-hint {
+  text-align: left;
+}
+
+.las-side-rail .las-dispatch-preview {
+  text-align: left;
+}
+
+.las-side-rail .las-dice,
+.las-side-rail .las-dice-groups,
+.las-side-rail .las-init-dice {
+  justify-content: flex-start;
+}
+
+/* ????????????????? */
+.las-table {
+  grid-column: 2;
+  justify-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.las-table-top {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 0.65rem;
+}
+
+.las-table-bottom {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 0.65rem;
+}
+
+.las-decks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.4rem;
+  background: #10161b;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  align-self: flex-start;
+  flex: 0 0 auto;
+}
+
+.las-deck-pile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.las-deck-stack {
+  position: relative;
+  width: 2.4rem;
+  height: 3.3rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: repeating-linear-gradient(
+    -18deg,
+    #2a343c,
+    #2a343c 4px,
+    #243038 4px,
+    #243038 8px
+  );
+  box-shadow:
+    2px 2px 0 #1a242b,
+    4px 4px 0 #141c22;
+}
+
+.las-deck-pile-resource .las-deck-stack {
+  border-color: #4a7c59;
+}
+.las-deck-pile-function .las-deck-stack {
+  border-color: #7a5cff;
+}
+.las-deck-pile-building .las-deck-stack {
+  border-color: #c9a227;
+}
+
+.las-deck-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.15;
+  font-size: 0.68rem;
+}
+
+.las-deck-name {
+  color: #d7e0e6;
+  font-weight: 600;
+}
+
+.las-deck-counts {
+  color: var(--muted);
+}
+
+.las-deck-hint {
+  margin: 0.1rem 0 0;
+  font-size: 0.62rem;
+  text-align: center;
+}
+
+.las-board-section {
+  background: #141c22;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.45rem 0.55rem 0.65rem;
+  width: fit-content;
+  max-width: 100%;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+}
+
+.las-board-section .game-sub {
+  margin: 0.1rem 0 0.4rem;
+  text-align: center;
+}
+
+.las-board-section-resource {
+  border-color: #3d6b4a;
+}
+
+.las-board-section-function {
+  border-color: #5a4a9a;
+}
+
+.las-board-section-building {
+  border-color: #8a7420;
+}
+
+/* 3ù2 ??????????????? */
+.las-board {
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  gap: 0.4rem;
+  margin: 0 auto;
+  justify-content: center;
+}
+
+.las-slot {
+  background: #1a242b;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: var(--las-slot-pad);
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 0;
+  color: inherit;
+  text-align: left;
+  cursor: default;
+  box-sizing: border-box;
+  width: fit-content;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ??/???????? 1 ???? = ?? / 0.75?????? 1/4? */
+.las-board-function .las-slot,
+.las-board-building .las-slot {
+  width: calc(var(--las-card-w) / 0.75 + 2 * var(--las-slot-pad));
+}
+
+/* ???????? 2 ? */
+.las-board-resource .las-slot {
+  width: calc(
+    (2 * var(--las-card-w) + var(--las-card-gap)) / 0.75 +
+      2 * var(--las-slot-pad)
+  );
+}
+
+/* ?????????? 1/4???????? */
+.las-slot-num {
+  flex: 0 0 var(--las-num-share);
+  width: var(--las-num-share);
+  max-width: var(--las-num-share);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 1.16rem;
+  color: #e8d48b;
+  align-self: stretch;
+  border-right: 1px dashed var(--las-divider);
+  padding: 0 0.2rem;
+  line-height: 1;
+  user-select: none;
+}
+
+.las-slot-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+/* ??????????? 3/4? */
+.las-slot-cards,
+.las-slot-tiles {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--las-card-gap);
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  min-height: var(--las-card-h);
+  padding: 0.15rem 0.25rem;
+  box-sizing: border-box;
+}
+
+.las-board-resource .las-slot-tiles {
+  width: auto;
+  /* ?????????????????????? */
+  justify-content: flex-start;
+}
+
+.las-slot:disabled {
+  opacity: 0.92;
+}
+
+.las-slot.is-target:not(:disabled) {
+  border-color: #c9a227;
+  box-shadow: 0 0 0 1px #c9a227;
+  cursor: pointer;
+}
+
+.las-slot-resource.is-target:not(:disabled) {
+  border-color: #4a7c59;
+}
+
+.las-slot-function.is-target:not(:disabled) {
+  border-color: #7a5cff;
+}
+
+.las-slot-empty {
+  color: var(--muted);
+  font-size: 0.82rem;
+  padding: 0.35rem 0.2rem;
+  text-align: center;
+  align-self: center;
+}
+
+.las-slot.is-locked {
+  opacity: 0.72;
+  background: #151b20;
+}
+
+.las-slot.is-locked .las-slot-empty.las-slot-locked {
+  color: #9aa8b2;
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+.las-tile {
+  position: relative;
+  width: var(--las-card-w);
+  height: var(--las-card-h);
+  min-height: var(--las-card-h);
+  margin: 0;
+  padding: 0.3rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #243038;
+  color: inherit;
+  font-size: 0.71rem;
+  line-height: 1.25;
+  display: flex;
+  flex-direction: column;
+  gap: 0.19rem;
+  pointer-events: auto;
+  cursor: help;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+}
+
+.las-fx-deal {
+  position: fixed;
+  z-index: 40;
+  width: var(--las-card-w);
+  height: var(--las-card-h);
+  perspective: 720px;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.las-fx-deal-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 0.2s cubic-bezier(0.4, 0.05, 0.2, 1);
+}
+
+.las-fx-deal.is-flipped .las-fx-deal-inner {
+  transform: rotateY(180deg);
+}
+
+.las-fx-deal-face {
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  border: 1px solid #c9a227;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0.26rem;
+  font-size: 0.71rem;
+  font-weight: 700;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.35);
+  box-sizing: border-box;
+}
+
+.las-fx-deal-back {
+  background: repeating-linear-gradient(
+    -18deg,
+    #2a343c,
+    #2a343c 5px,
+    #243038 5px,
+    #243038 10px
+  );
+  color: #9aa8b2;
+  border-color: #6a7882;
+}
+
+.las-fx-deal-front {
+  background: #2a3420;
+  color: #e8d48b;
+  transform: rotateY(180deg);
+}
+
+.las-fx-deal.is-fn .las-fx-deal-front {
+  background: #2a2440;
+  border-color: #7a5cff;
+  color: #d4c8ff;
+}
+
+.las-fx-deal.is-bld .las-fx-deal-front {
+  background: #3a3220;
+  border-color: #c9a227;
+}
+
+.las-fx-deal.is-res .las-fx-deal-front {
+  background: #1e3226;
+  border-color: #4a7c59;
+  color: #b8e0c4;
+}
+
+.las-personal-builds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+  justify-content: center;
+}
+
+@media (max-width: 900px) {
+  .lasidao-panel {
+    --las-card-w: 4.8rem;
+    --las-card-h: 6.6rem;
+    --las-side-rail-min-h: 10rem;
+  }
+}
+
+@media (max-width: 820px) {
+  .las-playfield {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .las-side-rail {
+    grid-column: auto;
+    width: 100%;
+    max-width: 100%;
+  }
+  .las-table {
+    grid-column: auto;
+    width: 100%;
+    align-self: center;
+  }
+  .las-table-top,
+  .las-table-bottom {
+    flex-direction: column;
+    align-items: center;
+  }
+  .las-decks {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-self: center;
+  }
+  .las-board {
+    grid-template-columns: repeat(2, auto);
+  }
+}
+
+/* ?????????????????? */
+.las-side-rail:not(:has(> :not([hidden]))) {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+
+.las-tile-art {
+  flex: 1 1 auto;
+  min-height: 5.25rem;
+  border-radius: 4px;
+  border: 1px dashed #4a5860;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.04), transparent 55%),
+    repeating-linear-gradient(
+      -45deg,
+      transparent,
+      transparent 6px,
+      rgba(0, 0, 0, 0.12) 6px,
+      rgba(0, 0, 0, 0.12) 7px
+    ),
+    #1a2228;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6a7880;
+  font-size: 0.49rem;
+}
+
+.las-tile-art.has-image {
+  border-style: solid;
+  border-color: rgba(0, 0, 0, 0.25);
+  background-color: #12181c;
+}
+
+.las-tile-art::after {
+  content: '?';
+  opacity: 0.55;
+}
+
+.las-tile-art.has-image::after {
+  content: none;
+}
+
+.las-tile-name {
+  font-weight: 700;
+  font-size: 0.54rem;
+  text-align: center;
+  word-break: break-all;
+}
+
+.las-tile-meta {
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.51rem;
+}
+
+.las-personal-build {
+  pointer-events: auto;
+  cursor: pointer;
+  margin-top: 0.25rem;
+  width: auto;
+  min-width: 4.1rem;
+}
+
+.las-personal-build.is-picked {
+  outline: 2px solid #e8d48b;
+}
+
+.las-tile.resource,
+.las-tile.kind-resource {
+  border-color: #4a7c59;
+}
+
+.las-tile.function,
+.las-tile.kind-function {
+  border-color: #7a5cff;
+}
+
+.las-tile.is-facedown {
+  border-style: dashed;
+  opacity: 0.92;
+  background: #1a1f24;
+}
+
+.las-tile.is-facedown .las-tile-name {
+  letter-spacing: 0.12em;
+  color: #9aa4ad;
+}
+
+.las-tile.is-facedown .las-tile-art {
+  background: repeating-linear-gradient(
+    -45deg,
+    #243038,
+    #243038 6px,
+    #1a2228 6px,
+    #1a2228 12px
+  );
+}
+
+/* ?????????????????????????? */
+.las-tile.is-dealing,
+.las-tile.is-facedown.is-dealing {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.las-workers {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+/* ???? */
+.las-card-tip {
+  position: fixed;
+  z-index: 90;
+  max-width: 16rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid #c9a227;
+  background: rgba(20, 26, 30, 0.96);
+  color: #f2f5f7;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  white-space: pre-line;
+  pointer-events: none;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.las-roll-wrap {
+  background: #1a242b;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
+  margin-bottom: 0.75rem;
+  text-align: left;
+}
+
+.las-dice-wrap {
+  background: #1a242b;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
+  text-align: left;
+}
+
+.las-die.is-wild {
+  border-style: dashed;
+  opacity: 0.95;
+}
+
+.las-die.is-wild.is-selected {
+  outline: 2px solid #e8d48b;
+  outline-offset: 2px;
+  transform: translateY(-2px);
+}
+
+.las-dice-stage {
+  position: relative;
+  min-height: 3.2rem;
+  margin-bottom: 0.35rem;
+}
+
+.las-dice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-start;
+  align-content: flex-start;
+  margin-bottom: 0.35rem;
+}
+
+.las-dice-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  justify-content: flex-start;
+  align-content: flex-start;
+  margin-bottom: 0.35rem;
+}
+
+.las-die {
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 8px;
+  border: 2px solid #6a7880;
+  background: linear-gradient(145deg, #3a474f, #243038);
+  font-weight: 700;
+  font-size: 1.25rem;
+  color: #f2f5f7;
+  cursor: default;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 0 #152028, 0 4px 10px rgba(0, 0, 0, 0.25);
+  user-select: none;
+}
+
+.las-die.is-mini {
+  width: 1.45rem;
+  height: 1.45rem;
+  font-size: 0.78rem;
+  border-radius: 5px;
+  border-width: 1.5px;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.las-die.is-placed {
+  flex: 0 0 auto;
+}
+
+/* ??????? / ? / ? / ? / ? */
+.las-die.color-red {
+  border-color: #f5a29a;
+  background: linear-gradient(145deg, #e85a4f, #b71c1c);
+  color: #fff8f6;
+  box-shadow: 0 2px 0 #7a1212, 0 4px 10px rgba(183, 28, 28, 0.35);
+}
+
+.las-die.color-yellow {
+  border-color: #f5e29a;
+  background: linear-gradient(145deg, #f0d24a, #c9a227);
+  color: #2a2208;
+  box-shadow: 0 2px 0 #8a7420, 0 4px 10px rgba(201, 162, 39, 0.35);
+}
+
+.las-die.color-blue {
+  border-color: #9ec5f5;
+  background: linear-gradient(145deg, #4f8fe8, #1c4fb7);
+  color: #f6f9ff;
+  box-shadow: 0 2px 0 #123a7a, 0 4px 10px rgba(28, 79, 183, 0.35);
+}
+
+.las-die.color-green {
+  border-color: #9ef5b8;
+  background: linear-gradient(145deg, #4ecf78, #1c8a3e);
+  color: #f4fff8;
+  box-shadow: 0 2px 0 #0f5a28, 0 4px 10px rgba(28, 138, 62, 0.35);
+}
+
+.las-die.color-pink {
+  border-color: #f5b0d4;
+  background: linear-gradient(145deg, #ef6aad, #c2185b);
+  color: #fff6fb;
+  box-shadow: 0 2px 0 #7a1040, 0 4px 10px rgba(194, 24, 91, 0.35);
+}
+
+.las-die.color-neutral {
+  border-color: #9a9a9a;
+  background: linear-gradient(145deg, #6a6a6a, #2e2e2e);
+  color: #f0f0f0;
+  box-shadow: 0 2px 0 #1a1a1a, 0 4px 10px rgba(0, 0, 0, 0.4);
+}
+
+.las-die-swatch.color-neutral {
+  background: #5a5a5a;
+}
+
+.las-die-swatch {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  vertical-align: middle;
+  margin-right: 0.15rem;
+}
+
+.las-die-swatch.color-red {
+  background: #e85a4f;
+}
+.las-die-swatch.color-yellow {
+  background: #f0d24a;
+}
+.las-die-swatch.color-blue {
+  background: #4f8fe8;
+}
+.las-die-swatch.color-green {
+  background: #4ecf78;
+}
+.las-die-swatch.color-pink {
+  background: #ef6aad;
+}
+.las-die-swatch.color-neutral {
+  background: #5a5a5a;
+}
+
+.las-workers {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.las-worker-dice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.22rem;
+  align-items: center;
+  align-self: flex-end;
+  max-width: 42%;
+  min-width: 3.2rem;
+  justify-content: flex-end;
+}
+
+.las-card .las-worker-dice,
+.las-personal-build .las-worker-dice,
+.las-player-build-chip .las-worker-dice {
+  max-width: none;
+  margin-top: 0.3rem;
+  justify-content: flex-start;
+}
+
+.las-player-build-workers {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  width: 100%;
+  margin-top: 0.25rem;
+}
+
+.las-player-build-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.25rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.2);
+  font-size: 0.72rem;
+}
+
+#las-players.member-list li {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.las-card.build {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.las-die.is-rolling {
+  animation: las-die-tumble 0.14s linear infinite;
+}
+
+.las-die.is-rolling:not([class*='color-']) {
+  border-color: #c9a227;
+  color: #e8d48b;
+}
+
+.las-die.is-reveal {
+  animation: las-die-land 0.35s ease-out;
+}
+
+.las-die.is-reveal:not([class*='color-']) {
+  border-color: #8fa3ad;
+}
+
+.las-die.is-fly {
+  transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.35s ease;
+}
+
+@keyframes las-die-tumble {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  25% {
+    transform: rotate(12deg) scale(1.08);
+  }
+  50% {
+    transform: rotate(-8deg) scale(0.96);
+  }
+  75% {
+    transform: rotate(10deg) scale(1.05);
+  }
+  100% {
+    transform: rotate(0deg) scale(1);
+  }
+}
+
+@keyframes las-die-land {
+  0% {
+    transform: scale(1.25) rotate(-8deg);
+  }
+  60% {
+    transform: scale(0.94) rotate(3deg);
+  }
+  100% {
+    transform: scale(1) rotate(0);
+  }
+}
+
+@keyframes las-group-in {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.las-die-group {
+  min-width: 0;
+  height: auto;
+  padding: 0.2rem 0.35rem;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: #f2f5f7;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.4rem;
+  box-shadow: none;
+  animation: las-group-in 0.35s ease-out;
+}
+
+/* ??????????????? */
+.las-die-group .las-die-face {
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 8px;
+  border: 2px solid #6a7880;
+  background: linear-gradient(145deg, #3a474f, #243038);
+  font-size: 1.25rem;
+  color: #e8d48b;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 0 #152028, 0 4px 10px rgba(0, 0, 0, 0.25);
+  flex: 0 0 auto;
+}
+
+.las-die-group .las-die-mul {
+  color: #e8d48b;
+  font-size: 1.15rem;
+  font-weight: 800;
+  line-height: 1;
+  flex: 0 0 auto;
+  user-select: none;
+}
+
+.las-die-group.is-selected {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.las-die-group.is-selected .las-die-face {
+  border-color: #c9a227;
+  background: #3a3420;
+  box-shadow: 0 0 0 1px #c9a227, 0 2px 0 #152028;
+}
+
+.las-die-group.is-selected .las-die-mul {
+  color: #f0e0a0;
+}
+
+.las-die-group.is-dim {
+  opacity: 0.4;
+}
+
+.las-hint {
+  font-size: 0.82rem;
+  margin: 0.25rem 0 0.5rem;
+  text-align: center;
+}
+
+.las-dispatch-preview {
+  text-align: center;
+  font-size: 0.9rem;
+  margin: 0.25rem 0 0.5rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 6px;
+  border: 1px dashed #c9a227;
+  color: #e8d48b;
+  background: #2a2618;
+}
+
+.las-actions {
+  justify-content: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0.75rem;
+}
+
+/* .row ? display:flex ????? [hidden]????????? */
+.las-actions[hidden],
+.row.las-actions[hidden],
+#las-phase-actions[hidden],
+#las-produce-actions[hidden],
+#las-roll-wrap[hidden],
+#las-dice-wrap[hidden],
+#las-init-wrap[hidden],
+#las-efficiency-wrap[hidden] {
+  display: none !important;
+}
+
+.las-efficiency {
+  text-align: center;
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px dashed #c9a227;
+  border-radius: 8px;
+  background: #1e2418;
+}
+
+.las-efficiency-picks {
+  justify-content: center;
+  margin: 0.35rem 0;
+}
+
+.las-efficiency-pick {
+  min-width: 5.5rem;
+}
+
+.las-efficiency-pick.is-on {
+  border-color: #c9a227;
+  box-shadow: 0 0 0 1px #c9a227;
+}
+
+.las-init-wrap {
+  text-align: left;
+  margin-bottom: 0;
+  background: #1a242b;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
+  box-sizing: border-box;
+}
+
+.las-init-dice {
+  justify-content: flex-start;
+  margin-bottom: 0.5rem;
+}
+
+.las-slot.is-picked:not(:disabled) {
+  outline: 2px solid #e8d48b;
+}
+
+.las-res {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.5rem;
+}
+
+.las-res .badge {
+  background: #243038;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.85rem;
+}
+
+.las-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.65rem;
+}
+
+.las-card-wrap {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.2rem;
+}
+
+.las-card-discard {
+  font-size: 0.72rem;
+  padding: 0.15rem 0.4rem;
+  cursor: pointer;
+}
+
+.las-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.35rem 0.5rem;
+  background: #1a242b;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.las-card.func {
+  border-color: #7a5cff;
+}
+
+.las-card.build {
+  border-color: #c9a227;
+}
+
+.las-card.build.is-built {
+  background: #2a3220;
+}
+
+.las-card.is-selected {
+  box-shadow: 0 0 0 1px #c9a227;
+}
+
+.las-func-panel,
+.las-exchange {
+  background: #1a242b;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.las-func-panel .row {
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.member-list .is-current {
+  outline: 1px solid #c9a227;
+}
+
+/* ùù????? ùù?*/
+.las-fx-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 80;
+  overflow: hidden;
+}
+
+.las-init-banner {
+  text-align: center;
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: #e8d48b;
+  background: linear-gradient(180deg, #3a3420 0%, #2a2618 100%);
+  border: 1px solid #c9a227;
+  border-radius: 8px;
+  padding: 0.55rem 0.85rem;
+  margin: 0.25rem auto 0.65rem;
+  max-width: 32rem;
+  letter-spacing: 0.02em;
+}
+
+.las-init-banner[hidden] {
+  display: none !important;
+}
+
+.las-init-all-dice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 0.75rem;
+  justify-content: flex-start;
+  align-items: flex-end;
+}
+
+.las-init-player-die {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 3.2rem;
+}
+
+.las-init-player-die .las-init-name {
+  font-size: 0.72rem;
+  color: #9aa8b2;
+  max-width: 4.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.las-init-player-die.is-first .las-init-name {
+  color: #e8d48b;
+  font-weight: 600;
+}
+
+.las-init-player-die.is-first .die {
+  outline: 2px solid #c9a227;
+}
+
+.las-slot.las-settle-focus {
+  outline: 2px solid #e8d48b;
+  box-shadow: 0 0 16px rgba(232, 212, 139, 0.35);
+  z-index: 2;
+}
+
+.las-slot.las-settle-winner {
+  outline-color: #c9a227;
+  animation: las-slot-win-pulse 0.7s ease-in-out 2;
+}
+
+@keyframes las-slot-win-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.04);
+  }
+}
+
+.las-fx-worker {
+  position: fixed;
+  transform: translate(-50%, -50%);
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+  border: 2px solid #8fa3ad;
+  background: #243038;
+  color: #f2f5f7;
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: opacity 0.3s ease, transform 0.35s ease;
+}
+
+.las-fx-worker.is-cancel {
+  border-color: #c45c5c;
+  color: #f0c8c8;
+  animation: las-cancel-shake 0.45s ease;
+}
+
+.las-fx-worker.is-gone {
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.3);
+}
+
+.las-fx-worker.is-winner {
+  border-color: #c9a227;
+  background: #3a3420;
+  color: #e8d48b;
+  box-shadow: 0 0 12px rgba(201, 162, 39, 0.55);
+  transform: translate(-50%, -50%) scale(1.15);
+  z-index: 2;
+}
+
+.las-fx-worker.is-second {
+  opacity: 0.75;
+}
+
+@keyframes las-cancel-shake {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) rotate(0);
+  }
+  25% {
+    transform: translate(-55%, -50%) rotate(-8deg);
+  }
+  75% {
+    transform: translate(-45%, -50%) rotate(8deg);
+  }
+}
+
+.las-fx-pop {
+  position: fixed;
+  transform: translate(-50%, -50%);
+  font-weight: 800;
+  font-size: 1.05rem;
+  color: #f0c8c8;
+  text-shadow: 0 1px 4px #000;
+  animation: las-pop-up 0.7s ease-out forwards;
+  pointer-events: none;
+}
+
+.las-fx-pop.is-win {
+  color: #e8d48b;
+  font-size: 1.15rem;
+}
+
+@keyframes las-pop-up {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -40%) scale(0.7);
+  }
+  30% {
+    opacity: 1;
+    transform: translate(-50%, -70%) scale(1.15);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -110%) scale(1);
+  }
+}
+
+.las-fx-loot {
+  position: fixed;
+  transform: translate(-50%, -50%);
+  padding: 0.3rem 0.55rem;
+  border-radius: 8px;
+  border: 2px solid #c9a227;
+  background: #2a3220;
+  color: #e8d48b;
+  font-size: 0.85rem;
+  font-weight: 700;
+  white-space: nowrap;
+  z-index: 3;
+}
+
+.las-fx-loot.is-fn {
+  border-color: #7a5cff;
+  background: #2a2450;
+  color: #cbb6ff;
+}
+
+.las-fx-loot.is-bld {
+  border-color: #c9a227;
+  background: #3a3420;
+}
+
+.las-fx-loot.is-pop {
+  animation: las-loot-pop 0.55s ease-out;
+}
+
+@keyframes las-loot-pop {
+  0% {
+    transform: translate(-50%, -50%) scale(0.7);
+    opacity: 0;
+  }
+  40% {
+    transform: translate(-50%, -80%) scale(1.1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -100%) scale(1);
+    opacity: 0;
+  }
+}
+
+.member-list .las-mvp-flash {
+  animation: las-mvp 1s ease-in-out;
+  outline: 2px solid #c9a227;
+  background: #3a3420;
+}
+
+@keyframes las-mvp {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.03);
+  }
+}
+
+/* ùù ?????? ùù */
+.las-boards-host {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  margin: 0.75rem 0 1rem;
+}
+
+.las-pboard {
+  border: 1px solid #4a5a66;
+  border-radius: 10px;
+  background: linear-gradient(160deg, #1c262d 0%, #152028 100%);
+  padding: 0.7rem 0.85rem 0.85rem;
+  box-sizing: border-box;
+}
+
+.las-pboard.is-me {
+  border-color: #c9a227;
+  box-shadow: 0 0 0 1px rgba(201, 162, 39, 0.35);
+}
+
+.las-pboard.is-current {
+  outline: 1px solid rgba(232, 212, 139, 0.55);
+}
+
+.las-pboard.is-left {
+  opacity: 0.55;
+}
+
+.las-pboard-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.7rem;
+  margin-bottom: 0.55rem;
+}
+
+.las-pboard-title {
+  font-weight: 600;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.las-pboard-stats {
+  font-size: 0.82rem;
+}
+
+.las-pboard-res {
+  margin-bottom: 0.55rem;
+}
+
+.las-pboard-label {
+  font-size: 0.78rem;
+  color: #9aa8b2;
+  margin: 0.35rem 0 0.3rem;
+  letter-spacing: 0.02em;
+}
+
+.las-pboard-slots {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.las-pboard-slot {
+  border: 1px dashed #4a5a66;
+  border-radius: 8px;
+  background: #121a20;
+  min-height: 5.2rem;
+  display: flex;
+  flex-direction: column;
+  padding: 0.25rem;
+  box-sizing: border-box;
+}
+
+.las-pboard-slot.is-drop {
+  cursor: pointer;
+}
+
+.las-pboard-slot.is-drop:hover {
+  border-color: #c9a227;
+  background: #1a242c;
+}
+
+.las-pboard-slot-num {
+  align-self: flex-start;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #e8d48b;
+  background: #2a343c;
+  border-radius: 4px;
+  padding: 0.05rem 0.35rem;
+  margin-bottom: 0.2rem;
+}
+
+.las-pboard-slot-body {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  min-height: 0;
+}
+
+.las-pboard-empty {
+  font-size: 0.75rem;
+  margin: auto;
+}
+
+.las-pboard-card {
+  width: 100%;
+  min-height: 3.8rem;
+  border: 1px solid #5a6a74;
+  border-radius: 6px;
+  background: #243038;
+  color: inherit;
+  font-size: 0.72rem;
+  line-height: 1.25;
+  padding: 0.3rem;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  word-break: break-word;
+}
+
+.las-pboard-card:disabled {
+  cursor: default;
+  opacity: 0.95;
+}
+
+.las-pboard-card.is-built {
+  border-color: #7a9e6a;
+  background: #243428;
+}
+
+.las-pboard-card.is-facedown {
+  border-style: dashed;
+  color: #9aa8b2;
+}
+
+.las-pboard-none-slots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr));
+  gap: 0.4rem;
+}
+
+.las-pboard-slot-none {
+  border-style: solid;
+  border-color: #5a6a74;
+}
+
+.las-pboard-none-cards,
+.las-pboard-funcs {
+  min-height: 2.4rem;
+}
+
+.las-pboard-tip {
+  margin: 0.4rem 0 0.2rem;
+  font-size: 0.85rem;
+}
+
+.las-pboard .las-mvp-flash {
+  animation: las-mvp 1s ease-in-out;
+}
+
+@media (max-width: 720px) {
+  .las-pboard-slots {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* ùù ?????? ùù */
+
+.las-rules-btn {
+  position: absolute;
+  top: 0.65rem;
+  left: 0.65rem;
+  z-index: 6;
+  margin: 0;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.7rem;
+}
+
+.las-rules-modal .las-rules-dialog {
+  width: min(100%, 560px);
+  max-height: min(90vh, 740px);
+  text-align: left;
+  padding: 0.85rem 1rem 1rem;
+  box-sizing: border-box;
+}
+
+.las-rules-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.65rem;
+  padding-bottom: 0.55rem;
+  border-bottom: 1px solid var(--border, #3a4a54);
+}
+
+.las-rules-head h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.las-rules-body {
+  overflow: auto;
+  max-height: min(72vh, 620px);
+  padding-right: 0.25rem;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: #c8d2d8;
+}
+
+.las-rules-body h4 {
+  margin: 1rem 0 0.45rem;
+  font-size: 0.98rem;
+  color: #e8d48b;
+}
+
+.las-rules-body h4:first-child {
+  margin-top: 0;
+}
+
+.las-rules-section p,
+.las-rules-section ol,
+.las-rules-section ul {
+  margin: 0.45rem 0;
+}
+
+.las-rules-section ol {
+  padding-left: 1.25rem;
+}
+
+.las-rules-section code {
+  font-size: 0.85em;
+  color: #e8d48b;
+}
+
+.las-rules-dl {
+  margin: 0.35rem 0 0;
+}
+
+.las-rules-dl dt {
+  margin-top: 0.65rem;
+  font-weight: 700;
+  color: #e8d48b;
+}
+
+.las-rules-dl dt:first-child {
+  margin-top: 0;
+}
+
+.las-rules-dl dd {
+  margin: 0.2rem 0 0;
+  color: #b0bcc4;
+}

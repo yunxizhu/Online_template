@@ -85,6 +85,9 @@ function loadAllHeroes() {
 const ALL_HEROES = loadAllHeroes();
 const GENERALS = ALL_HEROES.filter((h) => h.enabled);
 
+registerSkillRaw(require('../equip/muniu'));
+registerSkillRaw(require('./dengai/jixi'));
+
 function getSkillRaw(skillId) {
   return SKILL_LIB[skillId] || null;
 }

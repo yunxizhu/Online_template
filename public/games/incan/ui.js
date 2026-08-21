@@ -17,8 +17,8 @@ window.IncanUi = (function () {
   }
 
   function choiceLabel(c) {
-    if (c === 'continue') return '继续';
-    if (c === 'retreat') return '返回';
+    if (c === 'continue') return t('incan.continue');
+    if (c === 'retreat') return t('incan.retreat');
     return '';
   }
 
@@ -26,6 +26,7 @@ window.IncanUi = (function () {
     const gomoku = $('panel-gomoku');
     if (gomoku) gomoku.hidden = true;
     if (window.SgsUi) window.SgsUi.hide();
+    if (window.LasidaoUi) window.LasidaoUi.hide();
   }
 
   function render(game, net, opts) {
@@ -37,7 +38,7 @@ window.IncanUi = (function () {
     const meId = opts && opts.meId;
     const playerNameById = (opts && opts.playerNameById) || ((id) => id);
 
-    $('incan-temple').textContent = `神庙 ${game.temple}/${game.maxTemples}`;
+    $('incan-temple').textContent = t('incan.temple', { cur: game.templeIndex || 1, max: game.templeTotal || 5 });
     $('incan-path-gems').textContent = String(game.pathGems || 0);
     $('incan-deck-left').textContent = String(game.deckLeft || 0);
 
@@ -177,5 +178,10 @@ window.IncanUi = (function () {
     }
   }
 
+  window.addEventListener('i18n:change', () => {
+    if (window.I18n && window.I18n.applyDom) {
+      window.I18n.applyDom(document.getElementById('panel-incan'));
+    }
+  });
   return { render, hide, bindButtons };
 })();

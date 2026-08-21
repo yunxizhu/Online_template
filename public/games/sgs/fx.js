@@ -58,16 +58,23 @@ window.SgsFx = (function () {
       el.style.height = h + 'px';
       el.style.left = from.x - w / 2 + 'px';
       el.style.top = from.y - h / 2 + 'px';
+      const ms = duration || 450;
+      el.style.transition = [
+        `left ${ms}ms cubic-bezier(0.22, 0.7, 0.25, 1)`,
+        `top ${ms}ms cubic-bezier(0.22, 0.7, 0.25, 1)`,
+        `transform ${ms}ms ease`,
+        `opacity ${Math.min(ms, 420)}ms ease`,
+      ].join(', ');
       document.body.appendChild(el);
+      void el.offsetWidth;
       requestAnimationFrame(() => {
         el.style.left = to.x - w / 2 + 'px';
         el.style.top = to.y - h / 2 + 'px';
       });
-      const ms = duration || 450;
       setTimeout(() => {
         el.remove();
         resolve();
-      }, ms);
+      }, ms + 40);
     });
   }
 
@@ -313,6 +320,32 @@ window.SgsFx = (function () {
     return rectCenter($('sgs-hand')) || rectCenter($('sgs-hand-wrap'));
   }
 
+  /** 手牌最右端（新入牌落点） */
+  function handEndPoint() {
+    const hand = $('sgs-hand');
+    if (!hand) return handPoint();
+    const cards = hand.querySelectorAll('.sgs-kapai');
+    if (cards.length) {
+      return rectCenter(cards[cards.length - 1]);
+    }
+    return handPoint();
+  }
+
+  /** 从目标角色处获得牌（顺手牵羊等）：牌面飞向手牌最末端 */
+  async function animateGainFromSeat({ card, fromPlayerId, duration }) {
+    const from = seatPoint(fromPlayerId) || pilePoint('discard');
+    const to = handEndPoint() || handPoint();
+    if (!from || !to) return;
+    await flyCard({
+      card: card || null,
+      faceDown: !card,
+      from,
+      to,
+      duration: duration || 920,
+    });
+    await sleep(160);
+  }
+
   async function animateDraw(count, cardHint) {
     const n = Math.max(1, Math.min(count || 1, 5));
     const from = pilePoint('draw');
@@ -451,6 +484,8 @@ window.SgsFx = (function () {
     pilePoint,
     seatPoint,
     handPoint,
+    handEndPoint,
+    animateGainFromSeat,
     animateDraw,
     animateDiscardToPile,
     animatePlayToSeat,

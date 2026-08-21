@@ -13,6 +13,7 @@ const { buildStandardDeck } = require('./deck');
 const { getGeneral, dealGeneralChoices, GENERALS, getHero } = require('./generals');
 const { installSkillBridge } = require('./hero/skillBridge');
 const { createTrickFlow } = require('./trickFlow');
+const skillJudgeFlow = require('./skillJudgeFlow');
 const xz = require('./xianzhuMode');
 let skillBus;
 let resolveSkillEffect;
@@ -574,6 +575,24 @@ function prevAliveSeat(game, fromSeat) {
   return fromSeat;
 }
 
+/** 从某角色起按逆时针（与回合顺序一致）收集存活角色 id */
+function resolveOrderFromPlayer(game, fromPlayerId, { includeSelf = true } = {}) {
+  const from = getPlayer(game, fromPlayerId);
+  if (!from) return [];
+  const order = [];
+  let seat = includeSelf ? from.seat : prevAliveSeat(game, from.seat);
+  const home = from.seat;
+  let guard = 0;
+  while (guard++ <= game.players.length + 1) {
+    if (!includeSelf && seat === home) break;
+    const p = game.players.find((x) => x.seat === seat);
+    if (p && p.alive) order.push(p.id);
+    seat = prevAliveSeat(game, seat);
+    if (includeSelf && seat === home) break;
+  }
+  return order;
+}
+
 function chainDamageOrder(game, targetId, anchorSeat) {
   const out = [];
   const n = game.players.length;
@@ -610,6 +629,14 @@ function drawCards(game, player, n) {
   return got;
 }
 
+function onEquipRemoved(game, player, cardId) {
+  const card = cardById(game, cardId);
+  if (!card || card.subtype !== 'muniu') return;
+  const muniuEquip = require('./equip/muniu');
+  muniuEquip.clearMuniuPile(player, game);
+  muniuEquip.syncMuniuSkill(player);
+}
+
 function discardCard(game, player, cardId, from = 'hand') {
   let lostEquip = false;
   const card = cardById(game, cardId);
@@ -626,8 +653,11 @@ function discardCard(game, player, cardId, from = 'hand') {
     }
   }
   game.discardPile.push(cardId);
-  if (lostEquip && skillBus) {
-    skillBus.emit(game, 'afterLoseEquip', { player, cardId });
+  if (lostEquip) {
+    onEquipRemoved(game, player, cardId);
+    if (skillBus) {
+      skillBus.emit(game, 'afterLoseEquip', { player, cardId });
+    }
   }
   if (skillBus) {
     skillBus.emit(game, 'afterLoseCard', {
@@ -667,6 +697,10 @@ function findCardZone(player, cardId) {
       return { zone: 'equip', slot };
     }
   }
+  const muniu = player.skillPiles && player.skillPiles.muniu;
+  if (Array.isArray(muniu) && muniu.includes(cardId)) {
+    return { zone: 'muniu' };
+  }
   return null;
 }
 
@@ -675,15 +709,211 @@ function allCardsOf(player) {
   for (const slot of Object.keys(player.equips)) {
     if (player.equips[slot]) ids.push(player.equips[slot].id);
   }
+  const muniu = player.skillPiles && player.skillPiles.muniu;
+  if (Array.isArray(muniu)) ids.push(...muniu);
   return ids;
 }
 
+const REVEAL_MIN_MS = 3000;
+
 function setPending(game, pending) {
+  if (
+    pending &&
+    (pending.type === 'card_reveal' ||
+      pending.type === 'judge_reveal' ||
+      (pending.type === 'wuxie' && pending.phase === 'reveal'))
+  ) {
+    pending.revealStartedAt = pending.revealStartedAt || Date.now();
+    pending.revealMinMs = pending.revealMinMs || REVEAL_MIN_MS;
+  }
   game.pending = pending;
 }
 
 function clearPending(game) {
   game.pending = null;
+}
+
+function beginCardReveal(game, opts) {
+  setPending(game, {
+    type: 'card_reveal',
+    playerId: opts.playerId,
+    askId: opts.askId != null ? opts.askId : opts.playerId,
+    shown: opts.shown || [],
+    message: opts.message || '展示',
+    title: opts.title || null,
+    skillId: opts.skillId || null,
+    skillName: opts.skillName || null,
+    canPass: false,
+    _afterReveal: opts.afterReveal || null,
+  });
+}
+
+function revealElapsedOk(pend, force) {
+  if (force) return true;
+  const minMs = pend.revealMinMs || REVEAL_MIN_MS;
+  const started = pend.revealStartedAt || 0;
+  return Date.now() - started >= minMs;
+}
+
+function runAfterCardReveal(game, after) {
+  if (!after || !after.kind) {
+    return;
+  }
+  switch (after.kind) {
+    case 'zhiyu': {
+      if (after.same && after.sourceId) {
+        const src = getPlayer(game, after.sourceId);
+        if (src && src.alive && src.hand.length) {
+          setPending(game, {
+            type: 'skill_effect',
+            skillId: 'zhiyu',
+            playerId: after.playerId,
+            askId: src.id,
+            sourceId: src.id,
+            message: '智愚：请弃置一张手牌',
+          });
+        }
+      }
+      return;
+    }
+    case 'huogong': {
+      const source = getPlayer(game, after.sourceId);
+      const hasSameSuit =
+        source &&
+        source.hand.some((id) => {
+          const c = cardById(game, id);
+          return c && c.suit === after.suit;
+        });
+      if (!hasSameSuit) {
+        pushLog(
+          game,
+          `${source ? source.name : '来源角色'} 没有同花色手牌，火攻无效`
+        );
+        return;
+      }
+      setPending(game, {
+        type: 'huogong',
+        playerId: after.sourceId,
+        askId: after.sourceId,
+        sourceId: after.sourceId,
+        targetId: after.targetId,
+        shown: after.shownId ? [after.shownId] : [],
+        suit: after.suit,
+        message: `火攻：弃一张${SUIT_LABEL[after.suit]}牌造成火焰伤害，或取消`,
+      });
+      return;
+    }
+    case 'luoyi_choice': {
+      const me = getPlayer(game, after.playerId);
+      const shown =
+        after.shown ||
+        (me && me.skillStates && me.skillStates._luoyiShown) ||
+        [];
+      if (!me) return;
+      setPending(game, {
+        type: 'skill_effect',
+        skillId: 'luoyi',
+        playerId: me.id,
+        askId: me.id,
+        shown,
+        message:
+          '裸衣：是否放弃摸牌，获得翻开的武器与基本牌？（本回合杀/决斗伤害+1）',
+        canPass: true,
+      });
+      return;
+    }
+    case 'luoying_choice': {
+      const me = getPlayer(game, after.playerId);
+      if (!me) return;
+      setPending(game, {
+        type: 'skill_effect',
+        skillId: 'luoying',
+        playerId: me.id,
+        askId: me.id,
+        cardIds: after.cardIds || [],
+        shown: after.cardIds || [],
+        message: '落英：是否获得这些梅花牌？',
+        canPass: true,
+      });
+      return;
+    }
+    case 'fanjian': {
+      const me = getPlayer(game, after.playerId);
+      const target = getPlayer(game, after.targetId);
+      const card = cardById(game, after.cardId);
+      if (!card) return;
+      const shown =
+        (SUIT_LABEL[card.suit] || '') +
+        card.number +
+        '【' +
+        card.name +
+        '】';
+      pushLog(
+        game,
+        (target ? target.name : '目标') + ' 获得并展示 ' + shown
+      );
+      if (card.suit !== after.suit) {
+        dealDamage(game, me.id, target.id, 1);
+      }
+      return;
+    }
+    case 'anxu': {
+      const me = getPlayer(game, after.playerId);
+      const card = cardById(game, after.cardId);
+      const fewer = getPlayer(game, after.fewerId);
+      pushLog(
+        game,
+        `${fewer ? fewer.name : '角色'} 安恤获得并展示【${card ? card.name : after.cardId}】`
+      );
+      if (card && card.suit !== 'spade' && me) {
+        drawCards(game, me, 1);
+      }
+      return;
+    }
+    case 'buyi': {
+      const dying = getPlayer(game, after.dyingId);
+      const card = cardById(game, after.cardId);
+      pushLog(
+        game,
+        dying.name + ' 展示手牌【' + (card ? card.name : after.cardId) + '】'
+      );
+      if (card && card.type !== 'basic') {
+        discardCard(game, dying, after.cardId, 'hand');
+        const owner = getPlayer(game, after.playerId);
+        recoverHp(game, owner, dying, 1);
+        pushLog(game, dying.name + ' 因补益弃置非基本牌并回复 1 点体力');
+      }
+      return;
+    }
+    default:
+      return;
+  }
+}
+
+function resumeAfterCardReveal(game) {
+  if (game.over || game.pending) return;
+  if (typeof resumeAfterSkill === 'function') {
+    resumeAfterSkill(game);
+  }
+  if (!game.pending) {
+    resumeAfterPending(game);
+  }
+}
+
+function finishCardReveal(game, playerId, opts = {}) {
+  const pend = game.pending;
+  if (!pend || pend.type !== 'card_reveal') {
+    return { ok: false, error: '当前不是展示' };
+  }
+  if (pend.askId !== playerId) return { ok: false, error: '未轮到你' };
+  if (!revealElapsedOk(pend, opts.force)) {
+    return { ok: false, error: '展示中…' };
+  }
+  const after = pend._afterReveal;
+  clearPending(game);
+  runAfterCardReveal(game, after);
+  resumeAfterCardReveal(game);
+  return { ok: true };
 }
 
 function tryFinishGeneralSelect(game) {
@@ -1024,7 +1254,7 @@ function runJudgePhase(game) {
   }
   const cardId = p.judges[p.judges.length - 1];
   const card = cardById(game, cardId);
-  resolveDelayedJudge(game, p, card);
+  startDelayedJudgeWithWuxie(game, p, card);
 }
 
 function drawJudgeCard(game) {
@@ -1034,7 +1264,103 @@ function drawJudgeCard(game) {
   return id;
 }
 
-function resolveDelayedJudge(game, player, card) {
+/** 判定阶段：先对延时锦囊询问无懈，再翻判定牌 */
+function startDelayedJudgeWithWuxie(game, player, card) {
+  if (!card || !player) {
+    runJudgePhase(game);
+    return;
+  }
+  if (!trickFlow || typeof trickFlow.beginWuxieWindow !== 'function') {
+    beginDelayedJudgeReveal(game, player.id, card.id);
+    return;
+  }
+  pushLog(game, `${player.name} 开始判定【${card.name}】`);
+  trickFlow.beginWuxieWindow(game, {
+    sourceId: player.id,
+    cardId: card.id,
+    cardName: card.name,
+    targetIds: [player.id],
+    includeSource: true,
+    effect: {
+      type: 'delayed_judge',
+      playerId: player.id,
+      cardId: card.id,
+    },
+  });
+}
+
+function cancelDelayedJudge(game, effect) {
+  const player = getPlayer(game, effect && effect.playerId);
+  const cardId = effect && effect.cardId;
+  const card = cardId ? cardById(game, cardId) : null;
+  if (player && card && player.judges.includes(card.id)) {
+    discardCard(game, player, card.id, 'judge');
+    pushLog(game, `【${card.name}】因无懈被取消，移出判定区`);
+  } else if (card) {
+    pushLog(game, `【${card.name}】因无懈被取消`);
+  }
+  runJudgePhase(game);
+}
+
+function computeDelayedJudgeOutcome(player, card, jc) {
+  if (!player || !card || !jc) {
+    return { effective: false, message: '判定结束', kind: 'none' };
+  }
+  if (card.subtype === 'lebu') {
+    if (jc.suit !== 'heart') {
+      return {
+        effective: true,
+        message: `${player.name} 【乐不思蜀】生效：跳过出牌阶段`,
+        kind: 'lebu_skip',
+      };
+    }
+    return {
+      effective: false,
+      message: `${player.name} 【乐不思蜀】判定为红桃，失效`,
+      kind: 'lebu_fail',
+    };
+  }
+  if (card.subtype === 'bingliang') {
+    if (jc.suit !== 'club') {
+      return {
+        effective: true,
+        message: `${player.name} 【兵粮寸断】生效：跳过摸牌阶段`,
+        kind: 'bingliang_skip',
+      };
+    }
+    return {
+      effective: false,
+      message: `${player.name} 【兵粮寸断】判定为梅花，失效`,
+      kind: 'bingliang_fail',
+    };
+  }
+  if (card.subtype === 'shandian') {
+    if (jc.suit === 'spade' && jc.number >= 2 && jc.number <= 9) {
+      return {
+        effective: true,
+        message: `${player.name} 被【闪电】击中！受到 3 点雷电伤害`,
+        kind: 'shandian_hit',
+      };
+    }
+    return {
+      effective: false,
+      message: `【闪电】判定未击中，将传给下家`,
+      kind: 'shandian_pass',
+    };
+  }
+  return { effective: false, message: '判定结束', kind: 'none' };
+}
+
+/**
+ * 无懈过后：翻判定牌 →（鬼才等）→ 全员可见判定弹框
+ */
+function beginDelayedJudgeReveal(game, playerId, cardId) {
+  const player = getPlayer(game, playerId);
+  const card = cardById(game, cardId);
+  if (!player || !player.alive || !card || !player.judges.includes(cardId)) {
+    runJudgePhase(game);
+    return;
+  }
   const jid = drawJudgeCard(game);
   if (!jid) {
     discardCard(game, player, card.id, 'judge');
@@ -1042,12 +1368,11 @@ function resolveDelayedJudge(game, player, card) {
     return;
   }
   const jc = cardById(game, jid);
-  pushLog(
-    game,
-    `${player.name} 判定【${card.name}】→ ${SUIT_LABEL[jc.suit]}${jc.number}`
-  );
   game.discardPile.push(jid);
+  game._currentJudgeCardId = jid;
+  game._delayedJudgeCtx = { playerId, cardId };
 
+  // 落英等：梅花进弃牌堆
   if (skillBus && jc && jc.suit === 'club') {
     for (const p of alivePlayers(game)) {
       if (p.id === player.id) continue;
@@ -1061,70 +1386,278 @@ function resolveDelayedJudge(game, player, card) {
       if (game.pending) {
         game.stack = game.stack || [];
         game.stack.push({
-          resume: 'judge_continue',
-          _luoyingJudge: { playerId: player.id, cardId: card.id },
+          resume: 'open_judge_reveal',
+          _delayedJudgeCtx: { playerId, cardId },
         });
         return;
       }
     }
   }
 
+  // 鬼才等：判定牌生效前
+  if (skillBus) {
+    game._skillResume = 'after_delayed_judge_skills';
+    for (const p of alivePlayers(game)) {
+      const r = skillBus.emit(game, 'beforeJudge', {
+        player: p,
+        judgeOwnerId: playerId,
+        judgeCardId: game._currentJudgeCardId,
+        delayedCardId: cardId,
+      });
+      if (r.pending) return;
+    }
+    game._skillResume = null;
+  }
+  openJudgeRevealPending(game);
+}
+
+function openJudgeRevealPending(game) {
+  const ctx = game._delayedJudgeCtx;
+  if (!ctx) {
+    runJudgePhase(game);
+    return;
+  }
+  const player = getPlayer(game, ctx.playerId);
+  const card = cardById(game, ctx.cardId);
+  const jid = game._currentJudgeCardId;
+  const jc = jid ? cardById(game, jid) : null;
+  if (!player || !card || !jc || !player.judges.includes(card.id)) {
+    game._delayedJudgeCtx = null;
+    game._currentJudgeCardId = null;
+    runJudgePhase(game);
+    return;
+  }
+  const outcome = computeDelayedJudgeOutcome(player, card, jc);
+  pushLog(
+    game,
+    `${player.name} 判定【${card.name}】→ ${SUIT_LABEL[jc.suit]}${jc.number}`
+  );
+  setPending(game, {
+    type: 'judge_reveal',
+    playerId: player.id,
+    askId: player.id,
+    targetId: player.id,
+    cardId: card.id,
+    resultCardId: jid,
+    cardName: card.name,
+    message: `${player.name} 判定【${card.name}】`,
+    outcomeEffective: outcome.effective,
+    outcomeMessage: outcome.message,
+    outcomeKind: outcome.kind,
+    canPass: false,
+  });
+}
+
+function applyDelayedJudgeOutcome(game, player, card, jc) {
+  if (!player || !card) return;
+  const outcome = computeDelayedJudgeOutcome(player, card, jc);
+
   if (card.subtype === 'lebu') {
-    // 红桃则无效
-    if (jc.suit !== 'heart') {
-      player.skipPlay = true;
-      pushLog(game, `${player.name} 乐不思蜀生效，跳过出牌阶段`);
-    } else {
-      pushLog(game, `${player.name} 乐不思蜀判定为红桃，无效`);
-    }
+    if (outcome.kind === 'lebu_skip') player.skipPlay = true;
+    pushLog(game, outcome.message);
     discardCard(game, player, card.id, 'judge');
-    runJudgePhase(game);
-  } else if (card.subtype === 'bingliang') {
-    // 非梅花则跳过摸牌
-    if (jc.suit !== 'club') {
-      player.skipDraw = true;
-      pushLog(game, `${player.name} 兵粮寸断生效，跳过摸牌阶段`);
-    } else {
-      pushLog(game, `${player.name} 兵粮寸断判定为梅花，无效`);
-    }
+    return;
+  }
+  if (card.subtype === 'bingliang') {
+    if (outcome.kind === 'bingliang_skip') player.skipDraw = true;
+    pushLog(game, outcome.message);
     discardCard(game, player, card.id, 'judge');
-    runJudgePhase(game);
-  } else if (card.subtype === 'shandian') {
-    // 黑桃 2-9 → 3 雷伤无来源
-    if (jc.suit === 'spade' && jc.number >= 2 && jc.number <= 9) {
-      pushLog(game, `${player.name} 被闪电击中！`);
+    return;
+  }
+  if (card.subtype === 'shandian') {
+    if (outcome.kind === 'shandian_hit') {
+      pushLog(game, outcome.message);
       discardCard(game, player, card.id, 'judge');
       dealDamage(game, null, player.id, 3, {
         nature: 'thunder',
         reason: 'shandian',
       });
-      if (game.pending) {
-        game.stack.push({ resume: 'judge_continue' });
-        return;
-      }
-      runJudgePhase(game);
-    } else {
-      // move to next player
-      discardCard(game, player, card.id, 'judge');
-      const nextSeat = nextAliveSeat(game, player.seat);
-      const next = game.players.find((x) => x.seat === nextSeat);
-      if (next && !next.judges.some((id) => cardById(game, id).subtype === 'shandian')) {
-        next.judges.push(card.id);
-        // remove from discard if we put there via discardCard
-        game.discardPile = game.discardPile.filter((id) => id !== card.id);
-        pushLog(game, `闪电传给 ${next.name}`);
-      } else {
-        // cannot place, stay discarded / return to this player next? put back on self
-        player.judges.push(card.id);
-        game.discardPile = game.discardPile.filter((id) => id !== card.id);
-        pushLog(game, `闪电无法传递，仍在 ${player.name} 判定区`);
-      }
-      runJudgePhase(game);
+      return;
     }
-  } else {
+    pushLog(game, outcome.message);
     discardCard(game, player, card.id, 'judge');
-    runJudgePhase(game);
+    const nextSeat = prevAliveSeat(game, player.seat);
+    const next = game.players.find((x) => x.seat === nextSeat);
+    if (
+      next &&
+      !next.judges.some((id) => cardById(game, id).subtype === 'shandian')
+    ) {
+      next.judges.push(card.id);
+      game.discardPile = game.discardPile.filter((id) => id !== card.id);
+      pushLog(game, `闪电传给 ${next.name}`);
+    } else {
+      player.judges.push(card.id);
+      game.discardPile = game.discardPile.filter((id) => id !== card.id);
+      pushLog(game, `闪电无法传递，仍在 ${player.name} 判定区`);
+    }
+    return;
   }
+  discardCard(game, player, card.id, 'judge');
+}
+
+function openSkillJudgeRevealPending(game) {
+  const ctx = game._skillJudgeCtx;
+  if (!ctx) return;
+  const meta = game._skillJudgeRevealMeta || {};
+  const player = getPlayer(game, ctx.playerId);
+  const jid = game._currentJudgeCardId || ctx.resultCardId;
+  const jc = jid ? cardById(game, jid) : null;
+  if (!player || !jc) {
+    game._skillJudgeCtx = null;
+    game._skillJudgeRevealMeta = null;
+    if (typeof resumeAfterSkill === 'function') resumeAfterSkill(game);
+    return;
+  }
+  ctx.resultCardId = jid;
+  const outcome = skillJudgeFlow.computeSkillJudgeOutcome(
+    ctx.skillId,
+    player,
+    jc,
+    ctx.extra,
+    { SUIT_COLOR, SUIT_LABEL }
+  );
+  const skillName = meta.skillName || ctx.skillId;
+  pushLog(
+    game,
+    `${player.name} 【${skillName}】判定 → ${SUIT_LABEL[jc.suit]}${jc.number}`
+  );
+  setPending(game, {
+    type: 'judge_reveal',
+    judgeKind: 'skill',
+    skillId: ctx.skillId,
+    skillName,
+    playerId: player.id,
+    askId: player.id,
+    targetId: player.id,
+    cardId: null,
+    cardName: skillName,
+    resultCardId: jid,
+    message: meta.message || `${player.name} 【${skillName}】判定`,
+    outcomeEffective: outcome.effective,
+    outcomeMessage: outcome.message,
+    outcomeKind: outcome.kind,
+    canPass: false,
+  });
+}
+
+/**
+ * 技能判定：翻牌展示 → 确认后结算（屯田/刚烈/铁骑/洛神/双雄/悲歌等）
+ */
+function beginSkillJudgeReveal(game, opts = {}) {
+  const { playerId, skillId, skillName, message, extra } = opts;
+  const player = getPlayer(game, playerId);
+  if (!player || !player.alive || !skillId) return { ok: false };
+
+  const jid = drawJudgeCard(game);
+  if (!jid) {
+    pushLog(
+      game,
+      `${player.name} 【${skillName || skillId}】判定失败（牌堆无牌）`
+    );
+    return { ok: false };
+  }
+  game.discardPile.push(jid);
+  game._currentJudgeCardId = jid;
+  game._skillJudgeCtx = {
+    skillId,
+    playerId,
+    resultCardId: jid,
+    extra: extra || {},
+  };
+  game._skillJudgeRevealMeta = {
+    skillName: skillName || skillId,
+    message,
+  };
+
+  if (skillBus) {
+    game._skillResume = 'after_skill_judge_skills';
+    for (const p of alivePlayers(game)) {
+      const r = skillBus.emit(game, 'beforeJudge', {
+        player: p,
+        judgeOwnerId: playerId,
+        judgeCardId: game._currentJudgeCardId,
+        delayedCardId: null,
+        skillId,
+      });
+      if (r.pending) return { ok: true };
+    }
+    game._skillResume = null;
+  }
+  openSkillJudgeRevealPending(game);
+  game._skillJudgeRevealMeta = null;
+  return { ok: true };
+}
+
+function finishSkillJudgeReveal(game, playerId, opts = {}) {
+  const pend = game.pending;
+  if (!pend || pend.type !== 'judge_reveal' || pend.judgeKind !== 'skill') {
+    return { ok: false, error: '当前不是技能判定展示' };
+  }
+  if (pend.askId !== playerId) return { ok: false, error: '未轮到你' };
+  if (!revealElapsedOk(pend, opts.force)) {
+    return { ok: false, error: '展示中…' };
+  }
+  const ctx = game._skillJudgeCtx;
+  clearPending(game);
+  game._currentJudgeCardId = null;
+  game._skillJudgeRevealMeta = null;
+
+  if (ctx) {
+    skillJudgeFlow.applySkillJudgeOutcome(game, ctx, {
+      getPlayer,
+      cardById,
+      pushLog,
+      setPending,
+      drawCards,
+      discardCard,
+      dealDamage,
+      recoverHp,
+      SUIT_COLOR,
+      SUIT_LABEL,
+    });
+    game._skillJudgeCtx = null;
+  }
+
+  if (game.pending) return { ok: true };
+  if (typeof resumeAfterSkill === 'function') resumeAfterSkill(game);
+  return { ok: true };
+}
+
+function finishJudgeReveal(game, playerId, opts = {}) {
+  const pend = game.pending;
+  if (!pend || pend.type !== 'judge_reveal') {
+    return { ok: false, error: '当前不是判定展示' };
+  }
+  if (pend.judgeKind === 'bagua') {
+    return finishBaguaJudgeReveal(game, playerId, opts);
+  }
+  if (pend.judgeKind === 'skill') {
+    return finishSkillJudgeReveal(game, playerId, opts);
+  }
+  if (pend.askId !== playerId) return { ok: false, error: '未轮到你' };
+  if (!revealElapsedOk(pend, opts.force)) {
+    return { ok: false, error: '展示中…' };
+  }
+  const player = getPlayer(game, pend.playerId);
+  const card = cardById(game, pend.cardId);
+  const jid = pend.resultCardId || game._currentJudgeCardId;
+  const jc = jid ? cardById(game, jid) : null;
+  clearPending(game);
+  game._currentJudgeCardId = null;
+  game._delayedJudgeCtx = null;
+  applyDelayedJudgeOutcome(game, player, card, jc);
+  if (game.pending) {
+    game.stack = game.stack || [];
+    game.stack.push({ resume: 'judge_continue' });
+    return { ok: true };
+  }
+  runJudgePhase(game);
+  return { ok: true };
+}
+
+/** @deprecated 旧即时结算入口，保留给栈恢复兼容 */
+function resolveDelayedJudge(game, player, card) {
+  beginDelayedJudgeReveal(game, player.id, card.id);
 }
 
 function afterJudgePhase(game) {
@@ -1405,7 +1938,8 @@ function loseHp(game, targetId, amount, meta = {}) {
   }
 }
 
-function tryBaguaShan(game, target) {
+function getBaguaArmor(target) {
+  if (!target) return null;
   let armor = target.equips && target.equips.armor;
   if (!armor || armor.subtype !== 'bagua') {
     try {
@@ -1415,13 +1949,83 @@ function tryBaguaShan(game, target) {
       armor = null;
     }
   }
-  if (!armor || armor.subtype !== 'bagua') {
-    return false;
+  if (!armor || armor.subtype !== 'bagua') return null;
+  return armor;
+}
+
+function canOfferBagua(game, target, attacker) {
+  if (!target || !target.alive) return false;
+  if (attacker && ignoreArmor(attacker)) return false;
+  return Boolean(getBaguaArmor(target));
+}
+
+function cloneAoePend(pend) {
+  if (!pend) return null;
+  return {
+    type: pend.type,
+    sourceId: pend.sourceId,
+    victims: (pend.victims || []).slice(),
+    index: pend.index,
+    cardName: pend.cardName,
+    cardId: pend.cardId,
+    message: pend.message,
+    _respondedCards: pend._respondedCards
+      ? pend._respondedCards.slice()
+      : [],
+  };
+}
+
+function startBaguaOffer(game, ctx) {
+  const target = getPlayer(game, ctx.targetId);
+  if (!target) return { pending: false };
+  game._baguaCtx = ctx;
+  setPending(game, {
+    type: 'bagua_ask',
+    playerId: target.id,
+    askId: target.id,
+    sourceId: ctx.sourceId,
+    message: '是否发动【八卦阵】进行判定？',
+    canPass: true,
+  });
+  return { pending: true };
+}
+
+function continueAfterBaguaDecline(game, ctx) {
+  if (!ctx) return { ok: true };
+  game._baguaCtx = null;
+  if (ctx.kind === 'sha') {
+    setPending(game, ctx.shaRespondPend);
+    return { ok: true };
+  }
+  if (ctx.kind === 'aoe_shan') {
+    const pend = ctx.aoePend;
+    const p = getPlayer(game, ctx.targetId);
+    if (pend && p) {
+      pend.askId = ctx.targetId;
+      pend.message = `${pend.cardName}：${p.name} 请响应`;
+      game.pending = pend;
+      askAoe(game);
+    }
+    return { ok: true };
+  }
+  return { ok: true };
+}
+
+function beginBaguaJudge(game, ctx) {
+  const target = getPlayer(game, ctx.targetId);
+  const armor = getBaguaArmor(target);
+  if (!target || !armor) {
+    return continueAfterBaguaDecline(game, ctx);
   }
   const jid = drawJudgeCard(game);
-  if (!jid) return false;
+  if (!jid) {
+    return continueAfterBaguaDecline(game, ctx);
+  }
   const jc = cardById(game, jid);
   game.discardPile.push(jid);
+  game._currentJudgeCardId = jid;
+  game._baguaCtx = { ...ctx, resultCardId: jid };
+
   const ok = SUIT_COLOR[jc.suit] === 'red';
   pushLog(
     game,
@@ -1429,7 +2033,143 @@ function tryBaguaShan(game, target) {
       ok ? '视为出闪' : '失败'
     }`
   );
-  return ok;
+
+  setPending(game, {
+    type: 'judge_reveal',
+    judgeKind: 'bagua',
+    playerId: target.id,
+    askId: target.id,
+    targetId: target.id,
+    cardId: armor.virtual ? null : armor.id,
+    cardName: '八卦阵',
+    resultCardId: jid,
+    message: `${target.name} 【八卦阵】判定`,
+    outcomeEffective: ok,
+    outcomeMessage: ok
+      ? '判定为红色，视为打出【闪】'
+      : '判定为黑色，仍需打出【闪】或受到伤害',
+    outcomeKind: ok ? 'bagua_shan' : 'bagua_fail',
+    triggerCardId: armor.virtual ? null : armor.id,
+    canPass: false,
+  });
+  return { ok: true };
+}
+
+function onBaguaAskResponse(game, playerId, pass) {
+  const pend = game.pending;
+  if (!pend || pend.type !== 'bagua_ask' || pend.askId !== playerId) {
+    return { ok: false, error: '当前不是八卦阵询问' };
+  }
+  const ctx = game._baguaCtx;
+  clearPending(game);
+  if (pass) {
+    return continueAfterBaguaDecline(game, ctx);
+  }
+  return beginBaguaJudge(game, ctx);
+}
+
+function resolveShaMissedAfterBagua(game, attacker, target, shaCardId) {
+  if (
+    attacker &&
+    attacker.alive &&
+    attacker.equips.weapon &&
+    attacker.equips.weapon.subtype === 'qinglong'
+  ) {
+    attacker.shaUsed = Math.max(0, attacker.shaUsed - 1);
+    pushLog(game, `${attacker.name} 青龙偃月刀：可再出一张【杀】`);
+  }
+  if (attacker && attacker.alive) {
+    skillBus.emit(game, 'afterShaMissed', {
+      player: attacker,
+      targetId: target.id,
+      cardId: shaCardId,
+    });
+  }
+}
+
+function finishBaguaJudgeReveal(game, playerId, opts = {}) {
+  const pend = game.pending;
+  if (!pend || pend.type !== 'judge_reveal' || pend.judgeKind !== 'bagua') {
+    return { ok: false, error: '当前不是八卦阵判定' };
+  }
+  if (pend.askId !== playerId) return { ok: false, error: '未轮到你' };
+  if (!revealElapsedOk(pend, opts.force)) {
+    return { ok: false, error: '展示中…' };
+  }
+  const ctx = game._baguaCtx;
+  const effective = Boolean(pend.outcomeEffective);
+  clearPending(game);
+  game._currentJudgeCardId = null;
+  game._baguaCtx = null;
+
+  if (!ctx) return { ok: true };
+
+  if (ctx.kind === 'sha') {
+    const sp = game._shaPend;
+    const target = getPlayer(game, ctx.targetId);
+    const attacker = getPlayer(game, ctx.sourceId);
+    if (!sp || !target || !attacker) return { ok: true };
+    if (effective) {
+      moveToDiscard(game, [sp.cardId]);
+      attacker.wineBuff = false;
+      game._shaPend = null;
+      pushLog(game, `${target.name} 八卦阵生效，【杀】被抵消`);
+      resolveShaMissedAfterBagua(game, attacker, target, sp.cardId);
+      return { ok: true };
+    }
+    setPending(game, ctx.shaRespondPend);
+    return { ok: true };
+  }
+
+  if (ctx.kind === 'aoe_shan') {
+    const pend = ctx.aoePend;
+    const p = getPlayer(game, ctx.targetId);
+    if (!pend || !p) return { ok: true };
+    if (effective) {
+      pushLog(game, `${p.name} 八卦阵生效，视为出【闪】`);
+      pend.index += 1;
+    } else {
+      pend.askId = ctx.targetId;
+      pend.message = `${pend.cardName}：${p.name} 请响应`;
+    }
+    game.pending = pend;
+    askAoe(game);
+    if (!game.pending) {
+      for (const item of pend._respondedCards || []) {
+        trickFlow.notifyAfterRespond(
+          game,
+          getPlayer(game, item.playerId),
+          item.card
+        );
+        if (game.pending) break;
+      }
+    }
+    return { ok: true };
+  }
+
+  return { ok: true };
+}
+
+function buildShaRespondPending(game, player, target, sp) {
+  let needShan = 1;
+  for (const q of skillBus.query(game, player, 'shaNeedShanCount')) {
+    if (typeof q.value === 'number') needShan = Math.max(needShan, q.value);
+  }
+  const label = sp.label || '杀';
+  return {
+    type: 'respond_shan',
+    playerId: target.id,
+    sourceId: player.id,
+    shaCardId: sp.cardId,
+    nature: sp.nature,
+    extraDamage: sp.extraDamage || 0,
+    needShan,
+    shanGot: 0,
+    message:
+      needShan > 1
+        ? `${player.name} 的【${label}】（无双），请连续出 ${needShan} 张【闪】`
+        : `${player.name} 的【${label}】，请出【闪】或取消`,
+  };
 }
 
 function enterDying(game, target, deathMeta = {}) {
@@ -1479,14 +2219,8 @@ function enterDying(game, target, deathMeta = {}) {
     }
   }
 
-  const order = [];
   const start = currentPlayer(game) || target;
-  let seat = start.seat;
-  for (let i = 0; i < game.players.length; i++) {
-    const p = game.players.find((x) => x.seat === seat);
-    if (p && p.alive) order.push(p.id);
-    seat = (seat + 1) % game.players.length;
-  }
+  const order = resolveOrderFromPlayer(game, start.id, { includeSelf: true });
   // 完杀：当前回合拥有者回合内，仅濒死者与完杀拥有者可救
   const cur = currentPlayer(game);
   if (
@@ -1849,8 +2583,19 @@ function resumeAfterPending(game) {
         runJudgePhase(game);
         return;
       }
+      if (top.resume === 'open_judge_reveal') {
+        if (top._delayedJudgeCtx) {
+          game._delayedJudgeCtx = top._delayedJudgeCtx;
+        }
+        openJudgeRevealPending(game);
+        return;
+      }
       if (top.resume === 'aoe_next') {
         continueAoe(game, top);
+        return;
+      }
+      if (top.resume === 'skill_effect' && top.skill_effect) {
+        setPending(game, top.skill_effect);
         return;
       }
       if (top.resume === 'juedou') {
@@ -1875,7 +2620,9 @@ function useCard(game, playerId, cardId, targets = [], extra = {}) {
   if (currentPlayer(game).id !== playerId) {
     return { ok: false, error: '不是你的回合' };
   }
-  if (!player.hand.includes(cardId)) return { ok: false, error: '手牌中没有此牌' };
+  if (!takeFromPlayableZone(player, cardId)) {
+    return { ok: false, error: '手牌或木牛流马上没有此牌' };
+  }
 
   const card = cardById(game, cardId);
   if (!card) return { ok: false, error: '牌不存在' };
@@ -1921,11 +2668,24 @@ function takeFromHand(player, cardId) {
   return true;
 }
 
+function takeFromMuniuPile(player, cardId) {
+  const muniuEquip = require('./equip/muniu');
+  return muniuEquip.removeFromMuniuPile(player, cardId);
+}
+
+function takeFromPlayableZone(player, cardId) {
+  if (takeFromHand(player, cardId)) return 'hand';
+  if (takeFromMuniuPile(player, cardId)) return 'muniu';
+  return null;
+}
+
 function playEquip(game, player, card) {
+  const muniuEquip = require('./equip/muniu');
   takeFromHand(player, card.id);
   const slot = card.slot;
   if (player.equips[slot]) {
     const old = player.equips[slot];
+    if (old.subtype === 'muniu') muniuEquip.clearMuniuPile(player, game);
     game.discardPile.push(old.id);
     pushLog(game, `${player.name} 卸下 ${old.name}`);
     // 白银狮子离开装备区回复 1 体力
@@ -1934,8 +2694,10 @@ function playEquip(game, player, card) {
       pushLog(game, `${player.name} 白银狮子效果：回复 1 点体力`);
     }
     skillBus.emit(game, 'afterLoseEquip', { player, cardId: old.id });
+    muniuEquip.syncMuniuSkill(player);
   }
   player.equips[slot] = card;
+  if (card.subtype === 'muniu') muniuEquip.syncMuniuSkill(player);
   pushLog(game, `${player.name} 装备【${card.name}】`);
   return { ok: true };
 }
@@ -1953,6 +2715,151 @@ function playJiu(game, player, card) {
     return { ok: true };
   }
   return { ok: false, error: '现在不能使用【酒】' };
+}
+
+function isJileiSkipped(game, playerId, cardId) {
+  const p = getPlayer(game, playerId);
+  if (!p) return false;
+  const st = p.skillStates && p.skillStates.jileiSkip;
+  if (st != null && (st === true || st === cardId)) return true;
+  const gv = game._jileiSkip && game._jileiSkip[playerId];
+  if (gv != null && (gv === true || gv === cardId)) return true;
+  return false;
+}
+
+function clearJileiSkipForTrick(game, cardId) {
+  if (!cardId) return;
+  if (game._jileiSkip) {
+    for (const pid of Object.keys(game._jileiSkip)) {
+      const v = game._jileiSkip[pid];
+      if (v === true || v === cardId) delete game._jileiSkip[pid];
+    }
+  }
+  for (const p of game.players || []) {
+    if (!p.skillStates || p.skillStates.jileiSkip == null) continue;
+    const v = p.skillStates.jileiSkip;
+    if (v === true || v === cardId) delete p.skillStates.jileiSkip;
+  }
+}
+
+function initWhenTrickTargetQueue(game, source, card, targetIds) {
+  const targets = (targetIds || []).filter((id) => {
+    const p = getPlayer(game, id);
+    return p && p.alive;
+  });
+  game._trickTargetQueue = {
+    sourceId: source.id,
+    cardId: card.id,
+    card,
+    cardName: card.name,
+    targets,
+    index: 0,
+  };
+}
+
+function advanceWhenTrickTarget(game) {
+  const q = game._trickTargetQueue;
+  if (!q) return { pending: false };
+  while (q.index < q.targets.length) {
+    const tid = q.targets[q.index];
+    q.index += 1;
+    const player = getPlayer(game, tid);
+    if (!player || !player.alive) continue;
+    const r = skillBus.emit(game, 'whenTrickTarget', {
+      player,
+      sourceId: q.sourceId,
+      source: getPlayer(game, q.sourceId),
+      cardId: q.cardId,
+      card: q.card,
+      cardName: q.cardName,
+      targets: q.targets,
+      targetIds: q.targets,
+    });
+    if (r.pending) return { pending: true };
+  }
+  game._trickTargetQueue = null;
+  return { pending: false };
+}
+
+function beginTrickTargetPhase(game, source, card, targetIds, trickPend) {
+  game._trickPend = trickPend;
+  game._skillResume = 'after_trick_targets';
+  initWhenTrickTargetQueue(game, source, card, targetIds);
+  return advanceWhenTrickTarget(game);
+}
+
+function continueTrickAfterTargets(game) {
+  const tp = game._trickPend;
+  game._trickPend = null;
+  game._skillResume = null;
+  if (!tp) return { ok: true };
+
+  const cardId = tp.cardId;
+
+  switch (tp.kind) {
+    case 'tiesuo': {
+      const src = getPlayer(game, tp.playerId);
+      for (const tid of tp.targets || []) {
+        const t = getPlayer(game, tid);
+        if (!t || !t.alive) continue;
+        if (isJileiSkipped(game, tid, cardId)) {
+          pushLog(game, `${t.name} 不受【铁索连环】影响（鸡肋）`);
+          continue;
+        }
+        t.chained = !t.chained;
+        pushLog(
+          game,
+          `${src ? src.name : '某角色'} 令 ${t.name} ${
+            t.chained ? '进入横置' : '解除横置'
+          }`
+        );
+      }
+      clearJileiSkipForTrick(game, cardId);
+      break;
+    }
+    case 'taoyuan': {
+      const src = getPlayer(game, tp.playerId);
+      for (const p of alivePlayers(game)) {
+        if (isJileiSkipped(game, p.id, cardId)) {
+          pushLog(game, `${p.name} 不受【桃园结义】影响（鸡肋）`);
+          continue;
+        }
+        recoverHp(game, src, p, 1);
+      }
+      clearJileiSkipForTrick(game, cardId);
+      break;
+    }
+    case 'aoe_sha':
+    case 'aoe_shan': {
+      setPending(game, {
+        type: tp.kind,
+        sourceId: tp.sourceId,
+        victims: tp.victims,
+        index: 0,
+        cardName: tp.cardName,
+        cardId: tp.cardId,
+        message: tp.message,
+      });
+      askAoe(game);
+      break;
+    }
+    case 'wugu': {
+      setPending(game, {
+        type: 'wugu',
+        order: tp.order,
+        index: 0,
+        shown: tp.shown,
+        cardId: tp.cardId,
+        message: '五谷丰登：选择一张牌',
+      });
+      askWugu(game);
+      break;
+    }
+    default:
+      clearJileiSkipForTrick(game, cardId);
+      break;
+  }
+  return { ok: true };
 }
 
 function playTiesuo(game, player, card, targets) {
@@ -1979,17 +2886,19 @@ function playTiesuo(game, player, card, targets) {
   } else {
     pushLog(game, `${player.name} 使用【铁索连环】`);
   }
+  const validTargets = [];
   for (const tid of targets.slice(0, 2)) {
     const t = getPlayer(game, tid);
-    if (!t || !t.alive) continue;
-    // 横置为独立状态：对每名目标分别取反（已横置→解除，未横置→横置）
-    t.chained = !t.chained;
-    pushLog(
-      game,
-      `${player.name} 令 ${t.name} ${t.chained ? '进入横置' : '解除横置'}`
-    );
+    if (t && t.alive) validTargets.push(t.id);
   }
-  return { ok: true };
+  const r = beginTrickTargetPhase(game, player, card, validTargets, {
+    kind: 'tiesuo',
+    playerId: player.id,
+    cardId: card.id,
+    targets: validTargets,
+  });
+  if (r.pending) return { ok: true };
+  return continueTrickAfterTargets(game);
 }
 
 function playHuogong(game, player, card, targets) {
@@ -2009,7 +2918,6 @@ function playHuogong(game, player, card, targets) {
     askId: target.id,
     sourceId: player.id,
     targetId: target.id,
-    cardIds: target.hand.slice(),
     message: '火攻：请选择并展示一张手牌',
   });
   return { ok: true };
@@ -2065,10 +2973,14 @@ function playTaoyuan(game, player, card) {
   game.discardPile.push(card.id);
   pushLog(game, `${player.name} 使用【桃园结义】`);
   trickFlow.notifyAfterUseCard(game, player, card);
-  for (const p of alivePlayers(game)) {
-    recoverHp(game, player, p, 1);
-  }
-  return { ok: true };
+  const targetIds = alivePlayers(game).map((p) => p.id);
+  const r = beginTrickTargetPhase(game, player, card, targetIds, {
+    kind: 'taoyuan',
+    playerId: player.id,
+    cardId: card.id,
+  });
+  if (r.pending) return { ok: true };
+  return continueTrickAfterTargets(game);
 }
 
 function playLebu(game, player, card, targets) {
@@ -2232,11 +3144,13 @@ function continueShaAfterSkills(game) {
     return { ok: true };
   }
 
-  if (!ignoreArmor(player) && tryBaguaShan(game, target)) {
-    moveToDiscard(game, [card.id]);
-    player.wineBuff = false;
-    game._shaPend = null;
-    maybeQinglong(game, player, card, target);
+  if (!ignoreArmor(player) && canOfferBagua(game, target, player) && !sp.noShan) {
+    startBaguaOffer(game, {
+      kind: 'sha',
+      targetId: target.id,
+      sourceId: player.id,
+      shaRespondPend: buildShaRespondPending(game, player, target, sp),
+    });
     return { ok: true };
   }
 
@@ -2500,35 +3414,45 @@ function playNanman(game, player, card) {
   game.discardPile.push(card.id);
   pushLog(game, `${player.name} 使用【南蛮入侵】`);
   trickFlow.notifyAfterUseCard(game, player, card);
-  const victims = [];
-  let seat = nextAliveSeat(game, player.seat);
-  while (seat !== player.seat) {
-    const p = game.players.find((x) => x.seat === seat);
-    if (p && p.alive) {
-      const blocked = skillBus.query(game, p, 'canBeTarget', {
-        cardName: '南蛮入侵',
-        card,
-      });
-      if (blocked.some((x) => x.value === false)) {
-        pushLog(game, `${p.name} 不受【南蛮入侵】影响`);
-      } else {
-        victims.push(p.id);
-      }
+  const victims = resolveOrderFromPlayer(game, player.id, {
+    includeSelf: false,
+  }).filter((id) => {
+    const p = getPlayer(game, id);
+    const blocked = skillBus.query(game, p, 'canBeTarget', {
+      cardName: '南蛮入侵',
+      card,
+    });
+    if (blocked.some((x) => x.value === false)) {
+      pushLog(game, `${p.name} 不受【南蛮入侵】影响`);
+      return false;
     }
-    seat = nextAliveSeat(game, seat);
-    if (victims.length > 20) break;
-  }
-  setPending(game, {
-    type: 'aoe_sha',
+    return true;
+  });
+  const r = beginTrickTargetPhase(game, player, card, victims, {
+    kind: 'aoe_sha',
     sourceId: player.id,
-    victims,
-    index: 0,
-    cardName: '南蛮入侵',
     cardId: card.id,
+    cardName: '南蛮入侵',
+    victims,
     message: '南蛮入侵：请打出【杀】',
   });
-  askAoe(game);
-  return { ok: true };
+  if (r.pending) return { ok: true };
+  return continueTrickAfterTargets(game);
+}
+
+function isWanjianImmune(game, player, card) {
+  if (!player || !player.alive) return true;
+  if (
+    player.equips.armor &&
+    player.equips.armor.subtype === 'tengjia'
+  ) {
+    return true;
+  }
+  const blocked = skillBus.query(game, player, 'canBeTarget', {
+    cardName: '万箭齐发',
+    card,
+  });
+  return blocked.some((x) => x.value === false);
 }
 
 function playWanjian(game, player, card) {
@@ -2536,25 +3460,31 @@ function playWanjian(game, player, card) {
   game.discardPile.push(card.id);
   pushLog(game, `${player.name} 使用【万箭齐发】`);
   trickFlow.notifyAfterUseCard(game, player, card);
-  const victims = [];
-  let seat = nextAliveSeat(game, player.seat);
-  while (seat !== player.seat) {
-    const p = game.players.find((x) => x.seat === seat);
-    if (p && p.alive) victims.push(p.id);
-    seat = nextAliveSeat(game, seat);
-    if (victims.length > 20) break;
-  }
-  setPending(game, {
-    type: 'aoe_shan',
+  const victims = resolveOrderFromPlayer(game, player.id, {
+    includeSelf: false,
+  }).filter((id) => {
+    const p = getPlayer(game, id);
+    if (!isWanjianImmune(game, p, card)) return true;
+    pushLog(
+      game,
+      `${p.name} 不受【万箭齐发】影响${
+        p.equips.armor && p.equips.armor.subtype === 'tengjia'
+          ? '（藤甲）'
+          : ''
+      }`
+    );
+    return false;
+  });
+  const r = beginTrickTargetPhase(game, player, card, victims, {
+    kind: 'aoe_shan',
     sourceId: player.id,
-    victims,
-    index: 0,
-    cardName: '万箭齐发',
     cardId: card.id,
+    cardName: '万箭齐发',
+    victims,
     message: '万箭齐发：请打出【闪】',
   });
-  askAoe(game);
-  return { ok: true };
+  if (r.pending) return { ok: true };
+  return continueTrickAfterTargets(game);
 }
 
 function askAoe(game) {
@@ -2564,6 +3494,45 @@ function askAoe(game) {
     const id = pend.victims[pend.index];
     const p = getPlayer(game, id);
     if (p && p.alive) {
+      if (isJileiSkipped(game, id, pend.cardId)) {
+        pushLog(
+          game,
+          `${p.name} 不受【${pend.cardName}】影响（鸡肋）`
+        );
+        pend.index += 1;
+        continue;
+      }
+      if (
+        pend.type === 'aoe_shan' &&
+        isWanjianImmune(
+          game,
+          p,
+          pend.cardId ? cardById(game, pend.cardId) : null
+        )
+      ) {
+        pushLog(
+          game,
+          `${p.name} 不受【万箭齐发】影响${
+            p.equips.armor && p.equips.armor.subtype === 'tengjia'
+              ? '（藤甲）'
+              : ''
+          }`
+        );
+        pend.index += 1;
+        continue;
+      }
+      if (
+        pend.type === 'aoe_shan' &&
+        canOfferBagua(game, p, getPlayer(game, pend.sourceId))
+      ) {
+        startBaguaOffer(game, {
+          kind: 'aoe_shan',
+          targetId: id,
+          sourceId: pend.sourceId,
+          aoePend: cloneAoePend(pend),
+        });
+        return;
+      }
       pend.askId = id;
       pend.message = `${pend.cardName}：${p.name} 请响应`;
       return;
@@ -2572,6 +3541,7 @@ function askAoe(game) {
   }
   const settled = { ...pend };
   clearPending(game);
+  clearJileiSkipForTrick(game, settled.cardId);
   // 巨象等：AOE 结算后
   for (const pl of alivePlayers(game)) {
     if (!pl.alive) continue;
@@ -2644,7 +3614,7 @@ function onAoeResponse(game, playerId, cardId, pass) {
   if (game.pending && game.pending.type !== pend.type) {
     game.stack.push({
       resume: 'aoe_next',
-      aoe: { ...pend, index: pend.index },
+      aoe: cloneAoePend({ ...pend, index: pend.index }),
     });
     return { ok: true };
   }
@@ -2820,22 +3790,15 @@ function playWugu(game, player, card) {
   }
   pushLog(game, `${player.name} 使用【五谷丰登】`);
   trickFlow.notifyAfterUseCard(game, player, card);
-  const order = [];
-  let seat = player.seat;
-  for (let i = 0; i < game.players.length; i++) {
-    const p = game.players.find((x) => x.seat === seat);
-    if (p && p.alive) order.push(p.id);
-    seat = (seat + 1) % game.players.length;
-  }
-  setPending(game, {
-    type: 'wugu',
+  const order = resolveOrderFromPlayer(game, player.id, { includeSelf: true });
+  const r = beginTrickTargetPhase(game, player, card, order, {
+    kind: 'wugu',
     order,
-    index: 0,
     shown,
-    message: '五谷丰登：选择一张牌',
+    cardId: card.id,
   });
-  askWugu(game);
-  return { ok: true };
+  if (r.pending) return { ok: true };
+  return continueTrickAfterTargets(game);
 }
 
 function askWugu(game) {
@@ -2843,6 +3806,23 @@ function askWugu(game) {
   if (!pend || pend.type !== 'wugu') return;
   if (pend.index >= pend.order.length || pend.shown.length === 0) {
     moveToDiscard(game, pend.shown);
+    clearJileiSkipForTrick(game, pend.cardId);
+    clearPending(game);
+    return;
+  }
+  while (pend.index < pend.order.length) {
+    const playerId = pend.order[pend.index];
+    const p = getPlayer(game, playerId);
+    if (p && p.alive && isJileiSkipped(game, playerId, pend.cardId)) {
+      pushLog(game, `${p.name} 不受【五谷丰登】影响（鸡肋）`);
+      pend.index += 1;
+      continue;
+    }
+    break;
+  }
+  if (pend.index >= pend.order.length || pend.shown.length === 0) {
+    moveToDiscard(game, pend.shown);
+    clearJileiSkipForTrick(game, pend.cardId);
     clearPending(game);
     return;
   }
@@ -2854,15 +3834,21 @@ function askWugu(game) {
     const p = getPlayer(game, playerId);
     pend.shown = [];
     if (p && p.alive) {
-      p.hand.push(cardId);
-      const c = cardById(game, cardId);
-      pushLog(
-        game,
-        `${p.name} 获得五谷最后一张【${c ? c.name : '牌'}】`
-      );
+      if (isJileiSkipped(game, playerId, pend.cardId)) {
+        pushLog(game, `${p.name} 不受【五谷丰登】影响（鸡肋）`);
+        game.discardPile.push(cardId);
+      } else {
+        p.hand.push(cardId);
+        const c = cardById(game, cardId);
+        pushLog(
+          game,
+          `${p.name} 获得五谷最后一张【${c ? c.name : '牌'}】`
+        );
+      }
     } else {
       game.discardPile.push(cardId);
     }
+    clearJileiSkipForTrick(game, pend.cardId);
     clearPending(game);
     return;
   }
@@ -3042,12 +4028,15 @@ function useViewAs(game, playerId, payload) {
   if (!card) return { ok: false, error: '牌不存在' };
   const fromHand = player.hand.includes(cardId);
   let fromEquip = null;
+  let fromMuniu = false;
   if (!fromHand) {
+    const pile = player.skillPiles && player.skillPiles.muniu;
+    if (Array.isArray(pile) && pile.includes(cardId)) fromMuniu = true;
     for (const slot of Object.keys(player.equips || {})) {
       if (player.equips[slot] && player.equips[slot].id === cardId) fromEquip = slot;
     }
   }
-  if (!fromHand && !fromEquip) return { ok: false, error: '没有此牌' };
+  if (!fromHand && !fromEquip && !fromMuniu) return { ok: false, error: '没有此牌' };
   if (spec.includeEquip === false && fromEquip) {
     return { ok: false, error: '不能用装备转化' };
   }
@@ -3066,6 +4055,7 @@ function useViewAs(game, playerId, payload) {
 
   // 从原区域移除，构造虚拟牌
   if (fromHand) takeFromHand(player, cardId);
+  else if (fromMuniu) takeFromMuniuPile(player, cardId);
   else player.equips[fromEquip] = null;
 
   const virtualName =
@@ -3280,18 +4270,32 @@ function useViewAs(game, playerId, payload) {
     return playHuogong(game, player, game.cards[cardId], payload.targets || []);
   }
   if (to === 'wuxie') {
-    if (!pend || pend.type !== 'wuxie') {
+    if (
+      !pend ||
+      pend.type !== 'wuxie' ||
+      pend.phase !== 'collect' ||
+      !pend.waiting ||
+      !pend.waiting.includes(playerId)
+    ) {
       if (fromHand) player.hand.push(cardId);
       else if (fromEquip) player.equips[fromEquip] = card;
       game.cards[cardId] = card;
       return { ok: false, error: '请在需要出无懈时转化' };
     }
-    player.hand.push(cardId);
-    pushLog(game, `${player.name} 发动【${skill.name}】将牌当【无懈可击】`);
-    return trickFlow.onWuxieResponse(game, playerId, cardId, false);
+    if (fromMuniu) {
+      require('./equip/muniu').getMuniuPile(player).push(cardId);
+    } else {
+      player.hand.push(cardId);
+    }
+    return trickFlow.onWuxieResponse(game, playerId, cardId, false, {
+      asWuxie: true,
+      skillId,
+      skillName: skill.name,
+    });
   }
 
   if (fromHand) player.hand.push(cardId);
+  else if (fromMuniu) require('./equip/muniu').getMuniuPile(player).push(cardId);
   else if (fromEquip) player.equips[fromEquip] = card;
   game.cards[cardId] = card;
   return { ok: false, error: '未支持的转化' };
@@ -3345,7 +4349,21 @@ function applyAction(game, playerId, action) {
     const pass = Boolean(payload.pass);
 
     if (pend.type === 'wuxie') {
-      return trickFlow.onWuxieResponse(game, playerId, payload.cardId, pass);
+      return trickFlow.onWuxieResponse(game, playerId, payload.cardId, pass, {
+        asWuxie: Boolean(payload.asWuxie),
+        skillId: payload.skillId || null,
+        skillName: payload.skillName || null,
+        force: Boolean(payload.force),
+      });
+    }
+    if (pend.type === 'judge_reveal') {
+      return finishJudgeReveal(game, playerId);
+    }
+    if (pend.type === 'card_reveal') {
+      return finishCardReveal(game, playerId);
+    }
+    if (pend.type === 'bagua_ask') {
+      return onBaguaAskResponse(game, playerId, pass);
     }
     if (pend.type === 'succession') {
       return xz.applySuccession(
@@ -3380,6 +4398,7 @@ function applyAction(game, playerId, action) {
         SUIT_LABEL,
         currentPlayer,
         resumeAfterSkill,
+        resumeAfterPending,
         useCard,
         useCardByPlayer: useCard,
         startJuedou: (g, a, b, o) => trickFlow.startJuedou(g, a, b, o),
@@ -3522,11 +4541,14 @@ function applyAction(game, playerId, action) {
       if (z.zone === 'hand') discardCard(game, target, id, 'hand');
       else if (z.zone === 'judge') discardCard(game, target, id, 'judge');
       else {
+        const eq = target.equips[z.slot];
         target.equips[z.slot] = null;
         game.discardPile.push(id);
+        if (eq && eq.subtype === 'muniu') onEquipRemoved(game, target, id);
       }
       pushLog(game, `弃置了 ${target.name} 的一张牌`);
       clearPending(game);
+      resumeAfterPending(game);
       return { ok: true };
     }
     if (pend.type === 'choose_gain_target_card') {
@@ -3537,16 +4559,52 @@ function applyAction(game, playerId, action) {
       const me = getPlayer(game, playerId);
       const z = findCardZone(target, id);
       if (!z) return { ok: false, error: '牌已不在' };
+      const muniuMod = require('./equip/muniu');
+
+      if (z.zone === 'equip' && z.slot === 'treasure') {
+        const eq = target.equips.treasure;
+        if (eq && eq.subtype === 'muniu') {
+          if (me.equips.treasure) {
+            return { ok: false, error: '你的宝物栏已有装备' };
+          }
+          target.equips.treasure = null;
+          me.equips.treasure = eq;
+          if (!me.skillPiles) me.skillPiles = {};
+          me.skillPiles.muniu = (target.skillPiles && target.skillPiles.muniu
+            ? target.skillPiles.muniu.slice()
+            : []);
+          target.skillPiles.muniu = [];
+          muniuMod.syncMuniuSkill(target);
+          muniuMod.syncMuniuSkill(me);
+          if (skillBus) {
+            skillBus.emit(game, 'afterLoseEquip', {
+              player: target,
+              cardId: eq.id,
+            });
+          }
+          pushLog(game, `${me.name} 获得了 ${target.name} 的【木牛流马】`);
+          clearPending(game);
+          resumeAfterPending(game);
+          return { ok: true };
+        }
+      }
+
       if (z.zone === 'hand') {
         target.hand = target.hand.filter((x) => x !== id);
+        me.hand.push(id);
       } else if (z.zone === 'judge') {
         target.judges = target.judges.filter((x) => x !== id);
-      } else {
+        me.hand.push(id);
+      } else if (z.zone === 'muniu') {
+        muniuMod.removeFromMuniuPile(target, id);
+        me.hand.push(id);
+      } else if (z.zone === 'equip') {
         target.equips[z.slot] = null;
+        me.hand.push(id);
       }
-      me.hand.push(id);
       pushLog(game, `${me.name} 获得了 ${target.name} 的一张牌`);
       clearPending(game);
+      resumeAfterPending(game);
       return { ok: true };
     }
     if (pend.type === 'wugu') {
@@ -3691,27 +4749,19 @@ function applyAction(game, playerId, action) {
         game,
         `${target.name} 展示 ${SUIT_LABEL[shown.suit]}${shown.number}【${shown.name}】`
       );
-      const source = getPlayer(game, pend.sourceId);
-      const hasSameSuit =
-        source &&
-        source.hand.some((id) => {
-          const c = cardById(game, id);
-          return c && c.suit === shown.suit;
-        });
-      if (!hasSameSuit) {
-        clearPending(game);
-        pushLog(game, `${source ? source.name : '来源角色'} 没有同花色手牌，火攻无效`);
-        return { ok: true };
-      }
-      setPending(game, {
-        type: 'huogong',
-        playerId: pend.sourceId,
+      beginCardReveal(game, {
+        playerId: target.id,
         askId: pend.sourceId,
-        sourceId: pend.sourceId,
-        targetId: pend.targetId,
         shown: [shownId],
-        suit: shown.suit,
-        message: `火攻：弃一张${SUIT_LABEL[shown.suit]}牌造成火焰伤害，或取消`,
+        title: '火攻',
+        message: `${target.name} 展示手牌（对所有人明示）`,
+        afterReveal: {
+          kind: 'huogong',
+          sourceId: pend.sourceId,
+          targetId: pend.targetId,
+          suit: shown.suit,
+          shownId,
+        },
       });
       return { ok: true };
     }
@@ -3888,10 +4938,28 @@ function publicGameState(game, viewerId) {
           if (
             (!optionIds || !optionIds.length) &&
             pend.type === 'skill_effect' &&
+            pend.skillId === 'mengjin' &&
+            pend.targetId
+          ) {
+            const t = getPlayer(game, pend.targetId);
+            optionIds = t ? allCardsOf(t) : [];
+          }
+          if (
+            (!optionIds || !optionIds.length) &&
+            pend.type === 'skill_effect' &&
+            pend.skillId === 'tiaoxin' &&
+            pend.step === 'discard' &&
+            pend.targetId
+          ) {
+            const t = getPlayer(game, pend.targetId);
+            optionIds = t ? allCardsOf(t) : [];
+          }
+          if (
+            (!optionIds || !optionIds.length) &&
+            pend.type === 'skill_effect' &&
             pend.sourceId &&
             (pend.skillId === 'fankui' ||
               pend.skillId === 'ganglie' ||
-              pend.skillId === 'mengjin' ||
               (pend.skillId === 'xuanhuo' && pend.step === 'take'))
           ) {
             const src = getPlayer(game, pend.sourceId || pend.targetId);
@@ -3969,10 +5037,30 @@ function publicGameState(game, viewerId) {
             step: pend.step || null,
             trickId: pend.trickId || null,
             trickName: pend.trickName || null,
+            cardName: pend.cardName || null,
             options: pend.options || null,
             candidates: pend.candidates || null,
             mounts: pend.mounts,
+            outcomeEffective:
+              pend.outcomeEffective != null ? pend.outcomeEffective : null,
+            outcomeMessage: pend.outcomeMessage || null,
+            outcomeKind: pend.outcomeKind || null,
+            judgeKind: pend.judgeKind || null,
+            revealMinMs: pend.revealMinMs || REVEAL_MIN_MS,
+            title: pend.title || null,
+            resultCard:
+              pend.type === 'judge_reveal' && pend.resultCardId
+                ? publicCard(cardById(game, pend.resultCardId))
+                : null,
             triggerCard: (() => {
+              if (pend.judgeKind === 'bagua' && !pend.triggerCardId) {
+                return {
+                  id: 'virtual-bagua',
+                  name: '八卦阵',
+                  type: 'equip',
+                  subtype: 'bagua',
+                };
+              }
               const tid =
                 pend.shaCardId ||
                 pend.cardId ||
@@ -3985,19 +5073,56 @@ function publicGameState(game, viewerId) {
                 publicCardOption(game, viewer, optionOwner, id, pend)
               )
               .filter(Boolean),
-            shown: (pend.shown || pend.cardIds || []).map((id) =>
-              pend.type === 'pile_reorder' &&
-              viewerId &&
-              pend.askId !== viewerId
-                ? { id, name: '牌', back: true }
-                : publicCard(cardById(game, id))
-            ),
-            forMe: Boolean(
-              viewerId &&
-                (pend.askId
+            shown:
+              pend.type === 'judge_reveal' && pend.resultCardId
+                ? [publicCard(cardById(game, pend.resultCardId))]
+                : (pend.shown || pend.cardIds || []).map((id) =>
+                    pend.type === 'pile_reorder' &&
+                    viewerId &&
+                    pend.askId !== viewerId
+                      ? { id, name: '牌', back: true }
+                      : publicCard(cardById(game, id))
+                  ),
+            forMe: (() => {
+              if (!viewerId) return false;
+              if (pend.type === 'wuxie') {
+                if (pend.phase === 'reveal') {
+                  return pend.askId === viewerId;
+                }
+                if (pend.phase === 'collect') {
+                  return (
+                    Array.isArray(pend.waiting) &&
+                    pend.waiting.includes(viewerId)
+                  );
+                }
+              }
+              return Boolean(
+                pend.askId
                   ? pend.askId === viewerId
-                  : pend.playerId === viewerId)
-            ),
+                  : pend.playerId === viewerId
+              );
+            })(),
+            wuxiePhase: pend.type === 'wuxie' ? pend.phase || null : null,
+            wuxieSubmitted:
+              pend.type === 'wuxie' &&
+              viewerId &&
+              pend.responses &&
+              pend.responses[viewerId] != null,
+            wuxieWaitingCount:
+              pend.type === 'wuxie' && pend.waiting
+                ? pend.waiting.length
+                : null,
+            wuxieResults:
+              pend.type === 'wuxie' && pend.phase === 'reveal'
+                ? (pend.results || []).map((row) => ({
+                    playerId: row.playerId,
+                    playerName: row.playerName,
+                    pass: row.pass,
+                    auto: row.auto,
+                    asWuxie: row.asWuxie,
+                    skillName: row.skillName || null,
+                  }))
+                : null,
           };
         })()
       : null,
@@ -4171,6 +5296,10 @@ function publicGameState(game, viewerId) {
           const piles = p.skillPiles || {};
           const out = {};
           for (const key of Object.keys(piles)) {
+            if (key === 'muniu' && !isSelf) {
+              out[key] = [];
+              continue;
+            }
             out[key] = (piles[key] || []).map((id) =>
               publicCard(cardById(game, id))
             );
@@ -4181,6 +5310,9 @@ function publicGameState(game, viewerId) {
         distanceFromMe: viewer ? distance(game, viewerId, p.id) : null,
         inMyAttackRange: viewer
           ? inAttackRange(game, viewerId, p.id)
+          : false,
+        canAttackMe: viewer
+          ? inAttackRange(game, p.id, viewerId)
           : false,
       };
     }),
@@ -4204,6 +5336,15 @@ function publicGameState(game, viewerId) {
           ignoreShaDistance: Boolean(
             viewer.skillStates && viewer.skillStates.paoxiaoNoDistance
           ),
+          muniuCards: (() => {
+            const ids = (viewer.skillPiles && viewer.skillPiles.muniu) || [];
+            return ids.map((id) => {
+              const c = publicCard(cardById(game, id));
+              c.onMuniu = true;
+              c.muniuLabel = '木牛';
+              return c;
+            });
+          })(),
           activeSkills:
             skillBus && game.phase === 'playing'
               ? skillBus.listActiveSkills(game, viewer)
@@ -4307,9 +5448,14 @@ function publicGameState(game, viewerId) {
     advanceTurn,
     resumeAfterPending,
     continueShaAfterSkills,
+    openJudgeRevealPending,
+    openSkillJudgeRevealPending,
+    beginSkillJudgeReveal,
     playWanjian,
     askAoe,
     playSha,
+    advanceWhenTrickTarget,
+    continueTrickAfterTargets,
     startJuedou(game, a, b, opts) {
       return trickFlow.startJuedou(game, a, b, opts);
     },
@@ -4332,7 +5478,11 @@ function publicGameState(game, viewerId) {
     clearPending,
     pushLog,
     nextAliveSeat,
+    prevAliveSeat,
     resumeAfterSkill,
+    beginDelayedJudgeReveal,
+    beginSkillJudgeReveal,
+    cancelDelayedJudge,
   });
 }
 
@@ -4362,7 +5512,16 @@ function getActingPlayerIds(game) {
   }
 
   if (game.pending) {
-    const id = game.pending.askId || game.pending.playerId;
+    const pend = game.pending;
+    if (pend.type === 'wuxie') {
+      if (pend.phase === 'collect' && pend.waiting && pend.waiting.length) {
+        return pend.waiting.slice();
+      }
+      if (pend.phase === 'reveal' && pend.askId) {
+        return [pend.askId];
+      }
+    }
+    const id = pend.askId || pend.playerId;
     return id ? [id] : [];
   }
 
@@ -4385,7 +5544,19 @@ function actingHintFor(game, playerId) {
     if (pend.type === 'juedou') return '请出【杀】';
     if (pend.type === 'dying') return '请救【桃】';
     if (pend.type === 'discard') return msg || '请弃牌';
-    if (pend.type === 'wuxie') return '可出【无懈】';
+    if (pend.type === 'wuxie') {
+      if (pend.phase === 'reveal') return '无懈结果';
+      if (pend.waiting && pend.waiting.includes(playerId)) {
+        return '可出【无懈】';
+      }
+      if (pend.responses && pend.responses[playerId]) {
+        return '已选择，等待…';
+      }
+      return '等待无懈…';
+    }
+    if (pend.type === 'judge_reveal') return '判定中';
+    if (pend.type === 'card_reveal') return pend.message || '展示中';
+    if (pend.type === 'bagua_ask') return '是否发动【八卦阵】';
     if (pend.type === 'skill_effect' || pend.type === 'skill_ask') {
       return pend.skillName
         ? `请响应【${pend.skillName}】`
@@ -4492,6 +5663,23 @@ function forceTimeout(game, playerId) {
         type: 'respond',
         payload: { order },
       });
+    }
+
+    if (pend.type === 'card_reveal') {
+      return finishCardReveal(game, playerId, { force: true });
+    }
+
+    if (pend.type === 'judge_reveal') {
+      return finishJudgeReveal(game, playerId, { force: true });
+    }
+
+    if (pend.type === 'wuxie') {
+      if (pend.phase === 'reveal') {
+        return trickFlow.finishWuxieReveal(game, playerId, { force: true });
+      }
+      if (pend.phase === 'collect' && pend.waiting && pend.waiting.includes(playerId)) {
+        return trickFlow.onWuxieResponse(game, playerId, null, true);
+      }
     }
 
     if (pend.type === 'rebel_compensate') {

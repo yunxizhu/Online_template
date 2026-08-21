@@ -1,12 +1,12 @@
 <!-- 三国杀对局面板（本人正视角 · 90°俯视桌面） -->
 <div class="panel game-panel sgs-panel" id="panel-sgs" hidden>
   <header class="sgs-topbar">
-    <h2>三国杀 · <span id="sgs-mode-label">标准身份</span></h2>
+    <h2><span data-i18n="sgs.title">三国杀</span> · <span id="sgs-mode-label" data-i18n="sgs.modeIdentity">标准身份</span></h2>
     <p id="sgs-status" class="game-status">—</p>
   </header>
 
   <div id="sgs-general-select" class="sgs-general-select" hidden>
-    <h3>选择武将</h3>
+    <h3 data-i18n="sgs.pickGeneral">选择武将</h3>
     <div id="sgs-general-choices" class="sgs-general-choices"></div>
   </div>
 
@@ -17,13 +17,13 @@
       </div>
       <!-- 牌堆放在透视桌面外，避免 rotateX 裁切只露一半 -->
       <div class="sgs-center" id="sgs-center">
-        <div class="sgs-pile" id="sgs-draw-pile" title="抽牌堆">
+        <div class="sgs-pile" id="sgs-draw-pile" data-i18n-attr="title:sgs.drawPile" title="抽牌堆">
           <div class="sgs-pile-visual" id="sgs-draw-visual"></div>
-          <div class="sgs-pile-label">抽牌堆 <span id="sgs-draw">0</span></div>
+          <div class="sgs-pile-label"><span data-i18n="sgs.drawPile">抽牌堆</span> <span id="sgs-draw">0</span></div>
         </div>
-        <div class="sgs-pile" id="sgs-discard-pile" title="弃牌堆">
+        <div class="sgs-pile" id="sgs-discard-pile" data-i18n-attr="title:sgs.discardPile" title="弃牌堆">
           <div class="sgs-pile-visual" id="sgs-discard-visual"></div>
-          <div class="sgs-pile-label">弃牌堆 <span id="sgs-discard">0</span></div>
+          <div class="sgs-pile-label"><span data-i18n="sgs.discardPile">弃牌堆</span> <span id="sgs-discard">0</span></div>
           <div class="sgs-pile-caption" id="sgs-discard-caption"></div>
         </div>
       </div>
@@ -31,9 +31,9 @@
 
     <div class="sgs-self-prompts" id="sgs-self-prompts">
       <div class="sgs-play-bar row" id="sgs-play-actions">
-        <button id="btn-sgs-play" type="button" hidden>确认出牌</button>
-        <button id="btn-sgs-recast" type="button" class="secondary" hidden>重置</button>
-        <button id="btn-sgs-end-play" type="button" class="secondary" hidden>结束出牌</button>
+        <button id="btn-sgs-play" type="button" hidden data-i18n="sgs.confirmPlay">确认出牌</button>
+        <button id="btn-sgs-recast" type="button" class="secondary" hidden data-i18n="sgs.reset">重置</button>
+        <button id="btn-sgs-end-play" type="button" class="secondary" hidden data-i18n="sgs.endPlay">结束出牌</button>
       </div>
       <div class="sgs-ask-bar" id="sgs-ask-bar" hidden>
         <p class="sgs-ask-msg" id="sgs-ask-msg"></p>

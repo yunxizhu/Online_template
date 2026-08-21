@@ -470,6 +470,11 @@ window.SgsAssets = (function () {
       badge.textContent = card.virtualLabel || '虚';
       if (card.virtualTitle) badge.title = card.virtualTitle;
       el.appendChild(badge);
+    } else if (card && (card.onMuniu || card.muniuLabel)) {
+      const badge = document.createElement('div');
+      badge.className = 'sgs-kapai-virtual is-muniu-label';
+      badge.textContent = card.muniuLabel || '木牛';
+      el.appendChild(badge);
     }
 
     if (!opts.faceDown && card && card.suit) {

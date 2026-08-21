@@ -18,13 +18,19 @@ module.exports = {
   content(ctx) {
     const ids = (ctx.cardIds || []).slice();
     ctx.setPending({
-      type: 'skill_effect',
-      skillId: 'luoying',
+      type: 'card_reveal',
       playerId: ctx.player.id,
       askId: ctx.player.id,
-      cardIds: ids,
-      message: '落英：是否获得这些梅花牌？',
-      canPass: true,
+      shown: ids,
+      skillId: 'luoying',
+      skillName: '落英',
+      title: '落英',
+      message: `${ctx.player.name} 展示可获得的梅花牌`,
+      _afterReveal: {
+        kind: 'luoying_choice',
+        playerId: ctx.player.id,
+        cardIds: ids,
+      },
     });
     return { ok: true };
   },

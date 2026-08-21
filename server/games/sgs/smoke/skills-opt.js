@@ -44,6 +44,15 @@ function drain(game, preferPass = true) {
       continue;
     }
     if (pend.type === 'skill_effect' || pend.type === 'wuxie') {
+      if (pend.type === 'wuxie' && pend.phase === 'collect' && pend.waiting) {
+        for (const id of pend.waiting) {
+          engine.applyAction(game, id, {
+            type: 'respond',
+            payload: { pass: preferPass },
+          });
+        }
+        continue;
+      }
       engine.applyAction(game, pend.askId, {
         type: 'respond',
         payload: { pass: true },

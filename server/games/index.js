@@ -3,12 +3,14 @@
 const gomoku = require('./gomoku');
 const incan = require('./incan');
 const sgs = require('./sgs');
+const lasidao = require('./lasidao');
 
 /** @type {Record<string, object>} 顺序即创建房间下拉默认顺序 */
 const GAMES = {
   [sgs.id]: sgs,
   [gomoku.id]: gomoku,
   [incan.id]: incan,
+  [lasidao.id]: lasidao,
 };
 
 function listGames() {

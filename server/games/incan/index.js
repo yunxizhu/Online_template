@@ -503,6 +503,7 @@ module.exports = {
   label: '印加宝藏',
   minPlayers: 3,
   maxPlayers: 8,
+  modes: [{ id: 'standard', label: '标准模式' }],
   client: {
     styles: ['/games/incan/style.css'],
     scripts: ['/games/incan/ui.js'],

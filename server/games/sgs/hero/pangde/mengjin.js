@@ -16,6 +16,7 @@ module.exports = {
     ctx.setPending({
       type: 'skill_effect',
       skillId: 'mengjin',
+      skillName: '猛进',
       playerId: ctx.player.id,
       askId: ctx.player.id,
       targetId: ctx.targetId,

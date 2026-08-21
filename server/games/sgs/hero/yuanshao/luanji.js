@@ -45,7 +45,7 @@ module.exports = {
     const idx = alive.findIndex((p) => p.id === me.id);
     const victims = [];
     for (let i = 1; i < alive.length; i++) {
-      const p = alive[(idx + i) % alive.length];
+      const p = alive[(idx - i + alive.length) % alive.length];
       if (p.id === me.id) break;
       victims.push(p.id);
     }

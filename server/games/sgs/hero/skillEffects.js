@@ -55,6 +55,8 @@ function resolveSkillEffect(game, playerId, payload, api) {
       return resolveFangquan(game, pend, playerId, payload, api, pass);
     case 'haoshi':
       return resolveHaoshi(game, pend, playerId, payload, api, pass);
+    case 'muniu':
+      return resolveMuniu(game, pend, playerId, payload, api, pass);
     case 'tiaoxin':
       return resolveTiaoxin(game, pend, playerId, payload, api, pass);
     case 'zhiji':
@@ -241,13 +243,14 @@ function resolveLuoshen(game, pend, playerId, payload, api, pass) {
     api.resumeAfterSkill(game);
     return { ok: true };
   }
-  // 继续判定
-  const skill = skillBus.findSkill(me, 'luoshen');
-  if (skill && skill.content) {
-    const ctx = createCtx(api, game, { player: me, trigger: 'phasePrepare' });
-    skill.content(ctx, skill);
+  if (typeof api.beginSkillJudgeReveal === 'function') {
+    api.beginSkillJudgeReveal(game, {
+      playerId: me.id,
+      skillId: 'luoshen',
+      skillName: '洛神',
+      message: `${me.name} 【洛神】判定`,
+    });
   }
-  if (!game.pending) api.resumeAfterSkill(game);
   return { ok: true };
 }
 
@@ -332,25 +335,29 @@ function resolveFanjian(game, pend, playerId, payload, api) {
   }
 
   if (pend.step === 'card') {
-    const cid = payload.cardId || (payload.pass ? (pend.cardIds || [])[0] : null);
+    const cid = payload.cardId;
     if (!cid || !(pend.cardIds || []).includes(cid) || !me.hand.includes(cid)) {
       return { ok: false, error: '请选择发动者的一张手牌' };
     }
-    const card = api.cardById(game, cid);
     api.takeFromHand(me, cid);
     target.hand.push(cid);
-    const shown =
-      (api.SUIT_LABEL[card.suit] || '') +
-      card.number +
-      '【' +
-      card.name +
-      '】';
-    api.pushLog(game, target.name + ' 获得并展示 ' + shown);
-    api.clearPending(game);
-    if (card.suit !== pend.suit) {
-      api.dealDamage(game, me.id, target.id, 1);
-    }
-    if (!game.pending) api.resumeAfterSkill(game);
+    api.setPending(game, {
+      type: 'card_reveal',
+      playerId: target.id,
+      askId: target.id,
+      shown: [cid],
+      skillId: 'fanjian',
+      skillName: '反间',
+      title: '反间',
+      message: `${target.name} 获得并展示手牌`,
+      _afterReveal: {
+        kind: 'fanjian',
+        playerId: me.id,
+        targetId: target.id,
+        suit: pend.suit,
+        cardId: cid,
+      },
+    });
     return { ok: true };
   }
 
@@ -624,6 +631,9 @@ function resolveGuicai(game, pend, playerId, payload, api, pass) {
     game.discardPile.push(game._currentJudgeCardId);
   }
   game._currentJudgeCardId = cid;
+  if (game._skillJudgeCtx) {
+    game._skillJudgeCtx.resultCardId = cid;
+  }
   // 从弃牌堆取出作为判定
   game.discardPile = game.discardPile.filter((id) => id !== cid);
   api.pushLog(game, me.name + ' 鬼才打出牌替换判定');
@@ -825,6 +835,31 @@ function resolveFangquan(game, pend, playerId, payload, api, pass) {
   return { ok: true };
 }
 
+function resolveMuniu(game, pend, playerId, payload, api, pass) {
+  if (pend.step !== 'transfer') {
+    return { ok: false, error: '无效步骤' };
+  }
+  if (pass) {
+    api.clearPending(game);
+    return { ok: true };
+  }
+  const me = api.getPlayer(game, pend.playerId);
+  const tid = payload.targetId;
+  if (!tid || !(pend.candidateIds || []).includes(tid)) {
+    return { ok: false, error: '请选择宝物栏为空的其他角色' };
+  }
+  const target = api.getPlayer(game, tid);
+  if (!target || !target.alive) return { ok: false, error: '目标无效' };
+  const muniuMod = require('../equip/muniu');
+  const ok = muniuMod.transferMuniuEquip(game, me, target, (from, cardId) => {
+    skillBus.emit(game, 'afterLoseEquip', { player: from, cardId });
+  });
+  if (!ok) return { ok: false, error: '无法转移木牛流马' };
+  api.pushLog(game, `${me.name} 将【木牛流马】交给 ${target.name}`);
+  api.clearPending(game);
+  return { ok: true };
+}
+
 function resolveHaoshi(game, pend, playerId, payload, api, pass) {
   if (pass) {
     api.clearPending(game);
@@ -853,45 +888,64 @@ function resolveHaoshi(game, pend, playerId, payload, api, pass) {
 }
 
 function resolveTiaoxin(game, pend, playerId, payload, api, pass) {
-  const target = api.getPlayer(game, pend.targetId || pend.askId);
+  const target = api.getPlayer(game, pend.targetId);
   const me = api.getPlayer(game, pend.playerId);
-  if (!pass && payload.cardId) {
+  if (!target || !me) return { ok: false, error: '目标无效' };
+
+  if (pend.step === 'discard') {
     const cid = payload.cardId;
-    if (!target.hand.includes(cid)) return { ok: false, error: '请出【杀】' };
-    const c = api.cardById(game, cid);
-    if (!c || (c.name !== '杀' && c.name !== '火杀' && c.name !== '雷杀')) {
-      return { ok: false, error: '须使用【杀】' };
+    if (!cid) return { ok: false, error: '请选择要弃置的牌' };
+    if (!discardOneFrom(game, target, cid, api)) {
+      return { ok: false, error: '请选择要弃置的牌' };
     }
-    api.clearPending(game);
-    if (typeof api.playSha === 'function') {
-      return api.playSha(game, target, c, [me.id], {});
-    }
-    api.discardCard(game, target, cid, 'hand');
-    api.dealDamage(game, target.id, me.id, 1, { reason: '挑衅' });
-    if (typeof api.resumeAfterSkill === 'function') api.resumeAfterSkill(game);
-    return { ok: true };
-  }
-  // 弃置其一张牌
-  const zones = [];
-  for (const id of target.hand) zones.push({ id, from: 'hand' });
-  for (const slot of Object.keys(target.equips || {})) {
-    if (target.equips[slot]) {
-      zones.push({ id: target.equips[slot].id, from: 'equip:' + slot });
-    }
-  }
-  if (!zones.length) {
+    api.pushLog(game, me.name + ' 挑衅弃置 ' + target.name + ' 一张牌');
     api.clearPending(game);
     api.resumeAfterSkill(game);
     return { ok: true };
   }
-  const pick = payload.cardId
-    ? zones.find((z) => z.id === payload.cardId)
-    : zones[0];
-  if (!pick) return { ok: false, error: '请选择要弃置的牌' };
-  api.discardCard(game, target, pick.id, pick.from);
-  api.pushLog(game, me.name + ' 挑衅弃置 ' + target.name + ' 一张牌');
+
+  if (pass) {
+    const zones = [];
+    for (const id of target.hand) zones.push({ id, from: 'hand' });
+    for (const slot of Object.keys(target.equips || {})) {
+      if (target.equips[slot]) {
+        zones.push({ id: target.equips[slot].id, from: 'equip:' + slot });
+      }
+    }
+    if (!zones.length) {
+      api.pushLog(game, me.name + ' 挑衅，' + target.name + ' 无牌可弃');
+      api.clearPending(game);
+      api.resumeAfterSkill(game);
+      return { ok: true };
+    }
+    api.setPending({
+      type: 'skill_effect',
+      skillId: 'tiaoxin',
+      skillName: '挑衅',
+      playerId: me.id,
+      askId: me.id,
+      targetId: target.id,
+      step: 'discard',
+      message: '挑衅：弃置 ' + target.name + ' 的一张牌',
+      canPass: false,
+    });
+    return { ok: true };
+  }
+
+  const cid = payload.cardId;
+  if (!cid) return { ok: false, error: '请出【杀】或选择不出' };
+  if (!target.hand.includes(cid)) return { ok: false, error: '请出【杀】' };
+  const c = api.cardById(game, cid);
+  if (!c || (c.name !== '杀' && c.name !== '火杀' && c.name !== '雷杀')) {
+    return { ok: false, error: '须使用【杀】' };
+  }
   api.clearPending(game);
-  api.resumeAfterSkill(game);
+  if (typeof api.playSha === 'function') {
+    return api.playSha(game, target, c, [me.id], {});
+  }
+  api.discardCard(game, target, cid, 'hand');
+  api.dealDamage(game, target.id, me.id, 1, { reason: '挑衅' });
+  if (typeof api.resumeAfterSkill === 'function') api.resumeAfterSkill(game);
   return { ok: true };
 }
 
@@ -900,14 +954,17 @@ function resolveZhiji(game, pend, playerId, payload, api) {
   const choice = payload.choice || payload.option;
   if (choice === 'draw' || choice === '摸牌') {
     api.drawCards(game, me, 2);
-  } else {
+  } else if (choice === 'heal' || choice === '回复' || choice === '回血') {
     if (typeof api.recoverHp === 'function') {
       api.recoverHp(game, me, me, 1);
     } else if (me.hp < me.maxHp) me.hp += 1;
+  } else {
+    return { ok: false, error: '请选择回复1点体力或摸两张牌' };
   }
   me.maxHp = Math.max(1, me.maxHp - 1);
   if (me.hp > me.maxHp) me.hp = me.maxHp;
-  const { gainSkill } = require('./_infra_helpers');
+  const { gainSkill, markAwakened } = require('./_infra_helpers');
+  markAwakened(me, 'zhiji');
   gainSkill(me, {
     id: 'guanxing',
     name: '观星',
@@ -946,49 +1003,25 @@ function resolveBeige(game, pend, playerId, payload, api, pass) {
     return { ok: false, error: '请弃置一张牌' };
   }
   const victim = api.getPlayer(game, pend.targetId);
-  const src = api.getPlayer(game, pend.sourceId);
-  const jid = api.drawJudgeCard(game);
-  if (!jid || !victim) {
+  if (!victim) {
     api.clearPending(game);
     api.resumeAfterSkill(game);
     return { ok: true };
   }
-  const jc = api.cardById(game, jid);
-  game.discardPile.push(jid);
-  api.pushLog(
-    game,
-    me.name + ' 悲歌判定 ' + api.SUIT_LABEL[jc.suit] + jc.number
-  );
-  if (jc.suit === 'diamond') {
-    api.drawCards(game, victim, 2);
-  } else if (jc.suit === 'heart') {
-    if (typeof api.recoverHp === 'function') api.recoverHp(game, me, victim, 1);
-    else if (victim.hp < victim.maxHp) victim.hp += 1;
-  } else if (jc.suit === 'club') {
-    if (src && src.alive) {
-      let left = 2;
-      while (left > 0 && src.hand.length) {
-        api.discardCard(game, src, src.hand[0], 'hand');
-        left -= 1;
-      }
-      for (const slot of Object.keys(src.equips || {})) {
-        if (left <= 0) break;
-        if (src.equips[slot]) {
-          api.discardCard(game, src, src.equips[slot].id, 'equip:' + slot);
-          left -= 1;
-        }
-      }
-    }
-  } else if (jc.suit === 'spade') {
-    if (src && src.alive) {
-      src.turnedOver = !src.turnedOver;
-      api.pushLog(
-        game,
-        src.name + ' 因悲歌翻至' + (src.turnedOver ? '背面' : '正面')
-      );
-    }
-  }
   api.clearPending(game);
+  if (typeof api.beginSkillJudgeReveal === 'function') {
+    api.beginSkillJudgeReveal(game, {
+      playerId: me.id,
+      skillId: 'beige',
+      skillName: '悲歌',
+      message: `${me.name} 【悲歌】判定`,
+      extra: {
+        targetId: pend.targetId,
+        sourceId: pend.sourceId,
+      },
+    });
+    return { ok: true };
+  }
   api.resumeAfterSkill(game);
   return { ok: true };
 }
@@ -1187,22 +1220,22 @@ function resolveBuyi(game, pend, playerId, payload, api, pass) {
   if (!dying || !cid || !dying.hand.includes(cid)) {
     return { ok: false, error: '请选择要展示的手牌' };
   }
-  const c = api.cardById(game, cid);
-  api.pushLog(
-    game,
-    dying.name + ' 展示手牌【' + (c ? c.name : cid) + '】'
-  );
-  if (c && c.type !== 'basic') {
-    api.discardCard(game, dying, cid, 'hand');
-    if (typeof api.recoverHp === 'function') {
-      api.recoverHp(game, api.getPlayer(game, pend.playerId), dying, 1);
-    } else if (dying.hp < dying.maxHp) {
-      dying.hp += 1;
-    }
-    api.pushLog(game, dying.name + ' 因补益弃置非基本牌并回复 1 点体力');
-  }
-  api.clearPending(game);
-  api.resumeAfterSkill(game);
+  api.setPending(game, {
+    type: 'card_reveal',
+    playerId: dying.id,
+    askId: pend.playerId,
+    shown: [cid],
+    skillId: 'buyi',
+    skillName: '补益',
+    title: '补益',
+    message: `${dying.name} 展示手牌`,
+    _afterReveal: {
+      kind: 'buyi',
+      playerId: pend.playerId,
+      dyingId: dying.id,
+      cardId: cid,
+    },
+  });
   return { ok: true };
 }
 
@@ -1560,16 +1593,22 @@ function resolveAnxu(game, pend, playerId, payload, api, pass) {
   }
   api.takeFromHand(more, cid);
   fewer.hand.push(cid);
-  const c = api.cardById(game, cid);
-  api.pushLog(
-    game,
-    `${fewer.name} 安恤获得并展示【${c ? c.name : cid}】`
-  );
-  if (c && c.suit !== 'spade' && me) {
-    api.drawCards(game, me, 1);
-  }
-  api.clearPending(game);
-  api.resumeAfterSkill(game);
+  api.setPending(game, {
+    type: 'card_reveal',
+    playerId: fewer.id,
+    askId: me.id,
+    shown: [cid],
+    skillId: 'anxu',
+    skillName: '安恤',
+    title: '安恤',
+    message: `${fewer.name} 获得并展示手牌`,
+    _afterReveal: {
+      kind: 'anxu',
+      playerId: me.id,
+      fewerId: fewer.id,
+      cardId: cid,
+    },
+  });
   return { ok: true };
 }
 
@@ -1641,6 +1680,9 @@ function resolveZhiyu(game, pend, playerId, payload, api, pass) {
   api.pushLog(game, `${src.name} 因智愚弃置一张手牌`);
   api.clearPending(game);
   api.resumeAfterSkill(game);
+  if (!game.pending && game.stack && game.stack.length) {
+    api.resumeAfterPending(game);
+  }
   return { ok: true };
 }
 

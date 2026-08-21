@@ -9,33 +9,12 @@ module.exports = {
     return Boolean(ctx.sourceId && ctx.getPlayer(ctx.sourceId));
   },
   content(ctx) {
-    const jid = ctx.judge(ctx.player);
-    if (!jid) return null;
-    const jc = ctx.cardById(jid);
-    ctx.game.discardPile.push(jid);
-    const color = ctx.suitColor(jc.suit);
-    ctx.log(
-      ctx.player.name +
-        ' 刚烈判定 ' +
-        ctx.suitLabel(jc.suit) +
-        jc.number +
-        ' → ' +
-        (color === 'red' ? '红色' : '黑色')
-    );
-    const src = ctx.getPlayer(ctx.sourceId);
-    if (!src || !src.alive) return { ok: true };
-    if (color === 'red') {
-      ctx.dealDamage(ctx.player.id, src.id, 1);
-    } else {
-      ctx.setPending({
-        type: 'skill_effect',
-        skillId: 'ganglie',
-        playerId: ctx.player.id,
-        askId: ctx.player.id,
-        sourceId: src.id,
-        message: '刚烈：选择令伤害来源弃置的一张牌',
-      });
-    }
+    ctx.beginJudgeReveal(ctx.player, {
+      skillId: 'ganglie',
+      skillName: '刚烈',
+      message: `${ctx.player.name} 【刚烈】判定`,
+      extra: { sourceId: ctx.sourceId },
+    });
     return { ok: true };
   },
 };

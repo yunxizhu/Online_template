@@ -1,0 +1,154 @@
+<!-- Lasidao panel -->
+<div class="panel game-panel lasidao-panel" id="panel-lasidao" hidden>
+  <button
+    id="btn-las-rules"
+    type="button"
+    class="secondary las-rules-btn"
+    data-i18n="lasidao.rules.btn"
+  >????</button>
+  <h2 data-i18n="lasidao.title">???</h2>
+  <p id="las-round" class="game-status"></p>
+  <div id="las-init-banner" class="las-init-banner" hidden></div>
+  <p id="las-status" class="muted"></p>
+  <div id="las-settle-banner" class="las-settle-banner" hidden></div>
+  <div id="las-fx-layer" class="las-fx-layer" aria-hidden="true"></div>
+  <div id="las-card-tip" class="las-card-tip" hidden></div>
+
+  <div id="las-rules-modal" class="modal las-rules-modal" hidden>
+    <div class="modal-backdrop" id="las-rules-backdrop"></div>
+    <div class="modal-dialog panel las-rules-dialog" role="dialog" aria-modal="true" aria-labelledby="las-rules-title">
+      <div class="las-rules-head">
+        <h3 id="las-rules-title" data-i18n="lasidao.rules.title">??? ? ????</h3>
+        <button id="btn-las-rules-close" type="button" class="secondary" data-i18n="lasidao.rules.close">??</button>
+      </div>
+      <div class="las-rules-body">
+        <h4 data-i18n="lasidao.rules.flowTitle">?????</h4>
+        <div class="las-rules-section" data-i18n-html="lasidao.rules.flowHtml"></div>
+        <h4 data-i18n="lasidao.rules.funcTitle">?????</h4>
+        <div class="las-rules-section" data-i18n-html="lasidao.rules.funcHtml"></div>
+        <h4 data-i18n="lasidao.rules.buildTitle">?????</h4>
+        <div class="las-rules-section" data-i18n-html="lasidao.rules.buildHtml"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="las-playfield">
+    <aside class="las-side-rail" id="las-side-rail" aria-label="dice">
+      <div id="las-init-wrap" class="las-init-wrap" hidden>
+        <div id="las-init-dice" class="las-dice las-init-dice" hidden></div>
+        <div class="row las-actions las-side-actions">
+          <button id="btn-las-init-roll" type="button" data-i18n="lasidao.initRoll">?????????</button>
+        </div>
+      </div>
+
+      <div id="las-roll-wrap" class="las-roll-wrap" hidden>
+        <div class="row las-actions las-side-actions">
+          <button id="btn-las-produce-roll" type="button" data-i18n="lasidao.produceRoll">??</button>
+          <button id="btn-las-remote-dice" type="button" class="secondary" hidden data-i18n="lasidao.useRemoteDice">??????</button>
+        </div>
+        <p id="las-roll-hint" class="muted las-hint" data-i18n="lasidao.rollHint">????????????????</p>
+      </div>
+
+      <div id="las-dice-wrap" class="las-dice-wrap" hidden>
+        <h3 class="game-sub" data-i18n="lasidao.yourDice">????</h3>
+        <div id="las-dice-stage" class="las-dice-stage">
+          <div id="las-dice" class="las-dice"></div>
+          <div id="las-dice-groups" class="las-dice-groups" hidden></div>
+        </div>
+        <p id="las-dice-hint" class="muted las-hint"></p>
+        <div id="las-dispatch-preview" class="las-dispatch-preview" hidden></div>
+        <div class="row las-actions las-side-actions" id="las-produce-actions">
+          <button id="btn-las-confirm" type="button" hidden data-i18n="lasidao.confirmDispatch">????</button>
+          <button id="btn-las-void" type="button" class="secondary" data-i18n="lasidao.voidDispatch">??????? ?1 ???</button>
+        </div>
+      </div>
+
+      <div id="las-phase-actions" class="row las-actions las-side-actions" hidden>
+        <button id="btn-las-pass" type="button" class="secondary" data-i18n="lasidao.pass">?? / ????</button>
+      </div>
+    </aside>
+
+  <div class="las-table">
+    <div class="las-table-top">
+      <aside class="las-decks" id="las-decks" aria-label="decks">
+        <div class="las-deck-pile las-deck-pile-resource" data-deck="resource">
+          <div class="las-deck-stack" id="las-deck-stack-resource"></div>
+          <div class="las-deck-info">
+            <span class="las-deck-name" data-i18n="lasidao.area.resource">??</span>
+            <span class="las-deck-counts"><span id="las-deck-res">0</span>/<span id="las-discard-res">0</span></span>
+          </div>
+        </div>
+        <div class="las-deck-pile las-deck-pile-function" data-deck="function">
+          <div class="las-deck-stack" id="las-deck-stack-function"></div>
+          <div class="las-deck-info">
+            <span class="las-deck-name" data-i18n="lasidao.area.function">??</span>
+            <span class="las-deck-counts"><span id="las-deck-fn">0</span>/<span id="las-discard-fn">0</span></span>
+          </div>
+        </div>
+        <div class="las-deck-pile las-deck-pile-building" data-deck="building">
+          <div class="las-deck-stack" id="las-deck-stack-building"></div>
+          <div class="las-deck-info">
+            <span class="las-deck-name" data-i18n="lasidao.area.building">??</span>
+            <span class="las-deck-counts"><span id="las-deck-bld">0</span>/<span id="las-discard-bld">0</span></span>
+          </div>
+        </div>
+        <p class="las-deck-hint muted" data-i18n="lasidao.deckHint">?/?</p>
+      </aside>
+
+      <section class="las-board-section las-board-section-resource">
+        <h3 class="game-sub" data-i18n="lasidao.areaResource">????</h3>
+        <div id="las-board-resource" class="las-board las-board-resource" data-area="resource"></div>
+      </section>
+    </div>
+
+    <div class="las-table-bottom">
+      <section class="las-board-section las-board-section-function">
+        <h3 class="game-sub" data-i18n="lasidao.areaFunction">????</h3>
+        <div id="las-board-function" class="las-board las-board-function" data-area="function"></div>
+      </section>
+      <section class="las-board-section las-board-section-building">
+        <h3 class="game-sub" data-i18n="lasidao.areaBuilding">????</h3>
+        <div id="las-board-building" class="las-board las-board-building" data-area="building"></div>
+      </section>
+    </div>
+  </div>
+  </div>
+
+  <h3 class="game-sub" data-i18n="lasidao.players">????</h3>
+  <div id="las-boards-host" class="las-boards-host"></div>
+  <!-- ??????????????????????? JS ?? boards -->
+  <div id="las-me-res" class="las-res" hidden></div>
+  <div id="las-me-funcs" class="las-cards" hidden></div>
+  <div id="las-me-builds" class="las-cards" hidden></div>
+
+  <div id="las-func-panel" class="las-func-panel" hidden>
+    <h3 class="game-sub" data-i18n="lasidao.useFunc">????</h3>
+    <div id="las-func-form"></div>
+  </div>
+
+  <div id="las-efficiency-wrap" class="las-efficiency" hidden>
+    <h3 class="game-sub" data-i18n="lasidao.efficiencyTitle">??????</h3>
+    <p id="las-efficiency-hint" class="muted las-hint"></p>
+    <div id="las-efficiency-picks" class="las-efficiency-picks row"></div>
+    <div class="row las-actions">
+      <button id="btn-las-efficiency-reset" type="button" class="secondary" data-i18n="lasidao.efficiencyReset">??</button>
+      <button id="btn-las-efficiency-confirm" type="button" data-i18n="lasidao.efficiencyConfirm">????</button>
+    </div>
+  </div>
+
+  <div id="las-exchange-wrap" class="las-exchange" hidden>
+    <h3 class="game-sub" data-i18n="lasidao.exchange">???</h3>
+    <p id="las-exchange-hint" class="muted las-hint"></p>
+    <div class="row">
+      <select id="las-ex-from"></select>
+      <span>?</span>
+      <select id="las-ex-to"></select>
+      <button id="btn-las-exchange" type="button" data-i18n="lasidao.exchangeBtn">??</button>
+    </div>
+  </div>
+
+  <ul id="las-players" class="member-list" hidden></ul>
+
+  <h3 class="game-sub" data-i18n="lasidao.log">??</h3>
+  <ul id="las-log" class="game-log"></ul>
+</div>

@@ -1,5 +1,5 @@
 'use strict';
-const { awakened, markAwakened, gainSkill } = require('../_infra_helpers');
+const { awakened, gainSkill } = require('../_infra_helpers');
 
 module.exports = {
   id: 'zhiji',
@@ -13,7 +13,6 @@ module.exports = {
     return ctx.player.hand.length === 0;
   },
   content(ctx) {
-    markAwakened(ctx.player, 'zhiji');
     ctx.setPending({
       type: 'skill_effect',
       skillId: 'zhiji',

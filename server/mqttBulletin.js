@@ -12,8 +12,8 @@ const DEFAULT_CHANNEL = 'lianji-public';
 const APP_SIGNATURE = 'lianji';
 const LOGIN_HB_MS = 10000;
 const ROOM_HB_MS = 10000;
-const TUNNEL_READY_DELAY_MS =
-  Number(process.env.TUNNEL_READY_DELAY_MS) || 5000;
+/** 隧道 URL 刚出现时可额外等待再广播；给 Cloudflare DNS 一点传播时间 */
+const TUNNEL_READY_DELAY_MS = Number(process.env.TUNNEL_READY_DELAY_MS) || 2500;
 // 心跳间隔 10s，超时阈值给到 2~3 个周期，避免单次延迟发布导致列表闪跳
 const LOGIN_OFFLINE_MS = 25000;
 const ROOM_OFFLINE_MS = 25000;
@@ -307,6 +307,103 @@ class MqttBulletin {
     this.#pub(this.#roomTopic(), '');
   }
 
+  #sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  #roomSig(room, tunnelUrl) {
+    if (!room || !tunnelUrl) return '';
+    const host = String(tunnelUrl).replace(/\/$/, '');
+    const playerCount =
+      Number(room.playerCount) ||
+      (Array.isArray(room.players) ? room.players.length : 0);
+    return `${room.id}|${host}|${playerCount}|${room.status || 'waiting'}`;
+  }
+
+  #isRoomBeaconPublished(room, tunnelUrl) {
+    if (!room || !tunnelUrl || !this._lastRoomSig) return false;
+    return this._lastRoomSig === this.#roomSig(room, tunnelUrl);
+  }
+
+  /**
+   * 等待 MQTT 与公网隧道就绪（含隧道稳定延迟），用于隐藏房或登录心跳。
+   */
+  async waitForInfrastructureReady({ timeoutMs = 90000, onProgress } = {}) {
+    if (!this.enabled || !this._started) {
+      return { ok: true, reason: 'disabled' };
+    }
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (!this.#mqttUp()) {
+        if (onProgress) onProgress('mqtt');
+        await this.#sleep(300);
+        continue;
+      }
+      const tunnelUrl =
+        this.#peekUrl() || (await this.ensureTunnelUrl()) || '';
+      if (!tunnelUrl) {
+        if (onProgress) onProgress('tunnel');
+        await this.#sleep(400);
+        continue;
+      }
+      if (Date.now() < this._tunnelPublishAfter) {
+        if (onProgress) onProgress('tunnel-warmup');
+        await this.#sleep(300);
+        continue;
+      }
+      await this.touchLogin();
+      return { ok: true, tunnelUrl };
+    }
+    return { ok: false, message: '公网隧道或 MQTT 连接超时，请稍后重试' };
+  }
+
+  /**
+   * 等待指定房间已成功发出 MQTT 房间心跳（他人可在大厅看到）。
+   */
+  async waitForRoomBeacon(roomId, getRoom, { timeoutMs = 90000, onProgress } = {}) {
+    if (!this.enabled || !this._started) {
+      return { ok: true, reason: 'disabled' };
+    }
+    const wantId = String(roomId || '').toUpperCase();
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const room = getRoom && getRoom();
+      if (!room || String(room.id).toUpperCase() !== wantId) {
+        return { ok: false, message: '房间已不存在' };
+      }
+      if (room.hidden) {
+        return this.waitForInfrastructureReady({
+          timeoutMs: Math.max(0, deadline - Date.now()),
+          onProgress,
+        });
+      }
+      if (!this.#mqttUp()) {
+        if (onProgress) onProgress('mqtt');
+        await this.#sleep(300);
+        continue;
+      }
+      const tunnelUrl =
+        this.#peekUrl() || (await this.ensureTunnelUrl()) || '';
+      if (!tunnelUrl) {
+        if (onProgress) onProgress('tunnel');
+        await this.#sleep(400);
+        continue;
+      }
+      if (Date.now() < this._tunnelPublishAfter) {
+        if (onProgress) onProgress('tunnel-warmup');
+        await this.#sleep(300);
+        continue;
+      }
+      await this.touchRoom();
+      if (this.#isRoomBeaconPublished(room, tunnelUrl)) {
+        return { ok: true, tunnelUrl };
+      }
+      if (onProgress) onProgress('beacon');
+      await this.#sleep(400);
+    }
+    return { ok: false, message: '房间广播超时，请检查网络或稍后重试' };
+  }
+
   /** 隧道/MQTT 未就绪时快速重试，成功发出后自动停止 */
   #scheduleRoomRetry() {
     if (this._roomRetryTimer || !this._started) return;
@@ -416,11 +513,14 @@ class MqttBulletin {
     if (tunnelUrl !== this._lastTunnelUrl) {
       this._lastTunnelUrl = tunnelUrl;
       this._tunnelPublishAfter = Date.now() + TUNNEL_READY_DELAY_MS;
-      this.#scheduleRoomRetry();
-      console.log(
-        `[mqtt] 隧道地址已更新，等待 ${TUNNEL_READY_DELAY_MS}ms 后再广播房间`
-      );
-      return;
+      if (TUNNEL_READY_DELAY_MS > 0) {
+        this.#scheduleRoomRetry();
+        console.log(
+          `[mqtt] 隧道地址已更新，等待 ${TUNNEL_READY_DELAY_MS}ms 后再广播房间`
+        );
+        return;
+      }
+      console.log(`[mqtt] 隧道地址已更新，立刻广播房间`);
     }
     if (Date.now() < this._tunnelPublishAfter) {
       this.#scheduleRoomRetry();

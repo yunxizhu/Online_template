@@ -228,6 +228,7 @@ module.exports = {
   label: '五子棋',
   minPlayers: 2,
   maxPlayers: 2,
+  modes: [{ id: 'standard', label: '标准模式' }],
   client: {
     styles: ['/games/gomoku/style.css'],
     scripts: ['/games/gomoku/board.js'],

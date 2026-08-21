@@ -20,12 +20,14 @@ module.exports = {
     ctx.setPending({
       type: 'skill_effect',
       skillId: 'tiaoxin',
+      skillName: '挑衅',
       playerId: ctx.player.id,
       askId: target.id,
       targetId: target.id,
-      message: '挑衅：对发动者使用【杀】，或被弃置一张牌',
+      message: '挑衅：对 ' + ctx.player.name + ' 使用一张【杀】，或令其弃置你一张牌',
       canPass: true,
     });
+    ctx.log(ctx.player.name + ' 对 ' + target.name + ' 发动【挑衅】');
     return { ok: true };
   },
 };

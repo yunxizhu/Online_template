@@ -17,13 +17,19 @@ module.exports = {
     ctx.player.skillStates = ctx.player.skillStates || {};
     ctx.player.skillStates._luoyiShown = shown;
     ctx.setPending({
-      type: 'skill_effect',
-      skillId: 'luoyi',
+      type: 'card_reveal',
       playerId: ctx.player.id,
       askId: ctx.player.id,
       shown,
-      message: '裸衣：是否放弃摸牌，获得翻开的武器与基本牌？（本回合杀/决斗伤害+1）',
-      canPass: true,
+      skillId: 'luoyi',
+      skillName: '裸衣',
+      title: '裸衣',
+      message: `${ctx.player.name} 翻开牌堆顶 ${shown.length} 张牌`,
+      _afterReveal: {
+        kind: 'luoyi_choice',
+        playerId: ctx.player.id,
+        shown,
+      },
     });
     return { ok: true };
   },

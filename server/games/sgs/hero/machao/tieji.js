@@ -9,28 +9,11 @@ module.exports = {
     return true;
   },
   content(ctx) {
-    const jid = ctx.judge(ctx.player);
-    if (!jid) return null;
-    const jc = ctx.cardById(jid);
-    ctx.game.discardPile.push(jid);
-    ctx.log(
-      ctx.player.name +
-        ' 铁骑判定 ' +
-        ctx.suitLabel(jc.suit) +
-        jc.number
-    );
-    ctx.setPending({
-      type: 'skill_effect',
+    ctx.beginJudgeReveal(ctx.player, {
       skillId: 'tieji',
-      playerId: ctx.player.id,
-      askId: ctx.targetId,
-      suit: jc.suit,
-      shaPendingResume: true,
-      message:
-        '铁骑：请弃置一张' +
-        ctx.suitLabel(jc.suit) +
-        '牌，否则不能出闪',
-      canPass: true,
+      skillName: '铁骑',
+      message: `${ctx.player.name} 【铁骑】判定`,
+      extra: { targetId: ctx.targetId },
     });
     return { ok: true };
   },

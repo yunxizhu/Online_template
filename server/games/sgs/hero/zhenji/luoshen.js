@@ -9,34 +9,11 @@ module.exports = {
     return true;
   },
   content(ctx) {
-    const loop = () => {
-      const jid = ctx.judge(ctx.player);
-      if (!jid) return;
-      const jc = ctx.cardById(jid);
-      const color = ctx.suitColor(jc.suit);
-      ctx.game.discardPile = ctx.game.discardPile.filter((id) => id !== jid);
-      ctx.gainToHand(ctx.player, jid);
-      ctx.log(
-        ctx.player.name +
-          ' 洛神判定 ' +
-          ctx.suitLabel(jc.suit) +
-          jc.number +
-          ' → 获得'
-      );
-      if (color === 'black') {
-        ctx.player.skillStates = ctx.player.skillStates || {};
-        ctx.setPending({
-          type: 'skill_effect',
-          skillId: 'luoshen',
-          playerId: ctx.player.id,
-          askId: ctx.player.id,
-          message: '洛神：黑色，是否继续判定？',
-          canPass: true,
-          continue: true,
-        });
-      }
-    };
-    loop();
+    ctx.beginJudgeReveal(ctx.player, {
+      skillId: 'luoshen',
+      skillName: '洛神',
+      message: `${ctx.player.name} 【洛神】判定`,
+    });
     return { ok: true };
   },
 };

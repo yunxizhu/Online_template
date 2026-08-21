@@ -49,6 +49,16 @@ function createCtx(api, game, base) {
     judge(player) {
       return api.drawJudgeCard(game);
     },
+    beginJudgeReveal(player, meta = {}) {
+      if (typeof api.beginSkillJudgeReveal !== 'function') {
+        const jid = api.drawJudgeCard(game);
+        return jid;
+      }
+      return api.beginSkillJudgeReveal(game, {
+        playerId: player.id,
+        ...meta,
+      });
+    },
     setPending(pending) {
       api.setPending(game, pending);
     },

@@ -23,7 +23,7 @@ module.exports = {
       skillId: 'guanxing',
       skillName: '观星',
       cardIds: cards,
-      message: '观星：将牌分配到「牌堆顶」或「牌堆底」，并可调整同区内顺序',
+      message: '将牌堆顶观看的牌拖至下方空位表示置于牌堆底，留在上方即置于牌堆顶',
     });
     return { ok: true };
   },

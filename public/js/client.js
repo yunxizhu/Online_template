@@ -104,6 +104,7 @@ window.GameNet = (function () {
       'session:reclaimed',
       'session:reclaim-failed',
       'room:update',
+      'room:creating',
       'room:error',
       'room:left',
       'room:probe-result',
@@ -184,15 +185,31 @@ window.GameNet = (function () {
     });
   }
 
+  function errText(err) {
+    if (!err) return '';
+    const parts = [
+      err.message,
+      err.description,
+      err.type,
+      err.context && err.context.message,
+      typeof err.toString === 'function' ? err.toString() : '',
+    ];
+    return parts.filter(Boolean).join(' ').toLowerCase();
+  }
+
   function isRetryableRemoteJoinError(err) {
-    const msg = String(
-      (err && (err.message || err.description || err.type)) || err || ''
-    ).toLowerCase();
+    const msg = errText(err);
     return (
       msg.includes('err_name_not_resolved') ||
+      msg.includes('name_not_resolved') ||
+      msg.includes('enotfound') ||
+      msg.includes('getaddrinfo') ||
+      msg.includes('dns') ||
       msg.includes('xhr poll error') ||
       msg.includes('websocket error') ||
-      msg.includes('transport error')
+      msg.includes('transport error') ||
+      msg.includes('timeout') ||
+      msg.includes('连接失败')
     );
   }
 
@@ -214,16 +231,26 @@ window.GameNet = (function () {
     return socket;
   }
 
-  /** 按候选地址逐个尝试连接，全部失败才抛错（当前候选为公网隧道地址） */
-  async function connectAny(candidates) {
+  /**
+   * 按候选地址连接。远端隧道域名刚生成时 DNS 常未就绪（ERR_NAME_NOT_RESOLVED），
+   * 对同一地址做退避重试，而不是立刻放弃。
+   */
+  async function connectAny(candidates, opts = {}) {
     const list = (candidates || []).filter(Boolean);
     if (!list.length) list.push(localOrigin);
+    const retriesPerHost = Math.max(1, Number(opts.retriesPerHost) || 1);
     let lastErr = null;
     for (const target of list) {
-      try {
-        return await connect(target);
-      } catch (err) {
-        lastErr = err;
+      for (let attempt = 0; attempt < retriesPerHost; attempt++) {
+        try {
+          return await connect(target);
+        } catch (err) {
+          lastErr = err;
+          const retryable = isRetryableRemoteJoinError(err);
+          if (!retryable || attempt >= retriesPerHost - 1) break;
+          // 0.8s → 1.2s → 1.6s … 上限 3s；给 Cloudflare DNS 传播时间
+          await sleep(Math.min(3000, 800 + attempt * 400));
+        }
       }
     }
     throw lastErr || new Error('无法连接房主');
@@ -320,14 +347,17 @@ window.GameNet = (function () {
    * 本机房间请传 local:true 或 preferLocal；远端房间统一走公网隧道 host。
    */
   async function joinRoomOnHost(roomId, playerName, host, opts = {}) {
+    const remote = !(opts.local || opts.preferLocal);
+
     async function doJoin(targetHost) {
       let candidates = [];
-      if (opts.local || opts.preferLocal) {
+      if (!remote) {
         candidates = [localOrigin];
       } else if (targetHost) {
         candidates = [normalizeUrl(targetHost)];
       }
-      await connectAny(candidates);
+      // 远端：同一隧道 URL 多试几次（DNS 传播）；本机：一次即可
+      await connectAny(candidates, { retriesPerHost: remote ? 8 : 1 });
       await joinLobbyAndWait(playerName, {
         sessionId: opts.sessionId || null,
         roomId: opts.roomId || roomId || null,
@@ -340,46 +370,55 @@ window.GameNet = (function () {
       }
     }
 
-    const failedHosts = new Set();
-    if (host) failedHosts.add(normalizeUrl(host));
-
     try {
       await doJoin(host);
       return;
     } catch (err) {
-      if (host) failedHosts.add(normalizeUrl(host));
-      if (opts.local || opts.preferLocal || !isRetryableRemoteJoinError(err)) {
+      if (!remote || !isRetryableRemoteJoinError(err)) {
         throw err;
       }
     }
 
-    // 远端域名刚广播出来或隧道刚重连时，回本地持续重查一小段时间
+    // 仍失败：回本地查「房间最新地址」，并对同一 host 继续重试（不再永久拉黑）
     await connect(localOrigin);
     let lastResolved = null;
     let lastErr = null;
-    const deadline = Date.now() + 20000;
+    const deadline = Date.now() + 25000;
     while (Date.now() < deadline) {
       const resolved = await resolveRoom(roomId);
       lastResolved = resolved;
       const nextHost =
         resolved && resolved.ok && resolved.host
           ? normalizeUrl(resolved.host)
-          : '';
-      if (nextHost && !failedHosts.has(nextHost)) {
+          : host
+            ? normalizeUrl(host)
+            : '';
+      if (nextHost) {
         try {
-          await doJoin(nextHost);
+          // 每轮再给几次连接机会，覆盖 DNS 刚就绪的窗口
+          await connectAny([nextHost], { retriesPerHost: 3 });
+          await joinLobbyAndWait(playerName, {
+            sessionId: opts.sessionId || null,
+            roomId: opts.roomId || roomId || null,
+            oldPlayerId: opts.oldPlayerId || null,
+            rejoin: Boolean(opts.rejoin),
+            playerTag: opts.playerTag || null,
+          });
+          if (!opts.rejoin) {
+            joinRoom(roomId, playerName, opts);
+          }
           return;
         } catch (err) {
           lastErr = err;
           if (!isRetryableRemoteJoinError(err)) throw err;
-          failedHosts.add(nextHost);
         }
       }
-      await sleep(1500);
+      await sleep(1200);
     }
     if (lastErr) throw lastErr;
     throw new Error(
-      (lastResolved && lastResolved.message) || '未找到可用的房间最新地址'
+      (lastResolved && lastResolved.message) ||
+        '隧道地址尚未就绪（DNS），请稍后再试'
     );
   }
 

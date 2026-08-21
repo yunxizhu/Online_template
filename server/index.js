@@ -70,6 +70,20 @@ function getSgsResourseDir() {
 }
 const sgsResourseDir = getSgsResourseDir();
 app.use('/games/sgs/res', express.static(sgsResourseDir));
+
+// 拉斯岛资源：server/games/lasidao/resourse → /games/lasidao/res/
+function getLasidaoResourseDir() {
+  const envPath = process.env.LIANJI_LASIDAO_RESOURSE;
+  if (envPath) return envPath;
+  const isPkg = Boolean(process.pkg);
+  if (isPkg) {
+    const exeDir = path.dirname(process.execPath);
+    const external = path.join(exeDir, 'lasidao-resourse');
+    if (fs.existsSync(external)) return external;
+  }
+  return path.join(__dirname, 'games', 'lasidao', 'resourse');
+}
+app.use('/games/lasidao/res', express.static(getLasidaoResourseDir()));
 // 浏览器默认还会请求 /favicon.ico
 app.get('/favicon.ico', (_req, res) => {
   res.redirect(301, '/favicon.svg');
@@ -92,19 +106,21 @@ function localBaseUrl() {
 }
 
 function beaconRooms() {
-  return [...rooms.rooms.values()].map((room) => ({
-    id: room.id,
-    name: room.name,
-    hidden: room.hidden,
-    playerCount: room.players.length,
-    maxPlayers: room.maxPlayers,
-    minPlayers: room.minPlayers,
-    status: room.status,
-    gameType: room.gameType,
-    gameLabel: room.gameLabel,
-    gameMode: room.gameMode,
-    gameModeLabel: room.gameModeLabel,
-  }));
+  return [...rooms.rooms.values()]
+    .filter((room) => !room.pendingLobby)
+    .map((room) => ({
+      id: room.id,
+      name: room.name,
+      hidden: room.hidden,
+      playerCount: room.players.length,
+      maxPlayers: room.maxPlayers,
+      minPlayers: room.minPlayers,
+      status: room.status,
+      gameType: room.gameType,
+      gameLabel: room.gameLabel,
+      gameMode: room.gameMode,
+      gameModeLabel: room.gameModeLabel,
+    }));
 }
 
 /** 远端房间解析：统一走 MQTT 广播（host 为 Cloudflare 隧道地址） */
@@ -366,6 +382,27 @@ function emitGameStarted(room) {
   }
 }
 
+/** 拉斯岛：先手宣布结束后再发牌进入生产 */
+function scheduleLasidaoInitAnnounce(room) {
+  if (!room || room.gameType !== 'lasidao' || !room.game) return;
+  if (room.game.phase !== 'init_announce') return;
+  const mod = getGame('lasidao');
+  if (!mod || typeof mod.finishInitAnnounce !== 'function') return;
+  if (room._lasInitTimer) {
+    clearTimeout(room._lasInitTimer);
+    room._lasInitTimer = null;
+  }
+  const until = Number(room.game.initAnnounceUntil) || 0;
+  const delay = Math.max(0, until - Date.now());
+  room._lasInitTimer = setTimeout(() => {
+    room._lasInitTimer = null;
+    if (!room.game || room.game.phase !== 'init_announce') return;
+    mod.finishInitAnnounce(room.game);
+    syncTurnTimer(room, { onTimeout: handleTurnTimeout });
+    emitGameState(room);
+  }, delay);
+}
+
 function abandonedSig(room, mod, leftIds) {
   const game = room.game;
   if (!game) return '';
@@ -509,6 +546,7 @@ io.on('connection', (socket) => {
       emitRoomUpdate(reclaimed.room);
       if (reclaimed.room.status === 'playing' && reclaimed.room.game) {
         emitGameState(reclaimed.room);
+        scheduleLasidaoInitAnnounce(reclaimed.room);
       }
       return;
     }
@@ -662,7 +700,7 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('room:create', (data = {}) => {
+  socket.on('room:create', async (data = {}) => {
     if (!rooms.getPlayer(socket.id)) {
       rooms.registerPlayer(socket.id, data.playerName || '玩家', {
         sessionId: data.sessionId,
@@ -689,14 +727,65 @@ io.on('connection', (socket) => {
       return;
     }
 
-    socket.join(result.room.id);
+    const room = result.room;
+    socket.join(room.id);
     joinHallChat(socket);
     const me = rooms.getPlayer(socket.id);
     dropIdleSessionGhosts(me && me.sessionId, socket.id);
-    emitRoomUpdate(result.room);
-    emitLobbyUpdate();
+    // pendingLobby 期间仍按空闲发登录心跳，不广播房间
     mqttOnLogin();
-    mqttAfterRoomChange();
+
+    const progress = (message) =>
+      socket.emit('room:creating', { message, roomId: room.id });
+    progress('正在创建房间…');
+
+    try {
+      if (mqttBulletin && mqttBulletin.enabled) {
+        progress('正在准备公网隧道…');
+        await ensurePublicTunnelUrl();
+
+        const onProgress = (phase) => {
+          if (phase === 'mqtt') progress('正在连接 MQTT…');
+          else if (phase === 'tunnel') progress('正在准备公网隧道…');
+          else if (phase === 'tunnel-warmup') progress('隧道就绪中，请稍候…');
+        };
+
+        // 先等隧道/MQTT 就绪，此时房间仍 pending，大厅不会出现、状态仍空闲
+        const ready = await mqttBulletin.waitForInfrastructureReady({
+          timeoutMs: 90000,
+          onProgress,
+        });
+        if (!ready.ok) {
+          throw new Error(ready.message || '房间广播失败');
+        }
+      } else {
+        try {
+          await ensurePublicTunnelUrl();
+        } catch (_) {
+          /* 无 MQTT 时隧道可选 */
+        }
+      }
+
+      // 隧道就绪后：公开房间 → 房主进房 → 再刷新大厅/广播（此前大厅不出现该房、状态仍空闲）
+      const fresh = rooms.clearPendingLobby(room.id);
+      if (!fresh) {
+        socket.emit('room:error', { message: '房间创建失败' });
+        return;
+      }
+      emitRoomUpdate(fresh);
+      emitLobbyUpdate();
+      mqttOnLogin();
+      mqttAfterRoomChange();
+    } catch (err) {
+      const leave = rooms.leaveRoom(socket.id);
+      if (leave.leftRoomId) socket.leave(leave.leftRoomId);
+      mqttOnLogin();
+      mqttAfterRoomChange();
+      emitLobbyUpdate();
+      socket.emit('room:error', {
+        message: (err && err.message) || '创建房间失败',
+      });
+    }
   });
 
   socket.on('room:join', (data = {}) => {
@@ -811,6 +900,7 @@ io.on('connection', (socket) => {
     mqttAfterRoomChange();
     syncTurnTimer(result.room, { onTimeout: handleTurnTimeout });
     emitGameStarted(result.room);
+    scheduleLasidaoInitAnnounce(result.room);
   });
 
   socket.on('game:action', (data = {}) => {

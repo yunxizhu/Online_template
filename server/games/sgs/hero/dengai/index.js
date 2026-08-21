@@ -10,6 +10,5 @@ module.exports = {
   skills: [
     require('./tuntian'),
     require('./zaiqi'),
-    require('./jixi'),
   ],
 };

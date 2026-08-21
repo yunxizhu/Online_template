@@ -2,6 +2,9 @@
 
 const { createCtx } = require('./skillCtx');
 const { getHero } = require('./index');
+const { awakened } = require('./_infra_helpers');
+
+const AWAKEN_SKILL_IDS = new Set(['zaiqi', 'zhiji', 'ruoyu']);
 
 let api = null;
 
@@ -179,7 +182,7 @@ function promptNext(game) {
     skillId: skill.id,
     skillName: skill.name,
     trigger: next.trigger,
-    message: `是否发动【${skill.name}】？`,
+    message: skill.askMessage || `是否发动【${skill.name}】？`,
     canPass: true,
   });
   return { pending: true };
@@ -214,6 +217,9 @@ function resolveSkillAsk(game, playerId, payload) {
   const next = promptNext(game);
   if (!next.pending && typeof api.resumeAfterSkill === 'function') {
     api.resumeAfterSkill(game);
+  }
+  if (!game.pending && game.stack && game.stack.length && typeof api.resumeAfterPending === 'function') {
+    api.resumeAfterPending(game);
   }
   return { ok: true };
 }
@@ -298,7 +304,9 @@ function listSkillPanel(game, player) {
   const needWuxie =
     game.pending &&
     game.pending.type === 'wuxie' &&
-    game.pending.askId === player.id;
+    game.pending.phase === 'collect' &&
+    game.pending.waiting &&
+    game.pending.waiting.includes(player.id);
 
   const inPlay =
     game.phase === 'playing' &&
@@ -357,7 +365,11 @@ function listSkillPanel(game, player) {
       status = 'disabled';
     } else {
       // 触发技 / 锁定技：仅展示
-      status = used ? 'used' : 'disabled';
+      if (AWAKEN_SKILL_IDS.has(skill.id) && awakened(player, skill.id)) {
+        status = 'used';
+      } else {
+        status = used ? 'used' : 'disabled';
+      }
     }
 
     out.push({
@@ -408,7 +420,12 @@ function listViewAs(game, player, toName, purpose) {
       if (typeof skill.filter === 'function' && !skill.filter(ctx, skill)) {
         continue;
       }
-      const cards = [...player.hand.map((id) => ({ id, from: 'hand' }))];
+      const cards = [
+        ...player.hand.map((id) => ({ id, from: 'hand' })),
+        ...(player.skillPiles && Array.isArray(player.skillPiles.muniu)
+          ? player.skillPiles.muniu.map((id) => ({ id, from: 'muniu' }))
+          : []),
+      ];
       if (spec.includeEquip) {
         for (const slot of Object.keys(player.equips || {})) {
           const eq = player.equips[slot];
