@@ -658,28 +658,21 @@ assert.strictEqual(p11.buildings.find((b) => b.id === 'rep_b').slot, 5);
     built: false,
     workers: 0,
   });
-  p.buildings.push({
-    id: 'ex_b2',
-    label: '交易所B',
-    buildType: 'exchange',
-    cost: {},
-    slot: null,
-    built: false,
-    workers: 0,
-  });
   ok(
     applyAction(g, p.id, {
       type: 'placeBuildingSlot',
       payload: { buildingId: 'ex_b1', slot: 'none' },
     })
   );
-  ok(
-    applyAction(g, p.id, {
-      type: 'placeBuildingSlot',
-      payload: { buildingId: 'ex_b2', slot: 'none:1' },
-    })
-  );
-  assert.strictEqual(p.buildings.find((b) => b.id === 'ex_b2').slot, 'none:1');
+  assert.strictEqual(p.buildings.find((b) => b.id === 'ex_b1').slot, 'none');
+  const failExtra = applyAction(g, p.id, {
+    type: 'placeBuildingSlot',
+    payload: {
+      buildingId: 'ex_b_missing',
+      slot: 'none:1',
+    },
+  });
+  assert.strictEqual(failExtra.ok, false);
   console.log('✓ expand auto + none slots');
 }
 

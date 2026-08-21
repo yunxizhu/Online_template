@@ -9,6 +9,7 @@ const {
   BANDIT_RAID_COUNT,
   shuffle,
   resetUid,
+  makeFunc,
   buildResourceDeck,
   buildFunctionDeck,
   buildBuildingDeck,
@@ -25,9 +26,11 @@ function isNoneSlot(slot) {
 }
 
 function noneSlotList(player) {
-  const n = 1 + (Number(player && player.expandSlots) || 0);
-  const out = ['none'];
-  for (let i = 1; i < n; i++) out.push(`none:${i}`);
+  const n = Number(player && player.expandSlots) || 0;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push(i === 0 ? 'none' : `none:${i}`);
+  }
   return out;
 }
 
@@ -556,9 +559,27 @@ function createGameState(room) {
     lastSettle: null,
   };
 
+  //dealStartingBreedCards(game);
   // 开局自动投先手 → 宣布 → 再发牌
   startInitRoll(game);
   return game;
+}
+
+/** 开局每人一张「繁殖村民」（优先从功能牌堆抽取） */
+function dealStartingBreedCards(game) {
+  for (const p of game.players || []) {
+    let card = null;
+    const idx = (game.functionDeck || []).findIndex(
+      (c) => c.funcType === 'breed'
+    );
+    if (idx >= 0) {
+      card = game.functionDeck.splice(idx, 1)[0];
+    } else {
+      card = makeFunc('breed');
+    }
+    p.funcCards.push(card);
+  }
+  pushLog(game, '开局：每人获得 1 张「繁殖村民」');
 }
 
 const INIT_ANNOUNCE_MS = 3800;
@@ -1189,18 +1210,10 @@ function findNextBuilder(game, stayIfSelf) {
   const n = game.players.length;
   for (let step = 0; step < n; step++) {
     const p = playerById(game, id);
+    // 未声明跳过的玩家轮到其建造回合（可建造/用功能，或点跳过）
     if (p && !p.left && !game.buildPassed[p.id]) {
-      if (
-        !p.pendingDiscardFunc &&
-        !p.pendingDiscardBuild &&
-        !hasPendingPlacement(p) &&
-        !canBuildSomething(p)
-      ) {
-        game.buildPassed[p.id] = true;
-      } else {
-        game.currentPlayerId = id;
-        return;
-      }
+      game.currentPlayerId = id;
+      return;
     }
     const next = nextAlive(game, id);
     if (!next) break;
@@ -1222,10 +1235,7 @@ function findNextBuilder(game, stayIfSelf) {
 
 function afterBuildAction(game, playerId, didRealAction) {
   game.lastBuilderId = playerId;
-  if (didRealAction) {
-    // 有人行动后，清除所有 pass，继续循环
-    game.buildPassed = {};
-  }
+  // 跳过即本轮建造出局；他人行动不再清除 buildPassed
   if (checkWin(game)) return;
   const next = nextAlive(game, playerId);
   game.currentPlayerId = next ? next.id : playerId;
@@ -1309,6 +1319,9 @@ function applyAction(game, playerId, action) {
     return actExchange(game, player, payload);
   }
   if (type === 'useFunc') {
+    if (game.phase === 'build' && game.buildPassed[playerId]) {
+      return { ok: false, error: '你已跳过本轮建造' };
+    }
     return actUseFunc(game, player, payload);
   }
   if (type === 'discardFunc') {
@@ -1380,8 +1393,15 @@ function applyAction(game, playerId, action) {
     if (game.currentPlayerId !== playerId) {
       return { ok: false, error: '还没轮到你' };
     }
+    if (game.buildPassed[playerId]) {
+      return { ok: false, error: '你已跳过本轮建造' };
+    }
     if (type === 'pass') {
+      if (player.pendingDiscardFunc || player.pendingDiscardBuild) {
+        return { ok: false, error: '请先处理弃牌后再跳过' };
+      }
       game.buildPassed[playerId] = true;
+      pushLog(game, `${player.name} 跳过本轮建造（本阶段不再行动）`);
       afterBuildAction(game, playerId, false);
       return { ok: true };
     }
@@ -2150,6 +2170,7 @@ function publicGameState(game, viewerId) {
         buildings: p.buildings.map((b) => publicBuilding(b, isMe)),
         expandSlots: Number(p.expandSlots) || 0,
         maxBuildings: maxBuildingsFor(p),
+        buildPassed: Boolean(game.buildPassed && game.buildPassed[p.id]),
         pendingDiscardFunc: isMe ? p.pendingDiscardFunc : false,
         pendingDiscardBuild: isMe ? p.pendingDiscardBuild : null,
         pendingEfficiencyBonus: isMe
@@ -2181,6 +2202,7 @@ function publicGameState(game, viewerId) {
           pendingDiscardFunc: me.pendingDiscardFunc,
           pendingDiscardBuild: me.pendingDiscardBuild,
           pendingEfficiencyBonus: Number(me.pendingEfficiencyBonus) || 0,
+          buildPassed: Boolean(game.buildPassed && game.buildPassed[me.id]),
         }
       : null,
   };

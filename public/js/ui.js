@@ -2138,9 +2138,18 @@
       holdChatDockFocus();
     });
     el.chatInput.addEventListener('blur', (ev) => {
-      if (chatDockDragging || chatDockPreserveActive) return;
+      if (chatDockDragging) return;
       const next = ev.relatedTarget;
-      if (next && el.chatDock && el.chatDock.contains(next)) return;
+      // 焦点仍在聊天室内部（切到发送按钮/页签等）→ 保持展开
+      if (next && el.chatDock && el.chatDock.contains(next)) {
+        holdChatDockFocus();
+        return;
+      }
+      if (chatDockFocusHoldTimer) {
+        clearTimeout(chatDockFocusHoldTimer);
+        chatDockFocusHoldTimer = null;
+      }
+      chatDockPreserveActive = false;
       setChatDockActive(false);
     });
   }
@@ -2287,6 +2296,30 @@
       focusChatInput();
     });
   }
+
+  // 点击聊天室外部：收起并失焦（非输入框可聚焦区域点空白时 blur 往往不会触发）
+  document.addEventListener(
+    'pointerdown',
+    (ev) => {
+      if (!el.chatDock || el.chatDock.hidden) return;
+      if (!el.chatDock.classList.contains('is-active')) return;
+      if (chatDockDragging) return;
+      const target = ev.target;
+      if (target && el.chatDock.contains(target)) return;
+      if (chatDockFocusHoldTimer) {
+        clearTimeout(chatDockFocusHoldTimer);
+        chatDockFocusHoldTimer = null;
+      }
+      chatDockPreserveActive = false;
+      setChatDockActive(false);
+      if (el.chatInput && document.activeElement === el.chatInput) {
+        try {
+          el.chatInput.blur();
+        } catch (_) {}
+      }
+    },
+    true
+  );
 
   if (el.lobbyPeopleList) {
     el.lobbyPeopleList.addEventListener('contextmenu', (ev) => {

@@ -54,7 +54,7 @@ function shuffle(arr) {
 function buildResourceDeck() {
   const cards = [];
   for (const res of ['wood', 'stone', 'food']) {
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 3; i++) {
       cards.push({
         id: nextId('res'),
         kind: 'resource',
@@ -77,7 +77,7 @@ function buildResourceDeck() {
       });
     }
   }
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 4; i++) {
     cards.push({
       id: nextId('res'),
       kind: 'resource',
@@ -104,14 +104,14 @@ function makeFunc(type, extra = {}) {
 /** 功能板块卡堆 */
 function buildFunctionDeck() {
   const cards = [];
-  for (let i = 0; i < 8; i++) cards.push(makeFunc('breed'));
-  for (let i = 0; i < 4; i++) cards.push(makeFunc('harvest'));
-  for (let i = 0; i < 4; i++) cards.push(makeFunc('remoteDice'));
-  for (let i = 0; i < 4; i++) cards.push(makeFunc('exile'));
-  for (let i = 0; i < 8; i++) cards.push(makeFunc('buildHouse'));
-  for (let i = 0; i < 4; i++) cards.push(makeFunc('redraw'));
-  for (let i = 0; i < 4; i++) cards.push(makeFunc('banditRaid'));
-  for (let i = 0; i < 4; i++) cards.push(makeFunc('expand'));
+  for (let i = 0; i < 6; i++) cards.push(makeFunc('breed'));
+  for (let i = 0; i < 2; i++) cards.push(makeFunc('harvest'));
+  for (let i = 0; i < 2; i++) cards.push(makeFunc('remoteDice'));
+  for (let i = 0; i < 1; i++) cards.push(makeFunc('exile'));
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('buildHouse'));
+  for (let i = 0; i < 2; i++) cards.push(makeFunc('redraw'));
+  for (let i = 0; i < 1; i++) cards.push(makeFunc('banditRaid'));
+  for (let i = 0; i < 2; i++) cards.push(makeFunc('expand'));
   return shuffle(cards);
 }
 
@@ -176,17 +176,21 @@ function makeEfficiency() {
   };
 }
 
-/** 建筑卡堆 */
+/** 建筑卡堆：木/石/食生产建筑 2富3贫；铁矿 1富2贫 */
 function buildBuildingDeck() {
   const cards = [];
-  for (const res of RESOURCES) {
+  for (const res of ['wood', 'stone', 'food']) {
     cards.push(makeProduceBuild(res, true));
     cards.push(makeProduceBuild(res, true));
+    cards.push(makeProduceBuild(res, false));
     cards.push(makeProduceBuild(res, false));
     cards.push(makeProduceBuild(res, false));
   }
+  cards.push(makeProduceBuild('iron', true));
+  cards.push(makeProduceBuild('iron', false));
+  cards.push(makeProduceBuild('iron', false));
   for (let i = 0; i < 5; i++) cards.push(makeScore2());
-  for (let i = 0; i < 6; i++) cards.push(makeExchange());
+  for (let i = 0; i < 5; i++) cards.push(makeExchange());
   for (let i = 0; i < 4; i++) cards.push(makeEfficiency());
   return shuffle(cards);
 }
@@ -202,6 +206,7 @@ module.exports = {
   nextId,
   resetUid,
   shuffle,
+  makeFunc,
   buildResourceDeck,
   buildFunctionDeck,
   buildBuildingDeck,

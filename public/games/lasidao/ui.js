@@ -16,9 +16,11 @@ window.LasidaoUi = (function () {
   }
 
   function noneSlotKeysFor(p) {
-    const n = 1 + (Number(p && p.expandSlots) || 0);
-    const out = ['none'];
-    for (let i = 1; i < n; i++) out.push('none:' + i);
+    const n = Number(p && p.expandSlots) || 0;
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      out.push(i === 0 ? 'none' : 'none:' + i);
+    }
     return out;
   }
 
@@ -120,6 +122,50 @@ window.LasidaoUi = (function () {
   let dealtForRound = null; // ???????????
   let effAlloc = { wood: 0, stone: 0, food: 0, iron: 0 };
   let effAllocFor = 0; // pending total this form is editing
+  let turnToastArmed = true;
+  let turnToastTimer = null;
+  let turnToastSnap = null;
+  let lasScaleBound = false;
+
+  const LAS_DESIGN_W = 1920;
+  const LAS_DESIGN_H = 1080;
+  /** ?? 1080p ??????????/?????? */
+  const LAS_SCALE_BOOST = 1.14;
+
+  function supportsCssZoom() {
+    try {
+      return typeof CSS !== 'undefined' && CSS.supports && CSS.supports('zoom', '1');
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function updateLasScale() {
+    const panel = $('panel-lasidao');
+    if (!panel || panel.hidden) return;
+    const scale =
+      Math.min(
+        window.innerWidth / LAS_DESIGN_W,
+        window.innerHeight / LAS_DESIGN_H
+      ) * LAS_SCALE_BOOST;
+    const s = Math.round(Math.max(0.4, Math.min(scale, 3)) * 1000) / 1000;
+    panel.style.setProperty('--las-ui-scale', String(s));
+    panel.dataset.uiScale = String(s);
+    if (supportsCssZoom()) {
+      panel.classList.add('las-scale-zoom');
+      panel.classList.remove('las-scale-transform');
+    } else {
+      panel.classList.add('las-scale-transform');
+      panel.classList.remove('las-scale-zoom');
+    }
+  }
+
+  function bindLasScale() {
+    if (lasScaleBound) return;
+    lasScaleBound = true;
+    window.addEventListener('resize', updateLasScale);
+    window.addEventListener('orientationchange', updateLasScale);
+  }
 
   function clearDiceTimers() {
     for (const t of diceAnim.timers) clearTimeout(t);
@@ -154,6 +200,7 @@ window.LasidaoUi = (function () {
     const panel = $('panel-lasidao');
     if (panel) panel.hidden = true;
     hideCardTip();
+    hideTurnToast(true);
     setRulesModalOpen(false);
     // ???????? game:state ?? hide+render???????????????
     if (opts && opts.reset) {
@@ -167,54 +214,232 @@ window.LasidaoUi = (function () {
     pendingDealIds = new Set();
     dealAnimPlaying = false;
     dealtForRound = null;
+    turnToastArmed = true;
+    turnToastSnap = null;
+    hideTurnToast(true);
     if (window.LasidaoFx && typeof window.LasidaoFx.clearLayer === 'function') {
       window.LasidaoFx.clearLayer();
     }
   }
 
+  function hideTurnToast(immediate) {
+    const el = $('las-turn-toast');
+    if (turnToastTimer) {
+      clearTimeout(turnToastTimer);
+      turnToastTimer = null;
+    }
+    if (!el) return;
+    if (immediate) {
+      el.hidden = true;
+      el.classList.remove('is-in', 'is-out');
+      el.textContent = '';
+      return;
+    }
+    el.classList.remove('is-in');
+    el.classList.add('is-out');
+    turnToastTimer = setTimeout(() => {
+      el.hidden = true;
+      el.classList.remove('is-out');
+      turnToastTimer = null;
+    }, 280);
+  }
+
+  function showTurnToast(text) {
+    const el = $('las-turn-toast');
+    if (!el || !text) return;
+    if (turnToastTimer) {
+      clearTimeout(turnToastTimer);
+      turnToastTimer = null;
+    }
+    el.textContent = text;
+    el.hidden = false;
+    el.classList.remove('is-out');
+    void el.offsetWidth;
+    el.classList.add('is-in');
+    turnToastTimer = setTimeout(() => hideTurnToast(false), 3200);
+  }
+
+  function captureTurnToastSnap(game, meId) {
+    const me = mePlayer(game, meId);
+    return {
+      phase: game.phase,
+      round: game.round,
+      myTurn: isMyTurn(game, meId),
+      awaiting: isAwaitingRoll(game),
+      diceN: Array.isArray(game.dice) ? game.dice.length : 0,
+      buildPassed: Boolean(
+        (me && me.buildPassed) || (game.me && game.me.buildPassed)
+      ),
+    };
+  }
+
+  function lastLogText(game) {
+    const logs = game && game.log;
+    if (!logs || !logs.length) return '';
+    const last = logs[logs.length - 1];
+    return last == null ? '' : String(last);
+  }
+
+  function getTurnToastInfo(game, meId) {
+    if (!game || !meId || game.over) return null;
+    if (!isMyTurn(game, meId)) return null;
+
+    if (game.phase === 'produce') {
+      if (isAwaitingRoll(game)) {
+        return { text: t('lasidao.turnToastRoll') };
+      }
+      return null;
+    }
+
+    if (game.phase === 'build') {
+      const me = mePlayer(game, meId);
+      const passed = Boolean(
+        (me && me.buildPassed) || (game.me && game.me.buildPassed)
+      );
+      if (passed) return null;
+      return { text: t('lasidao.turnToastBuild') };
+    }
+
+    return null;
+  }
+
+  function maybeShowEventToasts(game, meId, prev, cur) {
+    if (!prev || !cur) return false;
+
+    if (cur.phase === 'build' && cur.buildPassed && !prev.buildPassed) {
+      showTurnToast(t('lasidao.turnToastBuildPassed'));
+      return true;
+    }
+
+    // ??????????/??
+    if (prev.phase === 'produce' && prev.myTurn && !prev.awaiting) {
+      const log = lastLogText(game);
+      const isVoid = log.indexOf('\u865a\u7a7a') >= 0; // ??
+      const diceCleared = prev.diceN > 0 && cur.diceN === 0;
+      const turnLeft = !cur.myTurn || cur.phase !== 'produce';
+      const reAwait =
+        cur.phase === 'produce' && cur.myTurn && cur.awaiting;
+
+      if (isVoid && (diceCleared || turnLeft || reAwait)) {
+        showTurnToast(t('lasidao.turnToastVoidSkip'));
+        return true;
+      }
+      if (diceCleared || (turnLeft && prev.diceN > 0)) {
+        if (!reAwait) {
+          showTurnToast(t('lasidao.turnToastDiceDone'));
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function maybeShowTurnToast(game, meId) {
+    if (!game || !meId) return;
+    const cur = captureTurnToastSnap(game, meId);
+    const prev = turnToastSnap;
+    turnToastSnap = cur;
+
+    const showedEvent = maybeShowEventToasts(game, meId, prev, cur);
+
+    const info = getTurnToastInfo(game, meId);
+    if (!info) {
+      turnToastArmed = true;
+      return;
+    }
+    if (!turnToastArmed) return;
+    turnToastArmed = false;
+    if (showedEvent) {
+      setTimeout(() => {
+        if (lastGame && getTurnToastInfo(lastGame, lastMeId)) {
+          showTurnToast(info.text);
+        }
+      }, 1700);
+    } else {
+      showTurnToast(info.text);
+    }
+  }
+
   function ensureCardTip() {
     let tip = $('las-card-tip');
-    if (tip) return tip;
-    tip = document.createElement('div');
-    tip.id = 'las-card-tip';
-    tip.className = 'las-card-tip';
-    tip.hidden = true;
+    if (!tip) {
+      tip = document.createElement('div');
+      tip.id = 'las-card-tip';
+      tip.className = 'las-card-tip';
+      tip.hidden = true;
+    }
     const panel = $('panel-lasidao');
-    (panel || document.body).appendChild(tip);
+    if (supportsCssZoom()) {
+      if (panel && tip.parentNode !== panel) panel.appendChild(tip);
+    } else if (tip.parentNode !== document.body) {
+      document.body.appendChild(tip);
+    }
     return tip;
   }
 
   function hideCardTip() {
     const tip = $('las-card-tip');
-    if (tip) {
-      tip.hidden = true;
-      tip.textContent = '';
-    }
+    if (!tip) return;
+    tip.hidden = true;
+    tip.innerHTML = '';
+    tip.classList.remove('has-preview');
+    tip._lasTipText = '';
+    tip._lasTipImg = '';
+    tip.style.left = '';
+    tip.style.top = '';
   }
 
-  function showCardTip(text, evt, anchorEl) {
-    const tip = ensureCardTip();
-    tip.textContent = text;
-    tip.hidden = false;
-    tip.style.pointerEvents = 'none';
-
+  function positionCardTip(tip, evt, anchorEl) {
     let x = 12;
     let y = 12;
     if (evt && typeof evt.clientX === 'number') {
-      x = evt.clientX + 14;
-      y = evt.clientY + 14;
+      x = evt.clientX + 16;
+      y = evt.clientY + 16;
     } else if (anchorEl && anchorEl.getBoundingClientRect) {
       const r = anchorEl.getBoundingClientRect();
-      x = r.right + 8;
+      x = r.right + 10;
       y = r.top;
     }
     const pad = 8;
-    const tw = tip.offsetWidth || 180;
-    const th = tip.offsetHeight || 60;
-    if (x + tw > window.innerWidth - pad) x = Math.max(pad, window.innerWidth - tw - pad);
-    if (y + th > window.innerHeight - pad) y = Math.max(pad, window.innerHeight - th - pad);
+    const tw = tip.offsetWidth || 220;
+    const th = tip.offsetHeight || 120;
+    if (x + tw > window.innerWidth - pad) {
+      x = Math.max(pad, (evt && evt.clientX != null ? evt.clientX : x) - tw - 16);
+    }
+    if (y + th > window.innerHeight - pad) {
+      y = Math.max(pad, window.innerHeight - th - pad);
+    }
     tip.style.left = x + 'px';
     tip.style.top = y + 'px';
+  }
+
+  function showCardTip(text, evt, anchorEl, imgUrl) {
+    const tip = ensureCardTip();
+    const nextText = text || '';
+    const nextImg = imgUrl || '';
+    const changed =
+      tip._lasTipText !== nextText || tip._lasTipImg !== nextImg;
+    if (changed) {
+      tip._lasTipText = nextText;
+      tip._lasTipImg = nextImg;
+      tip.innerHTML = '';
+      tip.classList.toggle('has-preview', Boolean(nextImg));
+      if (nextImg) {
+        const preview = document.createElement('div');
+        preview.className = 'las-card-tip-preview';
+        preview.style.backgroundImage = 'url("' + nextImg + '")';
+        tip.appendChild(preview);
+      }
+      if (nextText) {
+        const desc = document.createElement('div');
+        desc.className = 'las-card-tip-desc';
+        desc.textContent = nextText;
+        tip.appendChild(desc);
+      }
+    }
+    tip.hidden = false;
+    tip.style.pointerEvents = 'none';
+    positionCardTip(tip, evt, anchorEl);
   }
 
   function formatCost(cost, labels) {
@@ -307,16 +532,35 @@ window.LasidaoUi = (function () {
     return buildingDetail(tile, labels);
   }
 
+  function tileImageUrl(tile, areaKey) {
+    const kind = (tile && tile.kind) || areaKey;
+    if (tile && tile.faceDown) return '';
+    if (
+      (kind === 'resource' || areaKey === 'resource') &&
+      window.LasidaoAssets &&
+      typeof window.LasidaoAssets.resourceImageUrl === 'function'
+    ) {
+      return window.LasidaoAssets.resourceImageUrl(tile) || '';
+    }
+    return '';
+  }
+
   function bindTileTip(card, tile, areaKey) {
     card.style.pointerEvents = 'auto';
+    const imgUrl = tileImageUrl(tile, areaKey);
     card.addEventListener('mouseenter', (e) => {
       const labels = getResLabels(lastGame);
-      showCardTip(tileDetailText(tile, areaKey, labels), e, card);
+      showCardTip(
+        tileDetailText(tile, areaKey, labels),
+        e,
+        card,
+        imgUrl
+      );
     });
     card.addEventListener('mousemove', (e) => {
       const tip = $('las-card-tip');
       if (!tip || tip.hidden) return;
-      showCardTip(tip.textContent, e, card);
+      positionCardTip(tip, e, card);
     });
     card.addEventListener('mouseleave', () => hideCardTip());
     card.addEventListener('mousedown', (e) => {
@@ -332,20 +576,20 @@ window.LasidaoUi = (function () {
     const art = document.createElement('div');
     art.className = 'las-tile-art';
     art.setAttribute('aria-hidden', 'true');
+    let hasArt = false;
     if (
       (areaKey === 'resource' || tile.kind === 'resource') &&
       window.LasidaoAssets &&
       typeof window.LasidaoAssets.applyResourceArt === 'function'
     ) {
-      window.LasidaoAssets.applyResourceArt(art, tile);
+      hasArt = Boolean(window.LasidaoAssets.applyResourceArt(art, tile));
     }
     card.appendChild(art);
 
-    const name = document.createElement('div');
-    name.className = 'las-tile-name';
-
     if (tile.faceDown) {
       card.classList.add('is-facedown');
+      const name = document.createElement('div');
+      name.className = 'las-tile-name';
       name.textContent = t('lasidao.faceDown');
       card.appendChild(name);
       const meta = document.createElement('div');
@@ -360,6 +604,15 @@ window.LasidaoUi = (function () {
       return card;
     }
 
+    if (hasArt) {
+      card.classList.add('has-art');
+      card.setAttribute('aria-label', tile.label || '');
+      bindTileTip(card, tile, areaKey);
+      return card;
+    }
+
+    const name = document.createElement('div');
+    name.className = 'las-tile-name';
     name.textContent = tile.label || '';
     card.appendChild(name);
 
@@ -428,7 +681,8 @@ window.LasidaoUi = (function () {
     return el;
   }
 
-  function appendWorkerDice(container, face, workers, players, game) {
+  function appendWorkerDice(container, face, workers, players, game, opts) {
+    opts = opts || {};
     const entries = Object.entries(workers || {}).filter(([, n]) => n > 0);
     if (!entries.length) return null;
     const nid = (game && game.neutralWorkerId) || '__neutral__';
@@ -442,13 +696,18 @@ window.LasidaoUi = (function () {
       return sa - sb;
     });
     const wrap = document.createElement('div');
-    wrap.className = 'las-workers las-worker-dice';
+    wrap.className =
+      'las-workers las-worker-dice' + (opts.overlay ? ' is-overlay' : '');
     for (const [pid, n] of entries) {
+      const row = document.createElement('div');
+      row.className = 'las-worker-row';
+      row.dataset.pid = pid;
       const color = playerDieColor(players, pid, game);
       const count = Math.min(Number(n) || 0, 24);
       for (let i = 0; i < count; i++) {
-        wrap.appendChild(makeDieEl(face, 'is-mini is-placed', color));
+        row.appendChild(makeDieEl(face, 'is-mini is-placed', color));
       }
+      wrap.appendChild(row);
     }
     container.appendChild(wrap);
     return wrap;
@@ -487,6 +746,18 @@ window.LasidaoUi = (function () {
     const counts = {};
     for (const d of dice) counts[d] = (counts[d] || 0) + 1;
     return counts;
+  }
+
+  /** ????????????????????? 0? */
+  function availableFaces() {
+    const counts = countByFace(diceAnim.finalDice || []);
+    return Object.keys(counts)
+      .map(Number)
+      .filter((f) => f >= 1 && f <= 6 && counts[f] > 0);
+  }
+
+  function hasAvailableFace(num) {
+    return availableFaces().indexOf(Number(num)) >= 0;
   }
 
   function updateDispatchPreview() {
@@ -583,7 +854,7 @@ window.LasidaoUi = (function () {
       hint.textContent = t('lasidao.diceGrouping');
     } else if (diceAnim.stage === 'ready') {
       if (selectedFace == null) {
-        hint.textContent = t('lasidao.dicePickFace');
+        hint.textContent = t('lasidao.dicePickFaceOrBoard');
       } else if (!selectedTarget) {
         hint.textContent = t('lasidao.dicePickTarget', { face: selectedFace });
       } else {
@@ -595,12 +866,16 @@ window.LasidaoUi = (function () {
   }
 
   function pickAreaTarget(areaKey, num) {
-    selectedTarget = { type: 'area', area: areaKey, number: num };
-    if (lastGame && isRemoteMode(lastGame)) {
-      selectedFace = num;
+    const remote = lastGame && isRemoteMode(lastGame);
+    if (!remote) {
+      if (!hasAvailableFace(num)) return;
+      selectedFace = Number(num);
+    } else {
+      selectedFace = Number(num);
     }
+    selectedTarget = { type: 'area', area: areaKey, number: num };
     renderBoard(lastGame, lastMeId);
-    if (lastGame && isRemoteMode(lastGame)) renderRemoteDice(lastGame, lastMeId);
+    if (remote) renderRemoteDice(lastGame, lastMeId);
     else renderGroupedDice();
     updateDispatchPreview();
     updateDiceHint();
@@ -629,11 +904,10 @@ window.LasidaoUi = (function () {
     const area =
       (game.board && game.board[areaKey]) || { slots: [], workers: {} };
     const remote = isRemoteMode(game);
-    const canPick =
-      game.phase === 'produce' &&
-      isMyTurn(game, meId) &&
-      diceReady() &&
-      (remote ? selectedWildCount > 0 : selectedFace != null);
+    const faces = availableFaces();
+    const canPickBase =
+      game.phase === 'produce' && isMyTurn(game, meId) && diceReady();
+    const canPick = canPickBase && (remote ? selectedWildCount > 0 : faces.length > 0);
 
     for (let num = 1; num <= 6; num++) {
       const slotInfo =
@@ -651,7 +925,12 @@ window.LasidaoUi = (function () {
       slot.dataset.area = areaKey;
       slot.dataset.num = String(num);
       const hasTiles = tiles.length > 0;
-      const matchFace = remote ? true : selectedFace === num;
+      // ??????????????????????????????
+      const matchFace = remote
+        ? true
+        : selectedFace != null
+          ? selectedFace === num
+          : faces.indexOf(num) >= 0;
       slot.disabled = !canPick || !matchFace || !hasTiles;
       if (canPick && matchFace && hasTiles) slot.classList.add('is-target');
       if (
@@ -663,11 +942,26 @@ window.LasidaoUi = (function () {
         slot.classList.add('is-picked');
       }
 
-      const numEl = document.createElement('span');
+      const numEl = document.createElement('div');
       numEl.className = 'las-slot-num';
-      numEl.textContent = String(num);
+      const numLabel = document.createElement('span');
+      numLabel.className = 'las-slot-num-label';
+      numLabel.textContent = String(num);
+      numEl.appendChild(numLabel);
+      const diceRow = appendWorkerDice(
+        numEl,
+        num,
+        workers,
+        game.players,
+        game,
+        { overlay: true }
+      );
+      const wTxt = workersText(workers, game.players, game);
+      if (diceRow && wTxt) diceRow.title = wTxt;
       slot.appendChild(numEl);
 
+      const body = document.createElement('div');
+      body.className = 'las-slot-body';
       const stack = document.createElement('div');
       stack.className = 'las-slot-tiles';
 
@@ -676,7 +970,6 @@ window.LasidaoUi = (function () {
         empty.className = 'muted las-slot-empty';
         const unlockAt = slotUnlockRound(areaKey, num);
         const openCount = areaOpenSlotCount(areaKey, game.round || 1);
-        // ??/??????????????????????????????
         if (
           unlockAt != null &&
           (game.phase === 'init_roll' ||
@@ -699,11 +992,8 @@ window.LasidaoUi = (function () {
           stack.appendChild(card);
         }
       }
-      slot.appendChild(stack);
-
-      const wTxt = workersText(workers, game.players, game);
-      const diceRow = appendWorkerDice(slot, num, workers, game.players, game);
-      if (diceRow && wTxt) diceRow.title = wTxt;
+      body.appendChild(stack);
+      slot.appendChild(body);
 
       slot.onclick = () => {
         if (!canPick || !matchFace || !hasTiles) return;
@@ -727,11 +1017,13 @@ window.LasidaoUi = (function () {
       if (me && canPick) {
         for (const b of me.buildings || []) {
           if (!b.built) continue;
-          if (!remote && b.slot !== selectedFace) continue;
-          if (remote && (b.slot == null || b.slot === 'none')) continue;
+          if (b.slot == null || b.slot === 'none') continue;
+          const bSlot = Number(b.slot);
+          if (!remote && faces.indexOf(bSlot) < 0) continue;
           const btn = document.createElement('button');
           btn.type = 'button';
           btn.className = 'las-tile building las-personal-build';
+          btn.dataset.bid = b.id;
           if (
             selectedTarget &&
             selectedTarget.type === 'building' &&
@@ -739,35 +1031,44 @@ window.LasidaoUi = (function () {
           ) {
             btn.classList.add('is-picked');
           }
+          if (!remote && selectedFace != null && selectedFace !== bSlot) {
+            btn.classList.add('is-dim');
+          }
+          const numCol = document.createElement('div');
+          numCol.className = 'las-personal-build-num';
+          const numLab = document.createElement('span');
+          numLab.className = 'las-slot-num-label';
+          numLab.textContent = String(bSlot);
+          numCol.appendChild(numLab);
+          if ((b.workers || 0) > 0) {
+            appendWorkerDice(
+              numCol,
+              bSlot,
+              { [me.id]: b.workers },
+              game.players,
+              game,
+              { overlay: true }
+            );
+          }
+          btn.appendChild(numCol);
+          const main = document.createElement('div');
+          main.className = 'las-personal-build-main';
           const art = document.createElement('div');
           art.className = 'las-tile-art';
-          btn.appendChild(art);
+          main.appendChild(art);
           const name = document.createElement('div');
           name.className = 'las-tile-name';
           name.textContent = t('lasidao.personalBuild', { label: b.label });
-          btn.appendChild(name);
-          const meta = document.createElement('div');
-          meta.className = 'las-tile-meta';
-          meta.textContent =
-            b.slot != null && b.slot !== 'none' ? '#' + b.slot : '';
-          btn.appendChild(meta);
-          if ((b.workers || 0) > 0 && b.slot != null && b.slot !== 'none') {
-            appendWorkerDice(
-              btn,
-              Number(b.slot),
-              { [me.id]: b.workers },
-              game.players,
-              game
-            );
-          }
+          main.appendChild(name);
+          btn.appendChild(main);
           bindTileTip(btn, Object.assign({}, b, { kind: 'building' }), 'building');
           btn.onclick = () => {
+            selectedFace = bSlot;
             selectedTarget = {
               type: 'building',
               buildingId: b.id,
               label: b.label,
             };
-            if (remote) selectedFace = Number(b.slot);
             renderBoard(lastGame, lastMeId);
             if (remote) renderRemoteDice(lastGame, lastMeId);
             else renderGroupedDice();
@@ -859,6 +1160,7 @@ window.LasidaoUi = (function () {
   }
 
   function renderBoard(game, meId) {
+    hideCardTip();
     renderAreaBoard(game, meId, 'resource');
     renderAreaBoard(game, meId, 'function');
     renderAreaBoard(game, meId, 'building');
@@ -1348,6 +1650,182 @@ window.LasidaoUi = (function () {
     }, 800);
   }
 
+  const MAX_FUNC_HAND_UI = 5;
+
+  function makeEmptyFuncSlot() {
+    const slot = document.createElement('div');
+    slot.className = 'las-func-slot is-empty';
+    slot.setAttribute('aria-hidden', 'true');
+    return slot;
+  }
+
+  /** ????????????????????? maxSlots???????? */
+  function fillFuncHandRow(funcsEl, opts) {
+    const {
+      cards,
+      isMe,
+      interactive,
+      game,
+      player,
+      meId,
+      maxSlots,
+    } = opts;
+    const max = Math.max(1, Number(maxSlots) || MAX_FUNC_HAND_UI);
+    funcsEl.classList.add('las-func-hand');
+    funcsEl.innerHTML = '';
+
+    let filled = 0;
+    if (isMe) {
+      const visible = (cards || []).filter((c) => !c.hidden);
+      for (const c of visible) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className =
+          'las-card func' + (selectedFuncId === c.id ? ' is-selected' : '');
+        btn.textContent = c.label;
+        if (interactive) {
+          btn.onclick = () => {
+            selectedFuncId = selectedFuncId === c.id ? null : c.id;
+            renderPlayerBoards(game, meId);
+            renderActRail(game, meId);
+            renderFuncForm(game, player);
+          };
+        } else {
+          btn.disabled = true;
+        }
+        funcsEl.appendChild(btn);
+        filled += 1;
+        if (interactive && player && player.pendingDiscardFunc) {
+          const disc = document.createElement('button');
+          disc.type = 'button';
+          disc.className = 'las-card';
+          disc.textContent = t('lasidao.discardFunc', { label: c.label });
+          disc.onclick = () =>
+            netRef && netRef.sendAction('discardFunc', { cardId: c.id });
+          funcsEl.appendChild(disc);
+        }
+      }
+    } else {
+      const n = Number(opts.funcCount) || 0;
+      for (let i = 0; i < Math.min(n, max); i++) {
+        const back = document.createElement('span');
+        back.className = 'las-card func is-facedown';
+        back.textContent = t('lasidao.faceDown');
+        funcsEl.appendChild(back);
+        filled += 1;
+      }
+      if (n > max) {
+        const more = document.createElement('span');
+        more.className = 'muted';
+        more.textContent = t('lasidao.funcHidden', { n });
+        funcsEl.appendChild(more);
+      }
+    }
+
+    const empties = Math.max(0, max - filled);
+    for (let i = 0; i < empties; i++) {
+      funcsEl.appendChild(makeEmptyFuncSlot());
+    }
+  }
+
+  function isActRailPhase(phase) {
+    return (
+      phase === 'build' ||
+      phase === 'settle_act' ||
+      phase === 'round_end'
+    );
+  }
+
+  function renderActRail(game, meId) {
+    const wrap = $('las-act-wrap');
+    const hand = $('las-act-hand');
+    const hint = $('las-act-hint');
+    if (!wrap || !hand) return;
+
+    const show = isActRailPhase(game.phase);
+    wrap.hidden = !show;
+    if (!show) {
+      hand.innerHTML = '';
+      if (hint) hint.textContent = '';
+      return;
+    }
+
+    const me = mePlayer(game, meId);
+    hand.innerHTML = '';
+    if (!me) {
+      if (hint) hint.textContent = '';
+      return;
+    }
+
+    if (hint) {
+      if (game.phase === 'build') {
+        hint.textContent = isMyTurn(game, meId)
+          ? t('lasidao.actRailHintBuild')
+          : t('lasidao.actRailHintBuildWait');
+      } else if (game.phase === 'settle_act') {
+        hint.textContent = t('lasidao.actRailHintSettle');
+      } else {
+        hint.textContent = t('lasidao.actRailHintRoundEnd');
+      }
+    }
+
+    if (game.phase === 'build' && (me.buildPassed || (game.me && game.me.buildPassed))) {
+      const done = document.createElement('div');
+      done.className = 'las-act-passed muted';
+      done.textContent = t('lasidao.buildPassedNote');
+      hand.appendChild(done);
+    }
+
+    const funcLab = document.createElement('div');
+    funcLab.className = 'las-pboard-label';
+    funcLab.textContent = t('lasidao.funcHand');
+    hand.appendChild(funcLab);
+    const funcs = document.createElement('div');
+    funcs.className = 'las-cards las-act-cards las-func-hand';
+    fillFuncHandRow(funcs, {
+      cards: me.funcCards,
+      isMe: true,
+      interactive: true,
+      game,
+      player: me,
+      meId,
+      maxSlots: MAX_FUNC_HAND_UI,
+    });
+    hand.appendChild(funcs);
+
+    const unplaced = (me.buildings || []).filter((b) => b.slot == null);
+    const placedUnbuilt = (me.buildings || []).filter(
+      (b) => !b.built && b.slot != null
+    );
+    if (unplaced.length || placedUnbuilt.length || me.pendingDiscardBuild) {
+      const bLab = document.createElement('div');
+      bLab.className = 'las-pboard-label';
+      bLab.textContent = t('lasidao.actRailBuilds');
+      hand.appendChild(bLab);
+      const builds = document.createElement('div');
+      builds.className = 'las-cards las-act-cards';
+      for (const b of unplaced) {
+        builds.appendChild(makeBoardBuildingCard(game, meId, me, b, true));
+      }
+      for (const b of placedUnbuilt) {
+        builds.appendChild(makeBoardBuildingCard(game, meId, me, b, true));
+      }
+      if (me.pendingDiscardBuild) {
+        const tip = document.createElement('div');
+        tip.className = 'muted las-pboard-tip';
+        tip.textContent = t('lasidao.discardBuildTip', {
+          n: me.maxBuildings || game.maxBuildings || 6,
+        });
+        builds.appendChild(tip);
+        for (const b of me.buildings || []) {
+          if (unplaced.includes(b) || placedUnbuilt.includes(b)) continue;
+          builds.appendChild(makeBoardBuildingCard(game, meId, me, b, true));
+        }
+      }
+      hand.appendChild(builds);
+    }
+  }
+
   function renderMe(game, meId) {
     const me = mePlayer(game, meId);
     const resEl = $('las-me-res');
@@ -1361,11 +1839,18 @@ window.LasidaoUi = (function () {
       if (effWrap) effWrap.hidden = true;
       const host = $('las-boards-host');
       if (host) host.innerHTML = '';
+      const meHost = $('las-boards-me');
+      if (meHost) meHost.innerHTML = '';
+      const othersTitle = $('las-others-title');
+      if (othersTitle) othersTitle.hidden = true;
+      const actWrap = $('las-act-wrap');
+      if (actWrap) actWrap.hidden = true;
       return;
     }
 
     const labels = getResLabels(game);
     renderPlayerBoards(game, meId);
+    renderActRail(game, meId);
     renderEfficiencyBonus(game, me, labels);
 
     const exCount = (me.buildings || []).filter(
@@ -1445,14 +1930,16 @@ window.LasidaoUi = (function () {
 
   function renderPlayerBoards(game, meId) {
     const host = $('las-boards-host');
+    const meHost = $('las-boards-me');
+    const othersTitle = $('las-others-title');
     if (!host) return;
     host.innerHTML = '';
+    if (meHost) meHost.innerHTML = '';
     const players = (game.players || []).slice().sort((a, b) => {
-      if (meId && a.id === meId) return -1;
-      if (meId && b.id === meId) return 1;
       return (a.seat || 0) - (b.seat || 0);
     });
     const labels = getResLabels(game);
+    let othersCount = 0;
 
     for (const p of players) {
       const isMe = Boolean(meId && p.id === meId);
@@ -1557,57 +2044,61 @@ window.LasidaoUi = (function () {
       board.appendChild(slots);
 
       const noneKeys = noneSlotKeysFor(p);
-      const noneRow = document.createElement('div');
-      noneRow.className = 'las-pboard-none';
-      const noneLab = document.createElement('div');
-      noneLab.className = 'las-pboard-label';
-      noneLab.textContent = t('lasidao.slotNoneArea');
-      noneRow.appendChild(noneLab);
-      const noneSlots = document.createElement('div');
-      noneSlots.className = 'las-pboard-none-slots';
-      for (const slotKey of noneKeys) {
-        const cell = document.createElement('div');
-        cell.className = 'las-pboard-slot las-pboard-slot-none';
-        cell.dataset.slot = String(slotKey);
-        const num = document.createElement('span');
-        num.className = 'las-pboard-slot-num';
-        num.textContent = t('lasidao.slotNone');
-        cell.appendChild(num);
-        const body = document.createElement('div');
-        body.className = 'las-pboard-slot-body';
-        const occ = (p.buildings || []).find((b) => b.slot === slotKey);
-        if (occ) {
-          body.appendChild(makeBoardBuildingCard(game, meId, p, occ, isMe));
-        } else {
-          const empty = document.createElement('span');
-          empty.className = 'muted las-pboard-empty';
-          empty.textContent = t('lasidao.slotEmpty');
-          body.appendChild(empty);
-          if (isMe) {
-            cell.classList.add('is-drop');
-            cell.onclick = () => {
-              const unplaced = (p.buildings || []).find(
-                (b) =>
-                  !b.built &&
-                  b.slot == null &&
-                  b.buildType !== 'produce'
-              );
-              if (!unplaced || !netRef) return;
-              netRef.sendAction('placeBuildingSlot', {
-                buildingId: unplaced.id,
-                slot: slotKey,
-              });
-            };
+      if (noneKeys.length) {
+        const noneRow = document.createElement('div');
+        noneRow.className = 'las-pboard-none';
+        const noneLab = document.createElement('div');
+        noneLab.className = 'las-pboard-label';
+        noneLab.textContent = t('lasidao.slotNoneArea');
+        noneRow.appendChild(noneLab);
+        const noneSlots = document.createElement('div');
+        noneSlots.className = 'las-pboard-none-slots';
+        for (const slotKey of noneKeys) {
+          const cell = document.createElement('div');
+          cell.className = 'las-pboard-slot las-pboard-slot-none';
+          cell.dataset.slot = String(slotKey);
+          const num = document.createElement('span');
+          num.className = 'las-pboard-slot-num';
+          num.textContent = t('lasidao.slotNone');
+          cell.appendChild(num);
+          const body = document.createElement('div');
+          body.className = 'las-pboard-slot-body';
+          const occ = (p.buildings || []).find((b) => b.slot === slotKey);
+          if (occ) {
+            body.appendChild(makeBoardBuildingCard(game, meId, p, occ, isMe));
+          } else {
+            const empty = document.createElement('span');
+            empty.className = 'muted las-pboard-empty';
+            empty.textContent = t('lasidao.slotEmpty');
+            body.appendChild(empty);
+            if (isMe) {
+              cell.classList.add('is-drop');
+              cell.onclick = () => {
+                const unplaced = (p.buildings || []).find(
+                  (b) =>
+                    !b.built &&
+                    b.slot == null &&
+                    b.buildType !== 'produce'
+                );
+                if (!unplaced || !netRef) return;
+                netRef.sendAction('placeBuildingSlot', {
+                  buildingId: unplaced.id,
+                  slot: slotKey,
+                });
+              };
+            }
           }
+          cell.appendChild(body);
+          noneSlots.appendChild(cell);
         }
-        cell.appendChild(body);
-        noneSlots.appendChild(cell);
+        noneRow.appendChild(noneSlots);
+        board.appendChild(noneRow);
       }
-      noneRow.appendChild(noneSlots);
-      board.appendChild(noneRow);
+
+      const actHand = isMe && isActRailPhase(game.phase);
 
       const unplaced = (p.buildings || []).filter((b) => b.slot == null);
-      if (unplaced.length) {
+      if (unplaced.length && !actHand) {
         const hand = document.createElement('div');
         hand.className = 'las-pboard-unplaced';
         const lab = document.createElement('div');
@@ -1623,11 +2114,18 @@ window.LasidaoUi = (function () {
         board.appendChild(hand);
       }
 
-      if (isMe && p.pendingDiscardBuild) {
+      if (isMe && p.pendingDiscardBuild && !actHand) {
         const tip = document.createElement('div');
         tip.className = 'muted las-pboard-tip';
         tip.textContent = t('lasidao.discardBuildTip', { n: maxB });
         board.appendChild(tip);
+      }
+
+      if (actHand) {
+        const note = document.createElement('div');
+        note.className = 'muted las-pboard-tip';
+        note.textContent = t('lasidao.actRailMovedNote');
+        board.appendChild(note);
       }
 
       const funcTitle = document.createElement('div');
@@ -1635,61 +2133,31 @@ window.LasidaoUi = (function () {
       funcTitle.textContent = t('lasidao.funcHand');
       board.appendChild(funcTitle);
       const funcs = document.createElement('div');
-      funcs.className = 'las-pboard-funcs las-cards';
-      if (isMe) {
-        const visible = (p.funcCards || []).filter((c) => !c.hidden);
-        if (!visible.length) {
-          funcs.innerHTML =
-            '<span class="muted">' + t('lasidao.noFunc') + '</span>';
-        } else {
-          for (const c of visible) {
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className =
-              'las-card func' +
-              (selectedFuncId === c.id ? ' is-selected' : '');
-            btn.textContent = c.label;
-            btn.onclick = () => {
-              selectedFuncId = selectedFuncId === c.id ? null : c.id;
-              renderPlayerBoards(game, meId);
-              renderFuncForm(game, p);
-            };
-            funcs.appendChild(btn);
-            if (p.pendingDiscardFunc) {
-              const disc = document.createElement('button');
-              disc.type = 'button';
-              disc.className = 'las-card';
-              disc.textContent = t('lasidao.discardFunc', { label: c.label });
-              disc.onclick = () =>
-                netRef && netRef.sendAction('discardFunc', { cardId: c.id });
-              funcs.appendChild(disc);
-            }
-          }
-        }
-      } else {
-        const n = Number(p.funcCount) || 0;
-        if (!n) {
-          funcs.innerHTML =
-            '<span class="muted">' + t('lasidao.noFunc') + '</span>';
-        } else {
-          for (let i = 0; i < Math.min(n, 12); i++) {
-            const back = document.createElement('span');
-            back.className = 'las-card func is-facedown';
-            back.textContent = t('lasidao.faceDown');
-            funcs.appendChild(back);
-          }
-          if (n > 12) {
-            const more = document.createElement('span');
-            more.className = 'muted';
-            more.textContent = t('lasidao.funcHidden', { n });
-            funcs.appendChild(more);
-          }
-        }
-      }
+      funcs.className = 'las-pboard-funcs las-cards las-func-hand';
+      fillFuncHandRow(funcs, {
+        cards: p.funcCards,
+        isMe,
+        interactive: isMe && !actHand,
+        game,
+        player: p,
+        meId,
+        funcCount: p.funcCount,
+        maxSlots: MAX_FUNC_HAND_UI,
+      });
       board.appendChild(funcs);
 
-      host.appendChild(board);
+      if (isMe && meHost) {
+        meHost.appendChild(board);
+      } else {
+        host.appendChild(board);
+        othersCount += 1;
+      }
     }
+
+    if (othersTitle) {
+      othersTitle.hidden = othersCount === 0;
+    }
+    host.hidden = othersCount === 0;
   }
 
   function sumEffAlloc() {
@@ -2008,6 +2476,8 @@ window.LasidaoUi = (function () {
     if (!panel || !game) return;
     hideOthers();
     panel.hidden = false;
+    bindLasScale();
+    updateLasScale();
     netRef = net;
     lastGame = game;
     lastMeId = opts && opts.meId;
@@ -2158,6 +2628,7 @@ window.LasidaoUi = (function () {
     renderPlayers(game, meId);
 
     maybePlaySettle(game);
+    maybeShowTurnToast(game, meId);
 
     const initWrap = $('las-init-wrap');
     const keepInitUi =
@@ -2172,9 +2643,35 @@ window.LasidaoUi = (function () {
     }
 
     const phaseAct = $('las-phase-actions');
+    const passBtn = $('btn-las-pass');
     if (phaseAct) {
-      // ???/??????????????????
-      phaseAct.hidden = !(game.phase === 'build' && isMyTurn(game, meId));
+      const showPass =
+        game.phase === 'build' &&
+        isMyTurn(game, meId) &&
+        !(game.me && game.me.buildPassed);
+      phaseAct.hidden = !showPass;
+      if (passBtn) {
+        passBtn.disabled = !showPass;
+        passBtn.textContent = t('lasidao.passBuild');
+      }
+    }
+    // ???? / ???????????????
+    if (
+      phaseAct &&
+      phaseAct.hidden &&
+      (game.phase === 'settle_act' || game.phase === 'round_end') &&
+      isMyTurn(game, meId)
+    ) {
+      phaseAct.hidden = false;
+      if (passBtn) {
+        passBtn.disabled = false;
+        passBtn.textContent = t('lasidao.pass');
+      }
+    }
+
+    const actWrap = $('las-act-wrap');
+    if (actWrap) {
+      actWrap.hidden = !isActRailPhase(game.phase);
     }
 
     // ????????? renderDice ????????????
@@ -2231,30 +2728,105 @@ window.LasidaoUi = (function () {
     }
   }
 
-  function confirmDispatch() {
-    if (!netRef || !selectedTarget) return;
-    const remote = lastGame && isRemoteMode(lastGame);
+  let dispatchBusy = false;
+
+  function collectDispatchFromCenters(remote, face, count) {
+    const centers = [];
     if (remote) {
-      if (!selectedWildCount || selectedFace == null) return;
-      const payload = {
-        face: selectedFace,
-        count: selectedWildCount,
+      const diceRoot = $('las-dice');
+      const selected = diceRoot
+        ? diceRoot.querySelectorAll('.las-die.is-selected, .las-die.is-wild.is-selected')
+        : [];
+      for (const el of selected) {
+        const r = el.getBoundingClientRect();
+        if (r.width || r.height) {
+          centers.push({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+        }
+      }
+    } else {
+      const group = document.querySelector('.las-die-group.is-selected');
+      const faceEl = group && group.querySelector('.las-die-face, .las-die');
+      const el = faceEl || group || $('las-dice-groups') || $('las-dice');
+      if (el) {
+        const r = el.getBoundingClientRect();
+        if (r.width || r.height) {
+          const base = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+          for (let i = 0; i < count; i++) {
+            centers.push({
+              x: base.x + (i % 3) * 6 - 6,
+              y: base.y + Math.floor(i / 3) * 6,
+            });
+          }
+        }
+      }
+    }
+    if (!centers.length) {
+      const stage = $('las-dice-stage') || $('las-dice');
+      if (stage) {
+        const r = stage.getBoundingClientRect();
+        const base = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        for (let i = 0; i < count; i++) centers.push(base);
+      }
+    }
+    return centers;
+  }
+
+  async function confirmDispatch() {
+    if (!netRef || !selectedTarget || dispatchBusy) return;
+    const remote = lastGame && isRemoteMode(lastGame);
+    const face = selectedFace;
+    if (face == null) return;
+
+    let count = 1;
+    let payload;
+    if (remote) {
+      if (!selectedWildCount) return;
+      count = selectedWildCount;
+      payload = {
+        face,
+        count,
       };
       if (selectedTarget.type === 'area') payload.area = selectedTarget.area;
       else payload.buildingId = selectedTarget.buildingId;
+    } else {
+      count = countByFace(diceAnim.finalDice)[face] || 1;
+      payload = { face };
+      if (selectedTarget.type === 'area') {
+        payload.area = selectedTarget.area;
+      } else {
+        payload.buildingId = selectedTarget.buildingId;
+      }
+    }
+
+    const color = playerDieColor(
+      lastGame && lastGame.players,
+      lastMeId,
+      lastGame
+    );
+    const fromCenters = collectDispatchFromCenters(remote, face, count);
+    const fx = window.LasidaoFx;
+    dispatchBusy = true;
+    try {
+      if (fx && typeof fx.playDispatch === 'function') {
+        await fx.playDispatch({
+          face,
+          count,
+          color,
+          fromCenters,
+          area: payload.area,
+          number:
+            selectedTarget.type === 'area'
+              ? selectedTarget.number
+              : face,
+          buildingId: payload.buildingId,
+        });
+      }
+      if (fx && typeof fx.clearLayer === 'function') fx.clearLayer();
       netRef.sendAction('placeDice', payload);
       resetDiceAnim();
-      return;
+    } finally {
+      dispatchBusy = false;
     }
-    if (selectedFace == null) return;
-    const payload = { face: selectedFace };
-    if (selectedTarget.type === 'area') {
-      payload.area = selectedTarget.area;
-    } else {
-      payload.buildingId = selectedTarget.buildingId;
-    }
-    netRef.sendAction('placeDice', payload);
-    resetDiceAnim();
   }
 
   function setRulesModalOpen(open) {

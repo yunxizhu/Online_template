@@ -61,6 +61,23 @@ window.LasidaoFx = (function () {
     );
   }
 
+  function slotNumEl(area, number) {
+    return document.querySelector(
+      `.las-slot[data-area="${area}"][data-num="${number}"] .las-slot-num`
+    );
+  }
+
+  function personalBuildEl(buildingId) {
+    if (!buildingId) return null;
+    const id = String(buildingId).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    return document.querySelector(`.las-personal-build[data-bid="${id}"]`);
+  }
+
+  function personalBuildNumEl(buildingId) {
+    const root = personalBuildEl(buildingId);
+    return root ? root.querySelector('.las-personal-build-num') : null;
+  }
+
   function playerEl(pid) {
     return document.querySelector(
       `.las-pboard[data-pid="${pid}"], #las-players li[data-pid="${pid}"]`
@@ -101,6 +118,10 @@ window.LasidaoFx = (function () {
   function flyToPoint(el, from, to, ms, opts) {
     opts = opts || {};
     return new Promise((resolve) => {
+      if (!el) {
+        resolve();
+        return;
+      }
       if (!from || !to) {
         el.remove();
         resolve();
@@ -109,7 +130,8 @@ window.LasidaoFx = (function () {
       el.style.left = from.x + 'px';
       el.style.top = from.y + 'px';
       const fade = opts.fade !== false;
-      // ??????????
+      const fadeTo =
+        typeof opts.fadeTo === 'number' ? opts.fadeTo : fade ? 0 : 1;
       const ease = opts.ease || 'linear';
       el.style.transition = [
         `left ${ms}ms ${ease}`,
@@ -124,14 +146,14 @@ window.LasidaoFx = (function () {
         el.style.left = to.x + 'px';
         el.style.top = to.y + 'px';
         if (fade) {
-          el.style.opacity = '0.15';
+          el.style.opacity = String(fadeTo);
           el.style.transform = 'translate(-50%, -50%) scale(0.55)';
         }
       });
       setTimeout(() => {
-        el.remove();
+        if (el && el.parentNode) el.parentNode.removeChild(el);
         resolve();
-      }, ms + 30);
+      }, ms + 40);
     });
   }
 
@@ -257,6 +279,84 @@ window.LasidaoFx = (function () {
     }
     await Promise.all(inflight);
     setBanner('');
+  }
+
+  /** ?????????????????? */
+  async function playDispatch(opts) {
+    opts = opts || {};
+    const layer = ensureLayer();
+    if (!layer) return;
+    const face = opts.face;
+    const count = Math.max(1, Number(opts.count) || 1);
+    const color = opts.color || '';
+    let toEl = null;
+    if (opts.buildingId) {
+      toEl =
+        personalBuildNumEl(opts.buildingId) ||
+        personalBuildEl(opts.buildingId);
+    } else if (opts.area != null && opts.number != null) {
+      toEl = slotNumEl(opts.area, opts.number) || slotEl(opts.area, opts.number);
+    }
+    const toClient = rectCenter(toEl);
+    if (!toClient) return;
+
+    const layerRect = layer.getBoundingClientRect();
+    const toLayer = (p) => ({
+      x: p.x - layerRect.left,
+      y: p.y - layerRect.top,
+    });
+    const to = toLayer(toClient);
+
+    const fromList = (opts.fromCenters || []).filter(Boolean);
+    const flies = [];
+    try {
+      const jobs = [];
+      for (let i = 0; i < count; i++) {
+        const fromClient =
+          fromList[i] ||
+          fromList[fromList.length - 1] ||
+          rectCenter($('las-dice-stage')) ||
+          rectCenter($('las-dice'));
+        if (!fromClient) continue;
+        const jitterClient = {
+          x: fromClient.x + (Math.random() * 12 - 6),
+          y: fromClient.y + (Math.random() * 12 - 6),
+        };
+        const jitter = toLayer(jitterClient);
+        const fly = document.createElement('div');
+        let cls = 'las-die is-mini las-fx-dispatch-die';
+        if (color) cls += ' color-' + color;
+        fly.className = cls;
+        fly.textContent = String(face);
+        fly.style.left = jitter.x + 'px';
+        fly.style.top = jitter.y + 'px';
+        fly.style.opacity = '1';
+        layer.appendChild(fly);
+        flies.push(fly);
+        const dest = {
+          x: to.x + (Math.random() * 8 - 4),
+          y: to.y + (Math.random() * 8 - 4),
+        };
+        const ms = flyDurationMs(jitterClient, {
+          x: dest.x + layerRect.left,
+          y: dest.y + layerRect.top,
+        });
+        jobs.push(
+          flyToPoint(fly, jitter, dest, ms, {
+            fade: true,
+            fadeTo: 0,
+            ease: 'linear',
+          })
+        );
+        if (i < count - 1) await sleep(40);
+      }
+      await Promise.all(jobs);
+    } finally {
+      for (const f of flies) {
+        if (f && f.parentNode) f.parentNode.removeChild(f);
+      }
+      layer.querySelectorAll('.las-fx-dispatch-die').forEach((el) => el.remove());
+    }
   }
 
   async function playSlot(game, slot) {
@@ -481,5 +581,5 @@ window.LasidaoFx = (function () {
     clearLayer();
   }
 
-  return { playSettle, playDeal, clearLayer, setBanner };
+  return { playSettle, playDeal, playDispatch, clearLayer, setBanner };
 })();
