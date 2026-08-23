@@ -74,6 +74,14 @@ const out = `<!-- Lasidao panel -->
     <div class="row las-actions" id="las-produce-actions">
       <button id="btn-las-confirm" type="button" hidden data-i18n="lasidao.confirmDispatch">${zh.confirmDispatch}</button>
       <button id="btn-las-void" type="button" class="secondary" data-i18n="lasidao.voidDispatch">${zh.voidDispatch}</button>
+      <div id="las-void-picker" class="row las-void-picker" hidden>
+        <span class="muted" data-i18n="lasidao.voidPickLabel">丢弃资源以跳过：</span>
+        <button type="button" data-res="wood" data-i18n="lasidao.res.wood">木</button>
+        <button type="button" data-res="stone" data-i18n="lasidao.res.stone">石</button>
+        <button type="button" data-res="food" data-i18n="lasidao.res.food">食</button>
+        <button type="button" data-res="iron" data-i18n="lasidao.res.iron">铁</button>
+        <button type="button" class="secondary" id="btn-las-void-cancel" data-i18n="lasidao.cancel">取消</button>
+      </div>
     </div>
   </div>
 

@@ -21,6 +21,29 @@ window.LasidaoAssets = (function () {
     'iron:rich': 'tiekuang.png',
   };
 
+  /** 资源卡面（玩家手牌展示用） */
+  const RESOURCE_HAND_IMAGE = {
+    wood: 'ziyuan_mutou.png',
+    stone: 'ziyuan_shitou.png',
+    food: 'ziyuan_xiaomai.png',
+    iron: 'ziyuan_tiekuang.png',
+  };
+
+  /** 卡背 */
+  const CARD_BACK_IMAGE = {
+    function: 'bankuaikabei_gongneng.png',
+    building: 'bankuaikabei_jianzhu.png',
+    resource: 'bankuaikabei_ziyuan.png',
+  };
+
+  /** 功能卡面（funcType → 文件名） */
+  const FUNCTION_IMAGE = {
+    harvest: 'gongnengka_fengshou.png',
+    remoteDice: 'gongnengka_yaokongtouzi.png',
+    exile: 'gongnengka_quzhu.png',
+    redraw: 'gongnengka_chongchou.png',
+  };
+
   function picUrl(file) {
     if (!file) return '';
     return PIC + '/' + encodeURIComponent(file);
@@ -41,9 +64,37 @@ window.LasidaoAssets = (function () {
     return file ? picUrl(file) : '';
   }
 
+  function resourceHandImageUrl(resourceType) {
+    const file = RESOURCE_HAND_IMAGE[resourceType];
+    return file ? picUrl(file) : '';
+  }
+
+  function cardBackImageUrl(kind) {
+    const file = CARD_BACK_IMAGE[kind];
+    return file ? picUrl(file) : '';
+  }
+
+  function functionImageUrl(tile) {
+    const file = tile && tile.funcType ? FUNCTION_IMAGE[tile.funcType] : null;
+    return file ? picUrl(file) : '';
+  }
+
   function applyResourceArt(artEl, tile) {
     if (!artEl) return false;
     const url = resourceImageUrl(tile);
+    if (!url) {
+      artEl.classList.remove('has-image');
+      artEl.style.backgroundImage = '';
+      return false;
+    }
+    artEl.classList.add('has-image');
+    artEl.style.backgroundImage = 'url("' + url + '")';
+    return true;
+  }
+
+  function applyFunctionArt(artEl, tile) {
+    if (!artEl) return false;
+    const url = functionImageUrl(tile);
     if (!url) {
       artEl.classList.remove('has-image');
       artEl.style.backgroundImage = '';
@@ -60,5 +111,9 @@ window.LasidaoAssets = (function () {
     resourceImageFile,
     resourceImageUrl,
     applyResourceArt,
+    resourceHandImageUrl,
+    cardBackImageUrl,
+    functionImageUrl,
+    applyFunctionArt,
   };
 })();

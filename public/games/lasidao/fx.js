@@ -389,7 +389,7 @@ window.LasidaoFx = (function () {
       );
       if (chip) chips.push({ el: chip, pid, cancelled: cancelledSet.has(pid) });
     }
-    await sleep(450);
+    await sleep(600);
 
     const cancelChips = chips.filter((c) => c.cancelled);
     if (cancelChips.length) {
@@ -406,12 +406,12 @@ window.LasidaoFx = (function () {
           mark.style.left = r.x + 'px';
           mark.style.top = r.y + 'px';
           layer.appendChild(mark);
-          setTimeout(() => mark.remove(), 700);
+          setTimeout(() => mark.remove(), 900);
         }
       }
-      await sleep(750);
+      await sleep(900);
       for (const c of cancelChips) c.el.classList.add('is-gone');
-      await sleep(350);
+      await sleep(500);
       for (const c of cancelChips) c.el.remove();
     }
 
@@ -435,31 +435,33 @@ window.LasidaoFx = (function () {
             crown.style.left = r.x + 'px';
             crown.style.top = r.y - 18 + 'px';
             layer.appendChild(crown);
-            setTimeout(() => crown.remove(), 900);
+            setTimeout(() => crown.remove(), 1100);
           }
         } else {
           c.el.classList.add('is-second');
         }
       }
       boardSlot.classList.add('las-settle-winner');
-      await sleep(700);
+      await sleep(900);
     } else if (Object.keys(before).length) {
       setBanner(
         t('lasidao.fx.slotNobody', { area: areaLab, number: slot.number })
       );
-      await sleep(500);
+      await sleep(700);
     }
 
     if (slot.area === 'resource' && (slot.gains || []).length) {
-      for (const g of slot.gains) {
+      const gains = slot.gains;
+      for (let gi = 0; gi < gains.length; gi++) {
+        const g = gains[gi];
         const target = playerEl(g.pid);
+        const resStr = (g.detail || [])
+          .map((d) => (resLabel(d.resource) || d.resource) + '*' + d.amount)
+          .join('、');
         setBanner(
           t('lasidao.fx.gainRes', {
             name: g.name,
-            share: t(
-              g.rank === 1 ? 'lasidao.fx.largeShare' : 'lasidao.fx.smallShare'
-            ),
-            amount: g.amount,
+            res: resStr,
           })
         );
         for (const d of g.detail || []) {
@@ -472,8 +474,11 @@ window.LasidaoFx = (function () {
             fly.style.left = from.x + 'px';
             fly.style.top = from.y + 'px';
             layer.appendChild(fly);
-            await flyTo(fly, target);
+            await flyTo(fly, target, 1000);
           }
+        }
+        if (gi < gains.length - 1) {
+          await sleep(500);
         }
       }
     } else if (
@@ -486,7 +491,9 @@ window.LasidaoFx = (function () {
       setBanner(
         t('lasidao.fx.claimCards', { name: claim.name, kind })
       );
-      for (const tile of slot.tiles || []) {
+      const tiles = slot.tiles || [];
+      for (let ti = 0; ti < tiles.length; ti++) {
+        const tile = tiles[ti];
         const fly = document.createElement('div');
         fly.className =
           'las-fx-loot ' + (slot.area === 'function' ? 'is-fn' : 'is-bld');
@@ -503,7 +510,10 @@ window.LasidaoFx = (function () {
           if (src && src.classList && src.classList.contains('las-tile')) {
             src.style.opacity = '0.15';
           }
-          await flyTo(fly, target);
+          await flyTo(fly, target, 1000);
+        }
+        if (ti < tiles.length - 1) {
+          await sleep(500);
         }
       }
     }
@@ -512,7 +522,7 @@ window.LasidaoFx = (function () {
       if (c.el && c.el.parentNode) c.el.remove();
     }
     boardSlot.classList.remove('las-settle-focus', 'las-settle-winner');
-    await sleep(120);
+    await sleep(200);
   }
 
   async function playSettle(game) {
@@ -534,10 +544,13 @@ window.LasidaoFx = (function () {
     }
 
     setBanner(t('lasidao.fx.start'));
-    await sleep(400);
+    await sleep(600);
 
-    for (const slot of slots) {
-      await playSlot(game, slot);
+    for (let si = 0; si < slots.length; si++) {
+      await playSlot(game, slots[si]);
+      if (si < slots.length - 1) {
+        await sleep(500);
+      }
     }
 
     if ((report.buildings || []).length) {
@@ -552,9 +565,9 @@ window.LasidaoFx = (function () {
           fly.style.left = from.x + 'px';
           fly.style.top = from.y - 30 + 'px';
           layer.appendChild(fly);
-          await sleep(200);
+          await sleep(400);
           fly.classList.add('is-pop');
-          await sleep(500);
+          await sleep(800);
           fly.remove();
         }
       }
@@ -570,10 +583,10 @@ window.LasidaoFx = (function () {
       const target = playerEl(report.mvp.id);
       if (target) {
         target.classList.add('las-mvp-flash');
-        await sleep(1100);
+        await sleep(1400);
         target.classList.remove('las-mvp-flash');
       } else {
-        await sleep(900);
+        await sleep(1200);
       }
     }
 

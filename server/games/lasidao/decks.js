@@ -18,6 +18,7 @@ const FUNC_TYPES = {
   redraw: '重抽',
   banditRaid: '强盗来袭',
   expand: '扩建',
+  robbery: '抢劫',
 };
 
 /** 中立强盗工人 ID（参与抵消与名次，但不领取收益） */
@@ -53,7 +54,7 @@ function shuffle(arr) {
 /** 资源板块：木/石/食各 10（丰/贫各 5），铁矿 5（仅 2/1） */
 function buildResourceDeck() {
   const cards = [];
-  for (const res of ['wood', 'stone', 'food']) {
+  for (const res of ['wood', 'stone','food']) {
     for (let i = 0; i < 3; i++) {
       cards.push({
         id: nextId('res'),
@@ -77,6 +78,8 @@ function buildResourceDeck() {
       });
     }
   }
+
+
   for (let i = 0; i < 4; i++) {
     cards.push({
       id: nextId('res'),
@@ -104,14 +107,13 @@ function makeFunc(type, extra = {}) {
 /** 功能板块卡堆 */
 function buildFunctionDeck() {
   const cards = [];
-  for (let i = 0; i < 6; i++) cards.push(makeFunc('breed'));
-  for (let i = 0; i < 2; i++) cards.push(makeFunc('harvest'));
-  for (let i = 0; i < 2; i++) cards.push(makeFunc('remoteDice'));
-  for (let i = 0; i < 1; i++) cards.push(makeFunc('exile'));
-  for (let i = 0; i < 4; i++) cards.push(makeFunc('buildHouse'));
+  for (let i = 0; i < 10; i++) cards.push(makeFunc('harvest'));
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('remoteDice'));
+  for (let i = 0; i < 2; i++) cards.push(makeFunc('exile'));
   for (let i = 0; i < 2; i++) cards.push(makeFunc('redraw'));
-  for (let i = 0; i < 1; i++) cards.push(makeFunc('banditRaid'));
-  for (let i = 0; i < 2; i++) cards.push(makeFunc('expand'));
+  for (let i = 0; i < 2; i++) cards.push(makeFunc('banditRaid'));
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('expand'));
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('robbery'));
   return shuffle(cards);
 }
 
@@ -138,10 +140,10 @@ function makeScore2() {
     id: nextId('bld'),
     kind: 'building',
     buildType: 'score2',
-    label: '记分建筑(+2)',
-    cost: { wood: 5, stone: 5, iron: 3 },
+    label: '记分建筑(+3)',
+    cost: { wood: 6, stone: 6, iron: 2 },
     produce: 0,
-    score: 2,
+    score: 3,
     needsWorker: false,
     functionalOnly: true,
   };
@@ -153,7 +155,7 @@ function makeExchange() {
     kind: 'building',
     buildType: 'exchange',
     label: '交易所',
-    cost: { wood: 2, stone: 2 },
+    cost: { wood: 3, stone: 3 },
     produce: 0,
     score: 0,
     needsWorker: false,
@@ -168,7 +170,7 @@ function makeEfficiency() {
     kind: 'building',
     buildType: 'efficiency',
     label: '精炼装置',
-    cost: { wood: 2, stone: 2, iron: 1 },
+    cost: { wood: 3, stone: 3, iron: 1 },
     produce: 0,
     score: 0,
     needsWorker: false,
@@ -181,16 +183,13 @@ function buildBuildingDeck() {
   const cards = [];
   for (const res of ['wood', 'stone', 'food']) {
     cards.push(makeProduceBuild(res, true));
-    cards.push(makeProduceBuild(res, true));
-    cards.push(makeProduceBuild(res, false));
     cards.push(makeProduceBuild(res, false));
     cards.push(makeProduceBuild(res, false));
   }
-  cards.push(makeProduceBuild('iron', true));
   cards.push(makeProduceBuild('iron', false));
   cards.push(makeProduceBuild('iron', false));
   for (let i = 0; i < 5; i++) cards.push(makeScore2());
-  for (let i = 0; i < 5; i++) cards.push(makeExchange());
+  for (let i = 0; i < 4; i++) cards.push(makeExchange());
   for (let i = 0; i < 4; i++) cards.push(makeEfficiency());
   return shuffle(cards);
 }
