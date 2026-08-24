@@ -123,7 +123,7 @@ window.LasidaoFx = (function () {
         return;
       }
       if (!from || !to) {
-        el.remove();
+        if (opts.keep !== true && el.parentNode) el.remove();
         resolve();
         return;
       }
@@ -151,7 +151,9 @@ window.LasidaoFx = (function () {
         }
       });
       setTimeout(() => {
-        if (el && el.parentNode) el.parentNode.removeChild(el);
+        if (opts.keep !== true && el && el.parentNode) {
+          el.parentNode.removeChild(el);
+        }
         resolve();
       }, ms + 40);
     });
@@ -202,18 +204,75 @@ window.LasidaoFx = (function () {
   function makeDealCard(item) {
     const kind =
       item.area === 'function' ? 'fn' : item.area === 'building' ? 'bld' : 'res';
+    const backKind =
+      item.area === 'building'
+        ? 'building'
+        : item.area === 'function'
+          ? 'function'
+          : 'resource';
     const wrap = document.createElement('div');
     wrap.className = 'las-fx-deal is-' + kind;
     const inner = document.createElement('div');
     inner.className = 'las-fx-deal-inner';
     const back = document.createElement('div');
     back.className = 'las-fx-deal-face las-fx-deal-back';
-    back.textContent = t('lasidao.faceDown');
     const front = document.createElement('div');
     front.className = 'las-fx-deal-face las-fx-deal-front';
-    front.textContent = item.faceDown
-      ? t('lasidao.faceDown')
-      : item.label || areaLabel(item.area);
+    const Assets = window.LasidaoAssets;
+    const tile = item.tile || item;
+
+    let hasBack = false;
+    if (Assets && typeof Assets.applyCardBackArt === 'function') {
+      hasBack = Boolean(Assets.applyCardBackArt(back, backKind));
+    } else if (Assets && Assets.cardBackImageUrl) {
+      const backUrl = Assets.cardBackImageUrl(backKind);
+      if (backUrl) {
+        back.classList.add('has-image');
+        back.style.backgroundImage = 'url("' + backUrl + '")';
+        hasBack = true;
+      }
+    }
+    if (!hasBack) {
+      back.textContent = t('lasidao.faceDown');
+    } else {
+      back.textContent = '';
+    }
+
+    if (item.faceDown) {
+      if (Assets && typeof Assets.applyCardBackArt === 'function') {
+        Assets.applyCardBackArt(front, backKind);
+      }
+      if (!front.classList.contains('has-image')) {
+        front.textContent = t('lasidao.faceDown');
+      } else {
+        front.textContent = '';
+      }
+    } else {
+      let hasFront = false;
+      if (Assets) {
+        if (
+          item.area === 'resource' &&
+          typeof Assets.applyResourceArt === 'function'
+        ) {
+          hasFront = Boolean(Assets.applyResourceArt(front, tile));
+        } else if (
+          item.area === 'function' &&
+          typeof Assets.applyFunctionArt === 'function'
+        ) {
+          hasFront = Boolean(Assets.applyFunctionArt(front, tile));
+        } else if (
+          item.area === 'building' &&
+          typeof Assets.applyBuildingArt === 'function'
+        ) {
+          hasFront = Boolean(Assets.applyBuildingArt(front, tile));
+        }
+      }
+      if (!hasFront) {
+        front.textContent = item.label || areaLabel(item.area);
+      } else {
+        front.textContent = '';
+      }
+    }
     inner.appendChild(back);
     inner.appendChild(front);
     wrap.appendChild(inner);
@@ -235,18 +294,23 @@ window.LasidaoFx = (function () {
     }
   }
 
-  /** ??????????? ?? ? ???????????????? */
+  /** 先以卡背飞向目标，到位后再翻开（盖牌则不翻） */
   async function dealOneCard(layer, item, from, to, toEl) {
     const fly = makeDealCard(item);
     fly.style.left = from.x + 'px';
     fly.style.top = from.y + 'px';
     layer.appendChild(fly);
+    const ms = flyDurationMs(from, to);
+    await flyToPoint(fly, from, to, ms, {
+      fade: false,
+      ease: 'linear',
+      keep: true,
+    });
     if (!item.faceDown) {
       await flipDealCard(fly);
     }
-    const ms = flyDurationMs(from, to);
-    await flyToPoint(fly, from, to, ms, { fade: false, ease: 'linear' });
     revealDealtTile(item, toEl);
+    if (fly.parentNode) fly.remove();
   }
 
   async function playDeal(newcomers) {

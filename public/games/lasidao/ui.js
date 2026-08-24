@@ -114,8 +114,8 @@ window.LasidaoUi = (function () {
       effect = `建成+${b.score}分（无需工人）`;
     } else if (b.buildType === 'exchange') {
       effect = '无需工人，改善兑换比例';
-    } else if (b.buildType === 'efficiency') {
-      effect = '无需工人，结算后额外+1资源';
+    } else if (b.buildType === 'wishWell') {
+      effect = '无需工人，生产阶段结束后可选任意资源+1';
     }
 
     return `消耗：${costText}` + (effect ? `\n${effect}` : '');
@@ -173,8 +173,8 @@ window.LasidaoUi = (function () {
   let pendingDealIds = new Set();
   let dealAnimPlaying = false;
   let dealtForRound = null; // ???????????
-  let effAlloc = { wood: 0, stone: 0, food: 0, iron: 0 };
-  let effAllocFor = 0; // pending total this form is editing
+  let wishAlloc = { wood: 0, stone: 0, food: 0, iron: 0 };
+  let wishAllocFor = 0;
   let exFrom = null;
   let exTo = null;
   let turnToastArmed = true;
@@ -565,8 +565,8 @@ window.LasidaoUi = (function () {
       });
     } else if (tile.buildType === 'exchange') {
       effect = t('lasidao.exchangeCardTip');
-    } else if (tile.buildType === 'efficiency') {
-      effect = t('lasidao.tip.efficiencyEffect');
+    } else if (tile.buildType === 'wishWell') {
+      effect = t('lasidao.tip.wishWellEffect');
     } else if (tile.score) {
       effect = t('lasidao.tip.scoreEffect', { score: tile.score });
     } else if (tile.produce) {
@@ -593,20 +593,34 @@ window.LasidaoUi = (function () {
   }
 
   function tileImageUrl(tile, areaKey) {
+    const Assets = window.LasidaoAssets;
+    if (!Assets) return '';
     const kind = (tile && tile.kind) || areaKey;
-    if (tile && tile.faceDown) return '';
-    if (!window.LasidaoAssets) return '';
+    if (tile && tile.faceDown) {
+      const backKind =
+        kind === 'building' || areaKey === 'building'
+          ? 'building'
+          : kind === 'function' || areaKey === 'function'
+            ? 'function'
+            : 'resource';
+      return typeof Assets.cardBackImageUrl === 'function'
+        ? Assets.cardBackImageUrl(backKind) || ''
+        : '';
+    }
     if (
       (kind === 'resource' || areaKey === 'resource') &&
-      typeof window.LasidaoAssets.resourceImageUrl === 'function'
+      typeof Assets.resourceImageUrl === 'function'
     ) {
-      return window.LasidaoAssets.resourceImageUrl(tile) || '';
+      return Assets.resourceImageUrl(tile) || '';
     }
     if (
       (kind === 'function' || areaKey === 'function') &&
-      typeof window.LasidaoAssets.functionImageUrl === 'function'
+      typeof Assets.functionImageUrl === 'function'
     ) {
-      return window.LasidaoAssets.functionImageUrl(tile) || '';
+      return Assets.functionImageUrl(tile) || '';
+    }
+    if (typeof Assets.buildingImageUrl === 'function') {
+      return Assets.buildingImageUrl(tile) || '';
     }
     return '';
   }
@@ -634,6 +648,20 @@ window.LasidaoUi = (function () {
     });
   }
 
+  function bindImageTip(el, imgUrl, text) {
+    if (!el || !imgUrl) return;
+    el.style.pointerEvents = 'auto';
+    el.addEventListener('mouseenter', (e) => {
+      showCardTip(text || '', e, el, imgUrl);
+    });
+    el.addEventListener('mousemove', (e) => {
+      const tip = $('las-card-tip');
+      if (!tip || tip.hidden) return;
+      positionCardTip(tip, e, el);
+    });
+    el.addEventListener('mouseleave', () => hideCardTip());
+  }
+
   function makeTileCard(tile, areaKey) {
     const card = document.createElement('div');
     card.className = 'las-tile ' + (tile.kind || areaKey);
@@ -658,18 +686,45 @@ window.LasidaoUi = (function () {
     ) {
       hasArt = Boolean(window.LasidaoAssets.applyFunctionArt(art, tile));
     }
+    if (
+      !hasArt &&
+      (areaKey === 'building' || tile.kind === 'building') &&
+      window.LasidaoAssets &&
+      typeof window.LasidaoAssets.applyBuildingArt === 'function'
+    ) {
+      hasArt = Boolean(window.LasidaoAssets.applyBuildingArt(art, tile));
+    }
     card.appendChild(art);
 
     if (tile.faceDown) {
       card.classList.add('is-facedown');
-      const name = document.createElement('div');
-      name.className = 'las-tile-name';
-      name.textContent = t('lasidao.faceDown');
-      card.appendChild(name);
-      const meta = document.createElement('div');
-      meta.className = 'las-tile-meta';
-      meta.textContent = t('lasidao.faceDownHint');
-      card.appendChild(meta);
+      const backKind =
+        areaKey === 'building' || tile.kind === 'building'
+          ? 'building'
+          : areaKey === 'function' || tile.kind === 'function'
+            ? 'function'
+            : 'resource';
+      if (
+        window.LasidaoAssets &&
+        typeof window.LasidaoAssets.applyCardBackArt === 'function'
+      ) {
+        hasArt = Boolean(
+          window.LasidaoAssets.applyCardBackArt(art, backKind)
+        );
+      }
+      if (hasArt) {
+        card.classList.add('has-art', 'has-back');
+        card.setAttribute('aria-label', t('lasidao.faceDown'));
+      } else {
+        const name = document.createElement('div');
+        name.className = 'las-tile-name';
+        name.textContent = t('lasidao.faceDown');
+        card.appendChild(name);
+        const meta = document.createElement('div');
+        meta.className = 'las-tile-meta';
+        meta.textContent = t('lasidao.faceDownHint');
+        card.appendChild(meta);
+      }
       bindTileTip(
         card,
         { label: t('lasidao.faceDown'), faceDown: true },
@@ -704,8 +759,8 @@ window.LasidaoUi = (function () {
       metaTxt = '+' + (tile.score != null ? tile.score : 2);
     } else if (areaKey === 'building' && tile.buildType === 'exchange') {
       metaTxt = t('lasidao.tip.exchangeShort');
-    } else if (areaKey === 'building' && tile.buildType === 'efficiency') {
-      metaTxt = t('lasidao.tip.efficiencyShort');
+    } else if (areaKey === 'building' && tile.buildType === 'wishWell') {
+      metaTxt = t('lasidao.tip.wishWellShort');
     }
     if (metaTxt) {
       const meta = document.createElement('div');
@@ -955,7 +1010,13 @@ window.LasidaoUi = (function () {
     updateDiceHint();
   }
 
-  /** ??? num?? max(1,num-1) ????????? num?? num ????? */
+  /** 资源区每数字格第 idx 层（0 起）于第几轮解锁；每轮开放一格 */
+  function resourceSlotUnlockRound(num, idx) {
+    if (idx <= 0) return 1;
+    return idx * 6 + num - 5;
+  }
+
+  /** 功能/建筑区 num 格于第几轮解锁 */
   function slotUnlockRound(areaKey, num) {
     if (areaKey === 'function') return Math.max(1, num - 1);
     if (areaKey === 'building') return num;
@@ -998,6 +1059,9 @@ window.LasidaoUi = (function () {
       slot.className = 'las-slot las-slot-' + areaKey;
       slot.dataset.area = areaKey;
       slot.dataset.num = String(num);
+      const capacity = areaKey === 'resource' ? 3 : 1;
+      slot.style.setProperty('--las-slot-card-count', String(capacity));
+
       const hasTiles = tiles.length > 0;
       // ??????????????????????????????
       const matchFace = remote ? true : faces.indexOf(num) >= 0;
@@ -1040,7 +1104,6 @@ window.LasidaoUi = (function () {
       const stack = document.createElement('div');
       stack.className = 'las-slot-tiles';
 
-      const capacity = areaKey === 'resource' ? 2 : 1;
       const round = game.round || 1;
       for (let idx = 0; idx < capacity; idx++) {
         const tile = tiles[idx];
@@ -1055,7 +1118,15 @@ window.LasidaoUi = (function () {
           empty.className = 'muted las-slot-empty';
           let locked = false;
           let unlockN = null;
-          if (idx === 0 && areaKey !== 'resource') {
+          if (areaKey === 'resource') {
+            if (idx >= 1) {
+              const u = resourceSlotUnlockRound(num, idx);
+              if (round < u) {
+                locked = true;
+                unlockN = u;
+              }
+            }
+          } else if (idx === 0) {
             const u = slotUnlockRound(areaKey, num);
             const openCount = areaOpenSlotCount(areaKey, round);
             if (
@@ -1064,12 +1135,6 @@ window.LasidaoUi = (function () {
                 game.phase === 'init_announce' ||
                 num > openCount)
             ) {
-              locked = true;
-              unlockN = u;
-            }
-          } else if (idx === 1 && areaKey === 'resource') {
-            const u = num + 1;
-            if (round < u) {
               locked = true;
               unlockN = u;
             }
@@ -1099,7 +1164,7 @@ window.LasidaoUi = (function () {
   }
 
   function collectBoardTileMap(game) {
-    const map = new Map(); // id -> { area, number, label, faceDown }
+    const map = new Map(); // id -> { area, number, label, faceDown, tile }
     for (const area of ['resource', 'function', 'building']) {
       const tiles =
         (game.board && game.board[area] && game.board[area].tiles) || [];
@@ -1110,6 +1175,7 @@ window.LasidaoUi = (function () {
           number: tile.number,
           label: tile.faceDown ? null : tile.label,
           faceDown: Boolean(tile.faceDown),
+          tile,
         });
       }
       // also from slots if tiles array empty but slots present
@@ -1123,6 +1189,7 @@ window.LasidaoUi = (function () {
             number: s.number,
             label: tile.faceDown ? null : tile.label,
             faceDown: Boolean(tile.faceDown),
+            tile,
           });
         }
       }
@@ -2089,8 +2156,7 @@ window.LasidaoUi = (function () {
     if (fnEl) fnEl.innerHTML = '';
     if (bldEl) bldEl.innerHTML = '';
     if (!me) {
-      const effWrap = $('las-efficiency-wrap');
-      if (effWrap) effWrap.hidden = true;
+      setWishWellModalOpen(false);
       const host = $('las-boards-host');
       if (host) host.innerHTML = '';
       const meHost = $('las-boards-me');
@@ -2105,7 +2171,6 @@ window.LasidaoUi = (function () {
     const labels = getResLabels(game);
     renderPlayerBoards(game, meId);
     renderActRail(game, meId);
-    renderEfficiencyBonus(game, me, labels);
 
     const exCount = (me.buildings || []).filter(
       (b) => b.built && b.buildType === 'exchange'
@@ -2142,12 +2207,10 @@ window.LasidaoUi = (function () {
     // 生产建筑建成后自动产出，不再显示村民骰子
     if (isMe) {
       btn.onclick = () => onBuildingClick(game, p, b);
-      if (b.slot != null && !p.pendingDiscardBuild) {
-        btn.title = t('lasidao.discardBuildingHint');
-      }
     } else {
       btn.disabled = true;
     }
+    bindTileTip(btn, b, 'building');
     return btn;
   }
 
@@ -2232,11 +2295,7 @@ window.LasidaoUi = (function () {
       const placed = (p.buildings || []).filter((b) => b.slot != null);
       for (const b of placed) {
         const cell = document.createElement('div');
-        cell.className = 'las-pboard-slot las-pboard-slot-none';
-        const num = document.createElement('span');
-        num.className = 'las-pboard-slot-num';
-        num.textContent = t('lasidao.slotNone');
-        cell.appendChild(num);
+        cell.className = 'las-pboard-slot las-pboard-slot-none is-filled';
         const body = document.createElement('div');
         body.className = 'las-pboard-slot-body';
         body.appendChild(makeBoardBuildingCard(game, meId, p, b, isMe));
@@ -2246,19 +2305,13 @@ window.LasidaoUi = (function () {
       const emptyCount = Math.max(0, maxB - placed.length);
       for (let i = 0; i < emptyCount; i++) {
         const cell = document.createElement('div');
-        cell.className = 'las-pboard-slot las-pboard-slot-none';
-        const num = document.createElement('span');
-        num.className = 'las-pboard-slot-num';
-        num.textContent = t('lasidao.slotNone');
-        cell.appendChild(num);
+        cell.className = 'las-pboard-slot las-pboard-slot-none is-empty';
+        cell.setAttribute('aria-hidden', 'true');
         const body = document.createElement('div');
         body.className = 'las-pboard-slot-body';
-        const empty = document.createElement('span');
-        empty.className = 'muted las-pboard-empty';
-        empty.textContent = t('lasidao.slotEmpty');
-        body.appendChild(empty);
         if (isMe) {
           cell.classList.add('is-drop');
+          cell.removeAttribute('aria-hidden');
           cell.onclick = () => {
             const unplaced = (p.buildings || []).find(
               (b) => !b.built && b.slot == null
@@ -2340,41 +2393,43 @@ window.LasidaoUi = (function () {
     host.hidden = othersCount === 0;
   }
 
-  function sumEffAlloc() {
+  function sumWishAlloc() {
     return (
-      (effAlloc.wood || 0) +
-      (effAlloc.stone || 0) +
-      (effAlloc.food || 0) +
-      (effAlloc.iron || 0)
+      (wishAlloc.wood || 0) +
+      (wishAlloc.stone || 0) +
+      (wishAlloc.food || 0) +
+      (wishAlloc.iron || 0)
     );
   }
 
-  function renderEfficiencyBonus(game, me, labels) {
-    const wrap = $('las-efficiency-wrap');
-    const picks = $('las-efficiency-picks');
-    const hint = $('las-efficiency-hint');
-    const confirmBtn = $('btn-las-efficiency-confirm');
-    if (!wrap || !picks) return;
+  function setWishWellModalOpen(open) {
+    const modal = $('las-wishwell-modal');
+    if (!modal) return;
+    modal.hidden = !open;
+    if (!open) {
+      wishAlloc = { wood: 0, stone: 0, food: 0, iron: 0 };
+      wishAllocFor = 0;
+    } else if (window.I18n && window.I18n.applyDom) {
+      window.I18n.applyDom(modal);
+    }
+  }
 
-    const need = Number(me.pendingEfficiencyBonus) || 0;
-    const show =
-      need > 0 &&
-      (game.phase === 'settle_act' || game.phase === 'settle');
-    wrap.hidden = !show;
-    if (!show) return;
+  function renderWishWellModal(game, me, labels) {
+    const hint = $('las-wishwell-modal-hint');
+    const picks = $('las-wishwell-modal-picks');
+    const confirmBtn = $('btn-las-wishwell-modal-confirm');
+    if (!picks) return;
 
-    if (effAllocFor !== need) {
-      effAllocFor = need;
-      effAlloc = { wood: 0, stone: 0, food: 0, iron: 0 };
+    const need = Number(me.pendingWishWellBonus) || 0;
+    if (wishAllocFor !== need) {
+      wishAllocFor = need;
+      wishAlloc = { wood: 0, stone: 0, food: 0, iron: 0 };
     }
 
-    const used = sumEffAlloc();
+    const used = sumWishAlloc();
     const left = Math.max(0, need - used);
     if (hint) {
-      hint.textContent = t('lasidao.efficiencyHint', {
-        left,
-        total: need,
-      });
+      hint.textContent = t('lasidao.wishWellHint', { left, total: need });
     }
 
     picks.innerHTML = '';
@@ -2382,21 +2437,36 @@ window.LasidaoUi = (function () {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className =
-        'las-efficiency-pick' + ((effAlloc[k] || 0) > 0 ? ' is-on' : '');
-      btn.textContent = t('lasidao.efficiencyPick', {
+        'las-wishwell-pick' + ((wishAlloc[k] || 0) > 0 ? ' is-on' : '');
+      btn.textContent = t('lasidao.wishWellPick', {
         name: lab,
-        n: effAlloc[k] || 0,
+        n: wishAlloc[k] || 0,
       });
       btn.disabled = left <= 0;
       btn.onclick = () => {
-        if (sumEffAlloc() >= need) return;
-        effAlloc[k] = (effAlloc[k] || 0) + 1;
-        renderEfficiencyBonus(game, me, labels);
+        if (sumWishAlloc() >= need) return;
+        wishAlloc[k] = (wishAlloc[k] || 0) + 1;
+        renderWishWellModal(game, me, labels);
       };
       picks.appendChild(btn);
     }
     if (confirmBtn) {
       confirmBtn.disabled = used !== need;
+    }
+  }
+
+  function syncWishWellModal(game, meId) {
+    const me = mePlayer(game, meId);
+    const need = me ? Number(me.pendingWishWellBonus) || 0 : 0;
+    const shouldOpen = game.phase === 'wish_well' && need > 0;
+    const modal = $('las-wishwell-modal');
+    const isOpen = modal && !modal.hidden;
+
+    if (shouldOpen) {
+      if (!isOpen) setWishWellModalOpen(true);
+      renderWishWellModal(game, me, getResLabels(game));
+    } else if (isOpen) {
+      setWishWellModalOpen(false);
     }
   }
 
@@ -2673,6 +2743,18 @@ window.LasidaoUi = (function () {
       $('las-status').textContent = t('lasidao.statusSettle');
     } else if (game.phase === 'settle_act') {
       $('las-status').textContent = t('lasidao.statusSettleAct');
+    } else if (game.phase === 'wish_well') {
+      const me = mePlayer(game, meId);
+      const need = me ? Number(me.pendingWishWellBonus) || 0 : 0;
+      if (need > 0) {
+        $('las-status').textContent = t('lasidao.statusWishWell');
+      } else if (Array.isArray(game.wishWellPending) && game.wishWellPending.length) {
+        $('las-status').textContent = t('lasidao.statusWishWellWait', {
+          names: game.wishWellPending.map((p) => p.name).join('、'),
+        });
+      } else {
+        $('las-status').textContent = t('lasidao.statusWishWell');
+      }
     } else if (game.phase === 'build') {
       $('las-status').textContent = t('lasidao.statusBuild');
     } else if (isMyTurn(game, meId)) {
@@ -2748,7 +2830,7 @@ window.LasidaoUi = (function () {
       const report = game && game.lastSettle;
       if (!report || !report.at) return false;
       const key = (report.round || '') + ':' + report.at;
-      return settleAnimKey !== key && !settlePlaying && ['settle', 'settle_act', 'build', 'over'].includes(game.phase);
+      return settleAnimKey !== key && !settlePlaying && ['settle', 'settle_act', 'wish_well', 'build', 'over'].includes(game.phase);
     })();
     const handGame = ((willPlaySettle || settlePlaying) && _prevGame) ? _prevGame : game;
 
@@ -2758,6 +2840,8 @@ window.LasidaoUi = (function () {
     renderMe(handGame, meId);
     renderBuildHand(handGame, meId);
     renderPlayers(handGame, meId);
+
+    syncWishWellModal(game, meId);
 
     maybePlaySettle(game);
     maybeShowTurnToast(game, meId);
@@ -2802,7 +2886,8 @@ window.LasidaoUi = (function () {
       const me = mePlayer(game, meId);
       if (me && showPerm) {
         if (buildHouseBtn) {
-          const canHouse = canPay(me.resources || {}, { wood: 4, stone: 3, iron: 2 });
+          const houseCost = game.buildHouseCost || { wood: 4, stone: 3, iron: 2 };
+          const canHouse = canPay(me.resources || {}, houseCost);
           buildHouseBtn.disabled = !canHouse;
           buildHouseBtn.title = canHouse ? t('lasidao.func.buildHouse') : t('lasidao.buildHouseLack');
         }
@@ -2813,8 +2898,10 @@ window.LasidaoUi = (function () {
           exBtnAct.disabled = !canEx;
         }
         if (breedBtn) {
-          const needFood = me.villagers;
-          const canBreed = me.villagers < 12 && (me.resources.food || 0) >= needFood;
+          const breedRate = game.breedFoodPerVillager != null ? game.breedFoodPerVillager : 1;
+          const needFood = (me.villagers || 0) * breedRate;
+          const maxV = game.maxVillagers != null ? game.maxVillagers : 12;
+          const canBreed = me.villagers < maxV && (me.resources.food || 0) >= needFood;
           breedBtn.disabled = !canBreed;
           breedBtn.title = canBreed
             ? t('lasidao.func.breed')
@@ -2869,7 +2956,7 @@ window.LasidaoUi = (function () {
     const key = (report.round || '') + ':' + report.at;
     if (settleAnimKey === key || settlePlaying) return;
     if (
-      !['settle', 'settle_act', 'build', 'over'].includes(
+      !['settle', 'settle_act', 'wish_well', 'build', 'over'].includes(
         game.phase
       )
     ) {
@@ -3005,13 +3092,54 @@ window.LasidaoUi = (function () {
     }
   }
 
+  function decorateRulesCards(modal) {
+    if (!modal) return;
+    const Assets = window.LasidaoAssets;
+    if (!Assets || typeof Assets.ruleCardImageUrl !== 'function') return;
+
+    modal.querySelectorAll('[data-las-card], [data-las-cards]').forEach((el) => {
+      if (el.querySelector('.las-rules-card-thumbs')) return;
+      const specs = [];
+      const multi = el.getAttribute('data-las-cards');
+      const single = el.getAttribute('data-las-card');
+      if (multi) specs.push(...multi.trim().split(/\s+/).filter(Boolean));
+      else if (single) specs.push(single);
+
+      const wrap = document.createElement('span');
+      wrap.className = 'las-rules-card-thumbs';
+      for (const spec of specs) {
+        const url = Assets.ruleCardImageUrl(spec);
+        if (!url) continue;
+        const thumb = document.createElement('span');
+        thumb.className = 'las-rules-card-thumb';
+        thumb.style.backgroundImage = 'url("' + url + '")';
+        thumb.setAttribute('role', 'img');
+        bindImageTip(thumb, url, '');
+        wrap.appendChild(thumb);
+      }
+      if (!wrap.children.length) return;
+      el.classList.add('las-rules-dt-has-card');
+      el.insertBefore(wrap, el.firstChild);
+    });
+  }
+
   function setRulesModalOpen(open) {
     const modal = $('las-rules-modal');
     if (!modal) return;
-    modal.hidden = !open;
-    if (open && window.I18n && window.I18n.applyDom) {
+    if (!open) {
+      modal.hidden = true;
+      hideCardTip();
+      return;
+    }
+    // 房间等待页时对局面板是 hidden，挂到 body 才能显示
+    if (modal.parentElement !== document.body) {
+      document.body.appendChild(modal);
+    }
+    modal.hidden = false;
+    if (window.I18n && window.I18n.applyDom) {
       window.I18n.applyDom(modal);
     }
+    decorateRulesCards(modal);
   }
 
   function setExchangeModalOpen(open) {
@@ -3689,27 +3817,27 @@ window.LasidaoUi = (function () {
         setExchangeModalOpen(false);
       };
     }
-    const effReset = $('btn-las-efficiency-reset');
-    if (effReset) {
-      effReset.onclick = () => {
-        effAlloc = { wood: 0, stone: 0, food: 0, iron: 0 };
-        if (lastGame) renderMe(lastGame, lastMeId);
+    const wishReset = $('btn-las-wishwell-modal-reset');
+    if (wishReset) {
+      wishReset.onclick = () => {
+        wishAlloc = { wood: 0, stone: 0, food: 0, iron: 0 };
+        if (lastGame) syncWishWellModal(lastGame, lastMeId);
       };
     }
-    const effConfirm = $('btn-las-efficiency-confirm');
-    if (effConfirm) {
-      effConfirm.onclick = () => {
-        const need = effAllocFor;
-        if (sumEffAlloc() !== need) {
-          alert(t('lasidao.efficiencyNeedAll'));
+    const wishConfirm = $('btn-las-wishwell-modal-confirm');
+    if (wishConfirm) {
+      wishConfirm.onclick = () => {
+        const need = wishAllocFor;
+        if (sumWishAlloc() !== need) {
+          alert(t('lasidao.wishWellNeedAll'));
           return;
         }
-        net.sendAction('allocateEfficiency', {
+        net.sendAction('allocateWishWell', {
           alloc: {
-            wood: effAlloc.wood || 0,
-            stone: effAlloc.stone || 0,
-            food: effAlloc.food || 0,
-            iron: effAlloc.iron || 0,
+            wood: wishAlloc.wood || 0,
+            stone: wishAlloc.stone || 0,
+            food: wishAlloc.food || 0,
+            iron: wishAlloc.iron || 0,
           },
         });
       };
@@ -3776,7 +3904,7 @@ window.LasidaoUi = (function () {
       };
     }
 
-    // Expand modal bindings
+    // 扩容弹窗绑定
     const expandBackdrop = $('las-expand-backdrop');
     if (expandBackdrop) {
       expandBackdrop.onclick = () => setExpandModalOpen(false);
@@ -3837,5 +3965,11 @@ window.LasidaoUi = (function () {
     }
   });
 
-  return { render, hide, resetSession, bindButtons };
+  return {
+    render,
+    hide,
+    resetSession,
+    bindButtons,
+    openRules: () => setRulesModalOpen(true),
+  };
 })();

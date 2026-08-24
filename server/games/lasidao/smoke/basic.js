@@ -237,7 +237,7 @@ if (game.round >= 2) {
   const n = game.round - 1;
   assert.strictEqual(
     game.board.resource.tiles.length,
-    Math.min(12, 6 + n)
+    Math.min(18, 6 + n)
   );
   assert.strictEqual(
     game.board.function.tiles.length,
@@ -398,7 +398,7 @@ assert.strictEqual(exchangeCostN(3), 1);
 assert.strictEqual(exchangeCostN(4), 1);
 assert.strictEqual(exchangeCostN(6), 1);
 
-// 0 交易所：默认银行 4:1
+// 0 集市：默认银行 4:1
 const g9b = createGameState(room(2));
 finishInit(g9b);
 const p9b = g9b.players[0];
@@ -413,7 +413,7 @@ const p9 = g9.players[0];
 p9.buildings.push({
   id: 'ex1',
   buildType: 'exchange',
-  label: '交易所',
+  label: '集市',
   slot: 'none',
   built: true,
   workers: 0,
@@ -426,7 +426,7 @@ assert.strictEqual(p9.resources.food, 1);
 p9.buildings.push({
   id: 'ex2',
   buildType: 'exchange',
-  label: '交易所',
+  label: '集市',
   slot: 'none',
   built: true,
   workers: 0,
@@ -618,18 +618,18 @@ assert.strictEqual(p11.buildings.find((b) => b.id === 'rep_b').slot, 'none');
   const p = g.players[0];
   assert.strictEqual(p.expandSlots || 0, 0);
   assert.strictEqual(p.expandFuncSlots || 0, 0);
-  // 扩建卡现在进入手牌，需手动打出并选择方向
+  // 扩容卡现在进入手牌，需手动打出并选择方向
   p.funcCards.push({
     id: 'fn_expand_build',
     funcType: 'expand',
-    label: '扩建',
+    label: '扩容',
   });
   p.funcCards.push({
     id: 'fn_expand_func',
     funcType: 'expand',
-    label: '扩建',
+    label: '扩容',
   });
-  assert.strictEqual(p.funcCards.length, 2, '扩建进入手牌');
+  assert.strictEqual(p.funcCards.length, 2, '扩容进入手牌');
   g.phase = 'build';
   g.currentPlayerId = p.id;
   ok(
@@ -637,26 +637,26 @@ assert.strictEqual(p11.buildings.find((b) => b.id === 'rep_b').slot, 'none');
       type: 'useFunc',
       payload: { cardId: 'fn_expand_build', direction: 'building' },
     }),
-    '扩建建筑格成功'
+    '扩容建筑格成功'
   );
-  assert.strictEqual(p.expandSlots, 1, '扩建建筑格 +1 无数字格');
+  assert.strictEqual(p.expandSlots, 1, '扩容建筑格 +1 无数字格');
   assert.ok(
     p.funcCards.some((c) => c.funcType === 'expand'),
-    '还剩一张扩建卡未打出'
+    '还剩一张扩容卡未打出'
   );
   assert.ok(
     g.functionDiscard.some((c) => c.funcType === 'expand'),
-    '扩建进弃牌堆'
+    '扩容进弃牌堆'
   );
-  // 再测扩建功能卡格
+  // 再测扩容功能卡格
   ok(
     applyAction(g, p.id, {
       type: 'useFunc',
       payload: { cardId: 'fn_expand_func', direction: 'function' },
     }),
-    '扩建功能卡格成功'
+    '扩容功能卡格成功'
   );
-  assert.strictEqual(p.expandFuncSlots, 1, '扩建功能卡格 +1');
+  assert.strictEqual(p.expandFuncSlots, 1, '扩容功能卡格 +1');
   const pub = publicGameState(g, p.id);
   const me = pub.players.find((x) => x.id === p.id);
   assert.strictEqual(me.expandSlots, 1);
@@ -665,7 +665,7 @@ assert.strictEqual(p11.buildings.find((b) => b.id === 'rep_b').slot, 'none');
   assert.strictEqual(me.maxFuncHand, 4);
   p.buildings.push({
     id: 'ex_b1',
-    label: '交易所A',
+    label: '集市A',
     buildType: 'exchange',
     cost: {},
     slot: null,
@@ -690,6 +690,41 @@ assert.strictEqual(p11.buildings.find((b) => b.id === 'rep_b').slot, 'none');
   console.log('✓ expand auto + none slots');
 }
 
+function drainSettleAndWishWell(g) {
+  let guard = 0;
+  while (g.phase === 'settle_act' && guard++ < 50) {
+    const pid = g.currentPlayerId;
+    if (!pid) break;
+    const p = g.players.find((x) => x.id === pid);
+    if (p.pendingDiscardFunc && p.funcCards[0]) {
+      ok(
+        applyAction(g, pid, {
+          type: 'discardFunc',
+          payload: { cardId: p.funcCards[0].id },
+        })
+      );
+      continue;
+    }
+    ok(applyAction(g, pid, { type: 'pass' }));
+  }
+  guard = 0;
+  while (g.phase === 'wish_well' && guard++ < 20) {
+    let acted = false;
+    for (const p of g.players) {
+      const n = Number(p.pendingWishWellBonus) || 0;
+      if (n <= 0) continue;
+      ok(
+        applyAction(g, p.id, {
+          type: 'allocateWishWell',
+          payload: { alloc: { wood: n, stone: 0, food: 0, iron: 0 } },
+        })
+      );
+      acted = true;
+    }
+    if (!acted) break;
+  }
+}
+
 console.log('— build phase pass skip —');
 {
   const g = createGameState(room(4));
@@ -710,23 +745,8 @@ console.log('— build phase pass skip —');
       })
     );
   }
-  // drain settle_act
-  guard = 0;
-  while (g.phase === 'settle_act' && guard++ < 50) {
-    const pid = g.currentPlayerId;
-    if (!pid) break;
-    const p = g.players.find((x) => x.id === pid);
-    if (p.pendingDiscardFunc && p.funcCards[0]) {
-      ok(
-        applyAction(g, pid, {
-          type: 'discardFunc',
-          payload: { cardId: p.funcCards[0].id },
-        })
-      );
-      continue;
-    }
-    ok(applyAction(g, pid, { type: 'pass' }));
-  }
+  // drain settle_act + wish_well
+  drainSettleAndWishWell(g);
   assert.strictEqual(g.phase, 'build', '应进入建造阶段');
 
   // prepare build resources
@@ -802,17 +822,7 @@ console.log('— build phase pass skip —');
     }
     ok(applyAction(g, g.currentPlayerId, { type: 'voidSkip', payload: { resource: 'wood' } }));
   }
-  guard = 0;
-  while (g.phase === 'settle_act' && guard++ < 50) {
-    const pid = g.currentPlayerId;
-    if (!pid) break;
-    const p = g.players.find((x) => x.id === pid);
-    if (p.pendingDiscardFunc && p.funcCards[0]) {
-      ok(applyAction(g, pid, { type: 'discardFunc', payload: { cardId: p.funcCards[0].id } }));
-      continue;
-    }
-    ok(applyAction(g, pid, { type: 'pass' }));
-  }
+  drainSettleAndWishWell(g);
   assert.strictEqual(g.phase, 'build');
 
   const p0 = g.players[0];
@@ -851,6 +861,49 @@ console.log('— build phase pass skip —');
   assert.strictEqual(g.currentPlayerId, p0.id, '重置后仍应是 p0 的回合');
 
   console.log('✓ reset build turn');
+}
+
+console.log('— wish well after produce —');
+{
+  const g = createGameState(room(2));
+  const p0 = g.players[0];
+  const p1 = g.players[1];
+  for (const p of [p0, p1]) {
+    p.buildings.push({
+      id: 'ww_' + p.id,
+      kind: 'building',
+      buildType: 'wishWell',
+      label: '许愿井',
+      cost: { wood: 2, stone: 2, food: 2, iron: 2 },
+      built: true,
+      slot: 'none',
+      workers: 0,
+    });
+  }
+  g.phase = 'wish_well';
+  p0.pendingWishWellBonus = 1;
+  p1.pendingWishWellBonus = 2;
+  const wood0 = p0.resources.wood || 0;
+  const wood1 = p1.resources.wood || 0;
+  ok(
+    applyAction(g, p0.id, {
+      type: 'allocateWishWell',
+      payload: { alloc: { wood: 1, stone: 0, food: 0, iron: 0 } },
+    })
+  );
+  assert.strictEqual(g.phase, 'wish_well', '另一玩家未确认时应仍在许愿井阶段');
+  ok(
+    applyAction(g, p1.id, {
+      type: 'allocateWishWell',
+      payload: { alloc: { wood: 2, stone: 0, food: 0, iron: 0 } },
+    })
+  );
+  assert.strictEqual(g.phase, 'build', '全部确认后应进入建造阶段');
+  assert.strictEqual(p0.resources.wood, wood0 + 1);
+  assert.strictEqual(p1.resources.wood, wood1 + 2);
+  const pub = publicGameState(g, p0.id);
+  assert.deepStrictEqual(pub.wishWellPending, []);
+  console.log('✓ wish well after produce');
 }
 
 console.log('全部通过');

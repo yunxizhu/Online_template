@@ -9,11 +9,16 @@
   --las-card-w: 6.5rem;
   --las-card-h: calc(var(--las-card-w) * 800 / 600);
   --las-slot-pad: 0.26rem;
+  --las-slot-tiles-pad-x: 0.25rem;
   --las-card-gap: 0.26rem;
-  --las-num-share: 25%;
+  --las-board-card-gap: 20px; /* 板块区内卡牌间距 */
+  --las-slot-num-h: calc(var(--las-card-h) / 4);
   --las-divider: rgba(232, 212, 139, 0.42);
+  --las-hand-card-w: calc(var(--las-card-w) * 1.2);
+  --las-hand-card-h: calc(var(--las-hand-card-w) * 800 / 600);
   --las-side-rail-min-h: 10rem;
   --las-side-rail-max-w: 12.5rem;
+  --las-deck-w: 7.65rem; /* 抽牌堆宽 ≈ 原 2.55rem × 3 */
   font-size: 1.08rem;
 }
 
@@ -48,8 +53,7 @@
 /* ?=???(?) ?=???? ?=????(????) */
 .las-playfield {
   display: grid;
-  /* ??(????+??)?5:1?????1/3 */
-  grid-template-columns: minmax(0, 5fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 3.4fr) minmax(14rem, 1.25fr);
   column-gap: 0.65rem;
   align-items: start;
   margin: 0 0 1rem;
@@ -131,7 +135,7 @@
 }
 
 .las-act-wrap .las-func-panel,
-.las-act-wrap .las-efficiency,
+.las-act-wrap .las-wishwell,
 .las-act-wrap .las-exchange {
   margin-top: 0.55rem;
   padding-top: 0.45rem;
@@ -200,19 +204,31 @@
 .las-build-hand {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: var(--las-card-gap);
   align-items: flex-start;
-  min-height: 2.4rem;
+  min-height: var(--las-hand-card-h);
 }
 
 .las-build-card {
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 0.35rem 0.5rem;
+  padding: 0.4rem;
   background: #1a242b;
-  font-size: 0.82rem;
+  font-size: 0.86rem;
+  line-height: 1.3;
   cursor: pointer;
   flex: 0 0 auto;
+  width: var(--las-hand-card-w);
+  height: var(--las-hand-card-h);
+  min-width: var(--las-hand-card-w);
+  min-height: var(--las-hand-card-h);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  word-break: break-word;
+  overflow: hidden;
   transition: opacity 0.15s;
 }
 
@@ -296,7 +312,19 @@
   flex-direction: column;
   align-items: center;
   gap: 0.65rem;
+  flex: 1 1 auto;
+  min-width: 0;
   width: 100%;
+}
+
+.las-board-zone {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.75rem;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .las-me-rail {
@@ -333,13 +361,28 @@
   box-sizing: border-box;
 }
 
-.las-boards-me .las-pboard-slots {
-  gap: 0.35rem;
+.las-boards-me .las-pboard-slots,
+.las-boards-me .las-pboard-none-slots {
+  gap: 0.45rem;
 }
 
 .las-boards-me .las-pboard-funcs,
-.las-boards-me .las-func-hand {
-  min-height: var(--las-card-h);
+.las-boards-me .las-func-hand,
+.las-boards-me .las-pboard-none-slots {
+  min-height: var(--las-hand-card-h);
+  gap: 0.45rem;
+}
+
+.las-boards-me .las-func-hand > .las-card,
+.las-boards-me .las-func-hand > .las-card.func,
+.las-boards-me .las-func-slot.is-empty,
+.las-boards-me .las-pboard-slot,
+.las-boards-me .las-pboard-slot-body .las-pboard-card {
+  width: var(--las-hand-card-w);
+  min-width: var(--las-hand-card-w);
+  height: var(--las-hand-card-h);
+  min-height: var(--las-hand-card-h);
+  font-size: 0.88rem;
 }
 
 .las-me-rail:not(:has(.las-pboard)) {
@@ -365,33 +408,41 @@
 
 .las-decks {
   display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
-  gap: 0.55rem 0.85rem;
-  padding: 0.4rem 0.55rem;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 0.85rem;
+  padding: 0.55rem 0.65rem 0.65rem;
   background: #10161b;
   border: 1px solid var(--border);
   border-radius: 10px;
-  align-self: stretch;
-  justify-content: center;
-  align-items: flex-end;
+  align-self: flex-start;
+  justify-content: flex-start;
+  align-items: center;
   flex: 0 0 auto;
-  width: 100%;
+  width: auto;
+  min-width: calc(var(--las-deck-w) + 1.35rem);
   box-sizing: border-box;
+  overflow: visible;
 }
 
 .las-deck-pile {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.2rem;
+  gap: 0.35rem;
+  flex: 0 0 auto;
+  width: 100%;
+  /* 为伪元素叠层效果预留空间，避免与下方标签/下一堆重叠 */
+  padding: 0 0.45rem 0.45rem 0;
+  box-sizing: border-box;
 }
 
 .las-deck-stack {
   position: relative;
-  width: 2.4rem;
-  height: 3.2rem;
-  border-radius: 4px;
+  flex: 0 0 auto;
+  width: var(--las-deck-w);
+  height: calc(var(--las-deck-w) * 800 / 600);
+  border-radius: 6px;
   border: 1px solid var(--border);
   background: repeating-linear-gradient(
     -18deg,
@@ -400,9 +451,15 @@
     #243038 4px,
     #243038 8px
   );
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  /* 用阴影做叠牌厚度，避免伪元素盖住 background-image 卡背 */
   box-shadow:
-    2px 2px 0 #1a242b,
-    4px 4px 0 #141c22;
+    3px 3px 0 0 #1a242b,
+    3px 3px 0 1px var(--border),
+    6px 6px 0 0 #141c22,
+    6px 6px 0 1px var(--border);
 }
 
 .las-deck-pile-resource .las-deck-stack {
@@ -419,8 +476,12 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  line-height: 1.15;
-  font-size: 0.68rem;
+  gap: 0.08rem;
+  line-height: 1.2;
+  font-size: 0.78rem;
+  width: 100%;
+  text-align: center;
+  flex: 0 0 auto;
 }
 
 .las-deck-name {
@@ -433,11 +494,16 @@
 }
 
 .las-deck-hint {
-  margin: 0;
-  font-size: 0.78rem;
+  margin: 0.25rem 0 0;
+  padding-top: 0.35rem;
+  border-top: 1px dashed rgba(154, 168, 178, 0.28);
+  font-size: 0.72rem;
   text-align: center;
-  white-space: nowrap;
+  white-space: normal;
+  line-height: 1.25;
+  max-width: calc(var(--las-deck-w) + 0.8rem);
   align-self: center;
+  flex: 0 0 auto;
 }
 
 .las-board-section {
@@ -478,53 +544,59 @@
 }
 
 .las-slot {
+  /* 格宽必须在本元素上按 --las-slot-card-count 重算，否则会继承面板上按 1 张算出的宽度 */
+  --las-slot-card-count: 1;
+  --las-slot-cards-w: calc(
+    var(--las-slot-card-count) * var(--las-card-w) +
+      (var(--las-slot-card-count) - 1) * var(--las-board-card-gap)
+  );
+  --las-slot-w: calc(
+    var(--las-slot-cards-w) + 2 * var(--las-slot-pad) +
+      2 * var(--las-slot-tiles-pad-x)
+  );
   background: #1a242b;
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: var(--las-slot-pad);
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   align-items: stretch;
   gap: 0;
   color: inherit;
   text-align: left;
   cursor: default;
   box-sizing: border-box;
-  width: fit-content;
   min-height: 0;
   overflow: hidden;
 }
 
-/* ??/???????? 1 ???? = ?? / 0.75?????? 1/4? */
+/* 格宽随卡牌数量（--las-slot-card-count）变化 */
 .las-board-function .las-slot,
-.las-board-building .las-slot {
-  width: calc(var(--las-card-w) / 0.75 + 2 * var(--las-slot-pad));
-}
-
-/* ???????? 2 ? */
+.las-board-building .las-slot,
 .las-board-resource .las-slot {
-  width: calc(
-    (2 * var(--las-card-w) + var(--las-card-gap)) / 0.75 +
-      2 * var(--las-slot-pad)
-  );
+  width: var(--las-slot-w);
+  min-width: var(--las-slot-w);
+  max-width: var(--las-slot-w);
+  flex: 0 0 auto;
 }
 
-/* ?????????????????? */
 .las-slot-num {
-  flex: 0 0 var(--las-num-share);
-  width: var(--las-num-share);
-  max-width: var(--las-num-share);
+  flex: 0 0 var(--las-slot-num-h);
+  width: 100%;
+  height: var(--las-slot-num-h);
+  min-height: var(--las-slot-num-h);
+  max-height: var(--las-slot-num-h);
   box-sizing: border-box;
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 800;
-  font-size: 1.16rem;
+  font-size: 0.92rem;
   color: #e8d48b;
-  align-self: stretch;
-  border-right: 1px dashed var(--las-divider);
-  padding: 0.3rem 0.15rem;
+  border-right: none;
+  border-bottom: 1px dashed var(--las-divider);
+  padding: 0.12rem 0.25rem;
   line-height: 1;
   user-select: none;
   overflow: hidden;
@@ -540,16 +612,17 @@
 .las-slot-num .las-worker-dice.is-overlay,
 .las-personal-build-num .las-worker-dice.is-overlay {
   position: absolute;
-  inset: 0.12rem 0.08rem;
+  inset: 0.08rem 0.12rem;
   width: auto;
   max-width: none;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-start;
-  flex-wrap: nowrap;
-  gap: 0.1rem;
+  align-content: center;
+  gap: 0.08rem;
   z-index: 1;
   pointer-events: none;
 }
@@ -559,48 +632,69 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-start;
-  gap: 0.08rem;
-  width: 100%;
-  min-height: 1.05rem;
+  gap: 0.06rem;
+  width: auto;
+  min-height: 0;
 }
 
 .las-slot-num .las-die.is-mini,
 .las-personal-build-num .las-die.is-mini {
-  width: 1.05rem;
-  height: 1.05rem;
-  font-size: 0.62rem;
-  border-radius: 3px;
+  width: 0.82rem;
+  height: 0.82rem;
+  font-size: 0.52rem;
+  border-radius: 2px;
   border-width: 1px;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
 }
 
 .las-slot-body {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-  min-width: 0;
+  gap: 0;
+  overflow: visible;
 }
 
-/* ??????????? 3/4? */
+/* 板块区内卡牌横排：至少 20px 间距，相邻卡之间虚线分隔 */
 .las-slot-cards,
 .las-slot-tiles {
   display: flex;
   flex-wrap: nowrap;
-  gap: var(--las-card-gap);
-  align-items: center;
-  justify-content: center;
-  flex: 1 1 auto;
-  width: auto;
+  gap: var(--las-board-card-gap);
+  align-items: stretch;
+  justify-content: flex-start;
+  flex: 0 0 auto;
+  width: 100%;
   min-width: 0;
   min-height: var(--las-card-h);
-  padding: 0.15rem 0.25rem;
+  padding: 0.15rem var(--las-slot-tiles-pad-x);
   box-sizing: border-box;
+  overflow: visible;
+}
+
+.las-slot-tiles > .las-tile,
+.las-slot-tiles > .las-slot-empty {
+  flex: 0 0 auto;
+}
+
+.las-slot-tiles > * + *::before {
+  content: '';
+  position: absolute;
+  left: calc(var(--las-board-card-gap) / -2);
+  top: 0.35rem;
+  bottom: 0.35rem;
+  border-left: 1px dashed var(--las-divider);
+  pointer-events: none;
+}
+
+.las-board-function .las-slot-tiles,
+.las-board-building .las-slot-tiles {
+  justify-content: center;
 }
 
 .las-board-resource .las-slot-tiles {
-  width: auto;
-  /* ?????????????????????? */
   justify-content: flex-start;
 }
 
@@ -628,11 +722,27 @@
 }
 
 .las-slot-empty {
+  position: relative;
   color: var(--muted);
   font-size: 0.82rem;
   padding: 0.35rem 0.2rem;
   text-align: center;
-  align-self: center;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--las-card-w);
+  min-width: var(--las-card-w);
+  min-height: var(--las-card-h);
+  box-sizing: border-box;
+}
+
+.las-slot-empty.las-slot-locked {
+  color: #9aa8b2;
+  font-size: 0.72rem;
+  line-height: 1.3;
+  border: 1px dashed rgba(154, 168, 178, 0.35);
+  border-radius: 8px;
 }
 
 .las-slot.is-locked {
@@ -709,36 +819,49 @@
 }
 
 .las-fx-deal-back {
-  background: repeating-linear-gradient(
+  color: #9aa8b2;
+  border-color: #6a7882;
+  background-color: #243038;
+}
+
+.las-fx-deal-back:not(.has-image) {
+  background-image: repeating-linear-gradient(
     -18deg,
     #2a343c,
     #2a343c 5px,
     #243038 5px,
     #243038 10px
   );
-  color: #9aa8b2;
-  border-color: #6a7882;
+}
+
+.las-fx-deal-back.has-image,
+.las-fx-deal-front.has-image {
+  background-color: #12181c !important;
+  background-size: cover !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+  color: transparent;
 }
 
 .las-fx-deal-front {
-  background: #2a3420;
+  background-color: #2a3420;
   color: #e8d48b;
   transform: rotateY(180deg);
 }
 
-.las-fx-deal.is-fn .las-fx-deal-front {
-  background: #2a2440;
+.las-fx-deal.is-fn .las-fx-deal-front:not(.has-image) {
+  background-color: #2a2440;
   border-color: #7a5cff;
   color: #d4c8ff;
 }
 
-.las-fx-deal.is-bld .las-fx-deal-front {
-  background: #3a3220;
+.las-fx-deal.is-bld .las-fx-deal-front:not(.has-image) {
+  background-color: #3a3220;
   border-color: #c9a227;
 }
 
-.las-fx-deal.is-res .las-fx-deal-front {
-  background: #1e3226;
+.las-fx-deal.is-res .las-fx-deal-front:not(.has-image) {
+  background-color: #1e3226;
   border-color: #4a7c59;
   color: #b8e0c4;
 }
@@ -851,12 +974,21 @@
   background: #1a1f24;
 }
 
+.las-tile.is-facedown.has-art {
+  border-style: solid;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  background: transparent;
+  opacity: 1;
+}
+
 .las-tile.is-facedown .las-tile-name {
   letter-spacing: 0.12em;
   color: #9aa4ad;
 }
 
-.las-tile.is-facedown .las-tile-art {
+.las-tile.is-facedown .las-tile-art:not(.has-image) {
   background: repeating-linear-gradient(
     -45deg,
     #243038,
@@ -864,6 +996,14 @@
     #1a2228 6px,
     #1a2228 12px
   );
+}
+
+.las-tile.is-facedown.has-art .las-tile-art {
+  flex: 1 1 auto;
+  min-height: 100%;
+  height: 100%;
+  border: none;
+  border-radius: 5px;
 }
 
 /* ?????????????????????????? */
@@ -896,7 +1036,7 @@
 /* ?????? */
 .las-card-tip {
   position: fixed;
-  z-index: 90;
+  z-index: 1100;
   max-width: 15rem;
   padding: 0.55rem 0.7rem;
   border-radius: 8px;
@@ -1355,29 +1495,34 @@
 #las-roll-wrap[hidden],
 #las-dice-wrap[hidden],
 #las-init-wrap[hidden],
-#las-efficiency-wrap[hidden] {
+#las-wishwell-wrap[hidden] {
   display: none !important;
 }
 
-.las-efficiency {
-  text-align: center;
-  margin: 0.5rem 0 0.75rem;
-  padding: 0.55rem 0.65rem;
-  border: 1px dashed #c9a227;
-  border-radius: 8px;
-  background: #1e2418;
+.las-wishwell-modal .modal-dialog {
+  max-width: 28rem;
 }
 
-.las-efficiency-picks {
+.las-wishwell-head {
+  text-align: center;
+  margin-bottom: 0.35rem;
+}
+
+.las-wishwell-foot {
+  justify-content: center;
+  margin-top: 0.55rem;
+}
+
+.las-wishwell-picks {
   justify-content: center;
   margin: 0.35rem 0;
 }
 
-.las-efficiency-pick {
+.las-wishwell-pick {
   min-width: 5.5rem;
 }
 
-.las-efficiency-pick.is-on {
+.las-wishwell-pick.is-on {
   border-color: #c9a227;
   box-shadow: 0 0 0 1px #c9a227;
 }
@@ -2306,24 +2451,33 @@
   letter-spacing: 0.02em;
 }
 
-.las-pboard-slots {
+.las-pboard-slots,
+.las-pboard-none-slots {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.45rem;
-  align-items: flex-start;
+  gap: var(--las-card-gap);
+  align-items: stretch;
 }
 
+/* 建筑格与功能牌格统一：同尺寸、同空槽样式 */
 .las-pboard-slot {
+  flex: 0 0 auto;
+  width: var(--las-card-w);
+  min-width: var(--las-card-w);
+  height: var(--las-card-h);
+  min-height: var(--las-card-h);
   border: 1px dashed #4a5a66;
-  border-radius: 8px;
-  background: #121a20;
-  width: calc(var(--las-card-w) + 2 * var(--las-slot-pad) + 2px);
-  min-height: calc(var(--las-card-h) + 1.85rem);
+  border-radius: 6px;
+  background: rgba(18, 26, 32, 0.85);
+  padding: 0;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  padding: var(--las-slot-pad);
-  box-sizing: border-box;
-  flex: 0 0 auto;
+}
+
+.las-pboard-slot.is-filled {
+  border: none;
+  background: transparent;
 }
 
 .las-pboard-slot.is-drop {
@@ -2335,47 +2489,34 @@
   background: #1a242c;
 }
 
-.las-pboard-slot-num {
-  align-self: flex-start;
-  font-size: 0.72rem;
-  font-weight: 700;
-  color: #e8d48b;
-  background: #2a343c;
-  border-radius: 4px;
-  padding: 0.05rem 0.35rem;
-  margin-bottom: 0.2rem;
-}
-
 .las-pboard-slot-body {
-  width: var(--las-card-w);
-  height: var(--las-card-h);
-  min-height: var(--las-card-h);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   display: flex;
   align-items: stretch;
   justify-content: stretch;
-  flex: 0 0 auto;
-}
-
-.las-pboard-empty {
-  font-size: 0.75rem;
-  margin: auto;
+  flex: 1 1 auto;
 }
 
 .las-pboard-card {
-  width: var(--las-card-w);
-  height: var(--las-card-h);
-  min-height: var(--las-card-h);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   border: 1px solid #5a6a74;
   border-radius: 6px;
   background: #243038;
   color: inherit;
-  font-size: 0.72rem;
-  line-height: 1.25;
-  padding: 0.3rem;
-  text-align: left;
+  font-size: 0.78rem;
+  line-height: 1.3;
+  padding: 0.35rem;
+  text-align: center;
   cursor: pointer;
   display: flex;
   flex-direction: column;
+  align-items: center;
+  justify-content: center;
   gap: 0.2rem;
   word-break: break-word;
   box-sizing: border-box;
@@ -2397,20 +2538,12 @@
   color: #9aa8b2;
 }
 
-.las-pboard-none-slots {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-  align-items: flex-start;
-}
-
-.las-pboard-slot-none {
-  border-style: solid;
-  border-color: #5a6a74;
-}
-
 .las-pboard-unplaced .las-pboard-card {
   flex: 0 0 auto;
+  width: var(--las-card-w);
+  min-width: var(--las-card-w);
+  height: var(--las-card-h);
+  min-height: var(--las-card-h);
 }
 
 .las-pboard-none-cards,
@@ -2460,7 +2593,18 @@
 }
 
 .las-act-cards.las-func-hand {
-  min-height: var(--las-card-h);
+  min-height: var(--las-hand-card-h);
+  gap: var(--las-card-gap);
+}
+
+.las-act-cards.las-func-hand > .las-card,
+.las-act-cards.las-func-hand > .las-card.func,
+.las-act-cards.las-func-hand > .las-func-slot.is-empty {
+  width: var(--las-hand-card-w);
+  min-width: var(--las-hand-card-w);
+  height: var(--las-hand-card-h);
+  min-height: var(--las-hand-card-h);
+  font-size: 0.88rem;
 }
 
 .las-pboard-tip {
@@ -2493,8 +2637,8 @@
 }
 
 .las-rules-modal .las-rules-dialog {
-  width: min(100%, 560px);
-  max-height: min(90vh, 740px);
+  width: min(100%, 680px);
+  max-height: min(90vh, 780px);
   text-align: left;
   padding: 0.85rem 1rem 1rem;
   box-sizing: border-box;
@@ -2557,6 +2701,52 @@
   margin-top: 0.65rem;
   font-weight: 700;
   color: #e8d48b;
+}
+
+.las-rules-dl dt.las-rules-dt-has-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.45rem 0.65rem;
+  align-items: start;
+}
+
+.las-rules-card-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+  max-width: 8.6rem;
+}
+
+.las-rules-card-thumb {
+  flex: 0 0 auto;
+  width: 2.75rem;
+  height: calc(2.75rem * 800 / 600);
+  border-radius: 5px;
+  border: 1px solid rgba(154, 168, 178, 0.45);
+  background-color: #1a242b;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  cursor: zoom-in;
+}
+
+.las-rules-section em.las-rules-dt-has-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-style: normal;
+  font-weight: 700;
+  color: #e8d48b;
+}
+
+.las-rules-section em.las-rules-dt-has-card .las-rules-card-thumbs {
+  max-width: none;
+}
+
+.las-rules-section em.las-rules-dt-has-card .las-rules-card-thumb {
+  width: 2rem;
+  height: calc(2rem * 800 / 600);
 }
 
 .las-rules-dl dt:first-child {

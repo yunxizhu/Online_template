@@ -13,6 +13,9 @@ const {
   buildResourceDeck,
   buildFunctionDeck,
   buildBuildingDeck,
+  BUILD_HOUSE_COST,
+  BREED_FOOD_PER_VILLAGER,
+  breedFoodCost,
 } = require('./decks');
 
 const WIN_SCORE = 15;
@@ -20,6 +23,8 @@ const START_VILLAGERS = 3;
 const MAX_VILLAGERS = 12;
 const MAX_FUNC_HAND = 3;
 const MAX_BUILDINGS = 3;
+/** 资源板块摆放上限（6 数字格 × 每格 3 张） */
+const MAX_RESOURCE_BOARD_TILES = 18;
 
 function isNoneSlot(slot) {
   return slot === 'none' || (typeof slot === 'string' && /^none(:\d+)?$/.test(slot));
@@ -94,14 +99,46 @@ function addRes(have, gain) {
   }
 }
 
-function countBuiltEfficiency(p) {
+function countBuiltWishWell(p) {
   return (p.buildings || []).filter(
-    (b) => b.built && b.buildType === 'efficiency'
+    (b) => b.built && b.buildType === 'wishWell'
   ).length;
 }
 
+function playersNeedingWishWell(game) {
+  return alivePlayers(game).filter(
+    (p) => (Number(p.pendingWishWellBonus) || 0) > 0
+  );
+}
+
+function tryBeginWishWellOrBuild(game) {
+  if (playersNeedingWishWell(game).length > 0) {
+    beginWishWell(game);
+  } else {
+    beginBuild(game);
+  }
+}
+
+function beginWishWell(game) {
+  if (game.over) return;
+  game.phase = 'wish_well';
+  game.currentPlayerId = null;
+  const names = playersNeedingWishWell(game).map((p) => p.name);
+  pushLog(
+    game,
+    `—— 许愿井：${names.join('、')} 请选择资源 ——`
+  );
+}
+
+function tryFinishWishWellPhase(game) {
+  if (game.phase !== 'wish_well') return;
+  if (playersNeedingWishWell(game).length === 0) {
+    beginBuild(game);
+  }
+}
+
 /**
- * 从资源板块某一数字格取得大份/小份（基础量；精炼装置加成稍后由玩家分配）。
+ * 从资源板块某一数字格取得大份/小份。
  */
 function grantBoardResourceShare(p, tiles, shareKey) {
   const byRes = Object.create(null);
@@ -127,7 +164,6 @@ function grantBoardResourceShare(p, tiles, shareKey) {
       amount,
     });
   }
-  if (total > 0) p._boardResGainSettle = true;
   return { total, detail };
 }
 
@@ -182,24 +218,28 @@ function playerScore(p) {
 
 function checkWin(game) {
   if (game.over) return true;
-  const winners = [];
-  for (const p of alivePlayers(game)) {
-    if (playerScore(p) >= WIN_SCORE) winners.push(p.id);
+  // 建造等阶段按回合顺序结算：先达到 15 分的唯一玩家立刻获胜
+  let winner = null;
+  const cur = playerById(game, game.currentPlayerId);
+  if (cur && !cur.left && playerScore(cur) >= WIN_SCORE) {
+    winner = cur;
+  } else {
+    for (const p of alivePlayers(game)) {
+      if (playerScore(p) >= WIN_SCORE) {
+        winner = p;
+        break;
+      }
+    }
   }
-  if (winners.length) {
-    game.over = true;
-    game.phase = 'over';
-    game.winners = winners;
-    const names = winners
-      .map((id) => {
-        const p = playerById(game, id);
-        return p ? p.name : id;
-      })
-      .join('、');
-    pushLog(game, `有玩家达到 ${WIN_SCORE} 分，游戏结束！胜者：${names}`);
-    return true;
-  }
-  return false;
+  if (!winner) return false;
+  game.over = true;
+  game.phase = 'over';
+  game.winners = [winner.id];
+  pushLog(
+    game,
+    `有玩家达到 ${WIN_SCORE} 分，游戏结束！胜者：${winner.name}`
+  );
+  return true;
 }
 
 // ─── 板块摆放 ───────────────────────────────────────────
@@ -303,7 +343,7 @@ function drawToArea(game, kind, count) {
 
 function setupBoard(game) {
   const n = Math.max(0, game.round - 1);
-  const resCount = Math.min(12, 6 + n);
+  const resCount = Math.min(MAX_RESOURCE_BOARD_TILES, 6 + n);
   const fnCount = Math.min(6, 2 + n);
   const bldCount = Math.min(6, 1 + n);
 
@@ -530,9 +570,9 @@ function createGameState(room) {
     roundBred: false,
     pendingDiscardFunc: false,
     pendingDiscardBuild: null, // 总建筑达上限时需弃一张（已建或未建）腾位
-    pendingEfficiencyBonus: 0, // 本轮从资源板块有获取时，待分配的精炼装置次数
-    expandSlots: 0, // 扩建建筑格后增加的无数字格数量
-    expandFuncSlots: 0, // 扩建功能卡格后增加的上限
+    pendingWishWellBonus: 0, // 本轮许愿井待选取资源次数
+    expandSlots: 0, // 扩容建筑格后增加的无数字格数量
+    expandFuncSlots: 0, // 扩容功能卡格后增加的上限
   }));
 
   const game = {
@@ -834,8 +874,7 @@ function startSettle(game) {
   pushLog(game, '—— 进入结算阶段 ——');
 
   for (const p of alivePlayers(game)) {
-    p._boardResGainSettle = false;
-    p.pendingEfficiencyBonus = 0;
+    p.pendingWishWellBonus = 0;
   }
 
   // 资源区：按数字格汇总派遣，最多者拿该格全部资源卡的大份，第二拿全部小份
@@ -903,17 +942,14 @@ function startSettle(game) {
   }
 
   for (const p of alivePlayers(game)) {
-    const n = countBuiltEfficiency(p);
-    if (p._boardResGainSettle && n > 0) {
-      p.pendingEfficiencyBonus = n;
+    const n = countBuiltWishWell(p);
+    if (n > 0) {
+      p.pendingWishWellBonus = n;
       pushLog(
         game,
-        `${p.name} 因精炼装置可额外选取资源 +1 ×${n}（结算行动时分配）`
+        `${p.name} 许愿井：生产阶段结束后可选择任意资源 +1 ×${n}`
       );
-    } else {
-      p.pendingEfficiencyBonus = 0;
     }
-    delete p._boardResGainSettle;
   }
 
   // 功能区：按数字格汇总，最多者拿走该格全部功能卡
@@ -1057,7 +1093,7 @@ function startSettle(game) {
   game.settleActPassed = {};
   game.currentPlayerId = game.lastPlacerId || game.produceOrderStartId;
   if (!game.currentPlayerId) {
-    beginBuild(game);
+    tryBeginWishWellOrBuild(game);
     return;
   }
   pushLog(game, '结算行动：可分配效率加成、使用「建造房子」等，或跳过');
@@ -1097,12 +1133,12 @@ function takeBuildingCard(game, player, tile) {
 function ensureSettleActPlayer(game) {
   const alive = alivePlayers(game);
   if (!alive.length) {
-    beginBuild(game);
+    tryBeginWishWellOrBuild(game);
     return;
   }
-  // 若所有人都跳过，进入建造
+  // 若所有人都跳过，进入许愿井或建造
   if (alive.every((p) => game.settleActPassed[p.id])) {
-    beginBuild(game);
+    tryBeginWishWellOrBuild(game);
     return;
   }
   let id = game.currentPlayerId;
@@ -1110,11 +1146,10 @@ function ensureSettleActPlayer(game) {
   for (let i = 0; i < n; i++) {
     const p = playerById(game, id);
     if (p && !p.left && !game.settleActPassed[p.id]) {
-      // 还需处理弃牌 / 精炼装置加成
+      // 还需处理弃牌
       if (
         p.pendingDiscardFunc ||
-        p.pendingDiscardBuild ||
-        (p.pendingEfficiencyBonus || 0) > 0
+        p.pendingDiscardBuild
       ) {
         game.currentPlayerId = p.id;
         return;
@@ -1131,7 +1166,7 @@ function ensureSettleActPlayer(game) {
     if (!next) break;
     id = next.id;
   }
-  beginBuild(game);
+  tryBeginWishWellOrBuild(game);
 }
 
 function beginBuild(game) {
@@ -1170,7 +1205,7 @@ function makeBuildSnapshot(player) {
     expandFuncSlots: player.expandFuncSlots,
     pendingDiscardBuild: player.pendingDiscardBuild,
     pendingDiscardFunc: player.pendingDiscardFunc,
-    pendingEfficiencyBonus: player.pendingEfficiencyBonus,
+    pendingWishWellBonus: player.pendingWishWellBonus,
     roundGained: player.roundGained,
   }));
 }
@@ -1232,7 +1267,6 @@ function actResetBuildTurn(game, player) {
   player.expandFuncSlots = snap.expandFuncSlots;
   player.pendingDiscardBuild = snap.pendingDiscardBuild ? JSON.parse(JSON.stringify(snap.pendingDiscardBuild)) : null;
   player.pendingDiscardFunc = snap.pendingDiscardFunc;
-  player.pendingEfficiencyBonus = snap.pendingEfficiencyBonus;
   player.roundGained = snap.roundGained;
 
   game.currentPlayerId = player.id;
@@ -1257,10 +1291,13 @@ function canBuildSomething(p) {
     }
   }
   // 常驻功能：建造房子 / 繁殖村民
-  if (canPay(p.resources, { wood: 4, stone: 3, iron: 2 })) {
+  if (canPay(p.resources, BUILD_HOUSE_COST)) {
     return true;
   }
-  if (p.villagers < MAX_VILLAGERS && (p.resources.food || 0) >= p.villagers) {
+  if (
+    p.villagers < MAX_VILLAGERS &&
+    (p.resources.food || 0) >= breedFoodCost(p.villagers)
+  ) {
     return true;
   }
   // 可发动功能卡（anytime 类）
@@ -1269,7 +1306,7 @@ function canBuildSomething(p) {
       return true;
     }
   }
-  // 交易所
+  // 集市
   if (
     (p.buildings || []).some(
       (b) => b.built && b.buildType === 'exchange'
@@ -1367,7 +1404,7 @@ function applyAction(game, playerId, action) {
   const type = action && action.type;
   const payload = (action && action.payload) || {};
 
-  // 随时可用：交易所、部分功能（在合法阶段校验）
+  // 随时可用：集市、部分功能（在合法阶段校验）
   if (type === 'exchange') {
     return actExchange(game, player, payload);
   }
@@ -1422,14 +1459,8 @@ function applyAction(game, playerId, action) {
   }
 
   if (game.phase === 'settle_act') {
-    if (type === 'allocateEfficiency') {
-      return actAllocateEfficiency(game, player, payload);
-    }
     if (game.currentPlayerId !== playerId) {
       return { ok: false, error: '还没轮到你' };
-    }
-    if ((player.pendingEfficiencyBonus || 0) > 0) {
-      return { ok: false, error: '请先分配精炼装置加成' };
     }
     if (type === 'pass') {
       game.settleActPassed[playerId] = true;
@@ -1439,7 +1470,14 @@ function applyAction(game, playerId, action) {
       return { ok: true };
     }
     if (type === 'useFunc') return actUseFunc(game, player, payload);
-    return { ok: false, error: '结算行动：分配效率加成或跳过' };
+    return { ok: false, error: '结算行动：使用功能或跳过' };
+  }
+
+  if (game.phase === 'wish_well') {
+    if (type === 'allocateWishWell') {
+      return actAllocateWishWell(game, player, payload);
+    }
+    return { ok: false, error: '请选择许愿井资源并确认' };
   }
 
   if (game.phase === 'build') {
@@ -1469,10 +1507,10 @@ function applyAction(game, playerId, action) {
   return { ok: false, error: '当前阶段无法操作' };
 }
 
-/** payload.alloc: { wood, stone, food, iron } 非负整数，合计 = pendingEfficiencyBonus */
-function actAllocateEfficiency(game, player, payload = {}) {
-  const need = Number(player.pendingEfficiencyBonus) || 0;
-  if (need <= 0) return { ok: false, error: '无需分配效率加成' };
+/** payload.alloc: { wood, stone, food, iron } 非负整数，合计 = pendingWishWellBonus */
+function actAllocateWishWell(game, player, payload = {}) {
+  const need = Number(player.pendingWishWellBonus) || 0;
+  if (need <= 0) return { ok: false, error: '无需使用许愿井' };
   const raw = payload.alloc || payload;
   const counts = emptyRes();
   let sum = 0;
@@ -1487,7 +1525,7 @@ function actAllocateEfficiency(game, player, payload = {}) {
   if (sum !== need) {
     return {
       ok: false,
-      error: `需恰好分配 ${need} 点加成（当前 ${sum}）`,
+      error: `需恰好选取 ${need} 次资源（当前 ${sum}）`,
     };
   }
   const parts = [];
@@ -1497,14 +1535,13 @@ function actAllocateEfficiency(game, player, payload = {}) {
     player.roundGained += counts[r];
     parts.push(`${RESOURCE_LABELS[r]}+${counts[r]}`);
   }
-  player.pendingEfficiencyBonus = 0;
+  player.pendingWishWellBonus = 0;
   pushLog(
     game,
-    `${player.name} 精炼装置加成：${parts.join('、') || '无'}`
+    `${player.name} 许愿井：${parts.join('、') || '无'}`
   );
-  if (game.phase === 'settle_act') {
-    // 无结算功能卡时自动跳过，避免卡在无「跳过」按钮的结算行动
-    ensureSettleActPlayer(game);
+  if (game.phase === 'wish_well') {
+    tryFinishWishWellPhase(game);
   }
   return { ok: true };
 }
@@ -1680,7 +1717,7 @@ function actDiscardUnbuilt(game, player, payload) {
     player.pendingDiscardBuild = null;
     let msg = `${player.name} 弃置${wasBuilt ? '已建' : '未建'}「${b.label}」（入弃牌堆），新建筑「${neu.label}」放到原格子`;
     if (wasBuilt && b.buildType === 'score2' && b.score) {
-      msg += `，记分建筑被弃置，失去 +${b.score} 分`;
+      msg += `，宫殿被弃置，失去 +${b.score} 分`;
     }
     pushLog(game, msg);
   } else {
@@ -1690,7 +1727,7 @@ function actDiscardUnbuilt(game, player, payload) {
         : '') +
       '（入弃牌堆）';
     if (wasBuilt && b.buildType === 'score2' && b.score) {
-      msg += `，记分建筑被弃置，失去 +${b.score} 分`;
+      msg += `，宫殿被弃置，失去 +${b.score} 分`;
     }
     pushLog(game, msg);
   }
@@ -1717,8 +1754,8 @@ function countBuiltExchanges(player) {
 }
 
 /**
- * 交易所兑换率：0座（默认银行）→4换1，1座→3换1，2座→2换1，≥3座→1换1
- * 每个玩家独立按自己已建交易所数量计算。
+ * 集市兑换率：0座（默认银行）→4换1，1座→3换1，2座→2换1，≥3座→1换1
+ * 每个玩家独立按自己已建集市数量计算。
  */
 function exchangeCostN(exchangeCount) {
   const n = Number(exchangeCount) || 0;
@@ -1739,12 +1776,12 @@ function actExchange(game, player, payload) {
   if ((player.resources[from] || 0) < need) {
     return {
       ok: false,
-      error: `需要 ${need} 个相同的${RESOURCE_LABELS[from]}${exCount > 0 ? '（当前持有 ' + exCount + ' 座交易所）' : ''}`,
+      error: `需要 ${need} 个相同的${RESOURCE_LABELS[from]}${exCount > 0 ? '（当前持有 ' + exCount + ' 座集市）' : ''}`,
     };
   }
   player.resources[from] -= need;
   player.resources[to] = (player.resources[to] || 0) + 1;
-  const sourceLabel = exCount > 0 ? `用交易所（${exCount}座，${need}换1）` : `银行兑换（${need}换1）`;
+  const sourceLabel = exCount > 0 ? `用集市（${exCount}座，${need}换1）` : `银行兑换（${need}换1）`;
   pushLog(
     game,
     `${player.name} ${sourceLabel}：${need}${RESOURCE_LABELS[from]} → 1${RESOURCE_LABELS[to]}`
@@ -1947,11 +1984,13 @@ function useRobbery(game, player, payload) {
 }
 
 function actBuildHousePermanent(game, player) {
-  const cost = { wood: 4, stone: 3, iron: 2 };
-  if (!canPay(player.resources, cost)) {
-    return { ok: false, error: '需要 4木 3石 2铁' };
+  if (!canPay(player.resources, BUILD_HOUSE_COST)) {
+    return {
+      ok: false,
+      error: `需要 ${BUILD_HOUSE_COST.wood}木 ${BUILD_HOUSE_COST.stone}石 ${BUILD_HOUSE_COST.iron}铁`,
+    };
   }
-  pay(player.resources, cost);
+  pay(player.resources, BUILD_HOUSE_COST);
   player.score += 1;
   pushLog(
     game,
@@ -1967,15 +2006,15 @@ function actBreedPermanent(game, player) {
   if (player.villagers >= MAX_VILLAGERS) {
     return { ok: false, error: `村民已达上限 ${MAX_VILLAGERS}` };
   }
-  const cost = player.villagers;
+  const cost = breedFoodCost(player.villagers);
   if ((player.resources.food || 0) < cost) {
-    return { ok: false, error: `需要 ${cost} 食物` };
+    return { ok: false, error: `需要 ${cost} 小麦` };
   }
   player.resources.food -= cost;
   player.villagers += 1;
   pushLog(
     game,
-    `${player.name} 繁殖村民（-${cost} 食物），村民 ${player.villagers}`
+    `${player.name} 繁殖村民（-${cost} 小麦），村民 ${player.villagers}`
   );
   if (checkWin(game)) return { ok: true };
   // 常驻功能不结束回合，保留玩家行动权
@@ -1989,19 +2028,19 @@ function useExpand(game, player, payload) {
     player.expandSlots = (Number(player.expandSlots) || 0) + 1;
     pushLog(
       game,
-      `${player.name} 扩建：建筑区 +1 无数字格（建筑上限 ${maxBuildingsFor(player)}）`
+      `${player.name} 扩容：建筑区 +1 无数字格（建筑上限 ${maxBuildingsFor(player)}）`
     );
   } else if (dir === 'function') {
     player.expandFuncSlots = (Number(player.expandFuncSlots) || 0) + 1;
     pushLog(
       game,
-      `${player.name} 扩建：功能手牌上限 +1（当前 ${maxFuncHandFor(player)}）`
+      `${player.name} 扩容：功能手牌上限 +1（当前 ${maxFuncHandFor(player)}）`
     );
     if (player.funcCards.length > maxFuncHandFor(player)) {
       player.pendingDiscardFunc = true;
     }
   } else {
-    return { ok: false, error: '请选择扩建方向：building（建筑格）或 function（功能卡格）' };
+    return { ok: false, error: '请选择扩容方向：building（建筑格）或 function（功能卡格）' };
   }
   return { ok: true };
 }
@@ -2118,6 +2157,9 @@ function publicGameState(game, viewerId) {
     neutralWorkerId: NEUTRAL_WORKER_ID,
     neutralWorkerName: NEUTRAL_WORKER_NAME,
     maxBuildings: MAX_BUILDINGS,
+    maxVillagers: MAX_VILLAGERS,
+    buildHouseCost: { ...BUILD_HOUSE_COST },
+    breedFoodPerVillager: BREED_FOOD_PER_VILLAGER,
     board: {
       resource: publicArea(game.board.resource),
       function: publicArea(game.board.function),
@@ -2177,6 +2219,13 @@ function publicGameState(game, viewerId) {
         game.currentPlayerId === viewerId
     ),
     lastSettle: publicLastSettle(game.lastSettle, viewerId),
+    wishWellPending:
+      game.phase === 'wish_well'
+        ? playersNeedingWishWell(game).map((p) => ({
+            id: p.id,
+            name: p.name,
+          }))
+        : [],
     log: game.log.slice(-20),
     players: game.players.map((p) => {
       const isMe = p.id === viewerId;
@@ -2212,8 +2261,8 @@ function publicGameState(game, viewerId) {
         buildPassed: Boolean(game.buildPassed && game.buildPassed[p.id]),
         pendingDiscardFunc: isMe ? p.pendingDiscardFunc : false,
         pendingDiscardBuild: isMe ? p.pendingDiscardBuild : null,
-        pendingEfficiencyBonus: isMe
-          ? Number(p.pendingEfficiencyBonus) || 0
+        pendingWishWellBonus: isMe
+          ? Number(p.pendingWishWellBonus) || 0
           : 0,
         initRoll:
           game.phase === 'init_roll'
@@ -2240,7 +2289,7 @@ function publicGameState(game, viewerId) {
           exchangeCost: exchangeCostN(countBuiltExchanges(me)),
           pendingDiscardFunc: me.pendingDiscardFunc,
           pendingDiscardBuild: me.pendingDiscardBuild,
-          pendingEfficiencyBonus: Number(me.pendingEfficiencyBonus) || 0,
+          pendingWishWellBonus: Number(me.pendingWishWellBonus) || 0,
           buildPassed: Boolean(game.buildPassed && game.buildPassed[me.id]),
         }
       : null,
@@ -2250,7 +2299,9 @@ function publicGameState(game, viewerId) {
 function canPlayerAct(game, player) {
   if (!player || player.left || game.over) return false;
   if (player.pendingDiscardFunc || player.pendingDiscardBuild) return true;
-  if ((player.pendingEfficiencyBonus || 0) > 0) return true;
+  if (game.phase === 'wish_well') {
+    return (player.pendingWishWellBonus || 0) > 0;
+  }
   if (hasPendingPlacement(player)) return true;
   if (game.phase === 'init_roll') {
     return game.initRolls[player.id] == null;
@@ -2259,7 +2310,7 @@ function canPlayerAct(game, player) {
     return false;
   }
   if (game.currentPlayerId !== player.id) {
-    // 随时：交易所 / anytime 功能
+    // 随时：集市 / anytime 功能
     return false;
   }
   return true;
@@ -2281,7 +2332,6 @@ function getActingPlayerIds(game) {
       (p) =>
         p.pendingDiscardFunc ||
         p.pendingDiscardBuild ||
-        (p.pendingEfficiencyBonus || 0) > 0 ||
         hasPendingPlacement(p)
     )
     .map((p) => p.id);
@@ -2291,6 +2341,9 @@ function getActingPlayerIds(game) {
       return [game.currentPlayerId];
     }
     return pending.slice(0, 1);
+  }
+  if (game.phase === 'wish_well') {
+    return playersNeedingWishWell(game).map((p) => p.id);
   }
   if (
     ['produce', 'settle_act', 'build'].includes(game.phase) &&
@@ -2320,14 +2373,15 @@ function forceTimeout(game, playerId) {
       payload: { buildingId: pick.id },
     });
   }
-  if ((p.pendingEfficiencyBonus || 0) > 0) {
+  if (game.phase === 'wish_well' && (p.pendingWishWellBonus || 0) > 0) {
     const alloc = emptyRes();
-    alloc.wood = Number(p.pendingEfficiencyBonus) || 0;
+    alloc.wood = Number(p.pendingWishWellBonus) || 0;
     return applyAction(game, playerId, {
-      type: 'allocateEfficiency',
+      type: 'allocateWishWell',
       payload: { alloc },
     });
   }
+
   const unplaced = (p.buildings || []).find((b) => !b.built && b.slot == null);
   if (unplaced) {
     // 自动放到第一个可用无格槽
@@ -2421,6 +2475,9 @@ function onPlayerQuit(game, playerId) {
       const next = nextAlive(game, playerId);
       game.currentPlayerId = next ? next.id : null;
       ensureSettleActPlayer(game);
+    } else if (game.phase === 'wish_well') {
+      p.pendingWishWellBonus = 0;
+      tryFinishWishWellPhase(game);
     } else if (game.phase === 'build') {
       game.buildPassed[playerId] = true;
       afterBuildAction(game, playerId, false);
@@ -2443,4 +2500,5 @@ module.exports = {
   exchangeCostN,
   countBuiltExchanges,
   WIN_SCORE,
+  MAX_RESOURCE_BOARD_TILES,
 };

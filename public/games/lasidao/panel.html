@@ -37,7 +37,7 @@
     <div class="modal-backdrop" id="las-exchange-backdrop"></div>
     <div class="modal-dialog panel las-exchange-dialog" role="dialog" aria-modal="true" aria-labelledby="las-exchange-title">
       <div class="las-exchange-head">
-        <h3 id="las-exchange-title" data-i18n="lasidao.exchange">交易所</h3>
+        <h3 id="las-exchange-title" data-i18n="lasidao.exchange">集市</h3>
         <p id="las-exchange-rate-hint" class="muted las-hint"></p>
       </div>
       <div class="las-exchange-body">
@@ -98,6 +98,21 @@
     </div>
   </div>
 
+  <div id="las-wishwell-modal" class="modal las-wishwell-modal" hidden>
+    <div class="modal-backdrop las-wishwell-backdrop"></div>
+    <div class="modal-dialog panel las-wishwell-dialog" role="dialog" aria-modal="true" aria-labelledby="las-wishwell-modal-title">
+      <div class="las-wishwell-head">
+        <h3 id="las-wishwell-modal-title" data-i18n="lasidao.wishWellTitle">许愿井</h3>
+        <p id="las-wishwell-modal-hint" class="muted las-hint"></p>
+      </div>
+      <div id="las-wishwell-modal-picks" class="las-wishwell-picks row"></div>
+      <div class="las-wishwell-foot row las-actions">
+        <button id="btn-las-wishwell-modal-reset" type="button" class="secondary" data-i18n="lasidao.wishWellReset">清空</button>
+        <button id="btn-las-wishwell-modal-confirm" type="button" data-i18n="lasidao.wishWellConfirm">确认获取</button>
+      </div>
+    </div>
+  </div>
+
   <div id="las-harvest-modal" class="modal las-harvest-modal" hidden>
     <div class="modal-backdrop" id="las-harvest-backdrop"></div>
     <div class="modal-dialog panel las-harvest-dialog" role="dialog" aria-modal="true" aria-labelledby="las-harvest-title">
@@ -131,21 +146,21 @@
     <div class="modal-backdrop" id="las-expand-backdrop"></div>
     <div class="modal-dialog panel las-expand-dialog" role="dialog" aria-modal="true" aria-labelledby="las-expand-title">
       <div class="las-expand-head">
-        <h3 id="las-expand-title" data-i18n="lasidao.expandPickTitle">请选择一个栏位进行扩充</h3>
+        <h3 id="las-expand-title" data-i18n="lasidao.expandPickTitle">请选择一个栏位进行扩容</h3>
         <p id="las-expand-hint" class="muted las-hint"></p>
       </div>
       <div id="las-expand-body" class="las-expand-body">
         <div class="las-expand-options">
           <button type="button" class="las-expand-option" data-direction="function">
-            <span data-i18n="lasidao.expandFunction">扩建功能卡格</span>
+            <span data-i18n="lasidao.expandFunction">扩容功能卡格</span>
           </button>
           <button type="button" class="las-expand-option" data-direction="building">
-            <span data-i18n="lasidao.expandBuilding">扩建建筑格</span>
+            <span data-i18n="lasidao.expandBuilding">扩容建筑格</span>
           </button>
         </div>
       </div>
       <div class="las-expand-foot row las-actions">
-        <button id="btn-las-expand-confirm" type="button" data-i18n="lasidao.expandConfirm" disabled>确认扩充</button>
+        <button id="btn-las-expand-confirm" type="button" data-i18n="lasidao.expandConfirm" disabled>确认扩容</button>
         <button id="btn-las-expand-cancel" type="button" class="secondary" data-i18n="lasidao.cancel">取消</button>
       </div>
     </div>
@@ -216,16 +231,6 @@
             <div id="las-func-form"></div>
           </div>
 
-          <div id="las-efficiency-wrap" class="las-efficiency" hidden>
-            <h3 class="game-sub" data-i18n="lasidao.efficiencyTitle">??????</h3>
-            <p id="las-efficiency-hint" class="muted las-hint"></p>
-            <div id="las-efficiency-picks" class="las-efficiency-picks row"></div>
-            <div class="row las-actions las-side-actions">
-              <button id="btn-las-efficiency-reset" type="button" class="secondary" data-i18n="lasidao.efficiencyReset">??</button>
-              <button id="btn-las-efficiency-confirm" type="button" data-i18n="lasidao.efficiencyConfirm">????</button>
-            </div>
-          </div>
-
           <div id="las-permanent-actions" class="row las-actions las-side-actions" hidden>
             <button id="btn-las-build-house" type="button" data-i18n="lasidao.buildHousePermanent">建造房子</button>
             <button id="btn-las-exchange" type="button" data-i18n="lasidao.exchangeBtn">兑换</button>
@@ -248,6 +253,7 @@
         </div>
       </div>
 
+    <div class="las-board-zone">
     <aside class="las-decks" id="las-decks" aria-label="decks">
       <div class="las-deck-pile las-deck-pile-resource" data-deck="resource">
         <div class="las-deck-stack" id="las-deck-stack-resource"></div>
@@ -291,6 +297,7 @@
           <div id="las-board-building" class="las-board las-board-building" data-area="building"></div>
         </section>
       </div>
+    </div>
     </div>
   </div>
 

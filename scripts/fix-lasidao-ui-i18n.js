@@ -2,7 +2,7 @@
 const fs = require('fs');
 
 const zhExtra = {
-  res: { wood: '木头', stone: '石头', food: '食物', iron: '铁矿' },
+  res: { wood: '木头', stone: '石头', food: '小麦', iron: '铁矿' },
   tip: {
     unknown: '未知',
     rich: '富裕',
@@ -13,7 +13,7 @@ const zhExtra = {
     boardSlotUnset: '场上格 —',
     cost: '造价：',
     produceEffect: '工人生产 {amt}（{rich}）',
-    score2Effect: '记分建筑 +{score} 分',
+    score2Effect: '宫殿 +{score} 分',
     scoreEffect: '分数 +{score}',
     produceAmt: '产出 {amt}',
     buildingGeneric: '建筑卡',
@@ -61,7 +61,7 @@ const enExtra = {
     boardSlotUnset: 'Board slot —',
     cost: 'Cost: ',
     produceEffect: 'Workers produce {amt} ({rich})',
-    score2Effect: 'Score building +{score}',
+    score2Effect: 'Palace +{score}',
     scoreEffect: 'Score +{score}',
     produceAmt: 'Produce {amt}',
     buildingGeneric: 'Building',

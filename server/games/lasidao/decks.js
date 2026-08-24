@@ -5,7 +5,7 @@ const RESOURCES = ['wood', 'stone', 'food', 'iron'];
 const RESOURCE_LABELS = {
   wood: '木头',
   stone: '石头',
-  food: '食物',
+  food: '小麦',
   iron: '铁矿',
 };
 
@@ -17,7 +17,7 @@ const FUNC_TYPES = {
   buildHouse: '建造房子',
   redraw: '重抽',
   banditRaid: '强盗来袭',
-  expand: '扩建',
+  expand: '扩容',
   robbery: '抢劫',
 };
 
@@ -28,9 +28,9 @@ const BANDIT_RAID_COUNT = 2;
 
 const BUILD_TYPES = {
   produce: '资源建筑',
-  score2: '记分建筑',
-  exchange: '交易所',
-  efficiency: '精炼装置',
+  score2: '宫殿',
+  exchange: '集市',
+  wishWell: '许愿井',
 };
 
 let _uid = 1;
@@ -55,7 +55,7 @@ function shuffle(arr) {
 function buildResourceDeck() {
   const cards = [];
   for (const res of ['wood', 'stone','food']) {
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       cards.push({
         id: nextId('res'),
         kind: 'resource',
@@ -66,7 +66,7 @@ function buildResourceDeck() {
         label: `${RESOURCE_LABELS[res]}·丰`,
       });
     }
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 6; i++) {
       cards.push({
         id: nextId('res'),
         kind: 'resource',
@@ -80,7 +80,7 @@ function buildResourceDeck() {
   }
 
 
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 6; i++) {
     cards.push({
       id: nextId('res'),
       kind: 'resource',
@@ -107,17 +107,43 @@ function makeFunc(type, extra = {}) {
 /** 功能板块卡堆 */
 function buildFunctionDeck() {
   const cards = [];
-  for (let i = 0; i < 10; i++) cards.push(makeFunc('harvest'));
-  for (let i = 0; i < 4; i++) cards.push(makeFunc('remoteDice'));
-  for (let i = 0; i < 2; i++) cards.push(makeFunc('exile'));
-  for (let i = 0; i < 2; i++) cards.push(makeFunc('redraw'));
-  for (let i = 0; i < 2; i++) cards.push(makeFunc('banditRaid'));
-  for (let i = 0; i < 4; i++) cards.push(makeFunc('expand'));
-  for (let i = 0; i < 4; i++) cards.push(makeFunc('robbery'));
+  for (let i = 0; i < 3; i++) cards.push(makeFunc('harvest'));
+  for (let i = 0; i < 3; i++) cards.push(makeFunc('remoteDice'));
+  for (let i = 0; i < 6; i++) cards.push(makeFunc('exile'));
+  for (let i = 0; i < 3; i++) cards.push(makeFunc('redraw'));
+  for (let i = 0; i < 6; i++) cards.push(makeFunc('banditRaid'));
+  for (let i = 0; i < 3; i++) cards.push(makeFunc('expand'));
+  for (let i = 0; i < 6; i++) cards.push(makeFunc('robbery'));
   return shuffle(cards);
 }
 
+/** 生产建筑造价：资源种类 × 富/贫（仅列出非 0 项） */
+const PRODUCE_BUILD_COSTS = {
+  wood: {
+    rich: { wood: 2, stone: 5,food: 3, iron: 2 },
+    poor: { stone: 3,food: 2, iron: 1 },
+  },
+  stone: {
+    rich: { wood: 5, stone: 2,food: 3, iron: 2 },
+    poor: { wood: 3,food: 2, iron: 1  },
+  },
+  food: {
+    rich: { wood: 5, stone: 5, iron: 2 },
+    poor: { wood: 2, stone: 2 , iron: 1 },
+  },
+  iron: {
+    rich: { wood: 4, stone: 4,food: 3, iron: 2 },
+    poor: { wood: 1, stone: 1,food: 2, iron: 2 },
+  },
+};
+
 function makeProduceBuild(resource, rich) {
+  const tier = rich ? 'rich' : 'poor';
+  const byRes = PRODUCE_BUILD_COSTS[resource];
+  const cost = byRes && byRes[tier];
+  if (!cost) {
+    throw new Error(`未知生产建筑造价: ${resource}/${tier}`);
+  }
   return {
     id: nextId('bld'),
     kind: 'building',
@@ -125,9 +151,7 @@ function makeProduceBuild(resource, rich) {
     resource,
     rich,
     label: `${RESOURCE_LABELS[resource]}建筑·${rich ? '富' : '贫'}`,
-    cost: rich
-      ? { wood: 4, stone: 4, iron: 1 }
-      : { wood: 2, stone: 2 },
+    cost: { ...cost },
     produce: rich ? 2 : 1,
     score: 0,
     needsWorker: true,
@@ -140,8 +164,8 @@ function makeScore2() {
     id: nextId('bld'),
     kind: 'building',
     buildType: 'score2',
-    label: '记分建筑(+3)',
-    cost: { wood: 6, stone: 6, iron: 2 },
+    label: '宫殿(+3)',
+    cost: { wood: 7, stone: 7 , food: 7, iron: 4 },
     produce: 0,
     score: 3,
     needsWorker: false,
@@ -154,7 +178,7 @@ function makeExchange() {
     id: nextId('bld'),
     kind: 'building',
     buildType: 'exchange',
-    label: '交易所',
+    label: '集市',
     cost: { wood: 3, stone: 3 },
     produce: 0,
     score: 0,
@@ -163,14 +187,14 @@ function makeExchange() {
   };
 }
 
-/** 每建成一座：从资源板块取资源后可指定 1 次「某资源 +1」（可叠同一资源） */
-function makeEfficiency() {
+/** 每建成一座：生产阶段结束后可选任意一种资源 +1 */
+function makeWishWell() {
   return {
     id: nextId('bld'),
     kind: 'building',
-    buildType: 'efficiency',
-    label: '精炼装置',
-    cost: { wood: 3, stone: 3, iron: 1 },
+    buildType: 'wishWell',
+    label: '许愿井',
+    cost: { wood: 2, stone: 2, food: 2, iron: 2 },
     produce: 0,
     score: 0,
     needsWorker: false,
@@ -183,15 +207,28 @@ function buildBuildingDeck() {
   const cards = [];
   for (const res of ['wood', 'stone', 'food']) {
     cards.push(makeProduceBuild(res, true));
+    cards.push(makeProduceBuild(res, true));
+    cards.push(makeProduceBuild(res, false));
     cards.push(makeProduceBuild(res, false));
     cards.push(makeProduceBuild(res, false));
   }
   cards.push(makeProduceBuild('iron', false));
   cards.push(makeProduceBuild('iron', false));
+  cards.push(makeProduceBuild('iron', false));
   for (let i = 0; i < 5; i++) cards.push(makeScore2());
   for (let i = 0; i < 4; i++) cards.push(makeExchange());
-  for (let i = 0; i < 4; i++) cards.push(makeEfficiency());
+  for (let i = 0; i < 4; i++) cards.push(makeWishWell());
   return shuffle(cards);
+}
+
+/** 常驻「建造房子」造价 */
+const BUILD_HOUSE_COST = { wood: 3, stone: 3,  iron: 2 };
+
+/** 常驻「繁殖村民」：小麦消耗 = 当前村民数 × 该系数 */
+const BREED_FOOD_PER_VILLAGER = 1;
+
+function breedFoodCost(villagers) {
+  return Math.max(0, Math.floor(Number(villagers) || 0)) * BREED_FOOD_PER_VILLAGER;
 }
 
 module.exports = {
@@ -206,6 +243,11 @@ module.exports = {
   resetUid,
   shuffle,
   makeFunc,
+  makeProduceBuild,
+  PRODUCE_BUILD_COSTS,
+  BUILD_HOUSE_COST,
+  BREED_FOOD_PER_VILLAGER,
+  breedFoodCost,
   buildResourceDeck,
   buildFunctionDeck,
   buildBuildingDeck,

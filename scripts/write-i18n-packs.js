@@ -211,7 +211,7 @@ const zh = {
     placeSlotPrompt: '放置到格子 1-6，或 none（无数字格）',
     slotInvalid: '格子无效，请输入 1-6 或 none',
     buildHouseTooltip: '消耗 4木 3石 2铁，+1 分（建造阶段每回合限一次）',
-    breedTooltip: '消耗等同当前村民数的食物，村民 +1，上限 12（建造阶段每回合限一次）',
+    breedTooltip: '消耗等同当前村民数的小麦，村民 +1，上限 12（建造阶段每回合限一次）',
     diceRolling: '投掷中…',
     diceGrouping: '聚合点数中…',
     dicePickFace: '请选择点数组，再点对应数字格或己方建筑；或跳过（需弃1资源）',

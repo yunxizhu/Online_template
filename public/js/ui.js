@@ -83,6 +83,7 @@
     roomHiddenBadge: document.getElementById('room-hidden-badge'),
     memberList: document.getElementById('member-list'),
     btnStart: document.getElementById('btn-start'),
+    btnRoomRules: document.getElementById('btn-room-rules'),
     btnLeave: document.getElementById('btn-leave'),
     roomStartHint: document.getElementById('room-start-hint'),
     gameMenu: document.getElementById('game-menu'),
@@ -1551,6 +1552,9 @@
     const isHost = state.me && room.hostId === state.me.id;
     el.btnStart.hidden = !isHost;
     el.btnStart.disabled = room.players.length < min;
+    if (el.btnRoomRules) {
+      el.btnRoomRules.hidden = room.gameType !== 'lasidao';
+    }
   }
 
   function hideAllGamePanels() {
@@ -2446,6 +2450,16 @@
   });
 
   el.btnStart.addEventListener('click', () => net.startGame());
+  if (el.btnRoomRules) {
+    el.btnRoomRules.addEventListener('click', () => {
+      if (
+        window.LasidaoUi &&
+        typeof window.LasidaoUi.openRules === 'function'
+      ) {
+        window.LasidaoUi.openRules();
+      }
+    });
+  }
   el.btnLeave.addEventListener('click', () => leaveAndReturnLocal());
   if (el.btnGameMenu) {
     el.btnGameMenu.addEventListener('click', (ev) => {

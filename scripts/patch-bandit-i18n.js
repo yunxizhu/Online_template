@@ -5,7 +5,7 @@ const zhExtra = {
   'lasidao.neutralName': '强盗',
   'lasidao.confirmBandit': '放置中立骰子',
   'lasidao.confirmUse': '确认发动',
-  'lasidao.func.breed': '消耗等同当前村民数的食物，村民 +1（上限 12）',
+  'lasidao.func.breed': '消耗等同当前村民数的小麦，村民 +1（上限 12）',
   'lasidao.func.harvest': '获得任意 2 个资源（各 1）',
   'lasidao.func.remoteDice': '投掷前使用：可指定任意点数派遣',
   'lasidao.func.exile': '驱逐目标玩家在某数字格的 1 名村民',
@@ -14,7 +14,7 @@ const zhExtra = {
   'lasidao.func.banditRaid':
     '任意时间、无消耗：在任意板块的任意数字格放置 2 枚中立骰子；参与抵消并占用名次，不领取收益',
   'lasidao.buildHouseTooltip': '消耗 4木 3石 2铁，+1 分（建造阶段每回合限一次）',
-  'lasidao.breedTooltip': '消耗等同当前村民数的食物，村民 +1，上限 12（建造阶段每回合限一次）',
+  'lasidao.breedTooltip': '消耗等同当前村民数的小麦，村民 +1，上限 12（建造阶段每回合限一次）',
 };
 
 const enExtra = {
