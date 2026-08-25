@@ -1,36 +1,36 @@
 .lasidao-panel {
   position: relative;
   text-align: left;
-  /* ? 1080p ????????????????? */
+  /* 1080p 设计稿基准；--las-ui-scale 由 JS 按视口写入 */
   --las-ui-scale: 1;
+  --las-scale: var(--las-ui-scale, 1);
   --las-design-w: 1920;
   --las-design-h: 1080;
-  /* 卡牌比例 600×800（3:4） */
-  --las-card-w: 6.5rem;
+  /* 卡牌比例 600×800（3:4），全部随 --las-scale 同比缩放 */
+  --las-card-w: calc(6.5rem * var(--las-scale));
   --las-card-h: calc(var(--las-card-w) * 800 / 600);
-  --las-slot-pad: 0.26rem;
-  --las-slot-tiles-pad-x: 0.25rem;
-  --las-card-gap: 0.26rem;
-  --las-board-card-gap: 20px; /* 板块区内卡牌间距 */
+  --las-slot-pad: calc(0.26rem * var(--las-scale));
+  --las-slot-tiles-pad-x: calc(0.25rem * var(--las-scale));
+  --las-card-gap: calc(0.26rem * var(--las-scale));
+  --las-board-card-gap: calc(0.35rem * var(--las-scale));
   --las-slot-num-h: calc(var(--las-card-h) / 4);
   --las-divider: rgba(232, 212, 139, 0.42);
   --las-hand-card-w: calc(var(--las-card-w) * 1.2);
   --las-hand-card-h: calc(var(--las-hand-card-w) * 800 / 600);
-  --las-side-rail-min-h: 10rem;
-  --las-side-rail-max-w: 12.5rem;
-  --las-deck-w: 7.65rem; /* 抽牌堆宽 ≈ 原 2.55rem × 3 */
-  font-size: 1.08rem;
+  --las-side-rail-min-h: calc(var(--las-hand-card-h) + 3.5rem);
+  --las-me-rail-w: calc(var(--las-hand-card-w) * 3 + var(--las-card-gap) * 4);
+  --las-deck-w: calc(7.65rem * var(--las-scale));
+  font-size: calc(1.08rem * var(--las-scale));
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
-/* Chromium / Edge / Safari?zoom ?????????? */
-.lasidao-panel.las-scale-zoom {
-  zoom: var(--las-ui-scale, 1);
-}
-
-/* Firefox ??? transform ??????????????? */
+/* 旧版 zoom/transform 缩放已弃用，统一走 CSS 变量 */
+.lasidao-panel.las-scale-zoom,
 .lasidao-panel.las-scale-transform {
-  transform: scale(var(--las-ui-scale, 1));
-  transform-origin: top center;
+  zoom: unset;
+  transform: none;
 }
 
 .lasidao-panel h2,
@@ -50,15 +50,16 @@
   font-size: 0.9rem;
 }
 
-/* ?=???(?) ?=???? ?=????(????) */
+/* 左：骰子/手牌/公共板块  右：个人版面（宽度随卡牌变量） */
 .las-playfield {
   display: grid;
-  grid-template-columns: minmax(0, 3.4fr) minmax(14rem, 1.25fr);
-  column-gap: 0.65rem;
+  grid-template-columns: minmax(0, 1.65fr) minmax(0, var(--las-me-rail-w));
+  column-gap: calc(0.65rem * var(--las-scale));
   align-items: start;
-  margin: 0 0 1rem;
+  margin: 0 0 calc(1rem * var(--las-scale));
   width: 100%;
   max-width: 100%;
+  min-width: 0;
   box-sizing: border-box;
 }
 
@@ -68,13 +69,16 @@
   flex-wrap: nowrap;
   align-items: stretch;
   align-self: stretch;
-  gap: 0.4rem;
+  gap: calc(0.4rem * var(--las-scale));
   width: 100%;
   min-width: 0;
   min-height: var(--las-side-rail-min-h);
   box-sizing: border-box;
   overflow-x: hidden;
   overflow-y: visible;
+  position: relative;
+  z-index: 2;
+  flex-shrink: 0;
 }
 
 .las-side-rail .las-roll-wrap,
@@ -97,15 +101,15 @@
 }
 
 .las-side-rail .las-die {
-  width: 2.15rem;
-  height: 2.15rem;
-  font-size: 1.05rem;
+  width: calc(2.15rem * var(--las-scale));
+  height: calc(2.15rem * var(--las-scale));
+  font-size: calc(1.05rem * var(--las-scale));
 }
 
 .las-side-rail .las-die-group .las-die-face {
-  width: 2.15rem;
-  height: 2.15rem;
-  font-size: 1.05rem;
+  width: calc(2.15rem * var(--las-scale));
+  height: calc(2.15rem * var(--las-scale));
+  font-size: calc(1.05rem * var(--las-scale));
 }
 
 .las-act-wrap {
@@ -171,9 +175,12 @@
   background: #1a242b;
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 0.55rem 0.65rem;
+  padding: calc(0.55rem * var(--las-scale)) calc(0.65rem * var(--las-scale));
   width: 100%;
   box-sizing: border-box;
+  position: relative;
+  z-index: 2;
+  flex-shrink: 0;
 }
 
 .las-build-hand-wrap[hidden] {
@@ -252,6 +259,34 @@
   box-shadow: 0 0 0 2px #c9a227, 0 0 8px rgba(201, 162, 39, 0.35);
 }
 
+.las-hand-card-art {
+  width: 100%;
+  height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  border-radius: 4px;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.las-hand-card-art.has-image {
+  background-color: #12181c;
+}
+
+.las-card.has-art,
+.las-build-card.has-art,
+.las-pboard-card.has-art {
+  padding: 2px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: stretch;
+  text-indent: -9999px;
+  color: transparent;
+}
+
 .las-build-play-bar {
   margin-top: 0.45rem;
   display: flex;
@@ -263,7 +298,7 @@
 }
 
 .las-build-play-bar button {
-  min-width: 6.5rem;
+  min-width: calc(6.5rem * var(--las-scale));
   font-weight: 600;
 }
 
@@ -300,7 +335,7 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 0.55rem;
+  gap: calc(0.55rem * var(--las-scale));
   margin: 0;
   width: 100%;
   max-width: 100%;
@@ -321,10 +356,14 @@
   display: flex;
   flex-direction: row;
   align-items: flex-start;
-  gap: 0.75rem;
+  gap: calc(0.75rem * var(--las-scale));
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
+  position: relative;
+  z-index: 1;
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
 .las-me-rail {
@@ -333,16 +372,14 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 0.5rem;
+  gap: calc(0.5rem * var(--las-scale));
   width: 100%;
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
-  overflow: visible;
-  /* ?????????? */
-  max-height: none;
-  min-height: 28rem;
-  align-self: stretch;
+  overflow-x: auto;
+  overflow-y: visible;
+  align-self: start;
 }
 
 .las-boards-me {
@@ -1671,7 +1708,78 @@
 .las-ex-list {
   display: flex;
   flex-direction: column;
+  gap: 0.5rem;
+}
+
+.las-ex-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.las-ex-item.is-active .las-ex-card {
+  box-shadow: 0 0 0 2px #c9a227;
+}
+
+.las-ex-item-row {
+  align-items: center;
   gap: 0.35rem;
+}
+
+.las-ex-minus,
+.las-ex-plus {
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #243038;
+  color: var(--fg);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.las-ex-minus:hover:not(:disabled),
+.las-ex-plus:hover:not(:disabled) {
+  background: #2e3a44;
+}
+
+.las-ex-minus:disabled,
+.las-ex-plus:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.las-ex-card {
+  position: relative;
+  width: 3.2rem;
+  height: 4.2rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #1a2228 center / cover no-repeat;
+  flex: 0 0 auto;
+}
+
+.las-ex-count {
+  position: absolute;
+  right: 0.2rem;
+  bottom: 0.2rem;
+  min-width: 1.2rem;
+  padding: 0.05rem 0.25rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.las-ex-label {
+  font-size: 0.82rem;
+  color: var(--muted);
+  text-align: center;
 }
 
 .las-ex-res-btn {
@@ -1808,60 +1916,85 @@
 
 /* Harvest modal */
 .las-harvest-dialog {
-  max-width: 520px;
+  max-width: 1040px;
+  width: min(96vw, 1040px);
+  padding: 1.5rem 2rem 1.75rem;
 }
 .las-harvest-head {
   text-align: center;
-  margin-bottom: 0.5rem;
+  margin-bottom: 1rem;
 }
 .las-harvest-head h3 {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: 2.2rem;
+}
+.las-harvest-head .las-hint {
+  margin-top: 0.5rem;
+  font-size: 1.6rem;
 }
 .las-harvest-body {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  min-height: 140px;
+  gap: 1.5rem;
+  min-height: 280px;
   align-items: center;
+  justify-content: center;
 }
 .las-harvest-foot {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   justify-content: center;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+.las-harvest-foot button {
+  min-width: 9rem;
+  font-size: 1.15rem;
+  padding: 0.65rem 1.25rem;
 }
 .las-harvest-grid {
-  display: flex;
-  justify-content: center;
-  gap: 1rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 2rem 2.5rem;
   width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
 }
 .las-harvest-item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.4rem;
+  justify-content: center;
+  gap: 0.75rem;
 }
-.las-harvest-item .row {
+.las-harvest-item-row {
   display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 0.3rem;
+  justify-content: center;
+  gap: 1rem;
+  margin: 0;
 }
 .las-harvest-minus,
 .las-harvest-plus {
-  width: 28px;
-  height: 28px;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
   border: 1px solid #3a5a72;
   background: #1a2a36;
   color: #d4e0ea;
-  font-size: 1rem;
+  font-size: 2rem;
   line-height: 1;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
+  flex: 0 0 auto;
 }
 .las-harvest-minus:hover,
 .las-harvest-plus:hover {
@@ -1874,32 +2007,34 @@
   cursor: not-allowed;
 }
 .las-harvest-card {
-  width: 75px;
-  height: 100px;
-  border-radius: 6px;
+  width: 150px;
+  height: 200px;
+  border-radius: 10px;
   border: 2px solid transparent;
   background-size: cover;
   background-position: center;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 auto;
 }
 .las-harvest-count {
-  font-size: 1.4rem;
+  font-size: 2.8rem;
   font-weight: 700;
   color: #fff;
-  text-shadow: 0 1px 3px rgba(0,0,0,0.8);
-  background: rgba(0,0,0,0.45);
-  padding: 2px 8px;
-  border-radius: 12px;
-  min-width: 26px;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
+  background: rgba(0, 0, 0, 0.45);
+  padding: 4px 16px;
+  border-radius: 24px;
+  min-width: 52px;
   text-align: center;
 }
 .las-harvest-label {
-  font-size: 0.8rem;
+  font-size: 1.6rem;
   color: #b0c4d0;
+  text-align: center;
 }
 
 /* Expand modal */
@@ -2408,6 +2543,11 @@
   outline: 1px solid rgba(232, 212, 139, 0.55);
 }
 
+.las-pboard.is-discard-pending {
+  outline: 1px solid rgba(224, 140, 90, 0.7);
+  box-shadow: 0 0 0 1px rgba(224, 140, 90, 0.25);
+}
+
 .las-pboard.is-left {
   opacity: 0.55;
 }
@@ -2435,13 +2575,99 @@
 }
 
 .las-void-picker {
-  gap: 0.35rem;
-  align-items: center;
-  flex-wrap: wrap;
+  display: none;
 }
-.las-void-picker button {
-  padding: 0.3rem 0.55rem;
+
+/* Void skip modal */
+.las-void-skip-dialog {
+  max-width: 640px;
+  width: min(92vw, 640px);
+  padding: 1.25rem 1.5rem 1.5rem;
+}
+.las-void-skip-head {
+  text-align: center;
+  margin-bottom: 0.75rem;
+}
+.las-void-skip-head h3 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+.las-void-skip-head .las-hint {
+  margin-top: 0.35rem;
+  font-size: 1rem;
+}
+.las-void-skip-body {
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.las-void-skip-empty {
+  text-align: center;
+  margin: 0;
+  font-size: 1rem;
+}
+.las-void-skip-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem 1.25rem;
+  width: 100%;
+  max-width: 420px;
+  margin: 0 auto;
+}
+.las-void-skip-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.5rem;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.las-void-skip-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.las-void-skip-item.is-selected {
+  border-color: #c9a227;
+  box-shadow: 0 0 0 1px rgba(201, 162, 39, 0.35);
+  background: rgba(201, 162, 39, 0.08);
+}
+.las-void-skip-card {
+  position: relative;
+  width: 100px;
+  height: 133px;
+  border-radius: 8px;
+  background: #1a2228 center / cover no-repeat;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+.las-void-skip-qty {
+  position: absolute;
+  right: 0.25rem;
+  bottom: 0.25rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
   font-size: 0.85rem;
+  font-weight: 700;
+}
+.las-void-skip-label {
+  font-size: 1rem;
+  color: #b0c4d0;
+}
+.las-void-skip-foot {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+.las-void-skip-foot button {
+  min-width: 7rem;
 }
 
 .las-pboard-label {
@@ -2538,6 +2764,12 @@
   color: #9aa8b2;
 }
 
+.las-pboard-card.is-facedown.has-art,
+.las-card.is-facedown.has-art {
+  border-style: solid;
+  border-color: rgba(0, 0, 0, 0.25);
+}
+
 .las-pboard-unplaced .las-pboard-card {
   flex: 0 0 auto;
   width: var(--las-card-w);
@@ -2616,8 +2848,25 @@
   animation: las-mvp 1s ease-in-out;
 }
 
+@media (max-width: 1040px) {
+  .las-playfield {
+    grid-template-columns: 1fr;
+    row-gap: calc(0.65rem * var(--las-scale));
+  }
+
+  .las-table,
+  .las-me-rail {
+    grid-column: 1;
+    max-width: 100%;
+  }
+
+  .las-me-rail {
+    --las-me-rail-w: 100%;
+  }
+}
+
 @media (max-width: 720px) {
-  /* ???????????????????? */
+  /* 个人版面建筑/功能格间距 */
   .las-pboard-slots,
   .las-pboard-none-slots {
     gap: 0.35rem;

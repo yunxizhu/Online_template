@@ -93,6 +93,10 @@
     btnMenuLang: document.getElementById('btn-menu-lang'),
     menuLangSub: document.getElementById('menu-lang-sub'),
     menuLangItem: document.getElementById('menu-lang-item'),
+    btnMenuBgm: document.getElementById('btn-menu-bgm'),
+    menuBgmSub: document.getElementById('menu-bgm-sub'),
+    menuBgmRange: document.getElementById('menu-bgm-range'),
+    menuBgmValue: document.getElementById('menu-bgm-value'),
     turnTimer: document.getElementById('turn-timer'),
     turnTimerSec: document.getElementById('turn-timer-sec'),
     peopleCtx: document.getElementById('people-ctx'),
@@ -993,11 +997,25 @@
     el.gameMenuPop.hidden = true;
     el.btnGameMenu.setAttribute('aria-expanded', 'false');
     closeLangSub();
+    closeBgmSub();
   }
 
   function closeLangSub() {
     if (el.menuLangSub) el.menuLangSub.hidden = true;
     if (el.btnMenuLang) el.btnMenuLang.setAttribute('aria-expanded', 'false');
+  }
+
+  function closeBgmSub() {
+    if (el.menuBgmSub) el.menuBgmSub.hidden = true;
+    if (el.btnMenuBgm) el.btnMenuBgm.setAttribute('aria-expanded', 'false');
+  }
+
+  function syncBgmMenuSlider() {
+    if (!el.menuBgmRange || !window.BgmVolume) return;
+    const pct = window.BgmVolume.percent();
+    el.menuBgmRange.value = String(pct);
+    if (el.menuBgmValue) el.menuBgmValue.textContent = pct + '%';
+    if (el.menuBgmRange) el.menuBgmRange.setAttribute('aria-valuenow', String(pct));
   }
 
   function syncLangMenuActive() {
@@ -1011,9 +1029,19 @@
   function toggleLangSub() {
     if (!el.menuLangSub || !el.btnMenuLang) return;
     const open = el.menuLangSub.hidden;
+    if (open) closeBgmSub();
     el.menuLangSub.hidden = !open;
     el.btnMenuLang.setAttribute('aria-expanded', open ? 'true' : 'false');
     if (open) syncLangMenuActive();
+  }
+
+  function toggleBgmSub() {
+    if (!el.menuBgmSub || !el.btnMenuBgm) return;
+    const open = el.menuBgmSub.hidden;
+    if (open) closeLangSub();
+    el.menuBgmSub.hidden = !open;
+    el.btnMenuBgm.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) syncBgmMenuSlider();
   }
 
   function toggleGameMenu() {
@@ -1021,8 +1049,13 @@
     const open = el.gameMenuPop.hidden;
     el.gameMenuPop.hidden = !open;
     el.btnGameMenu.setAttribute('aria-expanded', open ? 'true' : 'false');
-    if (!open) closeLangSub();
-    else syncLangMenuActive();
+    if (!open) {
+      closeLangSub();
+      closeBgmSub();
+    } else {
+      syncLangMenuActive();
+      syncBgmMenuSlider();
+    }
   }
 
   function syncQuitMenuItem() {
@@ -1652,6 +1685,14 @@
     } else if (window.SgsAssets && typeof window.SgsAssets.stopBgm === 'function') {
       window.SgsAssets.stopBgm();
     }
+    if (game.type !== 'lasidao') {
+      if (
+        window.LasidaoAssets &&
+        typeof window.LasidaoAssets.stopBgm === 'function'
+      ) {
+        window.LasidaoAssets.stopBgm();
+      }
+    }
     if (game.type === 'incan') {
       hideAllGamePanels();
       if (window.IncanUi) {
@@ -1662,6 +1703,16 @@
       }
     } else if (game.type === 'lasidao') {
       hideAllGamePanels();
+      if (game.over && window.LasidaoAssets && window.LasidaoAssets.stopBgm) {
+        window.LasidaoAssets.stopBgm();
+      } else if (
+        !game.over &&
+        !el.viewGame.hidden &&
+        window.LasidaoAssets &&
+        typeof window.LasidaoAssets.playBgm === 'function'
+      ) {
+        window.LasidaoAssets.playBgm();
+      }
       if (window.LasidaoUi) {
         window.LasidaoUi.render(game, net, {
           meId: state.me && state.me.id,
@@ -2479,6 +2530,25 @@
       toggleLangSub();
     });
   }
+  if (el.btnMenuBgm) {
+    el.btnMenuBgm.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      toggleBgmSub();
+    });
+  }
+  if (el.menuBgmRange && window.BgmVolume) {
+    el.menuBgmRange.addEventListener('input', (ev) => {
+      ev.stopPropagation();
+      const pct = Number(ev.target.value);
+      window.BgmVolume.set(pct / 100);
+      if (el.menuBgmValue) el.menuBgmValue.textContent = pct + '%';
+      ev.target.setAttribute('aria-valuenow', String(pct));
+    });
+    el.menuBgmRange.addEventListener('click', (ev) => ev.stopPropagation());
+  }
+  if (el.menuBgmSub) {
+    el.menuBgmSub.addEventListener('click', (ev) => ev.stopPropagation());
+  }
   if (el.menuLangSub) {
     el.menuLangSub.addEventListener('click', (ev) => {
       const btn =
@@ -2522,6 +2592,7 @@
     I18n.onChange(() => refreshAfterLangChange());
   }
   syncLangMenuActive();
+  syncBgmMenuSlider();
   syncQuitMenuItem();
   if (el.roomTurnTime) {
     for (const opt of el.roomTurnTime.options) {

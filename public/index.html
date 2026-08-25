@@ -42,6 +42,34 @@
               <button type="button" role="menuitem" data-lang="en" data-i18n="lang.en">English</button>
             </div>
           </div>
+          <div class="game-menu-item has-sub" id="menu-bgm-item">
+            <button
+              type="button"
+              id="btn-menu-bgm"
+              role="menuitem"
+              aria-haspopup="true"
+              aria-expanded="false"
+              data-i18n="menu.bgmVolume"
+            >
+              BGM 音量
+            </button>
+            <div class="game-menu-sub game-menu-bgm-sub" id="menu-bgm-sub" hidden role="group">
+              <label class="menu-bgm-control" for="menu-bgm-range">
+                <span class="menu-bgm-label" data-i18n="menu.bgmVolumeLabel">音量</span>
+                <input
+                  type="range"
+                  id="menu-bgm-range"
+                  min="0"
+                  max="100"
+                  step="5"
+                  value="100"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                />
+                <span class="menu-bgm-value" id="menu-bgm-value" aria-live="polite">100%</span>
+              </label>
+            </div>
+          </div>
           <button type="button" id="btn-quit-game" role="menuitem" hidden data-i18n="menu.quitGame">
             退出游戏并返回大厅
           </button>
@@ -308,6 +336,7 @@
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/js/i18n.js"></script>
+  <script src="/js/bgm-volume.js"></script>
   <script src="/js/client.js"></script>
   <script src="/js/boot-games.js"></script>
   <script src="/js/ui.js"></script>

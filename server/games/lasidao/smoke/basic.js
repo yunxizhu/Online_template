@@ -59,9 +59,29 @@ function pickSlot(player, building) {
 function drainNonProduce(game) {
   let guard = 0;
   while (
-    ['settle_act', 'build'].includes(game.phase) &&
+    ['settle', 'settle_act', 'wish_well', 'build'].includes(game.phase) &&
     guard++ < 120
   ) {
+    if (game.phase === 'settle') {
+      drainSettleAnim(game);
+      continue;
+    }
+    if (game.phase === 'wish_well') {
+      let acted = false;
+      for (const p of game.players) {
+        const n = Number(p.pendingWishWellBonus) || 0;
+        if (n <= 0) continue;
+        ok(
+          applyAction(game, p.id, {
+            type: 'allocateWishWell',
+            payload: { alloc: { wood: n, stone: 0, food: 0, iron: 0 } },
+          })
+        );
+        acted = true;
+      }
+      if (!acted) break;
+      continue;
+    }
     const pid = game.currentPlayerId;
     if (!pid) break;
     const p = game.players.find((x) => x.id === pid);
@@ -78,26 +98,42 @@ function drainNonProduce(game) {
       );
       continue;
     }
-    if (p.pendingDiscardFunc && p.funcCards[0]) {
-      ok(
-        applyAction(game, pid, {
-          type: 'discardFunc',
-          payload: { cardId: p.funcCards[0].id },
-        })
-      );
-      continue;
-    }
-    if (p.pendingDiscardBuild) {
-      const pick =
-        p.buildings.find((b) => !b.built) || p.buildings[0];
-      if (pick) {
+    if (game.phase === 'settle_act') {
+      if (p.pendingDiscardRes) {
+        const pick = ['wood', 'stone', 'food', 'iron'].find(
+          (r) => (p.resources[r] || 0) > 0
+        );
+        if (pick) {
+          ok(
+            applyAction(game, pid, {
+              type: 'discardResource',
+              payload: { resource: pick },
+            })
+          );
+          continue;
+        }
+      }
+      if (p.pendingDiscardFunc && p.funcCards[0]) {
         ok(
           applyAction(game, pid, {
-            type: 'discardUnbuilt',
-            payload: { buildingId: pick.id },
+            type: 'discardFunc',
+            payload: { cardId: p.funcCards[0].id },
           })
         );
         continue;
+      }
+      if (p.pendingDiscardBuild) {
+        const pick =
+          p.buildings.find((b) => !b.built) || p.buildings[0];
+        if (pick) {
+          ok(
+            applyAction(game, pid, {
+              type: 'discardUnbuilt',
+              payload: { buildingId: pick.id },
+            })
+          );
+          continue;
+        }
       }
     }
     ok(applyAction(game, pid, { type: 'pass' }));
@@ -123,6 +159,7 @@ assert.strictEqual(game.board.resource.tiles.length, 0);
 assert.strictEqual(game.board.function.tiles.length, 0);
 assert.strictEqual(game.board.building.tiles.length, 0);
 assert.ok(game.players.every((p) => p.villagers === 3));
+assert.ok(game.players.every((p) => p.resources.food === 3));
 
 console.log('— init announce then board setup —');
 finishInit(game);
@@ -406,6 +443,18 @@ p9b.resources = { wood: 10, stone: 0, food: 0, iron: 0 };
 ok(ax(g9b, p9b.id, { type: 'exchange', payload: { from: 'wood', to: 'food' } }));
 assert.strictEqual(p9b.resources.wood, 6);
 assert.strictEqual(p9b.resources.food, 1);
+const g9c = createGameState(room(2));
+finishInit(g9c);
+const p9c = g9c.players[0];
+p9c.resources = { wood: 8, stone: 0, food: 0, iron: 0 };
+ok(
+  ax(g9c, p9c.id, {
+    type: 'exchange',
+    payload: { from: 'wood', to: 'iron', count: 2 },
+  })
+);
+assert.strictEqual(p9c.resources.wood, 0);
+assert.strictEqual(p9c.resources.iron, 2);
 
 const g9 = createGameState(room(2));
 finishInit(g9);
@@ -510,6 +559,34 @@ console.log('— face-down only visible to claimer —');
     .buildings.find((b) => b.id === 'secret_bld');
   assert.ok(mine && mine.label === '秘密房', '获得者可见暗置建筑内容');
   assert.ok(theirs && theirs.faceDown && !theirs.label, '他人不可见暗置建筑内容');
+
+  const openBld = {
+    id: 'open_bld',
+    kind: 'building',
+    label: '未建房',
+    buildType: 'exchange',
+    cost: { wood: 3, stone: 3 },
+    slot: null,
+    built: false,
+    workers: 0,
+  };
+  p0.buildings.push(openBld);
+  const pubOther2 = publicGameState(g, p1.id);
+  const theirsOpen = pubOther2.players
+    .find((p) => p.id === p0.id)
+    .buildings.find((b) => b.id === 'open_bld');
+  assert.ok(
+    theirsOpen && theirsOpen.faceDown && !theirsOpen.label,
+    '他人不可见未建造建筑（无论是否曾暗置）'
+  );
+  openBld.built = true;
+  openBld.faceDown = false;
+  const pubOther3 = publicGameState(g, p1.id);
+  const theirsBuilt = pubOther3.players
+    .find((p) => p.id === p0.id)
+    .buildings.find((b) => b.id === 'open_bld');
+  assert.strictEqual(theirsBuilt.label, '未建房', '已建造建筑对他人公开');
+
   assert.ok(
     pubOwner.players.find((p) => p.id === p0.id).funcCards.some((c) => c.id === faceDownFn.id),
     '获得者可见暗置功能卡'
@@ -613,11 +690,15 @@ ok(
 assert.strictEqual(p11.buildings.find((b) => b.id === 'rep_b').slot, 'none');
 
 {
+  const { maxResourceHandFor, expandCountFor, expandPermanentCost } =
+    require('../engine');
   const g = createGameState(room(2));
   finishInit(g);
   const p = g.players[0];
   assert.strictEqual(p.expandSlots || 0, 0);
   assert.strictEqual(p.expandFuncSlots || 0, 0);
+  assert.strictEqual(expandCountFor(p), 0);
+  assert.deepStrictEqual(expandPermanentCost(p), { wood: 2, stone: 2 });
   // 扩容卡现在进入手牌，需手动打出并选择方向
   p.funcCards.push({
     id: 'fn_expand_build',
@@ -657,10 +738,29 @@ assert.strictEqual(p11.buildings.find((b) => b.id === 'rep_b').slot, 'none');
     '扩容功能卡格成功'
   );
   assert.strictEqual(p.expandFuncSlots, 1, '扩容功能卡格 +1');
+  assert.strictEqual(expandCountFor(p), 2);
+  assert.deepStrictEqual(expandPermanentCost(p), { wood: 4, stone: 4 });
+  p.resources.wood = 10;
+  p.resources.stone = 10;
+  const woodBefore = p.resources.wood;
+  const stoneBefore = p.resources.stone;
+  ok(
+    applyAction(g, p.id, {
+      type: 'expandPermanent',
+      payload: { direction: 'resource' },
+    }),
+    '常驻扩容资源卡位成功'
+  );
+  assert.strictEqual(p.resources.wood, woodBefore - 4);
+  assert.strictEqual(p.resources.stone, stoneBefore - 4);
+  assert.strictEqual(p.expandResSlots, 1, '扩容资源卡位 +1');
+  assert.strictEqual(maxResourceHandFor(p), 14, '手牌资源上限 +4');
   const pub = publicGameState(g, p.id);
   const me = pub.players.find((x) => x.id === p.id);
   assert.strictEqual(me.expandSlots, 1);
   assert.strictEqual(me.expandFuncSlots, 1);
+  assert.strictEqual(me.expandResSlots, 1);
+  assert.strictEqual(me.maxResourceHand, 14);
   assert.strictEqual(me.maxBuildings, 4);
   assert.strictEqual(me.maxFuncHand, 4);
   p.buildings.push({
@@ -690,24 +790,15 @@ assert.strictEqual(p11.buildings.find((b) => b.id === 'rep_b').slot, 'none');
   console.log('✓ expand auto + none slots');
 }
 
+function drainSettleAnim(g) {
+  if (g.phase !== 'settle') return;
+  const { finishSettleAnimForce } = require('../engine');
+  ok(finishSettleAnimForce(g), 'finishSettleAnimForce');
+}
+
 function drainSettleAndWishWell(g) {
+  drainSettleAnim(g);
   let guard = 0;
-  while (g.phase === 'settle_act' && guard++ < 50) {
-    const pid = g.currentPlayerId;
-    if (!pid) break;
-    const p = g.players.find((x) => x.id === pid);
-    if (p.pendingDiscardFunc && p.funcCards[0]) {
-      ok(
-        applyAction(g, pid, {
-          type: 'discardFunc',
-          payload: { cardId: p.funcCards[0].id },
-        })
-      );
-      continue;
-    }
-    ok(applyAction(g, pid, { type: 'pass' }));
-  }
-  guard = 0;
   while (g.phase === 'wish_well' && guard++ < 20) {
     let acted = false;
     for (const p of g.players) {
@@ -722,6 +813,52 @@ function drainSettleAndWishWell(g) {
       acted = true;
     }
     if (!acted) break;
+  }
+}
+
+function drainSettleAct(g) {
+  let guard = 0;
+  while (g.phase === 'settle_act' && guard++ < 50) {
+    const pid = g.currentPlayerId;
+    if (!pid) break;
+    const p = g.players.find((x) => x.id === pid);
+    if (p.pendingDiscardRes) {
+      const pick = ['wood', 'stone', 'food', 'iron'].find(
+        (r) => (p.resources[r] || 0) > 0
+      );
+      if (pick) {
+        ok(
+          applyAction(g, pid, {
+            type: 'discardResource',
+            payload: { resource: pick },
+          })
+        );
+        continue;
+      }
+    }
+    if (p.pendingDiscardFunc && p.funcCards[0]) {
+      ok(
+        applyAction(g, pid, {
+          type: 'discardFunc',
+          payload: { cardId: p.funcCards[0].id },
+        })
+      );
+      continue;
+    }
+    if (p.pendingDiscardBuild) {
+      const pick =
+        p.buildings.find((b) => !b.built) || p.buildings[0];
+      if (pick) {
+        ok(
+          applyAction(g, pid, {
+            type: 'discardUnbuilt',
+            payload: { buildingId: pick.id },
+          })
+        );
+        continue;
+      }
+    }
+    ok(applyAction(g, pid, { type: 'pass' }));
   }
 }
 
@@ -904,6 +1041,41 @@ console.log('— wish well after produce —');
   const pub = publicGameState(g, p0.id);
   assert.deepStrictEqual(pub.wishWellPending, []);
   console.log('✓ wish well after produce');
+}
+
+console.log('— resource hand limit 10 —');
+{
+  const {
+    MAX_RESOURCE_HAND,
+    maxResourceHandFor,
+  } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p = g.players[0];
+  p.resources = { wood: 6, stone: 5, food: 0, iron: 0 };
+  g.phase = 'build';
+  g.buildPassed = {};
+  g.produceFinishOrder = ['p0', 'p1'];
+  g.currentPlayerId = 'p0';
+  ok(applyAction(g, 'p0', { type: 'pass' }));
+  ok(applyAction(g, 'p1', { type: 'pass' }));
+  assert.strictEqual(g.phase, 'settle_act', '超资源上限应进入弃牌阶段');
+  assert.ok(p.pendingDiscardRes, '应标记待弃资源');
+  while (p.pendingDiscardRes && g.phase === 'settle_act') {
+    ok(
+      applyAction(g, p.id, {
+        type: 'discardResource',
+        payload: { resource: 'wood' },
+      })
+    );
+  }
+  assert.strictEqual(
+    Object.values(p.resources).reduce((a, b) => a + b, 0),
+    maxResourceHandFor(p),
+    '弃置后应降至上限以内'
+  );
+  assert.notStrictEqual(g.phase, 'settle_act', '处理完应离开弃牌阶段');
+  console.log('✓ resource hand limit 10');
 }
 
 console.log('全部通过');

@@ -370,6 +370,7 @@ function emitGameState(room) {
       state: publicStateForRoom(room, p.id),
     });
   }
+  scheduleLasidaoSettleAnim(room);
 }
 
 function emitGameStarted(room) {
@@ -398,6 +399,30 @@ function scheduleLasidaoInitAnnounce(room) {
     room._lasInitTimer = null;
     if (!room.game || room.game.phase !== 'init_announce') return;
     mod.finishInitAnnounce(room.game);
+    syncTurnTimer(room, { onTimeout: handleTurnTimeout });
+    emitGameState(room);
+  }, delay);
+}
+
+/** 拉斯岛：结算动画超时后强制进入下一阶段 */
+function scheduleLasidaoSettleAnim(room) {
+  if (!room || room.gameType !== 'lasidao' || !room.game) return;
+  if (room.game.phase !== 'settle') {
+    if (room._lasSettleTimer) {
+      clearTimeout(room._lasSettleTimer);
+      room._lasSettleTimer = null;
+    }
+    return;
+  }
+  const mod = getGame('lasidao');
+  if (!mod || typeof mod.finishSettleAnimForce !== 'function') return;
+  if (room._lasSettleTimer) return;
+  const until = Number(room.game.settleAnimUntil) || 0;
+  const delay = Math.max(0, until - Date.now());
+  room._lasSettleTimer = setTimeout(() => {
+    room._lasSettleTimer = null;
+    if (!room.game || room.game.phase !== 'settle') return;
+    mod.finishSettleAnimForce(room.game);
     syncTurnTimer(room, { onTimeout: handleTurnTimeout });
     emitGameState(room);
   }, delay);

@@ -155,6 +155,24 @@ window.SgsAssets = (function () {
     game: `${RES}/music/bgm/${encodeURIComponent('01【背景】经典.mp3')}`,
   };
 
+  const BGM_BASE_VOLUME = 0.4;
+
+  function bgmTarget() {
+    const B = window.BgmVolume;
+    return B && typeof B.effective === 'function'
+      ? B.effective(BGM_BASE_VOLUME)
+      : BGM_BASE_VOLUME;
+  }
+
+  function applyBgmVolumeNow() {
+    if (!_bgmAudio || !_bgmKey) return;
+    _bgmAudio.volume = bgmTarget();
+  }
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('bgmvolumechange', applyBgmVolumeNow);
+  }
+
   let _bgmAudio = null;
   let _bgmKey = null;
   let _bgmUnlockBound = false;
@@ -196,6 +214,7 @@ window.SgsAssets = (function () {
       return;
     }
     if (key === _bgmKey && _bgmAudio) {
+      _bgmAudio.volume = bgmTarget();
       if (_bgmAudio.paused) {
         const p = _bgmAudio.play();
         if (p && typeof p.catch === 'function') p.catch(() => {});
@@ -206,7 +225,7 @@ window.SgsAssets = (function () {
     try {
       const audio = new Audio(BGM_SRC[key]);
       audio.loop = true;
-      audio.volume = 0.4;
+      audio.volume = bgmTarget();
       _bgmAudio = audio;
       _bgmKey = key;
       const p = audio.play();

@@ -160,6 +160,38 @@ body.phase-game {
   font-weight: 600;
 }
 
+.game-menu-bgm-sub {
+  min-width: 11rem;
+}
+
+.menu-bgm-control {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.55rem;
+  color: var(--text);
+  font-size: 0.88rem;
+  cursor: default;
+}
+
+.menu-bgm-label {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.menu-bgm-control input[type='range'] {
+  flex: 1 1 auto;
+  min-width: 0;
+  accent-color: #7eb8da;
+}
+
+.menu-bgm-value {
+  flex: 0 0 2.5rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.9;
+}
+
 @media (max-width: 640px) {
   .game-menu-sub {
     left: 0;

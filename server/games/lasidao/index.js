@@ -24,5 +24,7 @@ module.exports = {
   forceTimeout: engine.forceTimeout,
   onPlayerQuit: engine.onPlayerQuit,
   finishInitAnnounce: engine.finishInitAnnounce,
+  finishSettleAnimForce: engine.finishSettleAnimForce,
   INIT_ANNOUNCE_MS: engine.INIT_ANNOUNCE_MS,
+  SETTLE_ANIM_MAX_MS: engine.SETTLE_ANIM_MAX_MS,
 };

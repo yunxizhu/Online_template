@@ -52,7 +52,8 @@
         </div>
       </div>
       <div class="las-exchange-foot row las-actions">
-        <button id="btn-las-exchange-confirm" type="button" disabled>兑换</button>
+        <button id="btn-las-exchange-confirm" type="button" data-i18n="lasidao.exchangeBtn" disabled>兑换</button>
+        <button id="btn-las-exchange-reset" type="button" class="secondary" data-i18n="lasidao.exchangeReset">重置</button>
         <button id="btn-las-exchange-cancel" type="button" class="secondary" data-i18n="lasidao.cancel">取消</button>
       </div>
     </div>
@@ -128,6 +129,21 @@
     </div>
   </div>
 
+  <div id="las-void-skip-modal" class="modal las-void-skip-modal" hidden>
+    <div class="modal-backdrop" id="las-void-skip-backdrop"></div>
+    <div class="modal-dialog panel las-void-skip-dialog" role="dialog" aria-modal="true" aria-labelledby="las-void-skip-title">
+      <div class="las-void-skip-head">
+        <h3 id="las-void-skip-title" data-i18n="lasidao.voidSkipTitle">跳过本回合</h3>
+        <p id="las-void-skip-hint" class="muted las-hint" data-i18n="lasidao.voidSkipHint">选择要丢弃的 1 个资源</p>
+      </div>
+      <div id="las-void-skip-body" class="las-void-skip-body"></div>
+      <div class="las-void-skip-foot row las-actions">
+        <button id="btn-las-void-skip-confirm" type="button" data-i18n="lasidao.voidSkipConfirm" disabled>确认跳过</button>
+        <button id="btn-las-void-skip-cancel" type="button" class="secondary" data-i18n="lasidao.cancel">取消</button>
+      </div>
+    </div>
+  </div>
+
   <div id="las-exile-modal" class="modal las-exile-modal" hidden>
     <div class="modal-backdrop" id="las-exile-backdrop"></div>
     <div class="modal-dialog panel las-exile-dialog" role="dialog" aria-modal="true" aria-labelledby="las-exile-title">
@@ -151,6 +167,9 @@
       </div>
       <div id="las-expand-body" class="las-expand-body">
         <div class="las-expand-options">
+          <button type="button" class="las-expand-option" data-direction="resource">
+            <span data-i18n="lasidao.expandResource">扩容资源卡位</span>
+          </button>
           <button type="button" class="las-expand-option" data-direction="function">
             <span data-i18n="lasidao.expandFunction">扩容功能卡格</span>
           </button>
@@ -209,15 +228,7 @@
           <div id="las-dispatch-preview" class="las-dispatch-preview" hidden></div>
           <div class="row las-actions las-side-actions" id="las-produce-actions">
             <button id="btn-las-confirm" type="button" hidden data-i18n="lasidao.confirmDispatch">????</button>
-            <button id="btn-las-void" type="button" class="secondary" data-i18n="lasidao.voidDispatch">??????? ?1 ???</button>
-            <div id="las-void-picker" class="row las-void-picker" hidden>
-              <span class="muted" data-i18n="lasidao.voidPickLabel">丢弃资源以跳过：</span>
-              <button type="button" data-res="wood" data-i18n="lasidao.res.wood">木</button>
-              <button type="button" data-res="stone" data-i18n="lasidao.res.stone">石</button>
-              <button type="button" data-res="food" data-i18n="lasidao.res.food">食</button>
-              <button type="button" data-res="iron" data-i18n="lasidao.res.iron">铁</button>
-              <button type="button" class="secondary" id="btn-las-void-cancel" data-i18n="lasidao.cancel">取消</button>
-            </div>
+            <button id="btn-las-void" type="button" class="secondary" data-i18n="lasidao.produceSkip">跳过</button>
           </div>
         </div>
 
@@ -235,6 +246,7 @@
             <button id="btn-las-build-house" type="button" data-i18n="lasidao.buildHousePermanent">建造房子</button>
             <button id="btn-las-exchange" type="button" data-i18n="lasidao.exchangeBtn">兑换</button>
             <button id="btn-las-breed" type="button" data-i18n="lasidao.breedPermanent">繁殖村民</button>
+            <button id="btn-las-expand-perm" type="button" data-i18n="lasidao.expandPermanent">扩容</button>
             <button id="btn-las-reset-build" type="button" class="secondary" data-i18n="lasidao.resetBuildTurn">重置回合</button>
           </div>
           <div id="las-phase-actions" class="row las-actions las-side-actions las-pass-row" hidden>
