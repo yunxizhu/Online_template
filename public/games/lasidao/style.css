@@ -302,6 +302,12 @@
   font-weight: 600;
 }
 
+#las-permanent-actions button.is-selected {
+  outline: 2px solid #c9a227;
+  outline-offset: 1px;
+  background: rgba(201, 162, 39, 0.22);
+}
+
 .las-side-rail .las-actions,
 .las-side-rail .las-side-actions {
   justify-content: flex-start;
@@ -1641,6 +1647,10 @@
 
 .las-card.is-selected {
   box-shadow: 0 0 0 1px #c9a227;
+}
+
+.las-pboard-card.is-selected {
+  box-shadow: 0 0 0 2px #c9a227;
 }
 
 .las-func-panel,

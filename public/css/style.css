@@ -892,9 +892,9 @@ body.phase-room .room-panel button:not(.secondary):hover {
   transition: opacity 0.2s ease;
 }
 
-/* 对局中：聊天窗不遮挡底部「确认出牌 / 结束出牌」 */
+/* 对局中：聊天窗浮于牌桌之上，仍低于弹窗 */
 body.phase-game .chat-dock {
-  z-index: 12;
+  z-index: 45;
   bottom: 0.55rem;
   width: min(360px, calc(100vw - var(--page-pad) * 2 - 8rem));
   pointer-events: none;

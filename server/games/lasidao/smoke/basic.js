@@ -558,6 +558,7 @@ console.log('— face-down only visible to claimer —');
     .find((p) => p.id === p0.id)
     .buildings.find((b) => b.id === 'secret_bld');
   assert.ok(mine && mine.label === '秘密房', '获得者可见暗置建筑内容');
+  assert.strictEqual(mine.faceDown, false, '获得者应明示（非暗置卡背）');
   assert.ok(theirs && theirs.faceDown && !theirs.label, '他人不可见暗置建筑内容');
 
   const openBld = {
@@ -626,6 +627,7 @@ console.log('— face-down only visible to claimer —');
   const settleOwner = publicGameState(g, p0.id).lastSettle.slots[0].tiles[0];
   const settleOther = publicGameState(g, p1.id).lastSettle.slots[0].tiles[0];
   assert.ok(settleOwner.label, '结算动画：获得者可见');
+  assert.strictEqual(settleOwner.faceDown, false, '结算动画：获得者明示');
   assert.ok(settleOther.faceDown && !settleOther.label, '结算动画：他人仍暗置');
 }
 

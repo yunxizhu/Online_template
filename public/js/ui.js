@@ -1072,7 +1072,10 @@
           ? 'game'
           : 'lobby');
     if (!el.chatDock) return;
-    const shouldShow = state.inLobby && (name === 'lobby' || name === 'room');
+    // 大厅 / 房间等待 / 对局中均显示聊天室（含拉斯岛等）
+    const shouldShow =
+      state.inLobby &&
+      (name === 'lobby' || name === 'room' || name === 'game');
     el.chatDock.hidden = !shouldShow;
     if (!shouldShow) {
       setChatDockActive(false);

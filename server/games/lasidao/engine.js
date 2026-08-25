@@ -539,7 +539,7 @@ function publicSettleTiles(tiles, claimedByPid, viewerId) {
     return {
       id: t.id,
       kind: t.kind,
-      faceDown: Boolean(t.faceDown),
+      faceDown: false,
       label: t.label,
       resource: t.resource || null,
       large: t.large,
@@ -589,7 +589,7 @@ function publicBuilding(b, isMe) {
   }
   return {
     id: b.id,
-    faceDown: Boolean(b.faceDown),
+    faceDown: false,
     label: b.label,
     buildType: b.buildType,
     resource: b.resource,
@@ -1234,9 +1234,12 @@ function takeFunctionCard(game, player, tile) {
   receiveFunctionCard(game, player, card);
 }
 
-/** 入手功能卡 */
+/** 入手功能卡（对持有者明示） */
 function receiveFunctionCard(game, player, card) {
-  player.funcCards.push(card);
+  player.funcCards.push({
+    ...card,
+    faceDown: false,
+  });
   if (player.funcCards.length > maxFuncHandFor(player)) {
     player.pendingDiscardFunc = true;
   }
@@ -1244,10 +1247,10 @@ function receiveFunctionCard(game, player, card) {
 
 function takeBuildingCard(game, player, tile) {
   const { number, ...card } = tile;
-  // 保留 faceDown：暗置建筑仅持有者可见，建造后翻开
+  // 入手后对持有者明示；他人在 publicBuilding 中仍看不到未建造内容
   const neu = {
     ...card,
-    faceDown: Boolean(tile.faceDown),
+    faceDown: false,
     slot: 'none',
     built: false,
     workers: 0,
@@ -2483,7 +2486,7 @@ function publicGameState(game, viewerId) {
               id: c.id,
               funcType: c.funcType,
               label: c.label,
-              faceDown: Boolean(c.faceDown),
+              faceDown: false,
             }))
           : [],
         buildings: p.buildings.map((b) => publicBuilding(b, isMe)),
