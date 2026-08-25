@@ -29,7 +29,7 @@ const MAX_RESOURCE_HAND = 10;
 /** 每位玩家最多拥有的强化骰数量 */
 const MAX_ENHANCED_DICE = 3;
 /** 征召：下一轮生产临时村民数量 */
-const RECRUIT_TEMP_VILLAGERS = 3;
+const RECRUIT_TEMP_VILLAGERS = 1;
 const EXPAND_RESOURCE_BONUS = 4;
 /** 资源板块摆放上限（6 数字格 × 每格 3 张） */
 const MAX_RESOURCE_BOARD_TILES = 18;

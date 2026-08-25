@@ -811,20 +811,20 @@ body.phase-room .room-chat-bubble::after {
 
 .game-chat-fly {
   position: fixed;
-  right: -12rem;
-  max-width: min(40vw, 22rem);
-  padding: 0.38rem 0.72rem;
+  right: -18rem;
+  max-width: min(40vw, 33rem);
+  padding: 0.57rem 1.08rem;
   border-radius: 999px;
   background: rgba(26, 36, 42, 0.92);
-  border: 1px solid rgba(61, 155, 143, 0.55);
+  border: 1.5px solid rgba(61, 155, 143, 0.55);
   color: var(--text);
-  font-size: 0.9rem;
+  font-size: 1.35rem;
   line-height: 1.35;
   white-space: nowrap;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
   pointer-events: none;
   z-index: 40;
-  animation: game-chat-fly 4s linear forwards;
+  animation: game-chat-fly 8s linear forwards;
 }
 
 body.phase-game .game-chat-fly {
@@ -838,7 +838,7 @@ body.phase-game .game-chat-fly {
     opacity: 0.96;
   }
   to {
-    transform: translateX(calc(-100vw - 26rem));
+    transform: translateX(calc(-100vw - 39rem));
     opacity: 0.96;
   }
 }

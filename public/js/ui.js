@@ -485,7 +485,7 @@
     node.addEventListener('animationend', () => node.remove(), { once: true });
     setTimeout(() => {
       if (node.isConnected) node.remove();
-    }, 4200);
+    }, 8200);
   }
 
   function chatKey(msg) {
