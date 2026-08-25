@@ -1,0 +1,5 @@
+import { PkgBaseOptions, PkgExecOptions, PkgCompressType } from './types';
+export type { PkgBaseOptions, PkgExecOptions, PkgCompressType };
+export declare function exec(argv: string[]): Promise<void>;
+export declare function exec(options: PkgExecOptions): Promise<void>;
+//# sourceMappingURL=index.d.ts.map

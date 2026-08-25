@@ -1,0 +1,820 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.resolveConfig = exports.stringifyTargetForOutput = exports.differentParts = exports.stringifyTarget = exports.parseTargets = exports.resolveFlags = exports.validatePkgConfig = exports.parseInput = exports.isConfiguration = exports.loadPkgrc = exports.findPkgrc = exports.PKGRC_FILENAMES = void 0;
+const fs_1 = require("fs");
+const promises_1 = require("fs/promises");
+const path_1 = __importDefault(require("path"));
+const url_1 = require("url");
+const util_1 = require("util");
+const pkg_fetch_1 = require("@yao-pkg/pkg-fetch");
+const log_1 = require("./log");
+const common_1 = require("./common");
+const compress_type_1 = require("./compress_type");
+// ---------------------------------------------------------------------------
+// File discovery / loading
+// ---------------------------------------------------------------------------
+/** Auto-discovered config filenames, in precedence order. First match wins. */
+exports.PKGRC_FILENAMES = [
+    '.pkgrc',
+    '.pkgrc.json',
+    'pkg.config.js',
+    'pkg.config.cjs',
+    'pkg.config.mjs',
+];
+/** Return the first `PKGRC_FILENAMES` entry that exists in `baseDir`, or `undefined`. */
+function findPkgrc(baseDir) {
+    for (const name of exports.PKGRC_FILENAMES) {
+        const candidate = path_1.default.join(baseDir, name);
+        if ((0, fs_1.existsSync)(candidate))
+            return candidate;
+    }
+    return undefined;
+}
+exports.findPkgrc = findPkgrc;
+/**
+ * Genuine dynamic `import()` that survives the TS `module: commonjs` rewrite.
+ * TS would otherwise turn `import(...)` into `require(...)`, which breaks ESM.
+ */
+const nativeImport = new Function('specifier', 'return import(specifier)');
+/**
+ * Load a pkgrc / pkg.config file. `.pkgrc` and `.json` are read as JSON; `.js`
+ * / `.cjs` / `.mjs` are dynamically imported and their default export returned.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function loadPkgrc(file) {
+    const base = path_1.default.basename(file);
+    // `.pkgrc` has no extension and `.pkgrc.json` is JSON only — parse directly.
+    if (base === '.pkgrc' || file.endsWith('.json')) {
+        return JSON.parse((0, fs_1.readFileSync)(file, 'utf-8'));
+    }
+    const mod = await nativeImport((0, url_1.pathToFileURL)(file).href);
+    return mod.default ?? mod;
+}
+exports.loadPkgrc = loadPkgrc;
+/** True if `file` is a `package.json` or a `*.config.json` we should treat as one. */
+function isConfiguration(file) {
+    return (0, common_1.isPackageJson)(file) || file.endsWith('.config.json');
+}
+exports.isConfiguration = isConfiguration;
+/**
+ * Single source of truth for every config-overridable flag. Drives `parseArgs`
+ * options, `--no-*` negations, config validation, programmatic-input mapping,
+ * and the CLI > config > default merge. Add a flag by adding one entry here.
+ */
+const FLAG_SPECS = [
+    {
+        cli: 'debug',
+        cfg: 'debug',
+        resolved: 'debug',
+        kind: 'bool',
+        default: false,
+        short: 'd',
+    },
+    {
+        cli: 'bytecode',
+        cfg: 'bytecode',
+        resolved: 'bytecode',
+        kind: 'bool',
+        default: true,
+    },
+    {
+        cli: 'native-build',
+        cfg: 'nativeBuild',
+        resolved: 'nativeBuild',
+        kind: 'bool',
+        default: true,
+    },
+    {
+        cli: 'signature',
+        cfg: 'signature',
+        resolved: 'signature',
+        kind: 'bool',
+        default: true,
+    },
+    {
+        cli: 'fallback-to-source',
+        cfg: 'fallbackToSource',
+        resolved: 'fallbackToSource',
+        kind: 'bool',
+        default: false,
+    },
+    {
+        cli: 'public',
+        cfg: 'public',
+        resolved: 'public',
+        kind: 'bool',
+        default: false,
+    },
+    { cli: 'sea', cfg: 'sea', resolved: 'sea', kind: 'bool', default: false },
+    {
+        cli: 'compress',
+        cfg: 'compress',
+        resolved: 'compress',
+        kind: 'string',
+        default: 'None',
+        short: 'C',
+    },
+    {
+        cli: 'options',
+        cfg: 'options',
+        option: 'bakeOptions',
+        resolved: 'bakeOptions',
+        kind: 'list',
+    },
+    {
+        cli: 'public-packages',
+        cfg: 'publicPackages',
+        resolved: 'publicPackages',
+        kind: 'list',
+    },
+    {
+        cli: 'no-dict',
+        cfg: 'noDictionary',
+        resolved: 'noDictionary',
+        kind: 'list',
+    },
+];
+/** Programmatic option key for a flag (defaults to the config key). */
+const optionKey = (s) => (s.option ?? s.cfg);
+/**
+ * Options table handed to `util.parseArgs`. Short-circuits and input/output
+ * plumbing are declared here; flag-shaped entries are appended from
+ * `FLAG_SPECS` below so they stay in sync.
+ */
+const PARSE_ARGS_OPTIONS = {
+    // short-circuits + CLI-only controls
+    help: { type: 'boolean', short: 'h' },
+    version: { type: 'boolean', short: 'v' },
+    build: { type: 'boolean', short: 'b' },
+    // non-flag strings (input/output/target plumbing — not in FLAG_SPECS)
+    config: { type: 'string', short: 'c' },
+    output: { type: 'string', short: 'o' },
+    outdir: { type: 'string' },
+    'out-dir': { type: 'string' },
+    'out-path': { type: 'string' },
+    target: { type: 'string', short: 't' },
+    targets: { type: 'string' },
+};
+/**
+ * Names for which a `--no-<name>` sibling is registered with `parseArgs`.
+ * `parseArgs` does not auto-generate negations, and pkg needs them on every
+ * boolean flag plus the CLI-only `--build`.
+ */
+const NEGATABLE_BOOLS = [
+    'build',
+    ...FLAG_SPECS.filter((s) => s.kind === 'bool').map((s) => s.cli),
+];
+for (const s of FLAG_SPECS) {
+    if (s.kind === 'bool') {
+        PARSE_ARGS_OPTIONS[s.cli] = s.short
+            ? { type: 'boolean', short: s.short }
+            : { type: 'boolean' };
+    }
+    else {
+        PARSE_ARGS_OPTIONS[s.cli] = s.short
+            ? { type: 'string', short: s.short }
+            : { type: 'string' };
+    }
+}
+for (const name of NEGATABLE_BOOLS) {
+    PARSE_ARGS_OPTIONS[`no-${name}`] = { type: 'boolean' };
+}
+/**
+ * Collapse every `no-<flag>` value into the canonical `<flag>` key. The token
+ * walk establishes last-wins order when both forms are passed (e.g.
+ * `--bytecode --no-bytecode`).
+ */
+function mergeNegations(values, tokens) {
+    for (const name of NEGATABLE_BOOLS) {
+        const neg = `no-${name}`;
+        if (values[neg] === undefined)
+            continue;
+        let lastKind;
+        for (const t of tokens) {
+            if (t.kind !== 'option')
+                continue;
+            if (t.name === name)
+                lastKind = 'pos';
+            else if (t.name === neg)
+                lastKind = 'neg';
+        }
+        values[name] = lastKind === 'pos';
+        delete values[neg];
+    }
+}
+/**
+ * Flatten `string | string[]` into a comma-joined string. Empty results (`''`
+ * or `[]`) collapse to `undefined` so callers treat them the same as unset.
+ */
+function joinList(v) {
+    if (v === undefined)
+        return undefined;
+    const joined = Array.isArray(v) ? v.join(',') : v;
+    return joined === '' ? undefined : joined;
+}
+/** Parse raw `argv` into a `ParsedInput`. Used by the CLI entry point. */
+function parseCliInput(argv) {
+    let parsed;
+    try {
+        parsed = (0, util_1.parseArgs)({
+            args: argv,
+            options: PARSE_ARGS_OPTIONS,
+            allowPositionals: true,
+            strict: true,
+            tokens: true,
+        });
+    }
+    catch (err) {
+        throw (0, log_1.wasReported)(err.message);
+    }
+    const v = parsed.values;
+    mergeNegations(v, parsed.tokens);
+    if (parsed.positionals.length > 1) {
+        throw (0, log_1.wasReported)('Not more than one entry file/directory is expected');
+    }
+    // `--target` (short `-t`) and `--targets` are accepted as aliases. Reject
+    // both-present up front rather than silently preferring one — parseArgs
+    // stores them independently, and order-based "last wins" would require a
+    // token walk for a case that's almost certainly a user mistake.
+    if (v.target !== undefined && v.targets !== undefined) {
+        throw (0, log_1.wasReported)("Specify either '--target' or '--targets'. Not both");
+    }
+    const flags = {};
+    for (const s of FLAG_SPECS) {
+        if (v[s.cli] !== undefined)
+            flags[s.cli] = v[s.cli];
+    }
+    return {
+        help: v.help,
+        version: v.version,
+        entry: parsed.positionals[0],
+        config: v.config,
+        output: v.output,
+        outputPath: v['out-path'] ?? v.outdir ?? v['out-dir'],
+        targets: v.targets ?? v.target,
+        build: v.build,
+        flags,
+    };
+}
+/**
+ * Validate a `preBuild`/`postBuild` hook value: it must be a non-empty shell
+ * string or a function. `label` prefixes the error so the message matches the
+ * config source (`exec() option` vs `pkg config:`). Shared by the programmatic
+ * and config-file validators so the empty-string rule can't drift between them.
+ */
+function validateShellOrFnHook(label, key, v) {
+    if (typeof v !== 'string' && typeof v !== 'function') {
+        throw (0, log_1.wasReported)(`${label} "${key}" must be a shell command (string) or a function`);
+    }
+    if (typeof v === 'string' && v.trim() === '') {
+        throw (0, log_1.wasReported)(`${label} "${key}" must not be an empty string`);
+    }
+}
+/**
+ * Parse a programmatic `exec()` options object into a `ParsedInput`. Validates
+ * each flag's type at the boundary — wrong types throw immediately instead of
+ * being silently dropped.
+ */
+function parseOptionsInput(options) {
+    if (!options || typeof options !== 'object') {
+        throw (0, log_1.wasReported)('exec() options must be an object');
+    }
+    if (!options.input || typeof options.input !== 'string') {
+        throw (0, log_1.wasReported)('exec() options.input is required and must be a string');
+    }
+    const flags = {};
+    for (const s of FLAG_SPECS) {
+        const key = String(optionKey(s));
+        const v = options[optionKey(s)];
+        if (v === undefined)
+            continue;
+        if (s.kind === 'bool') {
+            if (typeof v !== 'boolean') {
+                throw (0, log_1.wasReported)(`exec() option "${key}" must be a boolean`);
+            }
+            flags[s.cli] = v;
+        }
+        else if (s.kind === 'string') {
+            if (typeof v !== 'string') {
+                throw (0, log_1.wasReported)(`exec() option "${key}" must be a string`);
+            }
+            flags[s.cli] = v;
+        }
+        else {
+            if (typeof v === 'string') {
+                flags[s.cli] = v;
+            }
+            else if (Array.isArray(v) && v.every((x) => typeof x === 'string')) {
+                flags[s.cli] = joinList(v);
+            }
+            else {
+                throw (0, log_1.wasReported)(`exec() option "${key}" must be a string or string[]`);
+            }
+        }
+    }
+    const apiPkg = {};
+    if (options.preBuild !== undefined) {
+        validateShellOrFnHook('exec() option', 'preBuild', options.preBuild);
+        apiPkg.preBuild = options.preBuild;
+    }
+    if (options.postBuild !== undefined) {
+        validateShellOrFnHook('exec() option', 'postBuild', options.postBuild);
+        apiPkg.postBuild = options.postBuild;
+    }
+    if (options.transform !== undefined) {
+        if (typeof options.transform !== 'function') {
+            throw (0, log_1.wasReported)(`exec() option "transform" must be a function`);
+        }
+        apiPkg.transform = options.transform;
+    }
+    return {
+        entry: options.input,
+        config: options.config,
+        output: options.output,
+        outputPath: options.outputPath,
+        targets: joinList(options.targets),
+        build: options.build,
+        flags,
+        apiPkg: Object.keys(apiPkg).length ? apiPkg : undefined,
+    };
+}
+/**
+ * Parse either an `argv` array (CLI) or an `exec()` options object
+ * (programmatic) into the same canonical `ParsedInput` shape.
+ */
+function parseInput(argvOrOptions) {
+    return Array.isArray(argvOrOptions)
+        ? parseCliInput(argvOrOptions)
+        : parseOptionsInput(argvOrOptions);
+}
+exports.parseInput = parseInput;
+// ---------------------------------------------------------------------------
+// Schema validation (driven by FLAG_SPECS + a small static list)
+// ---------------------------------------------------------------------------
+/** Keys accepted under `pkg` that are not driven by `FLAG_SPECS`. */
+const NON_FLAG_PKG_KEYS = [
+    'scripts',
+    'assets',
+    'ignore',
+    'patches',
+    'deployFiles',
+    'dictionary',
+    'log',
+    'targets',
+    'outputPath',
+    'seaConfig',
+    'preBuild',
+    'postBuild',
+    'transform',
+];
+/** Union of flag-driven and static keys — anything outside this set warns. */
+const KNOWN_PKG_KEYS = new Set([
+    ...NON_FLAG_PKG_KEYS,
+    ...FLAG_SPECS.map((s) => s.cfg),
+]);
+/**
+ * Warn on unknown keys under `pkg` and throw on flag values whose runtime type
+ * doesn't match the declared `FlagKind`. No-op when `cfg` is null/undefined.
+ */
+function validatePkgConfig(cfg) {
+    if (!cfg || typeof cfg !== 'object')
+        return;
+    const rec = cfg;
+    for (const key of Object.keys(rec)) {
+        if (!KNOWN_PKG_KEYS.has(key)) {
+            log_1.log.warn(`Unknown key "${key}" in pkg config — ignoring.`);
+        }
+    }
+    for (const s of FLAG_SPECS) {
+        const v = rec[s.cfg];
+        if (v === undefined)
+            continue;
+        if (s.kind === 'bool') {
+            if (typeof v !== 'boolean') {
+                throw (0, log_1.wasReported)(`pkg config: "${s.cfg}" must be a boolean`);
+            }
+        }
+        else if (s.kind === 'string') {
+            if (typeof v !== 'string') {
+                throw (0, log_1.wasReported)(`pkg config: "${s.cfg}" must be a string`);
+            }
+        }
+        else {
+            if (typeof v === 'string')
+                continue;
+            if (Array.isArray(v) && v.every((x) => typeof x === 'string'))
+                continue;
+            throw (0, log_1.wasReported)(`pkg config: "${s.cfg}" must be a string or string[]`);
+        }
+    }
+    // Hooks: shell-string or function for pre/postBuild, function-only for
+    // transform. Functions are unreachable from JSON config files but valid
+    // when loaded from `pkg.config.{js,cjs,mjs}` or passed via the Node API.
+    for (const key of ['preBuild', 'postBuild']) {
+        if (rec[key] !== undefined) {
+            validateShellOrFnHook('pkg config:', key, rec[key]);
+        }
+    }
+    if (rec.transform !== undefined && typeof rec.transform !== 'function') {
+        throw (0, log_1.wasReported)(`pkg config: "transform" must be a function`);
+    }
+}
+exports.validatePkgConfig = validatePkgConfig;
+/** Narrow an arbitrary value to `string | string[] | undefined` or `undefined`. */
+function toStringList(v) {
+    if (typeof v === 'string')
+        return v;
+    if (Array.isArray(v) && v.every((x) => typeof x === 'string')) {
+        return v;
+    }
+    return undefined;
+}
+/**
+ * Merge CLI (comma-joined string) and config (string | string[]) into a
+ * cleaned `string[]`. An empty CLI value (`--options ""`) wins over config but
+ * collapses to `undefined` so callers treat it the same as unset.
+ */
+function resolveList(cli, cfg) {
+    const raw = cli !== undefined ? cli : cfg;
+    if (raw === undefined)
+        return undefined;
+    const list = Array.isArray(raw) ? raw : raw.split(',');
+    const cleaned = list.map((s) => s.trim()).filter((s) => s.length);
+    return cleaned.length ? cleaned : undefined;
+}
+/** Decode a `--compress` string (case-insensitive, with aliases) to `CompressType`. */
+function resolveCompress(raw) {
+    switch (raw.toLowerCase()) {
+        case 'brotli':
+        case 'br':
+            return compress_type_1.CompressType.Brotli;
+        case 'gzip':
+        case 'gz':
+            return compress_type_1.CompressType.GZip;
+        case 'zstd':
+        case 'zs':
+            return compress_type_1.CompressType.Zstd;
+        case 'none':
+            return compress_type_1.CompressType.None;
+        default:
+            throw (0, log_1.wasReported)(`Invalid compression algorithm "${raw}" (accepted: None/none, Brotli/br, GZip/gz/gzip, or Zstd/zs/zstd)`);
+    }
+}
+/**
+ * Merge raw flag values and `pkg` config into `ResolvedFlags` using the
+ * precedence CLI > config > default. Pure: assumes `pkg` has already been
+ * validated by the caller (see `resolveConfig`).
+ */
+function resolveFlags(raw, pkg) {
+    const out = {};
+    for (const s of FLAG_SPECS) {
+        if (s.kind === 'list') {
+            const rawCli = raw[s.cli];
+            const rawCfg = pkg[s.cfg];
+            out[s.resolved] = resolveList(typeof rawCli === 'string' ? rawCli : undefined, toStringList(rawCfg));
+        }
+        else {
+            const cli = raw[s.cli];
+            const cfg = pkg[s.cfg];
+            out[s.resolved] =
+                cli !== undefined ? cli : cfg !== undefined ? cfg : s.default;
+        }
+    }
+    out.compress = resolveCompress(String(out.compress));
+    return out;
+}
+exports.resolveFlags = resolveFlags;
+/**
+ * Write resolved flag values back onto `pkg` so downstream consumers reading
+ * the pkg config (`pkgOptions.get()`, dictionary merges, ...) observe CLI
+ * overrides. Driven by `FLAG_SPECS` to stay in lockstep with `resolveFlags`.
+ */
+function applyResolvedFlags(pkg, flags) {
+    const out = { ...pkg };
+    for (const s of FLAG_SPECS) {
+        const v = flags[s.resolved];
+        if (v === undefined)
+            continue;
+        // `compress` is the one flag stored as enum on ResolvedFlags but a string
+        // literal on PkgOptions — convert back at the boundary.
+        out[s.cfg] = s.cli === 'compress' ? compress_type_1.CompressType[v] : v;
+    }
+    return out;
+}
+/**
+ * Resolve an entry path into its filesystem location and, if it's a package,
+ * locate the `bin` target. Throws if the entry or `bin` file doesn't exist.
+ */
+async function resolveInput(entry) {
+    let input = path_1.default.resolve(entry);
+    if (!(0, fs_1.existsSync)(input)) {
+        throw (0, log_1.wasReported)('Input file does not exist', [input]);
+    }
+    if ((await (0, promises_1.stat)(input)).isDirectory()) {
+        input = path_1.default.join(input, 'package.json');
+        if (!(0, fs_1.existsSync)(input)) {
+            throw (0, log_1.wasReported)('Input file does not exist', [input]);
+        }
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let inputJson;
+    let inputJsonName;
+    if (isConfiguration(input)) {
+        inputJson = JSON.parse(await (0, promises_1.readFile)(input, 'utf-8'));
+        inputJsonName = inputJson.name
+            ? inputJson.name.split('/').pop()
+            : undefined;
+    }
+    let inputBin;
+    if (inputJson) {
+        let { bin } = inputJson;
+        if (bin) {
+            if (typeof bin === 'object') {
+                if (inputJsonName && bin[inputJsonName]) {
+                    bin = bin[inputJsonName];
+                }
+                else {
+                    bin = bin[Object.keys(bin)[0]];
+                }
+            }
+            inputBin = path_1.default.resolve(path_1.default.dirname(input), bin);
+            if (!(0, fs_1.existsSync)(inputBin)) {
+                throw (0, log_1.wasReported)("Bin file does not exist (taken from package.json 'bin' property)", [inputBin]);
+            }
+        }
+        if (!inputBin) {
+            throw (0, log_1.wasReported)("Property 'bin' does not exist in", [input]);
+        }
+    }
+    return { input, inputFin: inputBin || input, inputJson, inputJsonName };
+}
+/**
+ * Resolve the config file: use `explicit` if given, else auto-discover via
+ * `findPkgrc`. Normalizes bare pkg-config shapes into `{ pkg: ... }` and warns
+ * when both a pkgrc and a `package.json` `pkg` field are present.
+ */
+async function resolveConfigFile(explicit, input, inputJson) {
+    if (inputJson && explicit) {
+        throw (0, log_1.wasReported)("Specify either 'package.json' or config. Not both");
+    }
+    let config = explicit;
+    if (!explicit) {
+        const discovered = findPkgrc(path_1.default.dirname(input));
+        if (discovered) {
+            config = discovered;
+            log_1.log.info(`Using config ${path_1.default.relative(process.cwd(), discovered)}`);
+        }
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let configJson;
+    if (config) {
+        config = path_1.default.resolve(config);
+        if (!(0, fs_1.existsSync)(config)) {
+            throw (0, log_1.wasReported)('Config file does not exist', [config]);
+        }
+        configJson = await loadPkgrc(config);
+        // Bare pkg config (no package-like keys) gets wrapped.
+        if (!configJson.name &&
+            !configJson.files &&
+            !configJson.dependencies &&
+            !configJson.pkg) {
+            configJson = { pkg: configJson };
+        }
+    }
+    if (!explicit && config && inputJson?.pkg) {
+        log_1.log.warn(`Both ${path_1.default.basename(config)} and "pkg" field in package.json were found. ` +
+            `The ${path_1.default.basename(config)} file takes precedence.`);
+    }
+    return { config, configJson };
+}
+/**
+ * Compute the single base output path. Returns `autoOutput: true` when the
+ * path was derived (rather than taken from `--output`), which signals that
+ * target-specific suffixes should be appended by `assignTargetOutputs`.
+ */
+function resolveOutput(cliOutput, cliOutputPath, 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+inputJson, inputJsonName, 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+configJson, pkg, inputFin, entry) {
+    if (cliOutput && cliOutputPath) {
+        throw (0, log_1.wasReported)("Specify either 'output' or 'out-path'. Not both");
+    }
+    if (cliOutput) {
+        return { output: path_1.default.resolve(cliOutput), autoOutput: false };
+    }
+    let name;
+    if (inputJson) {
+        name = inputJsonName;
+        if (!name) {
+            throw (0, log_1.wasReported)("Property 'name' does not exist in", [entry]);
+        }
+    }
+    else if (configJson) {
+        name = configJson.name;
+    }
+    if (!name)
+        name = path_1.default.basename(inputFin);
+    const outputPath = cliOutputPath ?? pkg.outputPath ?? '';
+    const ext = path_1.default.extname(name);
+    const base = name.slice(0, -ext.length || undefined);
+    return { output: path_1.default.resolve(outputPath, base), autoOutput: true };
+}
+// ---------------------------------------------------------------------------
+// Targets — spec parse + host defaults + per-target output naming.
+// ---------------------------------------------------------------------------
+const { hostArch, hostPlatform, isValidNodeRange, knownArchs, knownPlatforms, toFancyArch, toFancyPlatform, } = pkg_fetch_1.system;
+/** `node<major>` for the running Node.js version, used as the default nodeRange. */
+const hostNodeRange = `node${process.version.match(/^v(\d+)/)[1]}`;
+/**
+ * Expand target spec strings into `NodeTarget`s. Each item is split on `-`
+ * and tokens are classified as nodeRange / platform / arch; missing parts
+ * fall back to the host. `'host'` short-circuits to the full host triple.
+ *
+ * Exported for unit tests — production callers go through `resolveTargetList`.
+ */
+function parseTargets(items) {
+    const targets = [];
+    for (const item of items) {
+        const target = {
+            nodeRange: hostNodeRange,
+            platform: hostPlatform,
+            arch: hostArch,
+        };
+        if (item !== 'host') {
+            for (const token of item.split('-')) {
+                if (!token)
+                    continue;
+                if (isValidNodeRange(token)) {
+                    target.nodeRange = token;
+                    continue;
+                }
+                const p = toFancyPlatform(token);
+                if (knownPlatforms.indexOf(p) >= 0) {
+                    target.platform = p;
+                    continue;
+                }
+                const a = toFancyArch(token);
+                if (knownArchs.indexOf(a) >= 0) {
+                    target.arch = a;
+                    continue;
+                }
+                throw (0, log_1.wasReported)(`Unknown token '${token}' in '${item}'`);
+            }
+        }
+        targets.push(target);
+    }
+    return targets;
+}
+exports.parseTargets = parseTargets;
+/** Format a target back into its canonical `node<range>-<platform>-<arch>` spec. */
+function stringifyTarget(t) {
+    return `${t.nodeRange}-${t.platform}-${t.arch}`;
+}
+exports.stringifyTarget = stringifyTarget;
+/**
+ * Return the axes on which `targets` actually differ.
+ *
+ * Exported for unit tests — production callers go through `resolveConfig`.
+ */
+function differentParts(targets) {
+    const nr = new Set();
+    const pl = new Set();
+    const ar = new Set();
+    for (const t of targets) {
+        nr.add(t.nodeRange);
+        pl.add(t.platform);
+        ar.add(t.arch);
+    }
+    const r = {};
+    if (nr.size > 1)
+        r.nodeRange = true;
+    if (pl.size > 1)
+        r.platform = true;
+    if (ar.size > 1)
+        r.arch = true;
+    return r;
+}
+exports.differentParts = differentParts;
+/**
+ * Build a per-target output filename by appending only the target axes that
+ * actually differ across the target list, avoiding redundant `-x64`, etc.
+ *
+ * Exported for unit tests — production callers go through `assignTargetOutputs`.
+ */
+function stringifyTargetForOutput(baseOutput, t, diff) {
+    const a = [baseOutput];
+    if (diff.nodeRange)
+        a.push(t.nodeRange);
+    if (diff.platform)
+        a.push(t.platform);
+    if (diff.arch)
+        a.push(t.arch);
+    return a.join('-');
+}
+exports.stringifyTargetForOutput = stringifyTargetForOutput;
+/**
+ * Resolve the list of build targets from CLI/config spec. Falls back to
+ * `['linux','macos','win']` when the output name was auto-derived, else to
+ * `['host']` — preserving historical pkg behavior for bare invocations.
+ */
+function resolveTargetList(cliTargets, pkg, autoOutput) {
+    let spec = [];
+    if (cliTargets) {
+        spec = cliTargets
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+    }
+    else if (pkg.targets) {
+        spec = Array.isArray(pkg.targets)
+            ? pkg.targets.map((s) => s.trim()).filter(Boolean)
+            : String(pkg.targets)
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean);
+    }
+    let targets = parseTargets(spec);
+    if (!targets.length) {
+        targets = autoOutput
+            ? parseTargets(['linux', 'macos', 'win'])
+            : parseTargets(['host']);
+        log_1.log.info('Targets not specified. Assuming:', targets.map(stringifyTarget).join(', '));
+    }
+    return targets;
+}
+/**
+ * Attach a per-target output path. Adds `.exe` on Windows and disambiguates
+ * multi-target builds. Throws if a resolved path would overwrite the input
+ * file unless the name was auto-derived (in which case a platform suffix is
+ * appended to dodge the collision).
+ */
+function assignTargetOutputs(targets, baseOutput, autoOutput, inputFin) {
+    const diff = differentParts(targets);
+    const single = targets.length === 1;
+    return targets.map((t) => {
+        let file = single
+            ? baseOutput
+            : stringifyTargetForOutput(baseOutput, t, diff);
+        if (t.platform === 'win' && path_1.default.extname(file) !== '.exe')
+            file += '.exe';
+        if (file === inputFin) {
+            if (autoOutput) {
+                file += `-${t.platform}`;
+            }
+            else {
+                throw (0, log_1.wasReported)('Refusing to overwrite input file', [inputFin]);
+            }
+        }
+        return { ...t, output: file };
+    });
+}
+/**
+ * Orchestrate the full resolution pipeline: entry → config file → pkg validate
+ * → flag merge → output path → targets. This is the single "understand what
+ * the user asked for" step that `exec()` runs before any build work.
+ */
+async function resolveConfig(parsed) {
+    if (!parsed.entry) {
+        throw (0, log_1.wasReported)('Entry file/directory is expected', [
+            'Pass --help to see usage information',
+        ]);
+    }
+    const { input, inputFin, inputJson, inputJsonName } = await resolveInput(parsed.entry);
+    const { config, configJson } = await resolveConfigFile(parsed.config, input, inputJson);
+    const sourcePkg = configJson?.pkg ?? inputJson?.pkg ?? {};
+    if (typeof sourcePkg !== 'object' ||
+        sourcePkg === null ||
+        Array.isArray(sourcePkg)) {
+        throw (0, log_1.wasReported)('pkg config: "pkg" must be an object');
+    }
+    // Spread (not Object.assign) so configJson/inputJson stay untouched —
+    // they're returned to the caller and other readers shouldn't observe
+    // API-injected hooks bleeding back into the source `pkg` field.
+    // Programmatic-API hook fields are layered on top of any config-file
+    // hooks: the API call site is the most explicit.
+    const rawPkg = { ...sourcePkg, ...(parsed.apiPkg ?? {}) };
+    validatePkgConfig(rawPkg);
+    const flags = resolveFlags(parsed.flags, rawPkg);
+    const pkg = applyResolvedFlags(rawPkg, flags);
+    const { output, autoOutput } = resolveOutput(parsed.output, parsed.outputPath, inputJson, inputJsonName, configJson, pkg, inputFin, parsed.entry);
+    const targets = assignTargetOutputs(resolveTargetList(parsed.targets, pkg, autoOutput), output, autoOutput, inputFin);
+    return {
+        input,
+        inputFin,
+        inputJson,
+        config,
+        configJson,
+        pkg,
+        flags,
+        forceBuild: parsed.build === true,
+        output,
+        autoOutput,
+        targets,
+    };
+}
+exports.resolveConfig = resolveConfig;
+//# sourceMappingURL=config.js.map

@@ -1,0 +1,13 @@
+/// <reference types="node" />
+/// <reference types="node" />
+/// <reference types="node" />
+import type { Transform } from 'stream';
+export declare enum CompressType {
+    None = 0,
+    GZip = 1,
+    Brotli = 2,
+    Zstd = 3
+}
+export declare function getZstdCompressSync(): (b: Buffer) => Buffer;
+export declare function getZstdCompressStream(): () => Transform;
+//# sourceMappingURL=compress_type.d.ts.map

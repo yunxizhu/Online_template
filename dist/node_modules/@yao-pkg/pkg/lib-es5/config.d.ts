@@ -1,0 +1,148 @@
+import { CompressType } from './compress_type';
+import { NodeTarget, PkgExecOptions, PkgOptions } from './types';
+/** Auto-discovered config filenames, in precedence order. First match wins. */
+export declare const PKGRC_FILENAMES: string[];
+/** Return the first `PKGRC_FILENAMES` entry that exists in `baseDir`, or `undefined`. */
+export declare function findPkgrc(baseDir: string): string | undefined;
+/**
+ * Load a pkgrc / pkg.config file. `.pkgrc` and `.json` are read as JSON; `.js`
+ * / `.cjs` / `.mjs` are dynamically imported and their default export returned.
+ */
+export declare function loadPkgrc(file: string): Promise<any>;
+/** True if `file` is a `package.json` or a `*.config.json` we should treat as one. */
+export declare function isConfiguration(file: string): boolean;
+/** Pre-merge flag values keyed by CLI name; lists are still comma-joined strings. */
+export type RawFlags = Record<string, string | boolean | undefined>;
+/** Canonical shape produced by both the CLI and programmatic entry points. */
+export interface ParsedInput {
+    /** `--help` short-circuit. */
+    help?: boolean;
+    /** `--version` short-circuit. */
+    version?: boolean;
+    /** Positional entry file or directory. */
+    entry?: string;
+    /** Explicit config path from `--config` / `options.config`. */
+    config?: string;
+    /** Output file name from `--output` / `options.output`. */
+    output?: string;
+    /** Output directory; collapsed from `--out-path` / `--outdir` / `--out-dir`. */
+    outputPath?: string;
+    /** Raw target spec string (comma-separated), pre-parse. */
+    targets?: string;
+    /** `--build`: force rebuilding base Node.js binaries from source. */
+    build?: boolean;
+    /** Pre-merge flag values keyed by CLI name (see `RawFlags`). */
+    flags: RawFlags;
+    /**
+     * Programmatic-API-only `pkg` overrides that don't have a flag/config-file
+     * equivalent (currently: function-typed build hooks). Merged into the
+     * resolved `pkg` config in `resolveConfig`. The CLI never populates this.
+     */
+    apiPkg?: Partial<PkgOptions>;
+}
+/**
+ * Parse either an `argv` array (CLI) or an `exec()` options object
+ * (programmatic) into the same canonical `ParsedInput` shape.
+ */
+export declare function parseInput(argvOrOptions: string[] | PkgExecOptions): ParsedInput;
+/**
+ * Warn on unknown keys under `pkg` and throw on flag values whose runtime type
+ * doesn't match the declared `FlagKind`. No-op when `cfg` is null/undefined.
+ */
+export declare function validatePkgConfig(cfg: unknown): void;
+/** Fully merged build-shaping flags (CLI > config > default). */
+export interface ResolvedFlags {
+    debug: boolean;
+    /** `compress` is decoded from its string form into the enum at this layer. */
+    compress: CompressType;
+    bytecode: boolean;
+    nativeBuild: boolean;
+    signature: boolean;
+    fallbackToSource: boolean;
+    public: boolean;
+    sea: boolean;
+    publicPackages: string[] | undefined;
+    noDictionary: string[] | undefined;
+    bakeOptions: string[] | undefined;
+}
+/**
+ * Merge raw flag values and `pkg` config into `ResolvedFlags` using the
+ * precedence CLI > config > default. Pure: assumes `pkg` has already been
+ * validated by the caller (see `resolveConfig`).
+ */
+export declare function resolveFlags(raw: RawFlags, pkg: PkgOptions): ResolvedFlags;
+/**
+ * Expand target spec strings into `NodeTarget`s. Each item is split on `-`
+ * and tokens are classified as nodeRange / platform / arch; missing parts
+ * fall back to the host. `'host'` short-circuits to the full host triple.
+ *
+ * Exported for unit tests — production callers go through `resolveTargetList`.
+ */
+export declare function parseTargets(items: string[]): NodeTarget[];
+/** Format a target back into its canonical `node<range>-<platform>-<arch>` spec. */
+export declare function stringifyTarget(t: NodeTarget): string;
+/** Which parts of a target vary across a list (used to pick output suffixes). */
+export interface DifferentParts {
+    nodeRange?: boolean;
+    platform?: boolean;
+    arch?: boolean;
+}
+/**
+ * Return the axes on which `targets` actually differ.
+ *
+ * Exported for unit tests — production callers go through `resolveConfig`.
+ */
+export declare function differentParts(targets: NodeTarget[]): DifferentParts;
+/**
+ * Build a per-target output filename by appending only the target axes that
+ * actually differ across the target list, avoiding redundant `-x64`, etc.
+ *
+ * Exported for unit tests — production callers go through `assignTargetOutputs`.
+ */
+export declare function stringifyTargetForOutput(baseOutput: string, t: NodeTarget, diff: DifferentParts): string;
+/** `NodeTarget` with its final output path attached. */
+export type ResolvedTarget = NodeTarget & {
+    output: string;
+};
+/**
+ * Fully resolved input to `exec()`: every precedence decision (CLI > config >
+ * default) has been made, targets are expanded, and output paths are assigned.
+ * Downstream code reads from this exclusively — no raw argv or configJson
+ * re-parsing past this point.
+ */
+export interface ResolvedConfig {
+    /** Absolute path of the entry file or of an inferred `package.json`. */
+    input: string;
+    /** Real entrypoint: resolved `bin` target if input is a package.json-like
+     *  file, otherwise `input`. */
+    inputFin: string;
+    /** Parsed package.json-like input (undefined for plain JS entries). */
+    inputJson: any;
+    /** Absolute path of the loaded config file, if any. */
+    config: string | undefined;
+    /** Parsed (and normalized) config file contents, if any. */
+    configJson: any;
+    /**
+     * Effective pkg config (configJson.pkg > inputJson.pkg > {}) with resolved
+     * flag values written back in, so downstream consumers reading the pkg
+     * (e.g. `pkgOptions.get()`) observe CLI overrides.
+     */
+    pkg: PkgOptions;
+    /** Merged CLI > config > default build-shaping flags. */
+    flags: ResolvedFlags;
+    /** Force rebuilding base Node.js binaries from source. */
+    forceBuild: boolean;
+    /** Resolved single-output base path (absolute). */
+    output: string;
+    /** `true` when the output name was derived automatically. */
+    autoOutput: boolean;
+    /** Fully resolved targets with per-target output paths assigned. */
+    targets: ResolvedTarget[];
+}
+/**
+ * Orchestrate the full resolution pipeline: entry → config file → pkg validate
+ * → flag merge → output path → targets. This is the single "understand what
+ * the user asked for" step that `exec()` runs before any build work.
+ */
+export declare function resolveConfig(parsed: ParsedInput): Promise<ResolvedConfig>;
+//# sourceMappingURL=config.d.ts.map

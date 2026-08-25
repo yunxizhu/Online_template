@@ -1,0 +1,281 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.exec = void 0;
+const assert_1 = __importDefault(require("assert"));
+const fs_1 = require("fs");
+const promises_1 = require("fs/promises");
+const pkg_fetch_1 = require("@yao-pkg/pkg-fetch");
+const path_1 = __importDefault(require("path"));
+const log_1 = require("./log");
+const help_1 = __importDefault(require("./help"));
+const hooks_1 = require("./hooks");
+const packer_1 = __importDefault(require("./packer"));
+const chmod_1 = require("./chmod");
+const producer_1 = __importDefault(require("./producer"));
+const refiner_1 = __importDefault(require("./refiner"));
+const fabricator_1 = require("./fabricator");
+const walker_1 = __importDefault(require("./walker"));
+const compress_type_1 = require("./compress_type");
+const mach_o_1 = require("./mach-o");
+const options_1 = __importDefault(require("./options"));
+const sea_1 = __importStar(require("./sea"));
+const config_1 = require("./config");
+const { version } = JSON.parse((0, fs_1.readFileSync)(path_1.default.join(__dirname, '../package.json'), 'utf-8'));
+function buildMarker(configJson, config, inputJson, input) {
+    const marker = configJson
+        ? { config: configJson, base: path_1.default.dirname(config), configPath: config }
+        : {
+            config: inputJson || {},
+            base: path_1.default.dirname(input),
+            configPath: input,
+        };
+    marker.toplevel = true;
+    return marker;
+}
+// http://www.openwall.com/lists/musl/2012/12/08/4
+const { hostArch, hostPlatform } = pkg_fetch_1.system;
+function fabricatorForTarget({ nodeRange, arch }) {
+    let fabPlatform = hostPlatform;
+    if (hostArch !== arch &&
+        (hostPlatform === 'linux' || hostPlatform === 'alpine')) {
+        // With linuxstatic, it is possible to generate bytecode for different
+        // arch with simple QEMU configuration instead of the entire sysroot.
+        fabPlatform = 'linuxstatic';
+    }
+    return {
+        nodeRange,
+        platform: fabPlatform,
+        arch,
+    };
+}
+const dryRunResults = {};
+async function needWithDryRun({ forceBuild, nodeRange, platform, arch, }) {
+    const result = await (0, pkg_fetch_1.need)({
+        dryRun: true,
+        forceBuild,
+        nodeRange,
+        platform,
+        arch,
+    });
+    (0, assert_1.default)(['exists', 'fetched', 'built'].indexOf(result) >= 0);
+    dryRunResults[result] = true;
+}
+const targetsCache = {};
+async function needViaCache(target) {
+    const s = (0, config_1.stringifyTarget)(target);
+    let c = targetsCache[s];
+    if (c) {
+        return c;
+    }
+    const { forceBuild, nodeRange, platform, arch } = target;
+    c = await (0, pkg_fetch_1.need)({
+        forceBuild,
+        nodeRange,
+        platform,
+        arch,
+    });
+    targetsCache[s] = c;
+    return c;
+}
+async function exec(argvOrOptions) {
+    const parsed = (0, config_1.parseInput)(argvOrOptions);
+    if (parsed.help) {
+        (0, help_1.default)();
+        return;
+    }
+    if (parsed.version) {
+        console.log(version);
+        return;
+    }
+    log_1.log.info(`pkg@${version}`);
+    // Single "understand what the user asked for" step. Downstream never
+    // touches raw argv / configJson for behavior decisions.
+    const { input, inputFin, inputJson, config, configJson, pkg, flags, forceBuild, targets: resolvedTargets, } = await (0, config_1.resolveConfig)(parsed);
+    // Assign unconditionally: the programmatic API may call `exec()` multiple
+    // times in the same process, and `log.debugMode` is module-global. Leaving
+    // it set from a prior run would leak debug output into a later `debug:false`
+    // invocation.
+    log_1.log.debugMode = flags.debug;
+    if (flags.compress !== compress_type_1.CompressType.None) {
+        log_1.log.info(`compression: ${compress_type_1.CompressType[flags.compress]}`);
+    }
+    // Targets come fully resolved (host defaults applied, output paths
+    // assigned, input-overwrite guards enforced). Widen to the build-time
+    // shape so the fetch loop can attach binaryPath / fabricator.
+    const targets = resolvedTargets;
+    const bakes = (flags.bakeOptions ?? []).map((bake) => `--${bake}`);
+    // marker + options (shared between SEA and traditional pipelines)
+    options_1.default.set(pkg);
+    // preBuild runs once, before any walking / Node binary fetch / SEA work.
+    // Placed here (not inside each pipeline) so a single hook covers
+    // traditional, simple SEA, and enhanced SEA without duplication.
+    await (0, hooks_1.runPreBuild)(pkg);
+    const marker = buildMarker(configJson, config, inputJson, input);
+    // public / no-dict flags (shared between SEA and traditional pipelines)
+    const params = {};
+    if (flags.public) {
+        params.publicToplevel = true;
+    }
+    if (flags.publicPackages) {
+        params.publicPackages = flags.publicPackages.includes('*')
+            ? ['*']
+            : flags.publicPackages;
+    }
+    if (flags.noDictionary) {
+        params.noDictionary = flags.noDictionary.includes('*')
+            ? ['*']
+            : flags.noDictionary;
+    }
+    if (flags.sea) {
+        if (inputJson || configJson) {
+            // Enhanced SEA mode — use walker pipeline.
+            // seaEnhanced validates the host Node version and minTargetMajor itself.
+            await (0, sea_1.seaEnhanced)(inputFin, {
+                targets,
+                signature: flags.signature,
+                marker,
+                params: { ...params, seaMode: true },
+                addition: (0, config_1.isConfiguration)(input) ? input : undefined,
+                doCompress: flags.compress,
+            });
+        }
+        else {
+            // Simple SEA mode — plain .js file without package.json.
+            // No walker → no per-file archive → nothing to compress here.
+            if (flags.compress !== compress_type_1.CompressType.None) {
+                throw (0, log_1.wasReported)('Simple SEA mode (--sea without a package.json) does not support --compress. ' +
+                    'Add a package.json with a "pkg" / "bin" entry to use the enhanced SEA pipeline, ' +
+                    'which supports compression.');
+            }
+            await (0, sea_1.default)(inputFin, {
+                targets,
+                signature: flags.signature,
+            });
+        }
+        return;
+    }
+    // fetch targets
+    const { bytecode, nativeBuild } = flags;
+    for (const target of targets) {
+        target.forceBuild = forceBuild;
+        await needWithDryRun(target);
+        target.fabricator = fabricatorForTarget(target);
+        if (bytecode) {
+            await needWithDryRun({
+                ...target.fabricator,
+                forceBuild,
+            });
+        }
+    }
+    if (dryRunResults.fetched && !dryRunResults.built) {
+        log_1.log.info('Fetching base Node.js binaries to PKG_CACHE_PATH');
+    }
+    for (const target of targets) {
+        target.binaryPath = await needViaCache(target);
+        const f = target.fabricator;
+        if (f && bytecode) {
+            f.binaryPath = await needViaCache(f);
+            if (f.platform === 'macos') {
+                // ad-hoc sign the base binary temporarily to generate bytecode
+                // due to the new mandatory signing requirement
+                const signedBinaryPath = `${f.binaryPath}-signed`;
+                await (0, promises_1.rm)(signedBinaryPath, { recursive: true, force: true });
+                (0, fs_1.copyFileSync)(f.binaryPath, signedBinaryPath);
+                try {
+                    (0, mach_o_1.signMachOExecutable)(signedBinaryPath);
+                }
+                catch {
+                    throw (0, log_1.wasReported)('Cannot generate bytecode', [
+                        'pkg fails to run "codesign" utility. Due to the mandatory signing',
+                        'requirement of macOS, executables must be signed. Please ensure the',
+                        'utility is installed and properly configured.',
+                    ]);
+                }
+                f.binaryPath = signedBinaryPath;
+            }
+            if (f.platform !== 'win') {
+                await (0, chmod_1.plusx)(f.binaryPath);
+            }
+        }
+    }
+    // records
+    let records;
+    let entrypoint = inputFin;
+    let symLinks;
+    const addition = (0, config_1.isConfiguration)(input) ? input : undefined;
+    const walkResult = await (0, walker_1.default)(marker, entrypoint, addition, params);
+    entrypoint = walkResult.entrypoint;
+    records = walkResult.records;
+    symLinks = walkResult.symLinks;
+    const refineResult = (0, refiner_1.default)(records, entrypoint, symLinks);
+    entrypoint = refineResult.entrypoint;
+    records = refineResult.records;
+    symLinks = refineResult.symLinks;
+    // Transform runs after refinement so hooks see the final paths and the
+    // final set of records, but before packer hands STORE_BLOB sources to
+    // the bytecode fabricator and before STORE_CONTENT bodies are compressed.
+    await (0, hooks_1.runTransform)(pkg, records);
+    const backpack = (0, packer_1.default)({ records, entrypoint, bytecode, symLinks });
+    log_1.log.debug('Targets:', JSON.stringify(targets, null, 2));
+    for (const target of targets) {
+        if (target.output && (0, fs_1.existsSync)(target.output)) {
+            if ((await (0, promises_1.stat)(target.output)).isFile()) {
+                await (0, promises_1.rm)(target.output, { recursive: true, force: true });
+            }
+            else {
+                throw (0, log_1.wasReported)('Refusing to overwrite non-file output', [
+                    target.output,
+                ]);
+            }
+        }
+        else if (target.output) {
+            await (0, promises_1.mkdir)(path_1.default.dirname(target.output), { recursive: true });
+        }
+        await (0, producer_1.default)({
+            backpack,
+            bakes,
+            slash: target.platform === 'win' ? '\\' : '/',
+            target: target,
+            symLinks,
+            doCompress: flags.compress,
+            nativeBuild,
+            fallbackToSource: flags.fallbackToSource,
+        });
+        if (target.platform !== 'win' && target.output) {
+            await (0, sea_1.signMacOSIfNeeded)(target.output, target, flags.signature);
+            await (0, chmod_1.plusx)(target.output);
+        }
+        if (target.output) {
+            await (0, hooks_1.runPostBuild)(pkg, target.output);
+        }
+    }
+    (0, fabricator_1.shutdown)();
+}
+exports.exec = exec;
+//# sourceMappingURL=index.js.map

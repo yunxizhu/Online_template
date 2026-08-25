@@ -1,0 +1,37 @@
+import type { FileRecords, PkgOptions } from './types';
+/**
+ * Invoke `preBuild` if configured. Runs once before the walker, regardless
+ * of pipeline (traditional, simple SEA, enhanced SEA).
+ */
+export declare function runPreBuild(pkg: PkgOptions): Promise<void>;
+/**
+ * Invoke `postBuild` if configured. Called once per produced binary, after
+ * it has been written and (where applicable) codesigned.
+ *
+ * Shell form receives the absolute output path via `PKG_OUTPUT`; function
+ * form receives it as the first argument.
+ */
+export declare function runPostBuild(pkg: PkgOptions, output: string): Promise<void>;
+/**
+ * Run `postBuild` once per produced binary, sequentially. Sequential
+ * ordering keeps stdout/stderr from overlapping targets cleanly separated
+ * on the user's terminal. Used by both SEA paths after baking; the
+ * traditional pipeline calls `runPostBuild` directly inside its own
+ * per-target loop because each binary is produced sequentially anyway.
+ */
+export declare function runPostBuildForTargets(pkg: PkgOptions, targets: ReadonlyArray<{
+    output?: string;
+}>): Promise<void>;
+/**
+ * Apply the `transform` hook to every record that ships file contents
+ * (STORE_BLOB or STORE_CONTENT). Must run after the refiner (so paths are
+ * final) and before bytecode generation / compression (so the transformed
+ * source feeds those steps).
+ *
+ * Bodies are loaded eagerly when the user opts into transform — without
+ * loading, packer/sea-assets would re-read disk and bypass the transform.
+ * This trades memory for correctness; the cost only applies to builds that
+ * configure a transform.
+ */
+export declare function runTransform(pkg: PkgOptions, records: FileRecords): Promise<void>;
+//# sourceMappingURL=hooks.d.ts.map

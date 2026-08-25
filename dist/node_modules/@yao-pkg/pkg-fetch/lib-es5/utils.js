@@ -1,0 +1,123 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.nodeBinarySortFunction = exports.spawn = exports.plusx = exports.hash = exports.downloadUrl = void 0;
+const undici_1 = require("undici");
+const crypto_1 = __importDefault(require("crypto"));
+const fs_1 = require("fs");
+const promises_1 = require("fs/promises");
+const path_1 = __importDefault(require("path"));
+const stream_1 = require("stream");
+const promises_2 = require("stream/promises");
+const child_process_1 = require("child_process");
+const semver_1 = require("semver");
+const log_1 = require("./log");
+async function downloadUrl(url, file) {
+    log_1.log.enableProgress(path_1.default.basename(file));
+    log_1.log.showProgress(0);
+    const proxy = process.env.HTTPS_PROXY ??
+        process.env.https_proxy ??
+        process.env.HTTP_PROXY ??
+        process.env.http_proxy;
+    // Created once and closed in `finally` so its connection pool never leaks,
+    // even across the multiple throw paths below.
+    const dispatcher = proxy ? new undici_1.ProxyAgent(proxy) : undefined;
+    try {
+        let res;
+        try {
+            res = await (0, undici_1.fetch)(url, dispatcher ? { dispatcher } : undefined);
+        }
+        catch (err) {
+            log_1.log.disableProgress();
+            throw (0, log_1.wasReported)(`Network error during fetch: ${err.message}`);
+        }
+        if (!res.ok) {
+            log_1.log.disableProgress();
+            throw (0, log_1.wasReported)(`${res.status}: ${res.statusText}`);
+        }
+        if (!res.body) {
+            log_1.log.disableProgress();
+            throw (0, log_1.wasReported)(`Empty response body for ${url}`);
+        }
+        const tempFile = `${file}.downloading`;
+        (0, fs_1.mkdirSync)(path_1.default.dirname(tempFile), { recursive: true });
+        const ws = (0, fs_1.createWriteStream)(tempFile);
+        const totalSize = Number(res.headers.get('content-length'));
+        let currentSize = 0;
+        const body = stream_1.Readable.fromWeb(res.body);
+        body.on('data', (chunk) => {
+            // Falsy for both a missing header (`NaN`) and a zero length, avoiding a
+            // `NaN%` progress reading.
+            if (totalSize) {
+                currentSize += chunk.length;
+                log_1.log.showProgress((currentSize / totalSize) * 100);
+            }
+        });
+        // `pipeline` propagates errors from the source (`body`) as well as the
+        // destination (`ws`), so a truncated/aborted download rejects loudly
+        // instead of leaving the promise unsettled and the process exiting
+        // silently.
+        try {
+            await (0, promises_2.pipeline)(body, ws);
+        }
+        catch (err) {
+            log_1.log.disableProgress();
+            (0, fs_1.rmSync)(tempFile, { force: true });
+            throw (0, log_1.wasReported)(`${err.name}: ${err.message}`);
+        }
+        log_1.log.showProgress(100);
+        log_1.log.disableProgress();
+        (0, fs_1.renameSync)(tempFile, file);
+    }
+    finally {
+        await dispatcher?.close();
+    }
+}
+exports.downloadUrl = downloadUrl;
+async function hash(filePath) {
+    return new Promise((resolve, reject) => {
+        const resultHash = crypto_1.default.createHash('sha256');
+        const input = (0, fs_1.createReadStream)(filePath);
+        input.on('error', (e) => {
+            reject(e);
+        });
+        input.on('readable', () => {
+            const data = input.read();
+            if (data) {
+                resultHash.update(data);
+            }
+            else {
+                resolve(resultHash.digest('hex'));
+            }
+        });
+    });
+}
+exports.hash = hash;
+async function plusx(file) {
+    const s = await (0, promises_1.stat)(file);
+    const newMode = s.mode | 64 | 8 | 1;
+    if (s.mode === newMode)
+        return;
+    const base8 = newMode.toString(8).slice(-3);
+    await (0, promises_1.chmod)(file, base8);
+}
+exports.plusx = plusx;
+async function spawn(command, args, options) {
+    const { error } = (0, child_process_1.spawnSync)(command, args, options);
+    if (error) {
+        throw error;
+    }
+}
+exports.spawn = spawn;
+function nodeBinarySortFunction(a, b) {
+    const coercedVersionA = (0, semver_1.coerce)(a);
+    const coercedVersionB = (0, semver_1.coerce)(b);
+    if (coercedVersionA && coercedVersionB) {
+        return coercedVersionA.compare(coercedVersionB);
+    }
+    return 0;
+}
+exports.nodeBinarySortFunction = nodeBinarySortFunction;
+//# sourceMappingURL=utils.js.map

@@ -1,0 +1,51 @@
+import { NodeTarget, Target, SeaEnhancedOptions } from './types';
+export type GetNodejsExecutableOptions = {
+    useLocalNode?: boolean;
+    nodePath?: string;
+};
+export type SeaConfig = {
+    disableExperimentalSEAWarning: boolean;
+    useSnapshot: boolean;
+    useCodeCache: boolean;
+    assets?: Record<string, string>;
+};
+export type SeaOptions = {
+    seaConfig?: SeaConfig;
+    signature?: boolean;
+    targets: (NodeTarget & Partial<Target>)[];
+} & GetNodejsExecutableOptions;
+/**
+ * Patch mach-O __LINKEDIT (non-SEA only) and ad-hoc sign the binary.
+ *
+ * The __LINKEDIT patch exists for the classic pkg flow: pkg appends the
+ * VFS payload to the end of the binary, and codesign only hashes content
+ * covered by __LINKEDIT — so the segment must be extended to include the
+ * payload before signing.
+ *
+ * Pass `isSea: true` to skip the patch. For SEA binaries postject
+ * already creates a dedicated NODE_SEA `LC_SEGMENT_64` (per the
+ * [Node.js SEA docs](https://nodejs.org/api/single-executable-applications.html))
+ * and __LINKEDIT already sits at the file tail with
+ * `filesize = file.length - fileoff`, so the patch is a no-op on the
+ * resulting Mach-O. The docs call for just `codesign --sign -` after
+ * postject, which is what `signMachOExecutable` does.
+ */
+export declare function signMacOSIfNeeded(output: string, target: NodeTarget & Partial<Target>, signature?: boolean, isSea?: boolean): Promise<void>;
+/**
+ * Index into `targets` of the first entry whose platform+arch match
+ * `host`, or -1 when no target is runnable on the host. Exported for
+ * unit testing step 1 of the SEA blob-generator selection without
+ * spinning up a full pkg invocation.
+ */
+export declare function pickMatchingHostTargetIndex(host: {
+    platform: string;
+    arch: string;
+}, targets: readonly {
+    platform: string;
+    arch: string;
+}[]): number;
+/** Create NodeJS executable using the enhanced SEA pipeline (walker + refiner + assets) */
+export declare function seaEnhanced(entryPoint: string, opts: SeaEnhancedOptions): Promise<void>;
+/** Create NodeJS executable using sea */
+export default function sea(entryPoint: string, opts: SeaOptions): Promise<void>;
+//# sourceMappingURL=sea.d.ts.map

@@ -1,0 +1,24 @@
+/**
+ * Enhanced module resolver that supports both CommonJS and ESM resolution
+ * Handles package.json "exports" field and ESM-specific resolution rules
+ */
+interface ResolveOptions {
+    basedir: string;
+    extensions?: string[];
+    conditions?: string[];
+}
+interface ResolveResult {
+    resolved: string;
+    isESM: boolean;
+}
+/**
+ * Resolve a module specifier with ESM support
+ * Falls back to standard CommonJS resolution if ESM resolution fails
+ *
+ * @param specifier - Module specifier to resolve
+ * @param options - Resolution options
+ * @returns Resolved file path and ESM flag
+ */
+export declare function resolveModule(specifier: string, options: ResolveOptions): ResolveResult;
+export {};
+//# sourceMappingURL=resolver.d.ts.map

@@ -1,0 +1,39 @@
+import { CompressType } from './compress_type';
+import { FileRecords, SymLinks } from './types';
+export interface SeaManifest {
+    entrypoint: string;
+    entryIsESM: boolean;
+    directories: Record<string, string[]>;
+    stats: Record<string, {
+        size: number;
+        isFile: boolean;
+        isDirectory: boolean;
+    }>;
+    symlinks: Record<string, string>;
+    offsets: Record<string, [number, number]>;
+    compression?: number;
+    debug?: boolean;
+}
+export interface SeaAssetsResult {
+    assets: Record<string, string>;
+    manifestPath: string;
+}
+/**
+ * Transform walker/refiner output into a single SEA archive blob and manifest.
+ *
+ * All file contents are concatenated into one binary archive sorted by POSIX
+ * key.  The manifest contains an `offsets` map of key → [byteOffset, byteLength]
+ * so the runtime can extract individual files via zero-copy Buffer.subarray().
+ *
+ * Asset keys use refiner paths (no /snapshot prefix) because @roberts_lando/vfs
+ * strips the mount prefix before passing paths to the provider. The entrypoint
+ * in the manifest uses the snapshotified path for process.argv[1] compatibility.
+ *
+ * Always uses POSIX '/' separator for manifest paths so the same blob works
+ * regardless of build platform. The bootstrap normalizes at runtime.
+ */
+export declare function generateSeaAssets(records: FileRecords, entrypoint: string, symLinks: SymLinks, tmpDir: string, options?: {
+    debug?: boolean;
+    doCompress?: CompressType;
+}): Promise<SeaAssetsResult>;
+//# sourceMappingURL=sea-assets.d.ts.map

@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title data-i18n="app.pageTitle">联机大厅</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="app-top">
+      <div class="game-menu" id="game-menu">
+        <button
+          type="button"
+          id="btn-game-menu"
+          class="icon-btn game-menu-btn"
+          data-i18n-attr="title:menu.title,aria-label:menu.title"
+          title="菜单"
+          aria-label="菜单"
+          aria-expanded="false"
+          aria-haspopup="true"
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path fill="currentColor" d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z"/>
+          </svg>
+        </button>
+        <div class="game-menu-pop" id="game-menu-pop" hidden role="menu">
+          <div class="game-menu-item has-sub" id="menu-lang-item">
+            <button
+              type="button"
+              id="btn-menu-lang"
+              role="menuitem"
+              aria-haspopup="true"
+              aria-expanded="false"
+              data-i18n="lang.switch"
+            >
+              语言切换
+            </button>
+            <div class="game-menu-sub" id="menu-lang-sub" hidden role="menu">
+              <button type="button" role="menuitem" data-lang="zh" data-i18n="lang.zh">中文</button>
+              <button type="button" role="menuitem" data-lang="en" data-i18n="lang.en">English</button>
+            </div>
+          </div>
+          <div class="game-menu-item has-sub" id="menu-bgm-item">
+            <button
+              type="button"
+              id="btn-menu-bgm"
+              role="menuitem"
+              aria-haspopup="true"
+              aria-expanded="false"
+              data-i18n="menu.bgmVolume"
+            >
+              BGM 音量
+            </button>
+            <div class="game-menu-sub game-menu-bgm-sub" id="menu-bgm-sub" hidden role="group">
+              <label class="menu-bgm-control" for="menu-bgm-range">
+                <span class="menu-bgm-label" data-i18n="menu.bgmVolumeLabel">音量</span>
+                <input
+                  type="range"
+                  id="menu-bgm-range"
+                  min="0"
+                  max="100"
+                  step="5"
+                  value="100"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                />
+                <span class="menu-bgm-value" id="menu-bgm-value" aria-live="polite">100%</span>
+              </label>
+            </div>
+          </div>
+          <button type="button" id="btn-quit-game" role="menuitem" hidden data-i18n="menu.quitGame">
+            退出游戏并返回大厅
+          </button>
+        </div>
+      </div>
+      <div class="app-top-mid">
+        <div class="app-top-title-row">
+          <h1 id="app-phase-title" data-i18n="app.title">联机大厅</h1>
+          <div class="header-nick" id="header-nick" hidden>
+            <span id="nick-display" class="nick-display" data-i18n="app.playerDefault">玩家</span>
+            <input
+              id="player-name-edit"
+              class="nick-input"
+              type="text"
+              maxlength="16"
+              hidden
+              autocomplete="off"
+              data-i18n-attr="aria-label:app.editNickAria"
+              aria-label="编辑昵称"
+            />
+            <button
+              type="button"
+              id="btn-edit-name"
+              class="icon-btn"
+              data-i18n-attr="title:app.editNick,aria-label:app.editNick"
+              title="修改昵称"
+              aria-label="修改昵称"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zm2.92 2.83H5v-.92l9.06-9.06.92.92L5.92 20.08zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <p id="me-label" class="me-label" data-i18n="app.disconnected">未连接</p>
+      </div>
+    </header>
+
+    <div class="app-body">
+      <div class="app-content">
+        <p id="toast" class="toast" hidden></p>
+
+        <!-- 大厅 -->
+        <section id="view-lobby" class="view">
+          <div class="panel panel-narrow" id="lobby-gate">
+            <label>
+              <span data-i18n="lobby.nick">昵称</span>
+              <input id="player-name" type="text" maxlength="16" data-i18n-attr="placeholder:lobby.nickPlaceholder" placeholder="输入昵称" />
+            </label>
+            <button id="btn-enter-lobby" type="button" data-i18n="lobby.enter">进入大厅</button>
+          </div>
+
+          <div id="lobby-main" hidden>
+            <div class="panel lobby-toolbar">
+              <div class="row lobby-toolbar-actions">
+                <button id="btn-toggle-create" type="button" data-i18n="lobby.createRoom">创建房间</button>
+                <button id="btn-toggle-join" type="button" class="secondary" data-i18n="lobby.joinByCode">房间码加入</button>
+                <button id="btn-refresh-lobby" type="button" class="secondary" data-i18n="lobby.refresh">刷新</button>
+              </div>
+              <p id="peers-label" class="muted" data-i18n="lobby.peersSearching">广播：搜索中…</p>
+              <p id="lobby-refresh-hint" class="muted lobby-refresh-hint" data-i18n="lobby.refreshHint">大厅列表每 3 秒自动刷新</p>
+            </div>
+
+            <div class="panel lobby-rooms">
+              <h2 data-i18n="lobby.publicRooms">公开房间</h2>
+              <ul id="room-list" class="room-list"></ul>
+              <p id="room-list-empty" class="muted" data-i18n="lobby.noPublicRooms">暂无公开房间</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- 房间 -->
+        <section id="view-room" class="view view-room" hidden>
+          <div class="room-shell">
+            <div class="room-banner">
+              <span class="room-banner-tag" data-i18n="room.entered">已进入房间</span>
+              <span class="room-banner-hint" data-i18n="room.waiting">等待开局</span>
+            </div>
+            <div class="panel room-panel">
+              <div class="room-panel-head">
+                <div>
+                  <p class="room-eyebrow" data-i18n="room.nameEyebrow">房间名</p>
+                  <h2 id="room-title" data-i18n="room.title">房间</h2>
+                </div>
+                <div class="room-code-block" data-i18n-attr="title:room.code" title="房间码">
+                  <span class="room-code-label" data-i18n="room.code">房间码</span>
+                  <strong id="room-code" class="room-code-value">—</strong>
+                </div>
+              </div>
+              <p class="room-meta">
+                <span id="room-game-label">—</span>
+                <span id="room-hidden-badge" class="badge" hidden data-i18n="room.hidden">隐藏</span>
+              </p>
+              <h3 class="room-members-title" data-i18n="room.members">房间成员</h3>
+              <ul id="member-list" class="member-list"></ul>
+              <div class="row room-actions">
+                <button id="btn-start" type="button" hidden data-i18n="room.start">开始游戏</button>
+                <button id="btn-room-rules" type="button" class="secondary" hidden data-i18n="lasidao.rules.btn">游戏规则</button>
+                <button id="btn-leave" type="button" class="secondary btn-leave-room" data-i18n="room.leave">离开房间</button>
+              </div>
+              <p class="muted" id="room-start-hint" data-i18n="room.startHint">人齐后，房主可直接开始游戏。</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- 对局：各游戏面板由 boot-games 按清单挂载到 #game-panels -->
+        <section id="view-game" class="view" hidden>
+          <div id="turn-timer" class="turn-timer" hidden aria-live="polite">
+            <span data-i18n="game.thinkTime">思考时间</span> <strong id="turn-timer-sec">—</strong>
+          </div>
+          <div id="game-panels"></div>
+        </section>
+      </div>
+
+      <aside class="lobby-people" id="lobby-people-aside" hidden data-i18n-attr="aria-label:lobby.people" aria-label="大厅人员">
+        <h2 class="people-header">
+          <span>
+            <span id="lobby-people-title" data-i18n="lobby.people">大厅人员</span>
+            <span id="lobby-people-count" class="muted people-count"></span>
+          </span>
+          <button id="btn-refresh-doc" type="button" class="icon-btn" data-i18n-attr="title:lobby.refreshPeople,aria-label:lobby.refreshPeople" title="刷新大厅状态" aria-label="刷新大厅状态">
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+              <path fill="currentColor" d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 0 0-8 8 8 8 0 0 0 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18a6 6 0 0 1-6-6 6 6 0 0 1 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+            </svg>
+          </button>
+        </h2>
+        <ul id="lobby-people-list" class="people-list"></ul>
+        <p id="lobby-people-empty" class="muted" data-i18n="lobby.peopleEmpty">暂无在线玩家</p>
+      </aside>
+    </div>
+  </main>
+
+  <aside class="chat-dock" id="chat-dock" hidden data-i18n-attr="aria-label:chat.roomAria" aria-label="聊天室">
+    <div class="chat-panel" id="chat-panel">
+      <header class="chat-head" id="chat-drag-handle">
+        <span class="chat-head-title">
+          <span class="chat-head-channel" id="chat-head-channel" data-i18n="chat.channelAll">所有人</span>
+          <span data-i18n="chat.title">聊天室</span> <span class="chat-head-unread" id="chat-head-unread" hidden data-i18n="chat.newMessage">新消息</span>
+        </span>
+        <div class="chat-tabs" role="tablist">
+          <button type="button" id="chat-tab-all" class="is-on" data-chat-tab="all" role="tab">
+            <span data-i18n="chat.channelAllShort">所有人</span> <span class="chat-unread" id="chat-unread-all" hidden></span>
+          </button>
+          <button type="button" id="chat-tab-room" data-chat-tab="room" role="tab" hidden>
+            <span data-i18n="chat.channelRoomShort">房间</span> <span class="chat-unread" id="chat-unread-room" hidden></span>
+          </button>
+        </div>
+      </header>
+      <div class="chat-collapsed-preview" id="chat-collapsed-preview" data-i18n="chat.empty">还没有人发言</div>
+      <ul id="chat-log" class="chat-log" aria-live="polite"></ul>
+      <form id="chat-form" class="chat-form">
+        <input
+          id="chat-input"
+          type="text"
+          maxlength="120"
+          autocomplete="off"
+          data-i18n-attr="placeholder:chat.placeholder,aria-label:chat.inputAria"
+          placeholder="输入消息…"
+          aria-label="聊天内容"
+        />
+        <button type="submit" data-i18n="chat.send">发送</button>
+      </form>
+    </div>
+  </aside>
+
+  <div class="modal" id="create-room-modal" hidden>
+    <div class="modal-backdrop" data-close="create"></div>
+    <div class="modal-dialog panel" role="dialog" aria-labelledby="create-room-title">
+      <div class="row panel-head">
+        <h2 id="create-room-title" data-i18n="create.title">创建房间</h2>
+        <button id="btn-close-create" type="button" class="icon-btn" data-i18n-attr="title:create.close,aria-label:create.close" title="关闭" aria-label="关闭">×</button>
+      </div>
+      <label>
+        <span data-i18n="create.game">游戏</span>
+        <select id="game-type">
+          <option value="sgs" selected data-i18n="games.sgs">三国杀</option>
+        </select>
+      </label>
+      <label id="game-mode-wrap" hidden>
+        <span data-i18n="create.mode">模式</span>
+        <select id="game-mode">
+          <option value="identity" data-i18n="games.modes.identity">标准身份</option>
+        </select>
+      </label>
+      <label id="max-players-wrap">
+        <span data-i18n="create.maxPlayers">人数上限</span>
+        <select id="room-max">
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+          <option value="6" selected>6</option>
+          <option value="7">7</option>
+          <option value="8">8</option>
+        </select>
+      </label>
+      <label>
+        <span data-i18n="create.roomName">房间名</span>
+        <input id="room-name" type="text" maxlength="24" data-i18n-attr="placeholder:create.roomNamePlaceholder" placeholder="可选" />
+      </label>
+      <label>
+        <span data-i18n="create.turnTime">回合思考时间</span>
+        <select id="room-turn-time">
+          <option value="0" selected data-i18n="create.turnUnlimited">不限</option>
+          <option value="10">10</option>
+          <option value="15">15</option>
+          <option value="20">20</option>
+          <option value="30">30</option>
+          <option value="60">60</option>
+        </select>
+      </label>
+      <label class="checkbox">
+        <input id="room-hidden" type="checkbox" />
+        <span data-i18n="create.hidden">隐藏房间（仅房间码加入）</span>
+      </label>
+      <p id="game-hint" class="muted" data-i18n="create.hintDefault">选择游戏后查看人数要求。</p>
+      <button id="btn-create-room" type="button" data-i18n="create.confirm">确认创建</button>
+    </div>
+  </div>
+
+  <div class="modal" id="join-code-modal" hidden>
+    <div class="modal-backdrop" data-close="join"></div>
+    <div class="modal-dialog panel" role="dialog" aria-labelledby="join-code-title">
+      <div class="row panel-head">
+        <h2 id="join-code-title" data-i18n="join.title">房间码加入</h2>
+        <button id="btn-close-join" type="button" class="icon-btn" data-i18n-attr="title:create.close,aria-label:create.close" title="关闭" aria-label="关闭">×</button>
+      </div>
+      <label>
+        <span data-i18n="join.code">房间码</span>
+        <input id="join-code" type="text" maxlength="8" data-i18n-attr="placeholder:join.codePlaceholder" placeholder="输入房间码" />
+      </label>
+      <button id="btn-join-code" type="button" data-i18n="join.confirm">加入</button>
+    </div>
+  </div>
+
+  <div class="modal" id="rejoin-modal" hidden>
+    <div class="modal-backdrop" data-close="rejoin"></div>
+    <div class="modal-dialog panel" role="dialog" aria-labelledby="rejoin-title">
+      <div class="row panel-head">
+        <h2 id="rejoin-title" data-i18n="rejoin.title">发现未结束对局</h2>
+        <button id="btn-close-rejoin" type="button" class="icon-btn" data-i18n-attr="title:create.close,aria-label:create.close" title="关闭" aria-label="关闭">×</button>
+      </div>
+      <p id="rejoin-message" class="invite-message" data-i18n="rejoin.message">检测到你有可恢复的房间，是否重新加入？</p>
+      <div class="row">
+        <button id="btn-accept-rejoin" type="button" data-i18n="rejoin.accept">重新加入</button>
+        <button id="btn-decline-rejoin" type="button" class="secondary" data-i18n="rejoin.decline">留在大厅</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="people-ctx" class="ctx-menu" hidden>
+    <button type="button" data-action="join-their-room" data-i18n="lobby.joinTheirRoom">加入其房间</button>
+    <p class="ctx-hint muted" id="people-ctx-hint" hidden></p>
+  </div>
+
+  <div id="room-busy-overlay" class="room-busy-overlay" hidden aria-live="polite" aria-busy="true">
+    <div class="room-busy-panel panel">
+      <p id="room-busy-message" class="room-busy-message" data-i18n="create.creating">创建中…</p>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/bgm-volume.js"></script>
+  <script src="/js/client.js"></script>
+  <script src="/js/boot-games.js"></script>
+  <script src="/js/ui.js"></script>
+</body>
+</html>

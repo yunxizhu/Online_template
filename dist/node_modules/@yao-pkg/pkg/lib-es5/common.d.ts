@@ -1,0 +1,44 @@
+/// <reference types="node" />
+/// <reference types="node" />
+export declare const STORE_BLOB = 0;
+export declare const STORE_CONTENT = 1;
+export declare const STORE_LINKS = 2;
+export declare const STORE_STAT = 3;
+export declare const ALIAS_AS_RELATIVE = 0;
+export declare const ALIAS_AS_RESOLVABLE = 1;
+export declare function isRootPath(p: string | URL | Buffer): boolean;
+export declare function normalizePath(f: string | URL | Buffer): string;
+export declare function isPackageJson(file: string): boolean;
+export declare function isDotJS(file: string): boolean;
+export declare function isDotJSON(file: string): boolean;
+export declare function isDotNODE(file: string): boolean;
+export declare function unlikelyJavascript(file: string): boolean;
+export declare function replaceSlashes(file: string, slash: string): string;
+export declare function retrieveDenominator(files: string[]): number;
+export declare function substituteDenominator(f: string, denominator: number): string;
+/**
+ * Converts a file path to a snapshot path by replacing slashes and injecting the snapshot prefix.
+ * @param file - The file path to convert
+ * @param slash - The slash character to use for replacement
+ * @returns The converted snapshot file path
+ */
+export declare function snapshotify(file: string, slash: string): string;
+export declare function insideSnapshot(f: Buffer | string | URL): boolean;
+export declare function stripSnapshot(f: string): string;
+export declare function removeUplevels(f: string): string;
+export declare function toNormalizedRealPath(requestPath: string): string;
+/**
+ * Check if a package.json indicates an ESM package
+ * @param packageJsonPath - Path to package.json
+ * @returns true if "type": "module" is set
+ */
+export declare function isESMPackage(packageJsonPath: string): boolean;
+/**
+ * Determine if a file should be treated as ESM
+ * Based on file extension and nearest package.json "type" field
+ *
+ * @param filePath - The file path to check
+ * @returns true if file should be treated as ESM
+ */
+export declare function isESMFile(filePath: string): boolean;
+//# sourceMappingURL=common.d.ts.map

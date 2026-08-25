@@ -1,0 +1,3 @@
+declare function parseAndUpdateShas(inputFile: string): void;
+export { parseAndUpdateShas };
+//# sourceMappingURL=parse-update-shas.d.ts.map

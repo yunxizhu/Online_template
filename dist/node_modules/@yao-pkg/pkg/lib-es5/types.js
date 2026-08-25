@@ -1,0 +1,21 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.NODE_ARCHS = exports.NODE_OSES = exports.platform = void 0;
+exports.platform = {
+    macos: 'darwin',
+    win: 'win32',
+    linux: 'linux',
+};
+/** OS segment used in nodejs.org archive filenames. */
+exports.NODE_OSES = ['darwin', 'linux', 'win'];
+/** Arch segment used in nodejs.org archive filenames. */
+exports.NODE_ARCHS = [
+    'x64',
+    'arm64',
+    'armv7l',
+    'ppc64',
+    's390x',
+    'riscv64',
+    'loong64',
+];
+//# sourceMappingURL=types.js.map

@@ -1,0 +1,267 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.generateSeaAssets = void 0;
+const fs_1 = require("fs");
+const promises_1 = require("fs/promises");
+const path_1 = require("path");
+const zlib = __importStar(require("zlib"));
+const common_1 = require("./common");
+const log_1 = require("./log");
+const compress_type_1 = require("./compress_type");
+// Normalize a refiner path to a platform-independent POSIX key.
+// Strips drive letter and converts separators on Windows
+// (e.g. 'D:\\foo\\bar.js' → '/foo/bar.js').
+//
+// Invariant: callers pass refiner-side snapshot paths (already platform-native
+// for the build host). replaceSlashes handles both '/' and '\\' inputs, so this
+// is safe whether the caller pre-normalized or not. The output is the canonical
+// key shape used everywhere in the manifest.
+const toPosixKey = (p) => (0, common_1.replaceSlashes)(p, '/');
+// Write a buffer to fd, looping until the full payload is on disk.
+// FileHandle.write may return a short bytesWritten under filesystem pressure;
+// we MUST honor it because the manifest offsets are byte-exact and any drift
+// would corrupt every file after the short write.
+async function writeAll(fd, buf) {
+    let written = 0;
+    while (written < buf.length) {
+        const { bytesWritten } = await fd.write(buf, written, buf.length - written);
+        if (bytesWritten === 0) {
+            throw new Error('pkg: short write to SEA archive blob');
+        }
+        written += bytesWritten;
+    }
+    return written;
+}
+/**
+ * Resolve the per-codec sync compressor once, up front.  Sync compression is
+ * fine here: each file is MB-scale at worst, the archive build is offline,
+ * and plumbing a stream through `writeAll` would buy negligible real-world
+ * benefit.  Zstd resolution routes through compress_type.ts's zstdBuildError
+ * so build-time missing-API wording stays consistent with producer.ts.
+ */
+function resolveCompressor(type) {
+    switch (type) {
+        case compress_type_1.CompressType.None:
+            return (buf) => buf;
+        case compress_type_1.CompressType.GZip:
+            return zlib.gzipSync;
+        case compress_type_1.CompressType.Brotli:
+            return zlib.brotliCompressSync;
+        case compress_type_1.CompressType.Zstd:
+            return (0, compress_type_1.getZstdCompressSync)();
+        default: {
+            // Exhaustiveness: adding a new CompressType without wiring it here
+            // would otherwise emit a manifest that claims compression with raw
+            // payload, producing a cryptic runtime error instead of a clear build
+            // failure.
+            const exhaustive = type;
+            throw new Error(`pkg: unsupported CompressType ${exhaustive}`);
+        }
+    }
+}
+/**
+ * Transform walker/refiner output into a single SEA archive blob and manifest.
+ *
+ * All file contents are concatenated into one binary archive sorted by POSIX
+ * key.  The manifest contains an `offsets` map of key → [byteOffset, byteLength]
+ * so the runtime can extract individual files via zero-copy Buffer.subarray().
+ *
+ * Asset keys use refiner paths (no /snapshot prefix) because @roberts_lando/vfs
+ * strips the mount prefix before passing paths to the provider. The entrypoint
+ * in the manifest uses the snapshotified path for process.argv[1] compatibility.
+ *
+ * Always uses POSIX '/' separator for manifest paths so the same blob works
+ * regardless of build platform. The bootstrap normalizes at runtime.
+ */
+async function generateSeaAssets(records, entrypoint, symLinks, tmpDir, options) {
+    const doCompress = options?.doCompress ?? compress_type_1.CompressType.None;
+    const isCompressing = doCompress !== compress_type_1.CompressType.None;
+    // Resolve the compressor (or throw with a clear error) BEFORE we start
+    // writing any stripes, so a host missing zlib.zstdCompressSync fails
+    // immediately instead of mid-archive.
+    const compress = isCompressing ? resolveCompressor(doCompress) : null;
+    // Normalize symlink paths to use the same refiner-style POSIX keys as
+    // directories/stats/assets. Do not add the /snapshot prefix because the
+    // VFS provider receives paths after the mount prefix is stripped.
+    const normalizedSymlinks = {};
+    for (const src in symLinks) {
+        normalizedSymlinks[toPosixKey(src)] = toPosixKey(symLinks[src]);
+    }
+    // Detect if entrypoint is ESM via its real disk path
+    const entryRecord = records[entrypoint];
+    const entryIsESM = entryRecord
+        ? (0, common_1.isESMFile)(entryRecord.file)
+        : (0, common_1.isESMFile)(entrypoint);
+    const manifest = {
+        // Always use '/' — the bootstrap normalizes for the runtime platform
+        entrypoint: (0, common_1.snapshotify)(entrypoint, '/'),
+        entryIsESM,
+        directories: {},
+        stats: {},
+        symlinks: normalizedSymlinks,
+        offsets: {},
+        ...(isCompressing ? { compression: doCompress } : {}),
+        ...(options?.debug ? { debug: true } : {}),
+    };
+    // First pass: collect file entries and build manifest metadata
+    const entries = [];
+    for (const snap in records) {
+        if (!records[snap])
+            continue;
+        const record = records[snap];
+        const key = toPosixKey(snap);
+        // Collect file content entry for the archive.
+        //
+        // Prefer the in-memory body when present, fall back to disk streaming
+        // only when body was never loaded. This is safe because of an
+        // invariant maintained by walker.ts in SEA mode:
+        //
+        //   if (record.body != null) then it equals the bytes we want to
+        //   ship — either the original disk content (when stepRead loaded
+        //   it and nothing modified it) or an intentional rewrite (patches,
+        //   stripped shebang/BOM, package.json synthetic main, etc.).
+        //
+        // The ESM→CJS transform and `type: module → commonjs` rewrite are
+        // the only mutations that could diverge body from disk, and both
+        // are gated on `!seaMode` in walker.ts — so they never run here.
+        //
+        // Trusting the in-memory body has two upsides over re-streaming:
+        //   1. Avoids a redundant second read of every JS file (walker
+        //      already paid the I/O for strip/detect).
+        //   2. Race-safe: if a source file is modified mid-build, the
+        //      bytes we ship match the bytes walker scanned for require()
+        //      calls — detected deps cannot mismatch shipped content.
+        if (record[common_1.STORE_CONTENT]) {
+            if (record.body != null) {
+                const content = typeof record.body === 'string'
+                    ? Buffer.from(record.body)
+                    : record.body;
+                entries.push({ key, source: content });
+            }
+            else {
+                // body never loaded — stream straight from disk without
+                // pulling it through memory.
+                entries.push({ key, source: record.file });
+            }
+        }
+        // Collect directory entries
+        if (record[common_1.STORE_LINKS]) {
+            manifest.directories[key] = [...new Set(record[common_1.STORE_LINKS])];
+        }
+        // Collect stat metadata
+        if (record[common_1.STORE_STAT]) {
+            const s = record[common_1.STORE_STAT];
+            manifest.stats[key] = {
+                size: s.size ?? 0,
+                isFile: Boolean(s.isFileValue),
+                isDirectory: Boolean(s.isDirectoryValue),
+            };
+        }
+    }
+    // Sort entries by key for deterministic archive output
+    entries.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+    // Stream-write the single archive blob
+    const archivePath = (0, path_1.join)(tmpDir, '__pkg_archive__');
+    const fd = await (0, promises_1.open)(archivePath, 'w');
+    let offset = 0;
+    // Debug-mode running totals for per-stripe compression stats
+    let totalUncompressed = 0;
+    let totalCompressed = 0;
+    try {
+        for (const { key, source } of entries) {
+            let uncompressedLen;
+            let length;
+            if (compress) {
+                // Compression needs the full content in memory to feed zlib.*Sync.
+                const raw = Buffer.isBuffer(source)
+                    ? source
+                    : await (0, promises_1.readFile)(source);
+                uncompressedLen = raw.length;
+                const payload = compress(raw);
+                length = await writeAll(fd, payload);
+                totalUncompressed += uncompressedLen;
+                totalCompressed += length;
+                if (options?.debug) {
+                    const ratio = uncompressedLen
+                        ? ((length / uncompressedLen) * 100).toFixed(1)
+                        : '0.0';
+                    log_1.log.debug(`sea-stripe ${key}: ${uncompressedLen} → ${length} bytes (${ratio}%)`);
+                }
+            }
+            else if (Buffer.isBuffer(source)) {
+                // Modified file content already in memory.
+                length = await writeAll(fd, source);
+                uncompressedLen = length;
+            }
+            else {
+                // Unmodified disk-resident file — stream chunk-by-chunk so peak RSS
+                // stays bounded when packaging large asset sets.  Accumulate actual
+                // bytes written (avoids stat→read race if the file changes between
+                // calls).
+                length = 0;
+                const stream = (0, fs_1.createReadStream)(source);
+                for await (const chunk of stream) {
+                    length += await writeAll(fd, chunk);
+                }
+                uncompressedLen = length;
+            }
+            manifest.offsets[key] = [offset, length];
+            // `stats[key].size` must report the uncompressed size — that is what
+            // user code sees from fs.statSync() AND what the runtime uses to cap
+            // zlib output and validate the decompressed length.  Synthesize a
+            // minimal file stat when the record had no STORE_STAT so every entry
+            // with content has an authoritative size.
+            if (manifest.stats[key]) {
+                manifest.stats[key].size = uncompressedLen;
+            }
+            else {
+                manifest.stats[key] = {
+                    size: uncompressedLen,
+                    isFile: true,
+                    isDirectory: false,
+                };
+            }
+            offset += length;
+        }
+    }
+    finally {
+        await fd.close();
+    }
+    if (isCompressing) {
+        const ratio = totalUncompressed
+            ? ((totalCompressed / totalUncompressed) * 100).toFixed(1)
+            : '0.0';
+        log_1.log.info(`SEA archive compressed with ${compress_type_1.CompressType[doCompress]}: ${totalUncompressed} → ${totalCompressed} bytes (${ratio}%)`);
+    }
+    const manifestPath = (0, path_1.join)(tmpDir, '__pkg_manifest__.json');
+    await (0, promises_1.writeFile)(manifestPath, JSON.stringify(manifest));
+    return {
+        assets: { __pkg_archive__: archivePath },
+        manifestPath,
+    };
+}
+exports.generateSeaAssets = generateSeaAssets;
+//# sourceMappingURL=sea-assets.js.map

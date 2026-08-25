@@ -1,0 +1,12 @@
+{
+  "name": "lianji",
+  "version": "1.0.0",
+  "description": "Turn-based multiplayer lobby & room framework",
+  "main": "server/index.js",
+  "dependencies": {
+    "express": "^4.21.2",
+    "mqtt": "^5.15.2",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1"
+  }
+}

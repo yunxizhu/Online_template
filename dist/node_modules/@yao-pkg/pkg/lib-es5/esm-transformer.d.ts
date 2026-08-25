@@ -1,0 +1,26 @@
+export interface TransformResult {
+    code: string;
+    isTransformed: boolean;
+}
+/**
+ * Rewrite relative `.mjs` require paths to `.js` in CJS output
+ *
+ * When esbuild transforms ESM to CJS, it converts `import './foo.mjs'` to `require('./foo.mjs')`.
+ * Since the packer renames `.mjs` files to `.js` in the snapshot, the require paths must be
+ * updated to match. This handles the rewriting at build time.
+ *
+ * @param code - The CJS code after esbuild transformation
+ * @returns Code with relative .mjs require paths rewritten to .js
+ */
+export declare function rewriteMjsRequirePaths(code: string): string;
+/**
+ * Transform ESM code to CommonJS using esbuild
+ * This allows ESM modules to be compiled to bytecode via vm.Script
+ * Uses Babel parser for detecting unsupported ESM features, then esbuild for fast transformation
+ *
+ * @param code - The ESM source code to transform
+ * @param filename - The filename for error reporting
+ * @returns Object with transformed code and success flag
+ */
+export declare function transformESMtoCJS(code: string, filename: string): TransformResult;
+//# sourceMappingURL=esm-transformer.d.ts.map

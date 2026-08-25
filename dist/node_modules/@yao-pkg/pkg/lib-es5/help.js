@@ -1,0 +1,62 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const colors_1 = require("./colors");
+function help() {
+    console.log(`
+  ${colors_1.pc.bold('pkg')} [options] <input>
+
+  ${colors_1.pc.dim('Options:')}
+
+    -h, --help           output usage information
+    -v, --version        output pkg version
+    -t, --targets        comma-separated list of targets (see examples)
+    -c, --config         package.json or a .json, .js, .cjs, or .mjs file with top-level config
+                         (auto-discovered as .pkgrc, .pkgrc.json, pkg.config.js, pkg.config.cjs, or pkg.config.mjs)
+    --options            bake v8 options into executable to run with them on
+    -o, --output         output file name or template for several files
+    --out-path           path to save output one or more executables
+    -d, --debug          show more information during packaging process [off]
+    -b, --build          don't download prebuilt base binaries, build them
+    --public             speed up and disclose the sources of top-level project
+    --public-packages    force specified packages to be considered public
+    --no-bytecode        skip bytecode generation and include source files as plain js
+    --no-native-build    skip native addons build
+    --fallback-to-source if bytecode generation fails for a file, ship it as plain source instead of skipping it
+    --no-dict            comma-separated list of packages names to ignore dictionaries. Use --no-dict * to disable all dictionaries
+    -C, --compress       [default=None] compression algorithm = Brotli, GZip, or Zstd (Zstd requires Node.js >= 22.15)
+    --signature          enable macOS binary signing (default; use to override signature:false in config)
+    --no-signature       skip macOS binary signing [default: sign]
+    --sea                (Experimental) compile given file using node's SEA feature. Requires node v20.0.0 or higher and only single file is supported
+
+  All build-shaping flags above (compress, fallback-to-source, public, public-packages,
+  options, bytecode, native-build, no-dict, debug, signature, sea) can also be set in
+  the pkg config file (camelCase keys). CLI flags override config values.
+
+  ${colors_1.pc.dim('Examples:')}
+
+  ${colors_1.pc.gray('–')} Makes executables for Linux, macOS and Windows
+    ${colors_1.pc.cyan('$ pkg index.js')}
+  ${colors_1.pc.gray('–')} Takes package.json from cwd and follows 'bin' entry
+    ${colors_1.pc.cyan('$ pkg .')}
+  ${colors_1.pc.gray('–')} Makes executable for particular target machine
+    ${colors_1.pc.cyan('$ pkg -t node14-win-arm64 index.js')}
+  ${colors_1.pc.gray('–')} Makes executables for target machines of your choice
+    ${colors_1.pc.cyan('$ pkg -t node22-linux,node24-linux,node24-win index.js')}
+  ${colors_1.pc.gray('–')} Bakes '--expose-gc' and '--max-heap-size=34' into executable
+    ${colors_1.pc.cyan('$ pkg --options "expose-gc,max-heap-size=34" index.js')}
+  ${colors_1.pc.gray('–')} Consider packageA and packageB to be public
+    ${colors_1.pc.cyan('$ pkg --public-packages "packageA,packageB" index.js')}
+  ${colors_1.pc.gray('–')} Consider all packages to be public
+    ${colors_1.pc.cyan('$ pkg --public-packages "*" index.js')}
+  ${colors_1.pc.gray('–')} Bakes '--expose-gc' into executable
+    ${colors_1.pc.cyan('$ pkg --options expose-gc index.js')}
+  ${colors_1.pc.gray('–')} reduce size of the data packed inside the executable with GZip
+    ${colors_1.pc.cyan('$ pkg --compress GZip index.js')}
+  ${colors_1.pc.gray('–')} reduce size further with Zstd (Node.js >= 22.15 required on the build host)
+    ${colors_1.pc.cyan('$ pkg --compress Zstd index.js')}
+  ${colors_1.pc.gray('–')} compile the file using node's SEA feature. Creates executables for Linux, macOS and Windows
+    ${colors_1.pc.cyan('$ pkg --sea index.js')}
+`);
+}
+exports.default = help;
+//# sourceMappingURL=help.js.map

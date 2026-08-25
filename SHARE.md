@@ -1,23 +1,22 @@
 ﻿# 绿色版分享包
 
-本分支仅用于分享可双击运行的便携包。
+本分支仅用于分享可双击运行的便携目录（`dist/`，未压缩）。
 
-## 下载
+## 获取
 
-克隆本分支后拉取 LFS 文件，或从仓库的 LFS / Release 获取 \dist.zip\：
-
-\\\ash
-git clone -b share/portable-pack --single-branch <仓库地址>
+```bash
+git clone -b share/portable-pack --single-branch https://github.com/yunxizhu/Online_template.git
 cd Online_template
-git lfs pull
-\\\
+```
 
-也可在 GitHub 上打开本分支的 \dist.zip\ 直接下载（需已安装 Git LFS 或通过 GitHub 网页下载）。
+便携内容在仓库根目录的 `dist/` 下。
+
+也可在 GitHub 上打开本分支的 `dist/` 浏览或下载。
 
 ## 使用
 
-1. 解压 \dist.zip\
-2. 双击 \启动.bat\
+1. 进入 `dist/`
+2. 双击 `启动.bat`
 3. 浏览器打开 http://localhost:3000
 
 不需要本机安装 Node.js。

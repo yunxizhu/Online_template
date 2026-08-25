@@ -1,0 +1,61 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.getZstdCompressStream = exports.getZstdCompressSync = exports.CompressType = void 0;
+const zlib = __importStar(require("zlib"));
+const log_1 = require("./log");
+var CompressType;
+(function (CompressType) {
+    CompressType[CompressType["None"] = 0] = "None";
+    CompressType[CompressType["GZip"] = 1] = "GZip";
+    CompressType[CompressType["Brotli"] = 2] = "Brotli";
+    CompressType[CompressType["Zstd"] = 3] = "Zstd";
+})(CompressType = exports.CompressType || (exports.CompressType = {}));
+// Node.js gained Zstd zlib bindings in 22.15.  The TypeScript zlib typings do
+// not yet expose them, so we reach for the symbol through an untyped cast and
+// raise a uniformly-worded error when it is missing.  Both build-time callers
+// (producer.ts, sea-assets.ts) funnel through zstdBuildError so the message
+// can't drift between them.
+function zstdBuildError(symbol) {
+    return (0, log_1.wasReported)(`Zstd compression requires Node.js >= 22.15 (host runtime missing zlib.${symbol}, current: ${process.version}). ` +
+        'Upgrade the build host to Node.js >= 22.15, or pick --compress Brotli / GZip.');
+}
+function getZstdCompressSync() {
+    const fn = zlib.zstdCompressSync;
+    if (typeof fn !== 'function') {
+        throw zstdBuildError('zstdCompressSync');
+    }
+    return fn;
+}
+exports.getZstdCompressSync = getZstdCompressSync;
+function getZstdCompressStream() {
+    const fn = zlib.createZstdCompress;
+    if (typeof fn !== 'function') {
+        throw zstdBuildError('createZstdCompress');
+    }
+    return fn;
+}
+exports.getZstdCompressStream = getZstdCompressStream;
+//# sourceMappingURL=compress_type.js.map

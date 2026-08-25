@@ -1,0 +1,143 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.runTransform = exports.runPostBuildForTargets = exports.runPostBuild = exports.runPreBuild = void 0;
+const child_process_1 = require("child_process");
+const promises_1 = require("fs/promises");
+const log_1 = require("./log");
+const common_1 = require("./common");
+/**
+ * Run a shell command synchronously to-completion. stdio is inherited so the
+ * user sees their tool's output live; a non-zero exit (or spawn error) throws
+ * a `wasReported` error so `exec()` aborts with the standard pkg error path.
+ *
+ * `extraEnv` is layered on top of `process.env` — used to expose `PKG_OUTPUT`
+ * to `postBuild` shell hooks.
+ */
+async function runShell(command, extraEnv, hookName) {
+    await new Promise((resolvePromise, rejectPromise) => {
+        const child = (0, child_process_1.spawn)(command, {
+            shell: true,
+            stdio: 'inherit',
+            env: { ...process.env, ...extraEnv },
+        });
+        child.on('error', (err) => {
+            rejectPromise((0, log_1.wasReported)(`${hookName} hook failed to spawn: ${err.message}`));
+        });
+        child.on('exit', (code, signal) => {
+            if (code === 0)
+                return resolvePromise();
+            const reason = signal != null ? `signal ${signal}` : `exit code ${code}`;
+            rejectPromise((0, log_1.wasReported)(`${hookName} hook failed (${reason}): ${command}`));
+        });
+    });
+}
+/**
+ * Invoke `preBuild` if configured. Runs once before the walker, regardless
+ * of pipeline (traditional, simple SEA, enhanced SEA).
+ */
+async function runPreBuild(pkg) {
+    const hook = pkg.preBuild;
+    if (hook === undefined)
+        return;
+    log_1.log.info('Running preBuild hook...');
+    if (typeof hook === 'string') {
+        await runShell(hook, {}, 'preBuild');
+        return;
+    }
+    await hook();
+}
+exports.runPreBuild = runPreBuild;
+/**
+ * Invoke `postBuild` if configured. Called once per produced binary, after
+ * it has been written and (where applicable) codesigned.
+ *
+ * Shell form receives the absolute output path via `PKG_OUTPUT`; function
+ * form receives it as the first argument.
+ */
+async function runPostBuild(pkg, output) {
+    const hook = pkg.postBuild;
+    if (hook === undefined)
+        return;
+    log_1.log.info(`Running postBuild hook for ${output}`);
+    if (typeof hook === 'string') {
+        await runShell(hook, { PKG_OUTPUT: output }, 'postBuild');
+        return;
+    }
+    await hook(output);
+}
+exports.runPostBuild = runPostBuild;
+/**
+ * Run `postBuild` once per produced binary, sequentially. Sequential
+ * ordering keeps stdout/stderr from overlapping targets cleanly separated
+ * on the user's terminal. Used by both SEA paths after baking; the
+ * traditional pipeline calls `runPostBuild` directly inside its own
+ * per-target loop because each binary is produced sequentially anyway.
+ */
+async function runPostBuildForTargets(pkg, targets) {
+    if (pkg.postBuild === undefined)
+        return;
+    for (const target of targets) {
+        if (target.output) {
+            await runPostBuild(pkg, target.output);
+        }
+    }
+}
+exports.runPostBuildForTargets = runPostBuildForTargets;
+/**
+ * Apply the `transform` hook to every record that ships file contents
+ * (STORE_BLOB or STORE_CONTENT). Must run after the refiner (so paths are
+ * final) and before bytecode generation / compression (so the transformed
+ * source feeds those steps).
+ *
+ * Bodies are loaded eagerly when the user opts into transform — without
+ * loading, packer/sea-assets would re-read disk and bypass the transform.
+ * This trades memory for correctness; the cost only applies to builds that
+ * configure a transform.
+ */
+async function runTransform(pkg, records) {
+    const fn = pkg.transform;
+    if (fn === undefined)
+        return;
+    log_1.log.info('Running transform hook...');
+    for (const snap of Object.keys(records)) {
+        const record = records[snap];
+        if (!record)
+            continue;
+        if (!record[common_1.STORE_BLOB] && !record[common_1.STORE_CONTENT])
+            continue;
+        let body;
+        if (record.body !== undefined) {
+            body = record.body;
+        }
+        else {
+            try {
+                body = await (0, promises_1.readFile)(record.file);
+            }
+            catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                throw (0, log_1.wasReported)(`transform hook: failed to read "${record.file}": ${reason}`);
+            }
+        }
+        let result;
+        try {
+            result = await fn(record.file, body);
+        }
+        catch (err) {
+            const reason = err instanceof Error ? err.message : String(err);
+            throw (0, log_1.wasReported)(`transform hook threw for "${record.file}": ${reason}`);
+        }
+        if (result === undefined) {
+            // User opted not to change this file. Cache the body we just loaded
+            // so packer/sea-assets don't re-read the same bytes from disk.
+            record.body = body;
+            continue;
+        }
+        if (typeof result !== 'string' && !Buffer.isBuffer(result)) {
+            throw (0, log_1.wasReported)(`transform hook for "${record.file}" returned ${typeof result}; ` +
+                `expected string, Buffer, or undefined`);
+        }
+        record.body = result;
+    }
+}
+exports.runTransform = runTransform;
+//# sourceMappingURL=hooks.js.map

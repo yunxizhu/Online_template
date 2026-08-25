@@ -1,0 +1,73 @@
+import * as babelTypes from '@babel/types';
+import * as babel from '@babel/parser';
+/**
+ * Runs each literal-arg matcher in order and returns the first hit as a
+ * `{alias, aliasType, mustExclude?, mayExclude?}` derivative for the walker to
+ * bundle. When `test` is true returns a printable form (used by unit tests).
+ * `requireAliases` is the per-file set of identifiers bound to
+ * `createRequire(…)` (computed by `detect`); pass it through so the walker
+ * picks up `r("./foo")` calls where `r` was assigned from `createRequire`.
+ */
+export declare function visitorSuccessful(node: babelTypes.Node, test?: boolean, requireAliases?: Set<string>): string | {
+    alias: string | number | boolean;
+    aliasType: number;
+    mustExclude: boolean;
+    mayExclude: boolean;
+} | {
+    alias: string | number | boolean;
+    aliasType: number;
+    mustExclude?: undefined;
+    mayExclude?: undefined;
+} | {
+    alias: string | number | boolean;
+    aliasType: number;
+    mayExclude: boolean;
+    mustExclude?: undefined;
+} | null;
+/**
+ * Entry visitor for dynamic requires whose target isn't known at build time —
+ * returns the alias to warn about. `requireAliases` parity with
+ * `visitorSuccessful` keeps the diagnostic surface consistent: aliased
+ * `r(x)` / `r.resolve(x)` calls produce the same "Cannot resolve" warning
+ * literal `require(x)` does, instead of being silently dropped.
+ */
+export declare function visitorNonLiteral(n: babelTypes.Node, requireAliases?: Set<string>): {
+    alias: string;
+    mustExclude: boolean;
+    mayExclude: boolean;
+} | null;
+/** Fires on require/require.resolve shapes the literal matchers rejected (wrong arg count, etc.). */
+export declare function visitorMalformed(n: babelTypes.Node, requireAliases?: Set<string>): {
+    alias: string;
+} | null;
+/**
+ * Flags `path.resolve(...)` so the walker can warn that it resolves against
+ * `process.cwd()` at runtime, not `__dirname`. Skips the literal-only
+ * `path.resolve(__dirname, "a"[, "b", …])` shape — `visitorPathJoin` claims
+ * that case and bundles it, so warning here would contradict our own action.
+ * Dynamic shapes like `path.resolve(__dirname, x)` still warn: `visitorPathJoin`
+ * bails on the non-literal segment, so a diagnostic is the only signal the
+ * user gets that the target may not be in the snapshot.
+ */
+export declare function visitorUseSCWD(n: babelTypes.Node): {
+    alias: string;
+} | null;
+type VisitorFunction = (node: babelTypes.Node, trying?: boolean, requireAliases?: Set<string>) => boolean;
+/**
+ * `babel.parse` wrapper. `isEsm` selects `sourceType: 'module'` so `import.meta`
+ * / top-level await parse cleanly. `decorators-legacy` is enabled so third-party
+ * sources that ship raw `@decorator` syntax (fontkit, older MobX/Nest builds,
+ * etc.) don't trip the parser and silently drop their dependency graph.
+ */
+export declare function parse(body: string, isEsm?: boolean): babel.ParseResult<babelTypes.File>;
+/**
+ * Parses `body` and walks the AST with `visitor`. Parse failures are logged
+ * (not thrown) so one unparseable file doesn't abort the whole build — but the
+ * file's dependencies are then skipped, which is why callers must pass the
+ * correct `isEsm` flag. Before the main walk we collect identifiers bound to
+ * `createRequire(…)` and forward the set to the visitor (3rd arg) so it can
+ * treat aliased requires as first-class.
+ */
+export declare function detect(body: string, visitor: VisitorFunction, file?: string, isEsm?: boolean): void;
+export {};
+//# sourceMappingURL=detector.d.ts.map

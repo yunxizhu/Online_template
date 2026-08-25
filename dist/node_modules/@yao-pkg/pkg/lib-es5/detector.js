@@ -1,0 +1,705 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.detect = exports.parse = exports.visitorUseSCWD = exports.visitorMalformed = exports.visitorNonLiteral = exports.visitorSuccessful = void 0;
+const path_1 = __importDefault(require("path"));
+const babelTypes = __importStar(require("@babel/types"));
+const babel = __importStar(require("@babel/parser"));
+const generator_1 = __importDefault(require("@babel/generator"));
+const log_1 = require("./log");
+const common_1 = require("./common");
+/** Type guard for plain literal nodes; rejects template literals with interpolations. */
+function isLiteral(node) {
+    if (node == null) {
+        return false;
+    }
+    if (!node.type.endsWith('Literal')) {
+        return false;
+    }
+    if (node.type === 'TemplateLiteral' && node.expressions.length !== 0) {
+        return false;
+    }
+    return true;
+}
+/** Extracts the runtime value of a literal. Throws on null/regexp — never valid module specifiers. */
+function getLiteralValue(node) {
+    if (node.type === 'TemplateLiteral') {
+        return node.quasis[0].value.raw;
+    }
+    if (node.type === 'NullLiteral') {
+        throw new Error('Unexpected null in require expression');
+    }
+    if (node.type === 'RegExpLiteral') {
+        throw new Error('Unexpected regexp in require expression');
+    }
+    return node.value;
+}
+/** Renders an import specifier list back to source (`a, { b, c as d }`) for log output. */
+function reconstructSpecifiers(specs) {
+    if (!specs || !specs.length) {
+        return '';
+    }
+    const defaults = [];
+    for (const spec of specs) {
+        if (babelTypes.isImportDefaultSpecifier(spec)) {
+            defaults.push(spec.local.name);
+        }
+    }
+    const nonDefaults = [];
+    for (const spec of specs) {
+        if (babelTypes.isImportSpecifier(spec)) {
+            const importedName = babelTypes.isIdentifier(spec.imported)
+                ? spec.imported.name
+                : spec.imported.value;
+            if (spec.local.name === importedName) {
+                nonDefaults.push(spec.local.name);
+            }
+            else {
+                nonDefaults.push(`${importedName} as ${spec.local.name}`);
+            }
+        }
+    }
+    if (nonDefaults.length) {
+        defaults.push(`{ ${nonDefaults.join(', ')} }`);
+    }
+    return defaults.join(', ');
+}
+/** Prints any AST node back to a single-line source string, used when an arg isn't a literal. */
+function reconstruct(node) {
+    let v = (0, generator_1.default)(node, { comments: false }).code.replace(/\n/g, '');
+    let v2;
+    while (true) {
+        v2 = v.replace(/\[ /g, '[').replace(/ \]/g, ']').replace(/ {2}/g, ' ');
+        if (v2 === v) {
+            break;
+        }
+        v = v2;
+    }
+    return v2;
+}
+/** Fills a template (e.g. `require({v1}{c2}{v2})`) with captured args to produce the printable form of a match. */
+function forge(pattern, was) {
+    return pattern
+        .replace('{c1}', ', ')
+        .replace('{v1}', `"${was.v1}"`)
+        .replace('{c2}', was.v2 ? ', ' : '')
+        .replace('{v2}', was.v2 ? `"${was.v2}"` : '')
+        .replace('{c3}', was.v3 ? ' from ' : '')
+        .replace('{v3}', was.v3 ? was.v3 : '');
+}
+/** Guards the 2nd arg of require/require.resolve — only pkg's `must-exclude`/`may-exclude` markers are honored. */
+function valid2(v2) {
+    return (v2 === undefined ||
+        v2 === null ||
+        v2 === 'must-exclude' ||
+        v2 === 'may-exclude');
+}
+/**
+ * True if `n` is a `createRequire(...)` call. Used both to detect the direct
+ * `createRequire(import.meta.url)('./foo')` invocation pattern and to seed the
+ * alias set with names bound to its result.
+ */
+function isCreateRequireCall(n) {
+    return (!!n &&
+        babelTypes.isCallExpression(n) &&
+        babelTypes.isIdentifier(n.callee) &&
+        n.callee.name === 'createRequire');
+}
+/**
+ * True if `name` resolves to a `require`-equivalent in the current file —
+ * either the literal `require` or a local bound to `createRequire(...)` (e.g.
+ * `const r = createRequire(import.meta.url)`). The name set is collected by
+ * `collectRequireAliases` before traversal, so visitor lookups are O(1).
+ */
+function isRequireName(name, requireAliases) {
+    return name === 'require' || !!requireAliases?.has(name);
+}
+/** Matches `require.resolve("lit"[, "lit"])`. Returns captured args or null. */
+function visitorRequireResolve(n, requireAliases) {
+    if (!babelTypes.isCallExpression(n)) {
+        return null;
+    }
+    if (!babelTypes.isMemberExpression(n.callee)) {
+        return null;
+    }
+    const ci = n.callee.object.type === 'Identifier' &&
+        isRequireName(n.callee.object.name, requireAliases) &&
+        n.callee.property.type === 'Identifier' &&
+        n.callee.property.name === 'resolve';
+    if (!ci) {
+        return null;
+    }
+    if (!n.arguments || !isLiteral(n.arguments[0])) {
+        return null;
+    }
+    return {
+        v1: getLiteralValue(n.arguments[0]),
+        v2: isLiteral(n.arguments[1]) ? getLiteralValue(n.arguments[1]) : null,
+    };
+}
+/**
+ * Matches `require("lit"[, "lit"])`, plus two ESM idioms that resolve to the
+ * same thing: `createRequire(import.meta.url)("lit")` (direct invocation) and
+ * `r("lit")` where `r` was bound from `createRequire(…)`.
+ */
+function visitorRequire(n, requireAliases) {
+    if (!babelTypes.isCallExpression(n)) {
+        return null;
+    }
+    let isRequireCall = false;
+    if (babelTypes.isIdentifier(n.callee)) {
+        isRequireCall = isRequireName(n.callee.name, requireAliases);
+    }
+    else if (isCreateRequireCall(n.callee)) {
+        isRequireCall = true;
+    }
+    if (!isRequireCall) {
+        return null;
+    }
+    if (!n.arguments || !isLiteral(n.arguments[0])) {
+        return null;
+    }
+    return {
+        v1: getLiteralValue(n.arguments[0]),
+        v2: isLiteral(n.arguments[1]) ? getLiteralValue(n.arguments[1]) : null,
+    };
+}
+/** Matches a static ESM `import … from "lit"` declaration. */
+function visitorImport(n) {
+    if (!babelTypes.isImportDeclaration(n)) {
+        return null;
+    }
+    return { v1: n.source.value, v3: reconstructSpecifiers(n.specifiers) };
+}
+/**
+ * Matches ESM re-exports — `export * from "lit"`, `export * as ns from "lit"`,
+ * `export { x } from "lit"`. The walker's CJS pass handles these via the
+ * ESM→CJS transformer (`lib/esm-transformer.ts`), but in SEA mode that
+ * transform is skipped, so without this matcher every barrel file silently
+ * drops its re-exports.
+ */
+function visitorReExport(n) {
+    if (!babelTypes.isExportAllDeclaration(n) &&
+        !babelTypes.isExportNamedDeclaration(n)) {
+        return null;
+    }
+    if (!n.source || typeof n.source.value !== 'string') {
+        return null;
+    }
+    return { v1: n.source.value };
+}
+/**
+ * True iff `n` is the `import.meta` meta-property — `MetaProperty` also
+ * represents `new.target`, so we have to assert the meta/property pair.
+ */
+function isImportMeta(n) {
+    return (babelTypes.isMetaProperty(n) &&
+        babelTypes.isIdentifier(n.meta) &&
+        n.meta.name === 'import' &&
+        babelTypes.isIdentifier(n.property) &&
+        n.property.name === 'meta');
+}
+/**
+ * Matches `new URL("./rel", import.meta.url)` — the canonical ESM idiom for
+ * sibling assets (the equivalent of `path.join(__dirname, …)` in CJS). The
+ * literal first arg is treated as a snapshot-relative asset.
+ */
+function visitorNewURL(n) {
+    if (!babelTypes.isNewExpression(n)) {
+        return null;
+    }
+    if (!babelTypes.isIdentifier(n.callee) || n.callee.name !== 'URL') {
+        return null;
+    }
+    if (!n.arguments || !isLiteral(n.arguments[0])) {
+        return null;
+    }
+    const second = n.arguments[1];
+    // Only match the import.meta.url base — other bases (absolute URLs,
+    // arbitrary strings, `new.target.url`) don't resolve to a
+    // snapshot-relative path.
+    if (!second ||
+        !babelTypes.isMemberExpression(second) ||
+        !isImportMeta(second.object) ||
+        !babelTypes.isIdentifier(second.property) ||
+        second.property.name !== 'url') {
+        return null;
+    }
+    const value = getLiteralValue(n.arguments[0]);
+    if (typeof value !== 'string') {
+        return null;
+    }
+    // A scheme-prefixed first arg (e.g. "https:", "data:", "file:") is an
+    // absolute URL that ignores the base, so it never resolves to a
+    // snapshot-relative asset — only scheme-less relative references do.
+    if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(value)) {
+        return null;
+    }
+    return { v1: value };
+}
+/**
+ * Matches `import.meta.resolve("lit")` — the modern ESM resolver API,
+ * gradually replacing `require.resolve` in ESM code. The literal first arg is
+ * resolved through the same `follow` path as `require.resolve`. Guards against
+ * other `MetaProperty.resolve` shapes (e.g. hypothetical `new.target.resolve`)
+ * by asserting the receiver is exactly `import.meta`.
+ */
+function visitorImportMetaResolve(n) {
+    if (!babelTypes.isCallExpression(n)) {
+        return null;
+    }
+    if (!babelTypes.isMemberExpression(n.callee)) {
+        return null;
+    }
+    if (!isImportMeta(n.callee.object) ||
+        !babelTypes.isIdentifier(n.callee.property) ||
+        n.callee.property.name !== 'resolve') {
+        return null;
+    }
+    if (!n.arguments || !isLiteral(n.arguments[0])) {
+        return null;
+    }
+    const value = getLiteralValue(n.arguments[0]);
+    if (typeof value !== 'string') {
+        return null;
+    }
+    return { v1: value };
+}
+/** Matches dynamic `import("lit")` so bundler-emitted chunk splits get walked like static imports. */
+function visitorDynamicImport(n) {
+    if (!babelTypes.isCallExpression(n)) {
+        return null;
+    }
+    if (n.callee.type !== 'Import') {
+        return null;
+    }
+    if (!n.arguments || !isLiteral(n.arguments[0])) {
+        return null;
+    }
+    // Module specifiers are always strings — reject `import(0)` / `import(true)`
+    // so a non-string value can't reach the walker's alias handling.
+    const value = getLiteralValue(n.arguments[0]);
+    if (typeof value !== 'string') {
+        return null;
+    }
+    return { v1: value };
+}
+/**
+ * Matches `path.join(__dirname, "a"[, "b", …])` and `path.resolve(__dirname,
+ * "a"[, "b", …])` — treats the joined path as a snapshot-relative asset
+ * reference. Multi-segment joins concatenate to a single posix-style alias so
+ * the walker's `path.join(dirname, alias)` later normalizes correctly on every
+ * platform. Bails on any non-literal segment to avoid synthesizing wrong
+ * paths from `__dirname` + a runtime value.
+ */
+function visitorPathJoin(n) {
+    if (!babelTypes.isCallExpression(n)) {
+        return null;
+    }
+    if (!babelTypes.isMemberExpression(n.callee)) {
+        return null;
+    }
+    const ci = n.callee.object &&
+        n.callee.object.type === 'Identifier' &&
+        n.callee.object.name === 'path' &&
+        n.callee.property &&
+        n.callee.property.type === 'Identifier' &&
+        (n.callee.property.name === 'join' || n.callee.property.name === 'resolve');
+    if (!ci) {
+        return null;
+    }
+    const dn = n.arguments[0] &&
+        n.arguments[0].type === 'Identifier' &&
+        n.arguments[0].name === '__dirname';
+    if (!dn) {
+        return null;
+    }
+    if (n.arguments.length < 2) {
+        return null;
+    }
+    const segments = [];
+    for (let i = 1; i < n.arguments.length; i += 1) {
+        const arg = n.arguments[i];
+        if (!isLiteral(arg)) {
+            return null;
+        }
+        const value = getLiteralValue(arg);
+        if (typeof value !== 'string') {
+            return null;
+        }
+        segments.push(value);
+    }
+    return { v1: path_1.default.posix.join(...segments) };
+}
+/**
+ * Runs each literal-arg matcher in order and returns the first hit as a
+ * `{alias, aliasType, mustExclude?, mayExclude?}` derivative for the walker to
+ * bundle. When `test` is true returns a printable form (used by unit tests).
+ * `requireAliases` is the per-file set of identifiers bound to
+ * `createRequire(…)` (computed by `detect`); pass it through so the walker
+ * picks up `r("./foo")` calls where `r` was assigned from `createRequire`.
+ */
+function visitorSuccessful(node, test = false, requireAliases) {
+    let was = visitorRequireResolve(node, requireAliases);
+    if (was) {
+        if (test) {
+            return forge('require.resolve({v1}{c2}{v2})', was);
+        }
+        if (!valid2(was.v2)) {
+            return null;
+        }
+        return {
+            alias: was.v1,
+            aliasType: common_1.ALIAS_AS_RESOLVABLE,
+            mustExclude: was.v2 === 'must-exclude',
+            mayExclude: was.v2 === 'may-exclude',
+        };
+    }
+    was = visitorRequire(node, requireAliases);
+    if (was) {
+        if (test) {
+            return forge('require({v1}{c2}{v2})', was);
+        }
+        if (!valid2(was.v2)) {
+            return null;
+        }
+        return {
+            alias: was.v1,
+            aliasType: common_1.ALIAS_AS_RESOLVABLE,
+            mustExclude: was.v2 === 'must-exclude',
+            mayExclude: was.v2 === 'may-exclude',
+        };
+    }
+    was = visitorImport(node);
+    if (was) {
+        if (test) {
+            return forge('import {v3}{c3}{v1}', was);
+        }
+        return { alias: was.v1, aliasType: common_1.ALIAS_AS_RESOLVABLE };
+    }
+    was = visitorReExport(node);
+    if (was) {
+        if (test) {
+            return forge('export ... from {v1}', was);
+        }
+        return { alias: was.v1, aliasType: common_1.ALIAS_AS_RESOLVABLE };
+    }
+    was = visitorDynamicImport(node);
+    if (was) {
+        if (test) {
+            return forge('import({v1})', was);
+        }
+        return { alias: was.v1, aliasType: common_1.ALIAS_AS_RESOLVABLE };
+    }
+    was = visitorImportMetaResolve(node);
+    if (was) {
+        if (test) {
+            return forge('import.meta.resolve({v1})', was);
+        }
+        return { alias: was.v1, aliasType: common_1.ALIAS_AS_RESOLVABLE };
+    }
+    was = visitorNewURL(node);
+    if (was) {
+        if (test) {
+            return forge('new URL({v1}, import.meta.url)', was);
+        }
+        return { alias: was.v1, aliasType: common_1.ALIAS_AS_RELATIVE, mayExclude: false };
+    }
+    was = visitorPathJoin(node);
+    if (was) {
+        if (test) {
+            return forge('path.join(__dirname{c1}{v1})', was);
+        }
+        return { alias: was.v1, aliasType: common_1.ALIAS_AS_RELATIVE, mayExclude: false };
+    }
+    return null;
+}
+exports.visitorSuccessful = visitorSuccessful;
+/** Matches `require.resolve(<non-literal>[, "lit"])` — feeds the "Cannot resolve" warning path. */
+function nonLiteralRequireResolve(n, requireAliases) {
+    if (!babelTypes.isCallExpression(n)) {
+        return null;
+    }
+    if (!babelTypes.isMemberExpression(n.callee)) {
+        return null;
+    }
+    const ci = n.callee.object.type === 'Identifier' &&
+        isRequireName(n.callee.object.name, requireAliases) &&
+        n.callee.property.type === 'Identifier' &&
+        n.callee.property.name === 'resolve';
+    if (!ci) {
+        return null;
+    }
+    if (isLiteral(n.arguments[0])) {
+        return null;
+    }
+    const m = n.arguments[1];
+    if (!m) {
+        return { v1: reconstruct(n.arguments[0]) };
+    }
+    if (!isLiteral(n.arguments[1])) {
+        return null;
+    }
+    return {
+        v1: reconstruct(n.arguments[0]),
+        v2: getLiteralValue(n.arguments[1]),
+    };
+}
+/** Matches `require(<non-literal>[, "lit"])` — feeds the "Cannot resolve" warning path. */
+function nonLiteralRequire(n, requireAliases) {
+    if (!babelTypes.isCallExpression(n)) {
+        return null;
+    }
+    if (!babelTypes.isIdentifier(n.callee)) {
+        return null;
+    }
+    if (!isRequireName(n.callee.name, requireAliases)) {
+        return null;
+    }
+    if (isLiteral(n.arguments[0])) {
+        return null;
+    }
+    const m = n.arguments[1];
+    if (!m) {
+        return { v1: reconstruct(n.arguments[0]) };
+    }
+    if (!isLiteral(n.arguments[1])) {
+        return null;
+    }
+    return {
+        v1: reconstruct(n.arguments[0]),
+        v2: getLiteralValue(n.arguments[1]),
+    };
+}
+/**
+ * Entry visitor for dynamic requires whose target isn't known at build time —
+ * returns the alias to warn about. `requireAliases` parity with
+ * `visitorSuccessful` keeps the diagnostic surface consistent: aliased
+ * `r(x)` / `r.resolve(x)` calls produce the same "Cannot resolve" warning
+ * literal `require(x)` does, instead of being silently dropped.
+ */
+function visitorNonLiteral(n, requireAliases) {
+    const was = nonLiteralRequireResolve(n, requireAliases) ||
+        nonLiteralRequire(n, requireAliases);
+    if (was) {
+        if (!valid2(was.v2)) {
+            return null;
+        }
+        return {
+            alias: was.v1,
+            mustExclude: was.v2 === 'must-exclude',
+            mayExclude: was.v2 === 'may-exclude',
+        };
+    }
+    return null;
+}
+exports.visitorNonLiteral = visitorNonLiteral;
+/** Loose `require(...)` match (no literal gate) — used only to surface malformed-require diagnostics. */
+function isRequire(n, requireAliases) {
+    if (!babelTypes.isCallExpression(n)) {
+        return null;
+    }
+    if (!babelTypes.isIdentifier(n.callee)) {
+        return null;
+    }
+    if (!isRequireName(n.callee.name, requireAliases)) {
+        return null;
+    }
+    const f = n.arguments && n.arguments[0];
+    if (!f) {
+        return null;
+    }
+    return { v1: reconstruct(n.arguments[0]) };
+}
+/** Loose `require.resolve(...)` match (no literal gate) — used only for malformed-require diagnostics. */
+function isRequireResolve(n, requireAliases) {
+    if (!babelTypes.isCallExpression(n)) {
+        return null;
+    }
+    if (!babelTypes.isMemberExpression(n.callee)) {
+        return null;
+    }
+    const ci = n.callee.object.type === 'Identifier' &&
+        isRequireName(n.callee.object.name, requireAliases) &&
+        n.callee.property.type === 'Identifier' &&
+        n.callee.property.name === 'resolve';
+    if (!ci) {
+        return null;
+    }
+    const f = n.type === 'CallExpression' && n.arguments && n.arguments[0];
+    if (!f) {
+        return null;
+    }
+    return { v1: reconstruct(n.arguments[0]) };
+}
+/** Fires on require/require.resolve shapes the literal matchers rejected (wrong arg count, etc.). */
+function visitorMalformed(n, requireAliases) {
+    const was = isRequireResolve(n, requireAliases) || isRequire(n, requireAliases);
+    if (was) {
+        return { alias: was.v1 };
+    }
+    return null;
+}
+exports.visitorMalformed = visitorMalformed;
+/**
+ * Flags `path.resolve(...)` so the walker can warn that it resolves against
+ * `process.cwd()` at runtime, not `__dirname`. Skips the literal-only
+ * `path.resolve(__dirname, "a"[, "b", …])` shape — `visitorPathJoin` claims
+ * that case and bundles it, so warning here would contradict our own action.
+ * Dynamic shapes like `path.resolve(__dirname, x)` still warn: `visitorPathJoin`
+ * bails on the non-literal segment, so a diagnostic is the only signal the
+ * user gets that the target may not be in the snapshot.
+ */
+function visitorUseSCWD(n) {
+    if (!babelTypes.isCallExpression(n)) {
+        return null;
+    }
+    if (!babelTypes.isMemberExpression(n.callee)) {
+        return null;
+    }
+    const ci = n.callee.object.type === 'Identifier' &&
+        n.callee.object.name === 'path' &&
+        n.callee.property.type === 'Identifier' &&
+        n.callee.property.name === 'resolve';
+    if (!ci) {
+        return null;
+    }
+    const firstArg = n.arguments[0];
+    if (firstArg &&
+        babelTypes.isIdentifier(firstArg) &&
+        firstArg.name === '__dirname' &&
+        n.arguments.length >= 2 &&
+        n.arguments.slice(1).every((a) => isLiteral(a))) {
+        return null;
+    }
+    const was = { v1: n.arguments.map(reconstruct).join(', ') };
+    if (was) {
+        return { alias: was.v1 };
+    }
+    return null;
+}
+exports.visitorUseSCWD = visitorUseSCWD;
+/**
+ * Iterative DFS over the AST. `visitor` returns true to descend into children;
+ * `trying` is propagated inside try/catch bodies so the walker can downgrade
+ * downstream warnings to debug.
+ */
+function traverse(ast, visitor) {
+    // modified esprima-walk to support
+    // visitor return value and "trying" flag
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const stack = [[ast, false]];
+    for (let i = 0; i < stack.length; i += 1) {
+        const item = stack[i];
+        const [node] = item;
+        if (node) {
+            const trying = item[1] || babelTypes.isTryStatement(node);
+            if (visitor(node, trying)) {
+                for (const key in node) {
+                    if (node[key]) {
+                        const child = node[key];
+                        if (child instanceof Array) {
+                            for (let j = 0; j < child.length; j += 1) {
+                                stack.push([child[j], trying]);
+                            }
+                        }
+                        else if (child && typeof child.type === 'string') {
+                            stack.push([child, trying]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+/**
+ * `babel.parse` wrapper. `isEsm` selects `sourceType: 'module'` so `import.meta`
+ * / top-level await parse cleanly. `decorators-legacy` is enabled so third-party
+ * sources that ship raw `@decorator` syntax (fontkit, older MobX/Nest builds,
+ * etc.) don't trip the parser and silently drop their dependency graph.
+ */
+function parse(body, isEsm = false) {
+    return babel.parse(body, {
+        allowImportExportEverywhere: true,
+        allowReturnOutsideFunction: true,
+        sourceType: isEsm ? 'module' : 'script',
+        plugins: ['decorators-legacy'],
+    });
+}
+exports.parse = parse;
+/**
+ * Pre-scan pass: collects identifiers bound at the *module top level* to
+ * `createRequire(…)` so the main traversal can recognize `r("./foo")` (where
+ * `r` was assigned from `createRequire`) as a require-equivalent.
+ *
+ * Restricting to top-level `const` declarations is deliberate: a deep walk
+ * would also pick up bindings inside inner functions or shadowed scopes,
+ * which would falsely flag unrelated `r(...)` calls in other scopes as
+ * requires. The canonical `const r = createRequire(import.meta.url)` idiom is
+ * always file-top, so the safe-and-narrow rule covers the real-world cases
+ * without scope tracking.
+ */
+function collectRequireAliases(ast) {
+    const names = new Set();
+    for (const stmt of ast.program.body) {
+        if (!babelTypes.isVariableDeclaration(stmt) || stmt.kind !== 'const') {
+            continue;
+        }
+        for (const decl of stmt.declarations) {
+            if (babelTypes.isIdentifier(decl.id) && isCreateRequireCall(decl.init)) {
+                names.add(decl.id.name);
+            }
+        }
+    }
+    return names;
+}
+/**
+ * Parses `body` and walks the AST with `visitor`. Parse failures are logged
+ * (not thrown) so one unparseable file doesn't abort the whole build — but the
+ * file's dependencies are then skipped, which is why callers must pass the
+ * correct `isEsm` flag. Before the main walk we collect identifiers bound to
+ * `createRequire(…)` and forward the set to the visitor (3rd arg) so it can
+ * treat aliased requires as first-class.
+ */
+function detect(body, visitor, file, isEsm = false) {
+    let json;
+    try {
+        json = parse(body, isEsm);
+    }
+    catch (error) {
+        const fileInfo = file ? ` in ${file}` : '';
+        log_1.log.warn(`Babel parse has failed: ${error.message}${fileInfo}`);
+    }
+    if (!json) {
+        return;
+    }
+    const requireAliases = collectRequireAliases(json);
+    traverse(json, (node, trying) => visitor(node, trying, requireAliases));
+}
+exports.detect = detect;
+//# sourceMappingURL=detector.js.map
