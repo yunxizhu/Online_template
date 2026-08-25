@@ -19,6 +19,8 @@ const FUNC_TYPES = {
   banditRaid: '强盗来袭',
   expand: '扩容',
   robbery: '抢劫',
+  enhance: '强化',
+  recruit: '征召',
 };
 
 /** 中立强盗工人 ID（参与抵消与名次，但不领取收益） */
@@ -104,36 +106,43 @@ function makeFunc(type, extra = {}) {
   };
 }
 
-/** 功能板块卡堆 */
-function buildFunctionDeck() {
+/** 功能板块卡堆（未洗，供合堆组装） */
+function buildFunctionDeckRaw() {
   const cards = [];
   for (let i = 0; i < 3; i++) cards.push(makeFunc('harvest'));
   for (let i = 0; i < 3; i++) cards.push(makeFunc('remoteDice'));
-  for (let i = 0; i < 6; i++) cards.push(makeFunc('exile'));
+  for (let i = 0; i < 3; i++) cards.push(makeFunc('exile'));
   for (let i = 0; i < 3; i++) cards.push(makeFunc('redraw'));
-  for (let i = 0; i < 6; i++) cards.push(makeFunc('banditRaid'));
-  for (let i = 0; i < 3; i++) cards.push(makeFunc('expand'));
-  for (let i = 0; i < 6; i++) cards.push(makeFunc('robbery'));
-  return shuffle(cards);
+  for (let i = 0; i < 3; i++) cards.push(makeFunc('banditRaid'));
+  //for (let i = 0; i < 3; i++) cards.push(makeFunc('expand'));
+  for (let i = 0; i < 3; i++) cards.push(makeFunc('robbery'));
+  for (let i = 0; i < 3; i++) cards.push(makeFunc('enhance'));
+  for (let i = 0; i < 3; i++) cards.push(makeFunc('recruit'));
+  return cards;
+}
+
+/** 功能板块卡堆 */
+function buildFunctionDeck() {
+  return shuffle(buildFunctionDeckRaw());
 }
 
 /** 生产建筑造价：资源种类 × 富/贫（仅列出非 0 项） */
 const PRODUCE_BUILD_COSTS = {
   wood: {
-    rich: { wood: 2, stone: 5,food: 3, iron: 2 },
-    poor: { stone: 3,food: 2, iron: 1 },
+    rich: { stone: 2,food: 3, iron: 2 },
+    poor: { stone: 1, iron: 1 },
   },
   stone: {
-    rich: { wood: 5, stone: 2,food: 3, iron: 2 },
-    poor: { wood: 3,food: 2, iron: 1  },
+    rich: { wood: 2, food: 3, iron: 2 },
+    poor: { wood: 1, iron: 1  },
   },
   food: {
-    rich: { wood: 5, stone: 5, iron: 2 },
-    poor: { wood: 2, stone: 2 , iron: 1 },
+    rich: { wood: 3, stone: 3, iron: 1 },
+    poor: { wood: 1, stone: 1  },
   },
   iron: {
     rich: { wood: 4, stone: 4,food: 3, iron: 2 },
-    poor: { wood: 1, stone: 1,food: 2, iron: 2 },
+    poor: { wood: 1, stone: 1, iron: 1 },
   },
 };
 
@@ -165,7 +174,7 @@ function makeScore2() {
     kind: 'building',
     buildType: 'score2',
     label: '宫殿(+3)',
-    cost: { wood: 7, stone: 7 , food: 7, iron: 4 },
+    cost: { wood: 3, stone: 3 , food: 3, iron: 2 },
     produce: 0,
     score: 3,
     needsWorker: false,
@@ -179,7 +188,7 @@ function makeExchange() {
     kind: 'building',
     buildType: 'exchange',
     label: '集市',
-    cost: { wood: 3, stone: 3 },
+    cost: { wood: 2, stone: 2 },
     produce: 0,
     score: 0,
     needsWorker: false,
@@ -194,7 +203,7 @@ function makeWishWell() {
     kind: 'building',
     buildType: 'wishWell',
     label: '许愿井',
-    cost: { wood: 2, stone: 2, food: 2, iron: 2 },
+    cost: { wood: 1, stone: 1, food: 1, iron: 1 },
     produce: 0,
     score: 0,
     needsWorker: false,
@@ -202,8 +211,8 @@ function makeWishWell() {
   };
 }
 
-/** 建筑卡堆：木/石/食生产建筑 2富3贫；铁矿 1富2贫 */
-function buildBuildingDeck() {
+/** 建筑卡堆：木/石/食生产建筑 2富3贫；铁矿 0富3贫（未洗，供合堆组装） */
+function buildBuildingDeckRaw() {
   const cards = [];
   for (const res of ['wood', 'stone', 'food']) {
     cards.push(makeProduceBuild(res, true));
@@ -215,10 +224,20 @@ function buildBuildingDeck() {
   cards.push(makeProduceBuild('iron', false));
   cards.push(makeProduceBuild('iron', false));
   cards.push(makeProduceBuild('iron', false));
-  for (let i = 0; i < 5; i++) cards.push(makeScore2());
-  for (let i = 0; i < 4; i++) cards.push(makeExchange());
-  for (let i = 0; i < 4; i++) cards.push(makeWishWell());
-  return shuffle(cards);
+  for (let i = 0; i < 4; i++) cards.push(makeScore2());
+  for (let i = 0; i < 3; i++) cards.push(makeExchange());
+  for (let i = 0; i < 3; i++) cards.push(makeWishWell());
+  return cards;
+}
+
+/** 建筑卡堆 */
+function buildBuildingDeck() {
+  return shuffle(buildBuildingDeckRaw());
+}
+
+/** 功能+建筑混洗合堆 */
+function buildSpecialDeck() {
+  return shuffle(buildFunctionDeckRaw().concat(buildBuildingDeckRaw()));
 }
 
 /** 常驻「建造房子」造价 */
@@ -251,4 +270,5 @@ module.exports = {
   buildResourceDeck,
   buildFunctionDeck,
   buildBuildingDeck,
+  buildSpecialDeck,
 };

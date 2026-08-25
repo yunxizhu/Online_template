@@ -13,6 +13,7 @@ const {
   buildResourceDeck,
   buildFunctionDeck,
   buildBuildingDeck,
+  buildSpecialDeck,
   BUILD_HOUSE_COST,
   BREED_FOOD_PER_VILLAGER,
   breedFoodCost,
@@ -20,11 +21,15 @@ const {
 
 const WIN_SCORE = 15;
 const START_VILLAGERS = 3;
-const START_FOOD = 3;
-const MAX_VILLAGERS = 12;
+const START_HOUSES = 3;
+const MAX_VILLAGERS = 15;
 const MAX_FUNC_HAND = 3;
 const MAX_BUILDINGS = 3;
 const MAX_RESOURCE_HAND = 10;
+/** 每位玩家最多拥有的强化骰数量 */
+const MAX_ENHANCED_DICE = 3;
+/** 征召：下一轮生产临时村民数量 */
+const RECRUIT_TEMP_VILLAGERS = 3;
 const EXPAND_RESOURCE_BONUS = 4;
 /** 资源板块摆放上限（6 数字格 × 每格 3 张） */
 const MAX_RESOURCE_BOARD_TILES = 18;
@@ -61,6 +66,13 @@ function maxResourceHandFor(player) {
   );
 }
 
+/** 空闲房子数：房子 − 村民（繁殖需要至少 1 间空房） */
+function freeHousesFor(player) {
+  const houses = Number(player && player.houses) || 0;
+  const villagers = Number(player && player.villagers) || 0;
+  return Math.max(0, houses - villagers);
+}
+
 /** 累计扩容次数（功能卡与常驻均计入，用于常驻扩容造价） */
 function expandCountFor(player) {
   return (
@@ -80,12 +92,11 @@ function slotLabel(slot) {
   return isNoneSlot(slot) ? '无数字' : String(slot);
 }
 
-/** 三大公共区 */
-const BOARD_AREAS = ['resource', 'function', 'building'];
+/** 两大公共区：资源 + 功能/建筑合区 */
+const BOARD_AREAS = ['resource', 'special'];
 const AREA_LABELS = {
   resource: '资源',
-  function: '功能',
-  building: '建筑',
+  special: '功能/建筑',
 };
 
 function emptyRes() {
@@ -93,9 +104,7 @@ function emptyRes() {
 }
 
 function startRes() {
-  const r = emptyRes();
-  r.food = START_FOOD;
-  return r;
+  return emptyRes();
 }
 
 function cloneRes(r) {
@@ -260,7 +269,8 @@ function rollDice(n) {
 }
 
 function idleVillagers(p) {
-  return Math.max(0, p.villagers - p.dispatched);
+  const temp = Number(p && p.tempVillagers) || 0;
+  return Math.max(0, (Number(p.villagers) || 0) + temp - (Number(p.dispatched) || 0));
 }
 
 function playerScore(p) {
@@ -306,15 +316,15 @@ function emptySlotWorkers() {
 function emptyAreaBoard() {
   return {
     tiles: [], // { ...card, number }
-    workers: emptySlotWorkers(), // number -> { playerId: count }
+    workers: emptySlotWorkers(), // number -> { playerId: physical die count }
+    boosts: emptySlotWorkers(), // number -> { playerId: enhanced die count among workers }
   };
 }
 
 function emptyBoard() {
   return {
     resource: emptyAreaBoard(),
-    function: emptyAreaBoard(),
-    building: emptyAreaBoard(),
+    special: emptyAreaBoard(),
   };
 }
 
@@ -334,37 +344,46 @@ function cleanCardForPile(card) {
 
 const DECK_KIND_LABEL = {
   resource: '资源',
+  special: '功能/建筑',
   function: '功能',
   building: '建筑',
 };
 
+/** 功能/建筑统一进合堆弃牌 */
+function normalizeDeckKind(kind) {
+  if (kind === 'function' || kind === 'building') return 'special';
+  return kind;
+}
+
 function deckKey(kind) {
-  return `${kind}Deck`;
+  return `${normalizeDeckKind(kind)}Deck`;
 }
 
 function discardKey(kind) {
-  return `${kind}Discard`;
+  return `${normalizeDeckKind(kind)}Discard`;
 }
 
 /** 抽牌堆空时，将旁置弃牌堆洗混后作为新抽牌堆 */
 function ensureDeck(game, kind) {
-  const dk = deckKey(kind);
-  const xk = discardKey(kind);
+  const nk = normalizeDeckKind(kind);
+  const dk = deckKey(nk);
+  const xk = discardKey(nk);
   if ((game[dk] || []).length > 0) return true;
   if (!(game[xk] || []).length) return false;
   game[dk] = shuffle(game[xk]);
   game[xk] = [];
   pushLog(
     game,
-    `${DECK_KIND_LABEL[kind] || kind}抽牌堆已空，弃牌堆洗混后放回（${game[dk].length} 张）`
+    `${DECK_KIND_LABEL[nk] || nk}抽牌堆已空，弃牌堆洗混后放回（${game[dk].length} 张）`
   );
   return true;
 }
 
 function pushToDiscard(game, kind, card) {
   if (!card) return;
-  if (!game[discardKey(kind)]) game[discardKey(kind)] = [];
-  game[discardKey(kind)].push(cleanCardForPile(card));
+  const nk = normalizeDeckKind(kind);
+  if (!game[discardKey(nk)]) game[discardKey(nk)] = [];
+  game[discardKey(nk)].push(cleanCardForPile(card));
 }
 
 function drawOne(game, kind) {
@@ -372,7 +391,13 @@ function drawOne(game, kind) {
   return game[deckKey(kind)].shift();
 }
 
-/** 功能/建筑区：奇数格明示，偶数格暗置 */
+function peekSpecialTopKind(game) {
+  const deck = game.specialDeck || [];
+  if (!deck.length) return null;
+  return deckKindOfTile(deck[0]);
+}
+
+/** 功能/建筑合区：奇数格明示，偶数格（2/4/6）暗置 */
 function isBoardFaceDownNumber(number) {
   return number === 2 || number === 4 || number === 6;
 }
@@ -385,8 +410,7 @@ function drawToArea(game, kind, count) {
     if (!card) break;
     const number = (i % 6) + 1;
     const faceDown =
-      (kind === 'function' || kind === 'building') &&
-      isBoardFaceDownNumber(number);
+      kind === 'special' && isBoardFaceDownNumber(number);
     tiles.push({
       ...card,
       number,
@@ -396,20 +420,25 @@ function drawToArea(game, kind, count) {
   return tiles;
 }
 
+function deckKindOfTile(tile) {
+  if (!tile) return 'function';
+  if (tile.kind === 'building' || tile.buildType) return 'building';
+  if (tile.kind === 'function' || tile.funcType) return 'function';
+  return tile.kind === 'resource' ? 'resource' : 'function';
+}
+
 function setupBoard(game) {
   const n = Math.max(0, game.round - 1);
   const resCount = Math.min(MAX_RESOURCE_BOARD_TILES, 6 + n);
-  const fnCount = Math.min(6, 2 + n);
-  const bldCount = Math.min(6, 1 + n);
+  const specialCount = Math.min(6, 2 + n);
 
   game.board = emptyBoard();
   game.board.resource.tiles = drawToArea(game, 'resource', resCount);
-  game.board.function.tiles = drawToArea(game, 'function', fnCount);
-  game.board.building.tiles = drawToArea(game, 'building', bldCount);
+  game.board.special.tiles = drawToArea(game, 'special', specialCount);
 
   pushLog(
     game,
-    `第 ${game.round} 轮摆放：资源 ${game.board.resource.tiles.length}、功能 ${game.board.function.tiles.length}、建筑 ${game.board.building.tiles.length}`
+    `第 ${game.round} 轮摆放：资源 ${game.board.resource.tiles.length}、功能/建筑 ${game.board.special.tiles.length}`
   );
 }
 
@@ -420,7 +449,24 @@ function tilesOnNumber(areaBoard, number) {
 function clearAllSlotWorkers(game) {
   for (const area of BOARD_AREAS) {
     game.board[area].workers = emptySlotWorkers();
+    game.board[area].boosts = emptySlotWorkers();
   }
+}
+
+/** 为本回合骰子分配强化标记（剩余未派出的强化额度） */
+function assignDiceBoostFlags(game, player, count) {
+  if (!game.diceBoosted) game.diceBoosted = {};
+  const avail = Math.max(
+    0,
+    (Number(player.enhancedDice) || 0) - (Number(player.enhancedPlaced) || 0)
+  );
+  const flags = [];
+  for (let i = 0; i < count; i++) flags.push(i < avail);
+  for (let i = flags.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [flags[i], flags[j]] = [flags[j], flags[i]];
+  }
+  game.diceBoosted[player.id] = flags;
 }
 
 function findPersonalBuilding(player, buildingId) {
@@ -432,16 +478,28 @@ function recycleBoard(game) {
   for (const t of game.board.resource.tiles) {
     pushToDiscard(game, 'resource', t);
   }
-  for (const t of game.board.function.tiles) {
-    pushToDiscard(game, 'function', t);
-  }
-  for (const t of game.board.building.tiles) {
-    pushToDiscard(game, 'building', t);
+  for (const t of game.board.special.tiles) {
+    pushToDiscard(game, 'special', t);
   }
   game.board = emptyBoard();
 }
 
 // ─── 拉斯维加斯式抵消 ───────────────────────────────────
+
+/**
+ * 结算强度：普通骰 +1，强化骰 +2（= 骰数 + 强化数）
+ * 输入 area 某数字格的 workers / boosts
+ */
+function slotStrengthMap(workers, boosts) {
+  const out = {};
+  for (const [pid, c] of Object.entries(workers || {})) {
+    const n = Number(c) || 0;
+    if (n <= 0) continue;
+    const b = Math.min(Math.max(0, Number(boosts && boosts[pid]) || 0), n);
+    out[pid] = n + b;
+  }
+  return out;
+}
 
 /**
  * 相同数量的阵营互相抵消。
@@ -614,8 +672,13 @@ function createGameState(room) {
     seat: i,
     left: false,
     villagers: START_VILLAGERS,
+    houses: START_HOUSES,
     dispatched: 0,
     voided: 0,
+    enhancedDice: 0, // 已强化的村民/骰子数（永久，上限 MAX_ENHANCED_DICE，且不超过村民数）
+    enhancedPlaced: 0, // 本轮已派出的强化骰数
+    recruitPending: 0, // 下一轮生产开始时生效的临时村民数
+    tempVillagers: 0, // 本轮生产可用的临时村民（生产结束后清零）
     resources: startRes(),
     score: 0,
     funcCards: [],
@@ -640,11 +703,9 @@ function createGameState(room) {
     winners: [],
     players,
     resourceDeck: buildResourceDeck(),
-    functionDeck: buildFunctionDeck(),
-    buildingDeck: buildBuildingDeck(),
+    specialDeck: buildSpecialDeck(),
     resourceDiscard: [],
-    functionDiscard: [],
-    buildingDiscard: [],
+    specialDiscard: [],
     board: emptyBoard(),
     // 生产阶段
     produceOrderStartId: null,
@@ -652,6 +713,7 @@ function createGameState(room) {
     lastPlacerId: null,
     lastBuilderId: null,
     dice: {}, // playerId -> number[]
+    diceBoosted: {}, // playerId -> boolean[] 与 dice 对齐
     awaitingProduceRoll: false,
     remoteDiceMode: false,
     // 建造阶段
@@ -673,15 +735,15 @@ function createGameState(room) {
   return game;
 }
 
-/** 开局每人一张「繁殖村民」（优先从功能牌堆抽取） */
+/** 开局每人一张「繁殖村民」（优先从合堆抽取） */
 function dealStartingBreedCards(game) {
   for (const p of game.players || []) {
     let card = null;
-    const idx = (game.functionDeck || []).findIndex(
+    const idx = (game.specialDeck || []).findIndex(
       (c) => c.funcType === 'breed'
     );
     if (idx >= 0) {
-      card = game.functionDeck.splice(idx, 1)[0];
+      card = game.specialDeck.splice(idx, 1)[0];
     } else {
       card = makeFunc('breed');
     }
@@ -815,10 +877,23 @@ function beginProduce(game) {
   if (game.round > 1) game.pendingInitReveal = null;
   game.initAnnounceUntil = 0;
   game.dice = {};
+  game.diceBoosted = {};
   game.lastPlacerId = null;
   for (const p of alivePlayers(game)) {
     p.dispatched = 0;
     p.voided = 0;
+    p.enhancedPlaced = 0;
+    p.enhancedDice = Math.min(
+      Number(p.enhancedDice) || 0,
+      Number(p.villagers) || 0,
+      MAX_ENHANCED_DICE
+    );
+    const grant = Number(p.recruitPending) || 0;
+    p.tempVillagers = grant;
+    p.recruitPending = 0;
+    if (grant > 0) {
+      pushLog(game, `${p.name} 征召生效：本轮生产临时村民 +${grant}`);
+    }
     p.roundGained = 0;
     p.roundBuiltHouse = false;
     p.roundBred = false;
@@ -846,6 +921,8 @@ function prepareProduceTurn(game) {
   game.awaitingProduceRoll = true;
   game.remoteDiceMode = false;
   game.dice[p.id] = [];
+  if (!game.diceBoosted) game.diceBoosted = {};
+  game.diceBoosted[p.id] = [];
 }
 
 function rollForCurrent(game) {
@@ -856,12 +933,17 @@ function rollForCurrent(game) {
   game.remoteDiceMode = false;
   if (n <= 0) {
     game.dice[p.id] = [];
+    if (!game.diceBoosted) game.diceBoosted = {};
+    game.diceBoosted[p.id] = [];
     return;
   }
   game.dice[p.id] = rollDice(n);
+  assignDiceBoostFlags(game, p, n);
+  const boostN = (game.diceBoosted[p.id] || []).filter(Boolean).length;
   pushLog(
     game,
-    `${p.name} 投掷 ${n} 枚骰子：[${game.dice[p.id].join(', ')}]`
+    `${p.name} 投掷 ${n} 枚骰子：[${game.dice[p.id].join(', ')}]` +
+      (boostN ? `（强化 ${boostN}）` : '')
   );
 }
 
@@ -1042,6 +1124,14 @@ function startSettle(game) {
   game.phase = 'settle';
   game.currentPlayerId = null;
   game.dice = {};
+  game.diceBoosted = {};
+  for (const p of alivePlayers(game)) {
+    const temp = Number(p.tempVillagers) || 0;
+    if (temp > 0) {
+      pushLog(game, `${p.name} 的 ${temp} 名临时村民在生产结束后消失`);
+      p.tempVillagers = 0;
+    }
+  }
   const report = {
     at: Date.now(),
     round: game.round,
@@ -1054,15 +1144,16 @@ function startSettle(game) {
     p.pendingWishWellBonus = 0;
   }
 
-  // 资源区：按数字格汇总派遣，最多者拿该格全部资源卡的大份，第二拿全部小份
+  // 资源区：按数字格汇总派遣强度（强化骰计 2），最多者拿大份，第二拿小份
   for (let num = 1; num <= 6; num++) {
     const workers = game.board.resource.workers[num] || {};
+    const boosts =
+      (game.board.resource.boosts && game.board.resource.boosts[num]) || {};
     const tiles = tilesOnNumber(game.board.resource, num);
     if (!tiles.length && !Object.keys(workers).length) continue;
 
-    const before = { ...workers };
-    const remain = cancelEqualCounts(workers);
-    game.board.resource.workers[num] = remain;
+    const before = slotStrengthMap(workers, boosts);
+    const remain = cancelEqualCounts(before);
     const ranked = mapRanked(game, remain);
     const gains = [];
 
@@ -1105,6 +1196,8 @@ function startSettle(game) {
       tiles: summarizeTiles(tiles),
       gains,
       claimedBy: null,
+      boosts: { ...boosts },
+      physical: { ...workers },
     });
 
     if (gains.length) {
@@ -1129,82 +1222,47 @@ function startSettle(game) {
     }
   }
 
-  // 功能区：按数字格汇总，最多者拿走该格全部功能卡
+  // 功能/建筑合区：按数字格汇总强度，最多者按卡类型分别收取
   for (let num = 1; num <= 6; num++) {
-    const workers = game.board.function.workers[num] || {};
-    const tiles = tilesOnNumber(game.board.function, num);
+    const workers = game.board.special.workers[num] || {};
+    const boosts =
+      (game.board.special.boosts && game.board.special.boosts[num]) || {};
+    const tiles = tilesOnNumber(game.board.special, num);
     if (!tiles.length && !Object.keys(workers).length) continue;
 
-    const before = { ...workers };
-    const remain = cancelEqualCounts(workers);
-    game.board.function.workers[num] = remain;
+    const before = slotStrengthMap(workers, boosts);
+    const remain = cancelEqualCounts(before);
     const ranked = mapRanked(game, remain);
     let claimedBy = null;
 
     if (ranked[0] && tiles.length) {
       const p = playerById(game, ranked[0].pid);
       if (p) {
-        for (const tile of tiles) takeFunctionCard(game, p, tile);
-        game.board.function.tiles = game.board.function.tiles.filter(
+        for (const tile of tiles) {
+          if (deckKindOfTile(tile) === 'building') {
+            takeBuildingCard(game, p, tile);
+          } else {
+            takeFunctionCard(game, p, tile);
+          }
+        }
+        game.board.special.tiles = game.board.special.tiles.filter(
           (t) => t.number !== num
         );
         claimedBy = { pid: p.id, name: p.name, count: ranked[0].count };
+        const hasBuilding = tiles.some((t) => deckKindOfTile(t) === 'building');
         pushLog(
           game,
-          `${p.name} 以 ${ranked[0].count} 名村民取得功能格 ${num} 全部卡：` +
-            tiles.map(tileLogLabel).join('、')
-        );
-      }
-    } else if (Object.keys(before).length) {
-      pushLog(game, `功能格 ${num}：全部抵消，无人取得`);
-    }
-
-    report.slots.push({
-      area: 'function',
-      number: num,
-      before,
-      remain,
-      cancelled: cancelledEntries(before, remain),
-      ranked,
-      tiles: summarizeTiles(tiles),
-      gains: [],
-      claimedBy,
-    });
-  }
-
-  // 建筑区：按数字格汇总，最多者拿走该格全部建筑卡
-  for (let num = 1; num <= 6; num++) {
-    const workers = game.board.building.workers[num] || {};
-    const tiles = tilesOnNumber(game.board.building, num);
-    if (!tiles.length && !Object.keys(workers).length) continue;
-
-    const before = { ...workers };
-    const remain = cancelEqualCounts(workers);
-    game.board.building.workers[num] = remain;
-    const ranked = mapRanked(game, remain);
-    let claimedBy = null;
-
-    if (ranked[0] && tiles.length) {
-      const p = playerById(game, ranked[0].pid);
-      if (p) {
-        for (const tile of tiles) takeBuildingCard(game, p, tile);
-        game.board.building.tiles = game.board.building.tiles.filter(
-          (t) => t.number !== num
-        );
-        claimedBy = { pid: p.id, name: p.name, count: ranked[0].count };
-        pushLog(
-          game,
-          `${p.name} 取得建筑格 ${num} 全部卡：` +
+          `${p.name} 以强度 ${ranked[0].count} 取得功能/建筑格 ${num} 全部卡：` +
             tiles.map(tileLogLabel).join('、') +
-            '（需选择格子放置）'
+            (hasBuilding ? '（建筑需选择格子放置）' : '')
         );
       }
     } else if (Object.keys(before).length) {
-      pushLog(game, `建筑格 ${num}：全部抵消，无人取得`);
+      pushLog(game, `功能/建筑格 ${num}：全部抵消，无人取得`);
     }
 
     report.slots.push({
-      area: 'building',
+      area: 'special',
       number: num,
       before,
       remain,
@@ -1213,6 +1271,8 @@ function startSettle(game) {
       tiles: summarizeTiles(tiles),
       gains: [],
       claimedBy,
+      boosts: { ...boosts },
+      physical: { ...workers },
     });
   }
 
@@ -1327,6 +1387,7 @@ function makeBuildSnapshot(player) {
     resources: player.resources,
     score: player.score,
     villagers: player.villagers,
+    houses: player.houses,
     dispatched: player.dispatched,
     funcCards: player.funcCards,
     buildings: player.buildings,
@@ -1340,6 +1401,9 @@ function makeBuildSnapshot(player) {
     pendingDiscardRes: player.pendingDiscardRes,
     pendingWishWellBonus: player.pendingWishWellBonus,
     roundGained: player.roundGained,
+    enhancedDice: player.enhancedDice,
+    recruitPending: player.recruitPending,
+    tempVillagers: player.tempVillagers,
   }));
 }
 
@@ -1355,35 +1419,35 @@ function actResetBuildTurn(game, player) {
   // 回收旧建筑（snapshot 中有、当前无）
   for (const b of snap.buildings || []) {
     if (!currentBldIds.has(b.id)) {
-      const idx = game.buildingDiscard.findIndex(x => x.id === b.id);
-      if (idx >= 0) game.buildingDiscard.splice(idx, 1);
+      const idx = game.specialDiscard.findIndex(x => x.id === b.id);
+      if (idx >= 0) game.specialDiscard.splice(idx, 1);
     }
   }
   // 清理新增建筑（snapshot 中无、当前有）→ 移入弃牌堆
   for (const b of player.buildings || []) {
     if (!snapBldIds.has(b.id)) {
-      game.buildingDiscard.push(cleanCardForPile(b));
+      game.specialDiscard.push(cleanCardForPile(b));
     }
   }
   // 清理 pendingDiscardBuild 中的新卡
   if (player.pendingDiscardBuild && player.pendingDiscardBuild.newCard) {
     const neu = player.pendingDiscardBuild.newCard;
     if (!snap.pendingDiscardBuild || snap.pendingDiscardBuild.newCard?.id !== neu.id) {
-      game.buildingDiscard.push(cleanCardForPile(neu));
+      game.specialDiscard.push(cleanCardForPile(neu));
     }
   }
 
   // 回收旧功能卡
   for (const c of snap.funcCards || []) {
     if (!currentFuncIds.has(c.id)) {
-      const idx = game.functionDiscard.findIndex(x => x.id === c.id);
-      if (idx >= 0) game.functionDiscard.splice(idx, 1);
+      const idx = game.specialDiscard.findIndex(x => x.id === c.id);
+      if (idx >= 0) game.specialDiscard.splice(idx, 1);
     }
   }
   // 清理新增功能卡
   for (const c of player.funcCards || []) {
     if (!snapFuncIds.has(c.id)) {
-      game.functionDiscard.push(cleanCardForPile(c));
+      game.specialDiscard.push(cleanCardForPile(c));
     }
   }
 
@@ -1391,6 +1455,7 @@ function actResetBuildTurn(game, player) {
   player.resources = JSON.parse(JSON.stringify(snap.resources));
   player.score = snap.score;
   player.villagers = snap.villagers;
+  player.houses = snap.houses != null ? snap.houses : START_HOUSES;
   player.dispatched = snap.dispatched;
   player.funcCards = JSON.parse(JSON.stringify(snap.funcCards));
   player.buildings = JSON.parse(JSON.stringify(snap.buildings));
@@ -1403,6 +1468,9 @@ function actResetBuildTurn(game, player) {
   player.pendingDiscardFunc = snap.pendingDiscardFunc;
   player.pendingDiscardRes = snap.pendingDiscardRes;
   player.roundGained = snap.roundGained;
+  player.enhancedDice = Number(snap.enhancedDice) || 0;
+  player.recruitPending = Number(snap.recruitPending) || 0;
+  player.tempVillagers = Number(snap.tempVillagers) || 0;
 
   game.currentPlayerId = player.id;
   delete game.buildPassed[player.id];
@@ -1559,7 +1627,7 @@ function applyAction(game, playerId, action) {
     }
     if (type === 'placeDice') return actPlaceDice(game, player, payload);
     if (type === 'voidSkip') return actVoidSkip(game, player, payload);
-    return { ok: false, error: '生产阶段请投掷、放置骰子或跳过（需丢弃1资源）' };
+    return { ok: false, error: '生产阶段请投掷、放置骰子或跳过（爆骰换资源）' };
   }
 
   if (game.phase === 'settle_act') {
@@ -1660,7 +1728,7 @@ function actPlaceDice(game, player, payload) {
     return { ok: false, error: '请先投掷或使用遥控骰子' };
   }
   const face = Number(payload.face);
-  const area = payload.area; // 'resource' | 'function' | 'building'
+  const area = payload.area; // 'resource' | 'special'
   const personalBuildingId = payload.buildingId || null;
 
   if (!Number.isInteger(face) || face < 1 || face > 6) {
@@ -1695,24 +1763,57 @@ function actPlaceDice(game, player, payload) {
   }
 
   const slotW = areaBoard.workers[face] || (areaBoard.workers[face] = {});
-  slotW[player.id] = (slotW[player.id] || 0) + count;
+  if (!areaBoard.boosts) areaBoard.boosts = emptySlotWorkers();
+  const slotB = areaBoard.boosts[face] || (areaBoard.boosts[face] = {});
 
+  const boostFlags = (game.diceBoosted && game.diceBoosted[player.id]) || [];
+  let boostAdd = 0;
   if (remote) {
     let left = count;
-    game.dice[player.id] = dice.filter((d) => {
+    const nextDice = [];
+    const nextBoost = [];
+    for (let i = 0; i < dice.length; i++) {
+      const d = dice[i];
+      const b = Boolean(boostFlags[i]);
       if (d === 0 && left > 0) {
         left -= 1;
-        return false;
+        if (b) boostAdd += 1;
+        continue;
       }
-      return true;
-    });
+      nextDice.push(d);
+      nextBoost.push(b);
+    }
+    game.dice[player.id] = nextDice;
+    if (!game.diceBoosted) game.diceBoosted = {};
+    game.diceBoosted[player.id] = nextBoost;
   } else {
-    game.dice[player.id] = dice.filter((d) => d !== face);
+    const nextDice = [];
+    const nextBoost = [];
+    for (let i = 0; i < dice.length; i++) {
+      const d = dice[i];
+      const b = Boolean(boostFlags[i]);
+      if (d === face) {
+        if (b) boostAdd += 1;
+        continue;
+      }
+      nextDice.push(d);
+      nextBoost.push(b);
+    }
+    game.dice[player.id] = nextDice;
+    if (!game.diceBoosted) game.diceBoosted = {};
+    game.diceBoosted[player.id] = nextBoost;
+  }
+
+  slotW[player.id] = (slotW[player.id] || 0) + count;
+  if (boostAdd > 0) {
+    slotB[player.id] = (slotB[player.id] || 0) + boostAdd;
+    player.enhancedPlaced = (Number(player.enhancedPlaced) || 0) + boostAdd;
   }
   player.dispatched += count;
   pushLog(
     game,
     `${player.name} 派遣 ${count} 名村民到${AREA_LABELS[area]}区 ${face} 号格` +
+      (boostAdd ? `（强化 ${boostAdd}）` : '') +
       (remote ? '（遥控）' : '')
   );
   game.remoteDiceMode = false;
@@ -1722,28 +1823,37 @@ function actPlaceDice(game, player, payload) {
 
 function actVoidSkip(game, player, payload) {
   game.pendingInitReveal = null;
+  if (game.awaitingProduceRoll) {
+    return { ok: false, error: '请先投掷或使用遥控骰子' };
+  }
   if (idleVillagers(player) <= 0) {
     return { ok: false, error: '没有可派遣的村民' };
   }
+  const dice = game.dice[player.id] || [];
+  if (!dice.length) {
+    return { ok: false, error: '没有可爆掉的骰子' };
+  }
   const resource = payload && payload.resource;
   if (!resource || !RESOURCES.includes(resource)) {
-    return { ok: false, error: '请选择要丢弃的资源' };
+    return { ok: false, error: '请选择要获得的资源' };
   }
-  const totalRes = sumRes(player.resources);
-  if (totalRes <= 0) {
-    return { ok: false, error: '没有资源可丢弃' };
+  // 爆掉 1 枚未派遣骰子（本轮该村民不可再派出），并获得任意 1 资源
+  const boostFlags = (game.diceBoosted && game.diceBoosted[player.id]) || [];
+  if (boostFlags[0]) {
+    player.enhancedPlaced = (Number(player.enhancedPlaced) || 0) + 1;
   }
-  if ((player.resources[resource] || 0) < 1) {
-    return { ok: false, error: `${RESOURCE_LABELS[resource]}不足` };
-  }
-  player.resources[resource] -= 1;
   player.dispatched += 1;
+  player.resources[resource] = (player.resources[resource] || 0) + 1;
+  player.roundGained = (player.roundGained || 0) + 1;
+  syncResourceHandPending(player);
   game.dice[player.id] = [];
+  if (!game.diceBoosted) game.diceBoosted = {};
+  game.diceBoosted[player.id] = [];
   game.awaitingProduceRoll = false;
   game.remoteDiceMode = false;
   pushLog(
     game,
-    `${player.name} 丢弃 1 ${RESOURCE_LABELS[resource]}，跳过本回合`
+    `${player.name} 爆掉 1 枚骰子，获得 1 ${RESOURCE_LABELS[resource]}，结束本回合`
   );
   afterProduceAction(game, player.id);
   return { ok: true };
@@ -1971,7 +2081,7 @@ function actUseFunc(game, player, payload) {
 
   // 时机校验
   const produceOnly = ['remoteDice', 'exile', 'banditRaid'];
-  const buildOnly = ['harvest', 'robbery', 'redraw', 'expand'];
+  const buildOnly = ['harvest', 'robbery', 'redraw', 'expand', 'enhance', 'recruit'];
 
   if (produceOnly.includes(ft)) {
     if (game.phase !== 'produce') {
@@ -2001,6 +2111,8 @@ function actUseFunc(game, player, payload) {
   else if (ft === 'redraw') result = useRedraw(game, player, payload);
   else if (ft === 'banditRaid') result = useBanditRaid(game, player, payload);
   else if (ft === 'expand') result = useExpand(game, player, payload);
+  else if (ft === 'enhance') result = useEnhance(game, player, payload);
+  else if (ft === 'recruit') result = useRecruit(game, player, payload);
   else if (ft === 'robbery') result = useRobbery(game, player, payload);
   else return { ok: false, error: '未知功能' };
 
@@ -2046,6 +2158,7 @@ function useRemoteDice(game, player, payload) {
     game.awaitingProduceRoll = false;
     game.remoteDiceMode = true;
     game.dice[player.id] = Array(n).fill(0);
+    assignDiceBoostFlags(game, player, n);
     pushLog(game, `${player.name} 使用遥控骰子（${n} 枚，可指定任意点数）`);
     return { ok: true };
   }
@@ -2060,6 +2173,7 @@ function useRemoteDice(game, player, payload) {
   }
   game.remoteDiceMode = false;
   game.dice[player.id] = dice.map(Number);
+  assignDiceBoostFlags(game, player, n);
   pushLog(game, `${player.name} 遥控骰子 → [${dice.join(', ')}]`);
   return { ok: true };
 }
@@ -2104,7 +2218,23 @@ function useExile(game, player, payload) {
   if ((slotW[targetId] || 0) < 1) {
     return { ok: false, error: '该玩家在此数字格没有村民' };
   }
-  slotW[targetId] -= 1;
+  const slotB =
+    (game.board[area].boosts && game.board[area].boosts[number]) || {};
+  const physical = slotW[targetId];
+  const boosted = Math.min(Number(slotB[targetId]) || 0, physical);
+  const normal = physical - boosted;
+  // 优先驱逐普通骰；无普通则驱逐强化骰
+  if (normal > 0) {
+    slotW[targetId] -= 1;
+  } else {
+    slotW[targetId] -= 1;
+    if (game.board[area].boosts && game.board[area].boosts[number]) {
+      game.board[area].boosts[number][targetId] = Math.max(0, boosted - 1);
+      if (game.board[area].boosts[number][targetId] <= 0) {
+        delete game.board[area].boosts[number][targetId];
+      }
+    }
+  }
   if (slotW[targetId] <= 0) delete slotW[targetId];
   game.board[area].workers[number] = slotW;
   target.dispatched = Math.max(0, target.dispatched - 1);
@@ -2173,10 +2303,11 @@ function actBuildHousePermanent(game, player) {
     };
   }
   pay(player.resources, BUILD_HOUSE_COST);
+  player.houses = (Number(player.houses) || 0) + 1;
   player.score += 1;
   pushLog(
     game,
-    `${player.name} 建造房子，+1 分（当前 ${playerScore(player)} 分）`
+    `${player.name} 建造房子，+1 房 +1 分（房子 ${player.houses}，空闲 ${freeHousesFor(player)}，分数 ${playerScore(player)}）`
   );
   if (checkWin(game)) return { ok: true };
   // 常驻功能不结束回合，保留玩家行动权
@@ -2188,6 +2319,13 @@ function actBreedPermanent(game, player) {
   if (player.villagers >= MAX_VILLAGERS) {
     return { ok: false, error: `村民已达上限 ${MAX_VILLAGERS}` };
   }
+  const free = freeHousesFor(player);
+  if (free <= 0) {
+    return {
+      ok: false,
+      error: `没有空闲房子（房子 ${player.houses || 0} / 村民 ${player.villagers}），请先建造房子`,
+    };
+  }
   const cost = breedFoodCost(player.villagers);
   if ((player.resources.food || 0) < cost) {
     return { ok: false, error: `需要 ${cost} 小麦` };
@@ -2196,7 +2334,7 @@ function actBreedPermanent(game, player) {
   player.villagers += 1;
   pushLog(
     game,
-    `${player.name} 繁殖村民（-${cost} 小麦），村民 ${player.villagers}`
+    `${player.name} 繁殖村民（-${cost} 小麦），村民 ${player.villagers}（空闲房子 ${freeHousesFor(player)}）`
   );
   if (checkWin(game)) return { ok: true };
   // 常驻功能不结束回合，保留玩家行动权
@@ -2261,32 +2399,61 @@ function useExpand(game, player, payload) {
   return { ok: true };
 }
 
-function useRedraw(game, player, payload) {
-  const deck = payload.deck; // 'function' | 'building'
-  if (deck === 'function') {
-    const card = drawOne(game, 'function');
-    if (!card) return { ok: false, error: '功能卡堆与弃牌堆都已空' };
-    receiveFunctionCard(game, player, card);
-    return { ok: true };
+/** 强化：将 1 枚未强化骰子强化（建造阶段）；已达上限 3 或全部已强化则无法发动 */
+function useEnhance(game, player, _payload) {
+  const villagers = Number(player.villagers) || 0;
+  const cur = Number(player.enhancedDice) || 0;
+  const cap = Math.min(villagers, MAX_ENHANCED_DICE);
+  if (villagers <= 0 || cap <= 0) {
+    return { ok: false, error: '没有可强化的骰子' };
   }
-  if (deck === 'building') {
-    const card = drawOne(game, 'building');
-    if (!card) return { ok: false, error: '建筑卡堆与弃牌堆都已空' };
+  if (cur >= MAX_ENHANCED_DICE) {
+    return { ok: false, error: `强化骰已达上限 ${MAX_ENHANCED_DICE}` };
+  }
+  if (cur >= villagers) {
+    return { ok: false, error: '全部骰子已强化，无法发动' };
+  }
+  player.enhancedDice = cur + 1;
+  pushLog(
+    game,
+    `${player.name} 强化 1 枚骰子（${player.enhancedDice}/${MAX_ENHANCED_DICE}）`
+  );
+  return { ok: true };
+}
+
+/** 征召：建造阶段使用；下一轮生产获得临时村民，该生产阶段结束后消失 */
+function useRecruit(game, player, _payload) {
+  player.recruitPending =
+    (Number(player.recruitPending) || 0) + RECRUIT_TEMP_VILLAGERS;
+  pushLog(
+    game,
+    `${player.name} 发动征召：下一轮生产临时村民 +${RECRUIT_TEMP_VILLAGERS}（累计待生效 ${player.recruitPending}）`
+  );
+  return { ok: true };
+}
+
+function useRedraw(game, player, _payload) {
+  const card = drawOne(game, 'special');
+  if (!card) return { ok: false, error: '功能/建筑合堆与弃牌堆都已空' };
+  if (deckKindOfTile(card) === 'building') {
+    const neu = {
+      ...card,
+      faceDown: false,
+      slot: 'none',
+      built: false,
+      workers: 0,
+    };
     if (player.buildings.length >= maxBuildingsFor(player)) {
-      player.pendingDiscardBuild = {
-        newCard: { ...card, slot: 'none', built: false, workers: 0 },
-      };
+      player.pendingDiscardBuild = { newCard: neu };
     } else {
-      player.buildings.push({
-        ...card,
-        slot: 'none',
-        built: false,
-        workers: 0,
-      });
+      player.buildings.push(neu);
     }
-    return { ok: true };
+    pushLog(game, `${player.name} 重抽：合堆顶 → 建筑「${card.label || '?'}」`);
+  } else {
+    receiveFunctionCard(game, player, card);
+    pushLog(game, `${player.name} 重抽：合堆顶 → 功能「${card.label || '?'}」`);
   }
-  return { ok: false, error: '请选择 function 或 building 卡堆' };
+  return { ok: true };
 }
 
 // ─── 公开状态 / 超时 / 退出 ─────────────────────────────
@@ -2333,11 +2500,22 @@ function publicArea(areaBoard) {
   for (let num = 1; num <= 6; num++) {
     const tiles = tilesOnNumber(areaBoard, num).map(publicTile);
     const workers = { ...(areaBoard.workers[num] || {}) };
-    if (!tiles.length && !Object.keys(workers).length) {
-      slots.push({ number: num, tiles: [], workers: {} });
+    const boosts = {
+      ...((areaBoard.boosts && areaBoard.boosts[num]) || {}),
+    };
+    if (
+      !tiles.length &&
+      !Object.keys(workers).length &&
+      !Object.keys(boosts).length
+    ) {
+      slots.push({ number: num, tiles: [], workers: {}, boosts: {} });
       continue;
     }
-    slots.push({ number: num, tiles, workers });
+    slots.push({ number: num, tiles, workers, boosts });
+  }
+  const boostAll = {};
+  for (let n = 1; n <= 6; n++) {
+    boostAll[n] = { ...((areaBoard.boosts && areaBoard.boosts[n]) || {}) };
   }
   return {
     tiles: (areaBoard.tiles || []).map(publicTile),
@@ -2350,6 +2528,7 @@ function publicArea(areaBoard) {
       5: { ...(areaBoard.workers[5] || {}) },
       6: { ...(areaBoard.workers[6] || {}) },
     },
+    boosts: boostAll,
   };
 }
 
@@ -2374,23 +2553,22 @@ function publicGameState(game, viewerId) {
     neutralWorkerName: NEUTRAL_WORKER_NAME,
     maxBuildings: MAX_BUILDINGS,
     maxVillagers: MAX_VILLAGERS,
+    maxEnhancedDice: MAX_ENHANCED_DICE,
     buildHouseCost: { ...BUILD_HOUSE_COST },
     breedFoodPerVillager: BREED_FOOD_PER_VILLAGER,
     board: {
       resource: publicArea(game.board.resource),
-      function: publicArea(game.board.function),
-      building: publicArea(game.board.building),
+      special: publicArea(game.board.special),
     },
     decksLeft: {
       resource: game.resourceDeck.length,
-      function: game.functionDeck.length,
-      building: game.buildingDeck.length,
+      special: (game.specialDeck || []).length,
     },
     discardsLeft: {
       resource: (game.resourceDiscard || []).length,
-      function: (game.functionDiscard || []).length,
-      building: (game.buildingDiscard || []).length,
+      special: (game.specialDiscard || []).length,
     },
+    specialDeckTopKind: peekSpecialTopKind(game),
     initRolls:
       game.phase === 'init_roll' || game.phase === 'init_announce'
         ? Object.fromEntries(
@@ -2416,6 +2594,9 @@ function publicGameState(game, viewerId) {
         }
       : null,
     dice: me ? (game.dice[me.id] || []).slice() : [],
+    diceBoosted: me
+      ? ((game.diceBoosted && game.diceBoosted[me.id]) || []).slice()
+      : [],
     awaitingProduceRoll: Boolean(
       game.phase === 'produce' && game.awaitingProduceRoll
     ),
@@ -2427,6 +2608,10 @@ function publicGameState(game, viewerId) {
             awaitingRoll: Boolean(game.awaitingProduceRoll),
             remoteDiceMode: Boolean(game.remoteDiceMode),
             dice: (game.dice[game.currentPlayerId] || []).slice(),
+            diceBoosted: (
+              (game.diceBoosted && game.diceBoosted[game.currentPlayerId]) ||
+              []
+            ).slice(),
           }
         : null,
     remoteDiceMode: Boolean(
@@ -2472,8 +2657,14 @@ function publicGameState(game, viewerId) {
         left: Boolean(p.left),
         seat: p.seat,
         villagers: p.villagers,
+        houses: Number(p.houses) || 0,
+        freeHouses: freeHousesFor(p),
         dispatched: p.dispatched,
         idle: idleVillagers(p),
+        enhancedDice: Number(p.enhancedDice) || 0,
+        enhancedPlaced: Number(p.enhancedPlaced) || 0,
+        tempVillagers: Number(p.tempVillagers) || 0,
+        recruitPending: Number(p.recruitPending) || 0,
         resources: cloneRes(p.resources),
         score: playerScore(p),
         roundGained: p.roundGained,
@@ -2540,6 +2731,8 @@ function publicGameState(game, viewerId) {
           expandPermanentCost: expandPermanentCost(me),
           pendingWishWellBonus: Number(me.pendingWishWellBonus) || 0,
           buildPassed: Boolean(game.buildPassed && game.buildPassed[me.id]),
+          houses: Number(me.houses) || 0,
+          freeHouses: freeHousesFor(me),
         }
       : null,
   };
@@ -2692,11 +2885,9 @@ function forceTimeout(game, playerId) {
     if (game.awaitingProduceRoll) {
       return applyAction(game, playerId, { type: 'produceRoll', payload: {} });
     }
-    const play = playerById(game, playerId);
-    const voidRes = play ? RESOURCES.find((r) => (play.resources[r] || 0) > 0) : null;
     return applyAction(game, playerId, {
       type: 'voidSkip',
-      payload: { resource: voidRes },
+      payload: { resource: 'wood' },
     });
   }
   if (
@@ -2796,8 +2987,16 @@ module.exports = {
   WIN_SCORE,
   MAX_RESOURCE_BOARD_TILES,
   MAX_RESOURCE_HAND,
+  MAX_ENHANCED_DICE,
+  RECRUIT_TEMP_VILLAGERS,
   EXPAND_RESOURCE_BONUS,
   maxResourceHandFor,
   expandCountFor,
   expandPermanentCost,
+  freeHousesFor,
+  idleVillagers,
+  beginProduce,
+  startSettle,
+  START_HOUSES,
+  START_VILLAGERS,
 };

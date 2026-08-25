@@ -45,6 +45,8 @@ window.LasidaoAssets = (function () {
     banditRaid: 'gongnengka_qiangdaolaixi.png',
     expand: 'gongnengka_kuorong.png',
     robbery: 'gongnengka_qiangjie.png',
+    enhance: 'gongnengka_qianghua.png',
+    recruit: 'gongnengka_zhengzhao.png',
   };
 
   /** 建筑卡面（buildType / resource+tier → 文件名） */

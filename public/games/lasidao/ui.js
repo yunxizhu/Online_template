@@ -77,6 +77,8 @@ window.LasidaoUi = (function () {
     remoteDice: 'lasidao.func.remoteDice',
     exile: 'lasidao.func.exile',
     buildHouse: 'lasidao.func.buildHouse',
+    enhance: 'lasidao.func.enhance',
+    recruit: 'lasidao.func.recruit',
     redraw: 'lasidao.func.redraw',
     banditRaid: 'lasidao.func.banditRaid',
     expand: 'lasidao.func.expand',
@@ -84,7 +86,14 @@ window.LasidaoUi = (function () {
   };
 
   const PRODUCE_FUNC = new Set(['remoteDice', 'exile', 'banditRaid']);
-  const BUILD_FUNC = new Set(['harvest', 'robbery', 'redraw', 'expand']);
+  const BUILD_FUNC = new Set([
+    'harvest',
+    'robbery',
+    'redraw',
+    'expand',
+    'enhance',
+    'recruit',
+  ]);
 
   function canPlayFuncCard(game, meId, funcType) {
     if (!game || !meId || !funcType) return false;
@@ -93,6 +102,12 @@ window.LasidaoUi = (function () {
     if (game.phase === 'build') {
       const me = mePlayer(game, meId);
       if (me && me.buildPassed) return false;
+      if (funcType === 'enhance') {
+        const enh = Number(me && me.enhancedDice) || 0;
+        const vil = Number(me && me.villagers) || 0;
+        const maxEnh = Number(game && game.maxEnhancedDice) || 3;
+        if (enh >= Math.min(vil, maxEnh)) return false;
+      }
       return BUILD_FUNC.has(funcType);
     }
     return false;
@@ -157,7 +172,6 @@ window.LasidaoUi = (function () {
   let robberyCardId = null;
   let robberyTargetId = null;
   let redrawCardId = null;
-  let redrawSelectedDeck = null;
 
   let voidSkipRes = null;
   let harvestCardId = null;
@@ -181,6 +195,7 @@ window.LasidaoUi = (function () {
     timers: [],
     intervals: [],
     finalDice: [],
+    finalBoosted: [],
   };
 
   let initAnimKey = null;
@@ -256,6 +271,7 @@ window.LasidaoUi = (function () {
     diceAnim.key = null;
     diceAnim.stage = 'idle';
     diceAnim.finalDice = [];
+    diceAnim.finalBoosted = [];
     resetDiceSelection();
   }
 
@@ -464,10 +480,8 @@ window.LasidaoUi = (function () {
       tip.className = 'las-card-tip';
       tip.hidden = true;
     }
-    const panel = $('panel-lasidao');
-    if (supportsCssZoom()) {
-      if (panel && tip.parentNode !== panel) panel.appendChild(tip);
-    } else if (tip.parentNode !== document.body) {
+    // 规则弹窗会挂到 body；大图 tip 也必须在 body，且 z-index 高于 .modal
+    if (tip.parentNode !== document.body) {
       document.body.appendChild(tip);
     }
     return tip;
@@ -478,9 +492,10 @@ window.LasidaoUi = (function () {
     if (!tip) return;
     tip.hidden = true;
     tip.innerHTML = '';
-    tip.classList.remove('has-preview');
+    tip.classList.remove('has-preview', 'is-pinned');
     tip._lasTipText = '';
     tip._lasTipImg = '';
+    tip._lasTipPinned = false;
     tip.style.left = '';
     tip.style.top = '';
   }
@@ -509,7 +524,7 @@ window.LasidaoUi = (function () {
     tip.style.top = y + 'px';
   }
 
-  function showCardTip(text, evt, anchorEl, imgUrl) {
+  function showCardTip(text, evt, anchorEl, imgUrl, pinned) {
     const tip = ensureCardTip();
     const nextText = text || '';
     const nextImg = imgUrl || '';
@@ -533,6 +548,8 @@ window.LasidaoUi = (function () {
         tip.appendChild(desc);
       }
     }
+    tip._lasTipPinned = Boolean(pinned);
+    tip.classList.toggle('is-pinned', Boolean(pinned));
     tip.hidden = false;
     tip.style.pointerEvents = 'none';
     positionCardTip(tip, evt, anchorEl);
@@ -622,7 +639,7 @@ window.LasidaoUi = (function () {
     if (kind === 'resource' || areaKey === 'resource') {
       return resourceDetail(tile);
     }
-    if (kind === 'function' || areaKey === 'function') {
+    if (kind === 'function' || tile.funcType) {
       return functionDetail(tile);
     }
     return buildingDetail(tile, labels);
@@ -634,9 +651,9 @@ window.LasidaoUi = (function () {
     const kind = (tile && tile.kind) || areaKey;
     if (tile && tile.faceDown) {
       const backKind =
-        kind === 'building' || areaKey === 'building'
+        kind === 'building' || tile.buildType
           ? 'building'
-          : kind === 'function' || areaKey === 'function'
+          : kind === 'function' || tile.funcType
             ? 'function'
             : 'resource';
       return typeof Assets.cardBackImageUrl === 'function'
@@ -650,7 +667,7 @@ window.LasidaoUi = (function () {
       return Assets.resourceImageUrl(tile) || '';
     }
     if (
-      (kind === 'function' || areaKey === 'function') &&
+      (kind === 'function' || (tile && tile.funcType)) &&
       typeof Assets.functionImageUrl === 'function'
     ) {
       return Assets.functionImageUrl(tile) || '';
@@ -687,15 +704,63 @@ window.LasidaoUi = (function () {
   function bindImageTip(el, imgUrl, text) {
     if (!el || !imgUrl) return;
     el.style.pointerEvents = 'auto';
+    el.tabIndex = 0;
+    el.setAttribute('role', 'button');
     el.addEventListener('mouseenter', (e) => {
-      showCardTip(text || '', e, el, imgUrl);
+      const tip = $('las-card-tip');
+      if (tip && tip._lasTipPinned) return;
+      showCardTip(text || '', e, el, imgUrl, false);
     });
     el.addEventListener('mousemove', (e) => {
       const tip = $('las-card-tip');
-      if (!tip || tip.hidden) return;
+      if (!tip || tip.hidden || tip._lasTipPinned) return;
       positionCardTip(tip, e, el);
     });
-    el.addEventListener('mouseleave', () => hideCardTip());
+    el.addEventListener('mouseleave', () => {
+      const tip = $('las-card-tip');
+      if (tip && tip._lasTipPinned) return;
+      hideCardTip();
+    });
+    el.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const tip = $('las-card-tip');
+      if (
+        tip &&
+        !tip.hidden &&
+        tip._lasTipPinned &&
+        tip._lasTipImg === imgUrl
+      ) {
+        hideCardTip();
+        return;
+      }
+      showCardTip(text || '', e, el, imgUrl, true);
+    });
+    el.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      el.click();
+    });
+  }
+
+  if (typeof document !== 'undefined' && !window.__lasCardTipOutsideBound) {
+    window.__lasCardTipOutsideBound = true;
+    document.addEventListener(
+      'pointerdown',
+      (e) => {
+        const tip = $('las-card-tip');
+        if (!tip || tip.hidden || !tip._lasTipPinned) return;
+        const t = e.target;
+        if (t && t.closest && t.closest('.las-rules-card-thumb')) return;
+        hideCardTip();
+      },
+      true
+    );
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      const tip = $('las-card-tip');
+      if (tip && tip._lasTipPinned) hideCardTip();
+    });
   }
 
   function makeTileCard(tile, areaKey) {
@@ -782,20 +847,21 @@ window.LasidaoUi = (function () {
     card.appendChild(name);
 
     let metaTxt = '';
-    if (areaKey === 'resource' && tile.large != null) {
+    const isBld = areaKey === 'building' || tile.kind === 'building';
+    if ((areaKey === 'resource' || tile.kind === 'resource') && tile.large != null) {
       metaTxt = tile.large + '/' + tile.small;
-    } else if (areaKey === 'building' && tile.buildType === 'produce') {
+    } else if (isBld && tile.buildType === 'produce') {
       metaTxt =
         tile.produce != null
           ? '?' + tile.produce
           : tile.rich
             ? '?2'
             : '?1';
-    } else if (areaKey === 'building' && tile.buildType === 'score2') {
+    } else if (isBld && tile.buildType === 'score2') {
       metaTxt = '+' + (tile.score != null ? tile.score : 2);
-    } else if (areaKey === 'building' && tile.buildType === 'exchange') {
+    } else if (isBld && tile.buildType === 'exchange') {
       metaTxt = t('lasidao.tip.exchangeShort');
-    } else if (areaKey === 'building' && tile.buildType === 'wishWell') {
+    } else if (isBld && tile.buildType === 'wishWell') {
       metaTxt = t('lasidao.tip.wishWellShort');
     }
     if (metaTxt) {
@@ -900,6 +966,7 @@ window.LasidaoUi = (function () {
 
   function appendWorkerDice(container, face, workers, players, game, opts) {
     opts = opts || {};
+    const boosts = opts.boosts || {};
     const entries = Object.entries(workers || {}).filter(([, n]) => n > 0);
     if (!entries.length) return null;
     const nid = (game && game.neutralWorkerId) || '__neutral__';
@@ -916,15 +983,40 @@ window.LasidaoUi = (function () {
     wrap.className =
       'las-workers las-worker-dice' + (opts.overlay ? ' is-overlay' : '');
     for (const [pid, n] of entries) {
-      const row = document.createElement('div');
-      row.className = 'las-worker-row';
-      row.dataset.pid = pid;
       const color = playerDieColor(players, pid, game);
       const count = Math.min(Number(n) || 0, 24);
-      for (let i = 0; i < count; i++) {
-        row.appendChild(makeDieEl(face, 'is-mini is-placed', color));
+      const boosted = Math.min(Number(boosts[pid]) || 0, count);
+      const normal = count - boosted;
+
+      function addWorkerRow(c, isBoosted) {
+        if (c <= 0) return;
+        const row = document.createElement('div');
+        row.className = 'las-worker-row is-compact';
+        row.dataset.pid = pid;
+        const dieCls =
+          'is-mini is-placed' + (isBoosted ? ' is-boosted' : '');
+        row.appendChild(makeDieEl(face, dieCls, color));
+        const mul = document.createElement('span');
+        mul.className = 'las-worker-mul';
+        mul.textContent = '\u00d7' + c;
+        if (isBoosted) {
+          mul.title = t('lasidao.workerBoostHint', {
+            count: c,
+            boost: c,
+            strength: c + c,
+          });
+        }
+        row.appendChild(mul);
+        row.title =
+          workerName(pid, players, game) +
+          ' \u00d7' +
+          c +
+          (isBoosted ? ' (' + t('lasidao.boostMul', { n: c }) + ')' : '');
+        wrap.appendChild(row);
       }
-      wrap.appendChild(row);
+
+      addWorkerRow(boosted, true);
+      addWorkerRow(normal, false);
     }
     container.appendChild(wrap);
     return wrap;
@@ -963,6 +1055,38 @@ window.LasidaoUi = (function () {
     const counts = {};
     for (const d of dice) counts[d] = (counts[d] || 0) + 1;
     return counts;
+  }
+
+  /** 按点数汇总：总数 / 强化数 / 普通数 */
+  function faceDiceStats(dice, boosted) {
+    const stats = {};
+    for (let i = 0; i < dice.length; i++) {
+      const f = dice[i];
+      if (f == null || f < 1 || f > 6) continue;
+      if (!stats[f]) stats[f] = { total: 0, boosted: 0 };
+      stats[f].total += 1;
+      if (boosted && boosted[i]) stats[f].boosted += 1;
+    }
+    return stats;
+  }
+
+  function appendGroupDieStack(parent, face, count, isBoosted, colorKey) {
+    if (!count) return null;
+    const stack = document.createElement('span');
+    stack.className = 'las-die-stack';
+    const faceEl = document.createElement('span');
+    let cls = 'las-die las-die-face';
+    if (isBoosted) cls += ' is-boosted';
+    if (colorKey) cls += ' color-' + colorKey;
+    faceEl.className = cls;
+    faceEl.textContent = String(face);
+    const mulEl = document.createElement('span');
+    mulEl.className = 'las-die-mul';
+    mulEl.textContent = '\u00d7' + count;
+    stack.appendChild(faceEl);
+    stack.appendChild(mulEl);
+    parent.appendChild(stack);
+    return stack;
   }
 
   /** ????????????????????? 0? */
@@ -1104,18 +1228,16 @@ window.LasidaoUi = (function () {
     return idx * 6 + num - 5;
   }
 
-  /** 功能/建筑区 num 格于第几轮解锁 */
+  /** 功能/建筑合区 num 格于第几轮解锁（开局 2 格，逐轮 +1） */
   function slotUnlockRound(areaKey, num) {
-    if (areaKey === 'function') return Math.max(1, num - 1);
-    if (areaKey === 'building') return num;
+    if (areaKey === 'special') return Math.max(1, num - 1);
     return null;
   }
 
-  /** ??????????????????1~6? */
+  /** 合区本轮开放格数 1~6 */
   function areaOpenSlotCount(areaKey, round) {
     const n = Math.max(0, (round || 1) - 1);
-    if (areaKey === 'function') return Math.min(6, 2 + n);
-    if (areaKey === 'building') return Math.min(6, 1 + n);
+    if (areaKey === 'special') return Math.min(6, 2 + n);
     return 6;
   }
 
@@ -1141,6 +1263,10 @@ window.LasidaoUi = (function () {
         };
       const tiles = slotInfo.tiles || [];
       const workers = slotInfo.workers || {};
+      const boosts =
+        slotInfo.boosts ||
+        (area.boosts && area.boosts[num]) ||
+        {};
 
       const slot = document.createElement('button');
       slot.type = 'button';
@@ -1181,7 +1307,7 @@ window.LasidaoUi = (function () {
         workers,
         game.players,
         game,
-        { overlay: true }
+        { overlay: true, boosts }
       );
       const wTxt = workersText(workers, game.players, game);
       if (diceRow && wTxt) diceRow.title = wTxt;
@@ -1253,7 +1379,7 @@ window.LasidaoUi = (function () {
 
   function collectBoardTileMap(game) {
     const map = new Map(); // id -> { area, number, label, faceDown, tile }
-    for (const area of ['resource', 'function', 'building']) {
+    for (const area of ['resource', 'special']) {
       const tiles =
         (game.board && game.board[area] && game.board[area].tiles) || [];
       for (const tile of tiles) {
@@ -1334,8 +1460,7 @@ window.LasidaoUi = (function () {
   function renderBoard(game, meId) {
     hideCardTip();
     renderAreaBoard(game, meId, 'resource');
-    renderAreaBoard(game, meId, 'function');
-    renderAreaBoard(game, meId, 'building');
+    renderAreaBoard(game, meId, 'special');
   }
 
   function renderGroupedDice() {
@@ -1347,31 +1472,45 @@ window.LasidaoUi = (function () {
     groupsEl.hidden = false;
     groupsEl.innerHTML = '';
 
-    const counts = countByFace(diceAnim.finalDice);
-    const faces = Object.keys(counts)
+    const dice = diceAnim.finalDice || [];
+    const boosted = diceAnim.finalBoosted || [];
+    const stats = faceDiceStats(dice, boosted);
+    const faces = Object.keys(stats)
       .map(Number)
       .sort((a, b) => a - b);
+    const myColor = playerDieColor(
+      (lastGame && lastGame.players) || [],
+      lastMeId,
+      lastGame
+    );
 
     for (const face of faces) {
+      const stat = stats[face];
+      const normal = stat.total - stat.boosted;
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'las-die-group';
       if (selectedFace === face) btn.classList.add('is-selected');
       else if (selectedFace != null) btn.classList.add('is-dim');
 
-      const faceEl = document.createElement('span');
-      faceEl.className = 'las-die las-die-face';
-      faceEl.textContent = String(face);
-      const mulEl = document.createElement('span');
-      mulEl.className = 'las-die-mul';
-      mulEl.textContent = '\u00d7' + counts[face];
-      btn.appendChild(faceEl);
-      btn.appendChild(mulEl);
+      const diceWrap = document.createElement('div');
+      diceWrap.className = 'las-die-group-dice';
+      if (stat.boosted > 0) {
+        appendGroupDieStack(diceWrap, face, stat.boosted, true, myColor);
+      }
+      if (normal > 0) {
+        appendGroupDieStack(diceWrap, face, normal, false, myColor);
+      }
+      btn.appendChild(diceWrap);
 
       btn.title = t('lasidao.dieGroupTitle', {
         face,
-        count: counts[face],
+        count: stat.total,
       });
+      if (stat.boosted > 0) {
+        btn.title +=
+          ' (' + t('lasidao.boostMul', { n: stat.boosted }) + ')';
+      }
       btn.onclick = () => {
         if (!diceReady()) return;
         selectedFace = selectedFace === face ? null : face;
@@ -1385,11 +1524,12 @@ window.LasidaoUi = (function () {
     }
   }
 
-  function startDiceAnimation(finalDice, meId) {
+  function startDiceAnimation(finalDice, meId, boostFlags) {
     clearDiceTimers();
     resetDiceSelection();
     diceAnim.stage = 'rolling';
     diceAnim.finalDice = finalDice.slice();
+    diceAnim.finalBoosted = (boostFlags || []).slice();
 
     const wrap = $('las-dice-wrap');
     const diceEl = $('las-dice');
@@ -1413,7 +1553,7 @@ window.LasidaoUi = (function () {
     for (let i = 0; i < n; i++) {
       const el = makeDieEl(
         1 + Math.floor(Math.random() * 6),
-        'is-rolling',
+        'is-rolling' + (diceAnim.finalBoosted[i] ? ' is-boosted' : ''),
         myColor
       );
       diceEl.appendChild(el);
@@ -1433,6 +1573,7 @@ window.LasidaoUi = (function () {
         const el = dieNodes[i];
         el.classList.remove('is-rolling');
         el.classList.add('is-reveal');
+        if (diceAnim.finalBoosted[i]) el.classList.add('is-boosted');
         el.textContent = String(finalDice[i]);
       }
       updateDiceHint();
@@ -1486,11 +1627,12 @@ window.LasidaoUi = (function () {
     diceAnim.timers.push(t3);
   }
 
-  function startSpectatorDiceAnimation(finalDice, color, actorName) {
+  function startSpectatorDiceAnimation(finalDice, color, actorName, boostFlags) {
     clearDiceTimers();
     resetDiceSelection();
     diceAnim.stage = 'rolling';
     diceAnim.finalDice = finalDice.slice();
+    diceAnim.finalBoosted = (boostFlags || []).slice();
 
     const wrap = $('las-dice-wrap');
     const diceEl = $('las-dice');
@@ -1509,7 +1651,7 @@ window.LasidaoUi = (function () {
     for (let i = 0; i < n; i++) {
       const el = makeDieEl(
         1 + Math.floor(Math.random() * 6),
-        'is-rolling',
+        'is-rolling' + (diceAnim.finalBoosted[i] ? ' is-boosted' : ''),
         color
       );
       diceEl.appendChild(el);
@@ -1529,6 +1671,7 @@ window.LasidaoUi = (function () {
         const el = dieNodes[i];
         el.classList.remove('is-rolling');
         el.classList.add('is-reveal');
+        if (diceAnim.finalBoosted[i]) el.classList.add('is-boosted');
         const v = finalDice[i];
         el.textContent = v === 0 ? t('lasidao.wildDie') : String(v);
       }
@@ -1575,7 +1718,7 @@ window.LasidaoUi = (function () {
 
     const t3 = setTimeout(() => {
       diceAnim.stage = 'ready';
-      renderSpectatorDice(finalDice, color);
+      renderSpectatorDice(finalDice, color, diceAnim.finalBoosted);
       const hint = $('las-dice-hint');
       if (hint) {
         hint.textContent = t('lasidao.otherDiceHint', { name: actorName });
@@ -1593,11 +1736,14 @@ window.LasidaoUi = (function () {
     diceEl.hidden = false;
     diceEl.innerHTML = '';
     const dice = (game.dice || []).slice();
+    const boostFlags = (game.diceBoosted || []).slice();
     const myColor = playerDieColor(game.players || [], meId);
     dice.forEach((val, idx) => {
       const el = makeDieEl(
         val === 0 ? t('lasidao.wildDie') : val,
-        'is-wild' + (selectedWildIdx.has(idx) ? ' is-selected' : ''),
+        'is-wild' +
+          (selectedWildIdx.has(idx) ? ' is-selected' : '') +
+          (boostFlags[idx] ? ' is-boosted' : ''),
         myColor
       );
       el.style.cursor = 'pointer';
@@ -1616,6 +1762,7 @@ window.LasidaoUi = (function () {
     });
     diceAnim.stage = 'ready';
     diceAnim.finalDice = dice.slice();
+    diceAnim.finalBoosted = boostFlags.slice();
   }
 
   function renderRollWrap(game, meId) {
@@ -1640,7 +1787,7 @@ window.LasidaoUi = (function () {
     if (title) title.textContent = text;
   }
 
-  function renderSpectatorDice(dice, color) {
+  function renderSpectatorDice(dice, color, boostFlags) {
     const diceEl = $('las-dice');
     const groupsEl = $('las-dice-groups');
     if (!diceEl || !groupsEl) return;
@@ -1648,11 +1795,16 @@ window.LasidaoUi = (function () {
     groupsEl.innerHTML = '';
     diceEl.hidden = false;
     diceEl.innerHTML = '';
-    for (const v of dice) {
+    const flags = boostFlags || diceAnim.finalBoosted || [];
+    dice.forEach((v, i) => {
       diceEl.appendChild(
-        makeDieEl(v === 0 ? t('lasidao.wildDie') : v, '', color)
+        makeDieEl(
+          v === 0 ? t('lasidao.wildDie') : v,
+          flags[i] ? 'is-boosted' : '',
+          color
+        )
       );
-    }
+    });
   }
 
   function renderDice(game, meId, _prevGame) {
@@ -1713,6 +1865,9 @@ window.LasidaoUi = (function () {
     const dice = myTurn
       ? (game.dice || []).slice()
       : ((active && active.dice) || []).slice();
+    const boostFlags = myTurn
+      ? (game.diceBoosted || []).slice()
+      : ((active && active.diceBoosted) || []).slice();
 
     if (!dice.length) {
       if (diceAnim.stage !== 'idle') resetDiceAnim();
@@ -1777,16 +1932,17 @@ window.LasidaoUi = (function () {
           dice.length > 0;
 
         if (isFreshRoll && !(active && active.remoteDiceMode)) {
-          startSpectatorDiceAnimation(dice, color, actorName);
+          startSpectatorDiceAnimation(dice, color, actorName, boostFlags);
         } else {
           diceAnim.stage = 'ready';
-          renderSpectatorDice(dice, color);
+          diceAnim.finalBoosted = boostFlags.slice();
+          renderSpectatorDice(dice, color, boostFlags);
         }
         return;
       }
 
       if (diceAnim.stage === 'ready') {
-        renderSpectatorDice(dice, color);
+        renderSpectatorDice(dice, color, boostFlags);
       }
       return;
     }
@@ -1800,7 +1956,9 @@ window.LasidaoUi = (function () {
       ':' +
       (remote ? 'R' : 'N') +
       ':' +
-      dice.join(',');
+      dice.join(',') +
+      ':' +
+      boostFlags.map((b) => (b ? '1' : '0')).join('');
 
     if (diceAnim.key !== key) {
       diceAnim.key = key;
@@ -1808,11 +1966,12 @@ window.LasidaoUi = (function () {
       if (remote) {
         diceAnim.stage = 'ready';
         diceAnim.finalDice = dice.slice();
+        diceAnim.finalBoosted = boostFlags.slice();
         renderRemoteDice(game, meId);
         updateDispatchPreview();
         updateDiceHint();
       } else {
-        startDiceAnimation(dice, meId);
+        startDiceAnimation(dice, meId, boostFlags);
       }
       return;
     }
@@ -2382,7 +2541,14 @@ window.LasidaoUi = (function () {
       selectedBuildingId = null;
     }
 
-    const buildPhasePlayable = ['harvest', 'robbery', 'redraw', 'expand'];
+    const buildPhasePlayable = [
+      'harvest',
+      'robbery',
+      'redraw',
+      'expand',
+      'enhance',
+      'recruit',
+    ];
     // 功能卡：点选，确认发动走下方 play-bar
     const visible = (me.funcCards || []).filter((c) => !c.hidden);
     for (const c of visible) {
@@ -2613,16 +2779,15 @@ window.LasidaoUi = (function () {
       renderHarvestModal();
     } else if (card.funcType === 'redraw') {
       redrawCardId = card.id;
-      redrawSelectedDeck = null;
-      const hint = $('las-redraw-hint');
-      const confirmBtn = $('btn-las-redraw-confirm');
-      if (hint) hint.textContent = '';
-      if (confirmBtn) confirmBtn.disabled = true;
-      document
-        .querySelectorAll('.las-redraw-deck')
-        .forEach((d) => d.classList.remove('is-selected'));
       setRedrawModalOpen(true);
+      renderRedrawModal();
     } else if (card.funcType === 'remoteDice') {
+      netRef.sendAction('useFunc', { cardId: card.id });
+      selectedFuncId = null;
+    } else if (card.funcType === 'enhance') {
+      netRef.sendAction('useFunc', { cardId: card.id });
+      selectedFuncId = null;
+    } else if (card.funcType === 'recruit') {
       netRef.sendAction('useFunc', { cardId: card.id });
       selectedFuncId = null;
     } else if (card.funcType === 'exile') {
@@ -2802,6 +2967,11 @@ window.LasidaoUi = (function () {
       stats.textContent = t('lasidao.playerStats', {
         score: p.score,
         villagers: p.villagers,
+        houses: p.houses != null ? p.houses : 3,
+        freeHouses:
+          p.freeHouses != null
+            ? p.freeHouses
+            : Math.max(0, (p.houses != null ? p.houses : 3) - (p.villagers || 0)),
         res: totalRes,
         resMax: maxRes,
         func: funcN,
@@ -2828,10 +2998,21 @@ window.LasidaoUi = (function () {
           idle:
             p.idle != null
               ? p.idle
-              : Math.max(0, (p.villagers || 0) - (p.dispatched || 0)),
-          total: p.villagers,
+              : Math.max(
+                  0,
+                  (p.villagers || 0) +
+                    (p.tempVillagers || 0) -
+                    (p.dispatched || 0)
+                ),
+          total: (p.villagers || 0) + (Number(p.tempVillagers) || 0),
           dispatched: p.dispatched || 0,
         });
+        if (Number(p.tempVillagers) > 0 || Number(p.recruitPending) > 0) {
+          vill.title =
+            Number(p.tempVillagers) > 0
+              ? t('lasidao.tempVillagersActive', { n: p.tempVillagers })
+              : t('lasidao.recruitPendingHint', { n: p.recruitPending });
+        }
         resRow.appendChild(vill);
       }
       const cap = document.createElement('span');
@@ -3134,7 +3315,15 @@ window.LasidaoUi = (function () {
         title.textContent = t('lasidao.permanentFormTitle', {
           label: t('lasidao.breedPermanent'),
         });
-        tip.textContent = t('lasidao.func.breed');
+        const free =
+          me.freeHouses != null
+            ? me.freeHouses
+            : Math.max(0, (me.houses || 0) - (me.villagers || 0));
+        tip.textContent = t('lasidao.breedFormHint', {
+          need: (me.villagers || 0) * (game.breedFoodPerVillager != null ? game.breedFoodPerVillager : 1),
+          free,
+          houses: me.houses != null ? me.houses : 0,
+        });
       } else if (selectedPermanent === 'expand') {
         title.textContent = t('lasidao.permanentFormTitle', {
           label: t('lasidao.expandPermanent'),
@@ -3274,10 +3463,8 @@ window.LasidaoUi = (function () {
       deckMeta.textContent = t('lasidao.deckMeta', {
         resDraw: (game.decksLeft && game.decksLeft.resource) || 0,
         resDiscard: (game.discardsLeft && game.discardsLeft.resource) || 0,
-        fnDraw: (game.decksLeft && game.decksLeft.function) || 0,
-        fnDiscard: (game.discardsLeft && game.discardsLeft.function) || 0,
-        bldDraw: (game.decksLeft && game.decksLeft.building) || 0,
-        bldDiscard: (game.discardsLeft && game.discardsLeft.building) || 0,
+        spDraw: (game.decksLeft && game.decksLeft.special) || 0,
+        spDiscard: (game.discardsLeft && game.discardsLeft.special) || 0,
       });
     }
 
@@ -3363,20 +3550,16 @@ window.LasidaoUi = (function () {
       if (el) el.textContent = String(n || 0);
     };
     setNum('las-deck-res', game.decksLeft && game.decksLeft.resource);
-    setNum('las-deck-fn', game.decksLeft && game.decksLeft.function);
-    setNum('las-deck-bld', game.decksLeft && game.decksLeft.building);
+    setNum('las-deck-sp', game.decksLeft && game.decksLeft.special);
     setNum(
       'las-discard-res',
       game.discardsLeft && game.discardsLeft.resource
     );
     setNum(
-      'las-discard-fn',
-      game.discardsLeft && game.discardsLeft.function
+      'las-discard-sp',
+      game.discardsLeft && game.discardsLeft.special
     );
-    setNum(
-      'las-discard-bld',
-      game.discardsLeft && game.discardsLeft.building
-    );
+    updateSpecialDeckTopArt(game);
 
     if (game.phase === 'init_announce' && game.pendingInitReveal) {
       playInitAnnounce(game);
@@ -3477,7 +3660,9 @@ window.LasidaoUi = (function () {
           const houseCost = game.buildHouseCost || { wood: 4, stone: 3, iron: 2 };
           const canHouse = canPay(me.resources || {}, houseCost);
           buildHouseBtn.disabled = !canHouse;
-          buildHouseBtn.title = canHouse ? t('lasidao.func.buildHouse') : t('lasidao.buildHouseLack');
+          buildHouseBtn.title = canHouse
+            ? t('lasidao.buildHouseTooltip')
+            : t('lasidao.buildHouseLack');
         }
         if (exBtnAct) {
           const exCount2 = (me.buildings || []).filter((b) => b.built && b.buildType === 'exchange').length;
@@ -3488,12 +3673,43 @@ window.LasidaoUi = (function () {
         if (breedBtn) {
           const breedRate = game.breedFoodPerVillager != null ? game.breedFoodPerVillager : 1;
           const needFood = (me.villagers || 0) * breedRate;
-          const maxV = game.maxVillagers != null ? game.maxVillagers : 12;
-          const canBreed = me.villagers < maxV && (me.resources.food || 0) >= needFood;
+          const maxV = game.maxVillagers != null ? game.maxVillagers : 15;
+          const houses =
+            me.houses != null
+              ? me.houses
+              : game.me && game.me.houses != null
+                ? game.me.houses
+                : 3;
+          const freeHouses =
+            me.freeHouses != null
+              ? me.freeHouses
+              : game.me && game.me.freeHouses != null
+                ? game.me.freeHouses
+                : Math.max(0, houses - (me.villagers || 0));
+          const atCap = me.villagers >= maxV;
+          const noHouse = freeHouses <= 0;
+          const noFood = (me.resources.food || 0) < needFood;
+          const canBreed = !atCap && !noHouse && !noFood;
           breedBtn.disabled = !canBreed;
-          breedBtn.title = canBreed
-            ? t('lasidao.func.breed')
-            : t('lasidao.breedLack', { need: needFood });
+          if (canBreed) {
+            breedBtn.title = t('lasidao.breedTooltip', {
+              need: needFood,
+              free: freeHouses,
+              houses,
+            });
+          } else if (atCap) {
+            breedBtn.title = t('lasidao.breedLackCap', { max: maxV });
+          } else if (noHouse) {
+            breedBtn.title = t('lasidao.breedLackHouse', {
+              houses,
+              villagers: me.villagers || 0,
+            });
+          } else {
+            breedBtn.title = t('lasidao.breedLack', { need: needFood });
+          }
+          if (selectedPermanent === 'breed' && !canBreed) {
+            selectedPermanent = null;
+          }
         }
         if (expandPermBtn) {
           const expandCost =
@@ -3619,17 +3835,40 @@ window.LasidaoUi = (function () {
       }
     } else {
       const group = document.querySelector('.las-die-group.is-selected');
-      const faceEl = group && group.querySelector('.las-die-face, .las-die');
-      const el = faceEl || group || $('las-dice-groups') || $('las-dice');
-      if (el) {
-        const r = el.getBoundingClientRect();
-        if (r.width || r.height) {
+      if (group) {
+        const stacks = group.querySelectorAll('.las-die-stack');
+        for (const stack of stacks) {
+          const faceEl = stack.querySelector('.las-die-face, .las-die');
+          const mulEl = stack.querySelector('.las-die-mul');
+          if (!faceEl) continue;
+          const r = faceEl.getBoundingClientRect();
+          if (!r.width && !r.height) continue;
           const base = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-          for (let i = 0; i < count; i++) {
+          let n = 1;
+          if (mulEl && mulEl.textContent) {
+            const m = mulEl.textContent.match(/\d+/);
+            if (m) n = Math.max(1, parseInt(m[0], 10) || 1);
+          }
+          for (let i = 0; i < n; i++) {
             centers.push({
               x: base.x + (i % 3) * 6 - 6,
               y: base.y + Math.floor(i / 3) * 6,
             });
+          }
+        }
+      }
+      if (!centers.length) {
+        const el = $('las-dice-groups') || $('las-dice');
+        if (el) {
+          const r = el.getBoundingClientRect();
+          if (r.width || r.height) {
+            const base = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+            for (let i = 0; i < count; i++) {
+              centers.push({
+                x: base.x + (i % 3) * 6 - 6,
+                y: base.y + Math.floor(i / 3) * 6,
+              });
+            }
           }
         }
       }
@@ -3785,26 +4024,84 @@ window.LasidaoUi = (function () {
     }
   }
 
+  function updateSpecialDeckTopArt(game) {
+    const el = $('las-deck-stack-special');
+    const topLabel = $('las-deck-special-top');
+    const Assets = window.LasidaoAssets;
+    const topKind = game && game.specialDeckTopKind;
+    const kindName =
+      topKind === 'building'
+        ? t('lasidao.deckBuilding')
+        : topKind === 'function'
+          ? t('lasidao.deckFunction')
+          : t('lasidao.redrawTopUnknown');
+    if (topLabel) {
+      topLabel.textContent = topKind
+        ? t('lasidao.deckTopKind', { name: kindName })
+        : t('lasidao.deckTopEmpty');
+    }
+    if (!el || !Assets || !Assets.cardBackImageUrl) return;
+    const backKind = topKind === 'building' ? 'building' : 'function';
+    const url = Assets.cardBackImageUrl(backKind);
+    if (url) {
+      el.style.backgroundImage = 'url("' + url + '")';
+      el.style.backgroundSize = 'cover';
+      el.style.backgroundPosition = 'center';
+      el.style.backgroundRepeat = 'no-repeat';
+    }
+    el.classList.toggle('is-top-building', topKind === 'building');
+    el.classList.toggle('is-top-function', topKind === 'function');
+  }
+
   function setRedrawModalOpen(open) {
     const modal = $('las-redraw-modal');
     if (!modal) return;
     modal.hidden = !open;
     if (!open) {
       redrawCardId = null;
-      redrawSelectedDeck = null;
     } else {
-      const fnBack = $('las-redraw-deck-fn-back');
-      const bldBack = $('las-redraw-deck-bld-back');
-      const Assets = window.LasidaoAssets;
-      if (fnBack && Assets && Assets.cardBackImageUrl) {
-        fnBack.style.backgroundImage = 'url("' + Assets.cardBackImageUrl('function') + '")';
-      }
-      if (bldBack && Assets && Assets.cardBackImageUrl) {
-        bldBack.style.backgroundImage = 'url("' + Assets.cardBackImageUrl('building') + '")';
-      }
       if (window.I18n && window.I18n.applyDom) {
         window.I18n.applyDom(modal);
       }
+      renderRedrawModal();
+    }
+  }
+
+  function renderRedrawModal() {
+    const hint = $('las-redraw-hint');
+    const confirmBtn = $('btn-las-redraw-confirm');
+    const backEl = $('las-redraw-deck-top-back');
+    const labelEl = $('las-redraw-top-label');
+    const game = lastGame;
+    const topKind = game && game.specialDeckTopKind;
+    const Assets = window.LasidaoAssets;
+    const kindName =
+      topKind === 'building'
+        ? t('lasidao.deckBuilding')
+        : topKind === 'function'
+          ? t('lasidao.deckFunction')
+          : t('lasidao.redrawTopUnknown');
+    if (hint) {
+      hint.textContent = topKind
+        ? t('lasidao.redrawHintTop', { name: kindName })
+        : t('lasidao.redrawHintEmpty');
+    }
+    if (labelEl) labelEl.textContent = kindName;
+    if (backEl && Assets && Assets.cardBackImageUrl) {
+      const backKind = topKind === 'building' ? 'building' : 'function';
+      const url = Assets.cardBackImageUrl(backKind);
+      if (url) {
+        backEl.style.backgroundImage = 'url("' + url + '")';
+        backEl.style.backgroundSize = 'cover';
+        backEl.style.backgroundPosition = 'center';
+      }
+    }
+    if (confirmBtn) {
+      const left =
+        (game && game.decksLeft && game.decksLeft.special) || 0;
+      const disc =
+        (game && game.discardsLeft && game.discardsLeft.special) || 0;
+      confirmBtn.disabled = left + disc <= 0;
     }
   }
 
@@ -3944,7 +4241,7 @@ window.LasidaoUi = (function () {
     }
   }
 
-  const EXILE_AREAS = ['resource', 'function', 'building'];
+  const EXILE_AREAS = ['resource', 'special'];
 
   function setExileModalOpen(open) {
     const modal = $('las-exile-modal');
@@ -4082,28 +4379,15 @@ window.LasidaoUi = (function () {
     const body = $('las-void-skip-body');
     const confirmBtn = $('btn-las-void-skip-confirm');
     const game = lastGame;
-    const me = game && mePlayer(game, lastMeId);
     if (!body) return;
     body.innerHTML = '';
 
     const labels = getResLabels(game);
     const Assets = window.LasidaoAssets;
-    const available = RESOURCES.filter(
-      (r) => me && (me.resources[r] || 0) >= 1
-    );
-
-    if (!available.length) {
-      const empty = document.createElement('p');
-      empty.className = 'las-void-skip-empty muted';
-      empty.textContent = t('lasidao.voidSkipNoRes');
-      body.appendChild(empty);
-      if (confirmBtn) confirmBtn.disabled = true;
-      return;
-    }
 
     const grid = document.createElement('div');
     grid.className = 'las-void-skip-grid';
-    for (const res of available) {
+    for (const res of RESOURCES) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className =
@@ -4116,11 +4400,6 @@ window.LasidaoUi = (function () {
           ? Assets.resourceHandImageUrl(res)
           : '';
       if (url) cardEl.style.backgroundImage = 'url("' + url + '")';
-
-      const qty = document.createElement('span');
-      qty.className = 'las-void-skip-qty';
-      qty.textContent = '×' + (me.resources[res] || 0);
-      cardEl.appendChild(qty);
 
       const label = document.createElement('span');
       label.className = 'las-void-skip-label';
@@ -4337,25 +4616,7 @@ window.LasidaoUi = (function () {
   }
 
   function bindRedrawDeckClicks() {
-    const decks = document.querySelectorAll('.las-redraw-deck');
-    const hint = $('las-redraw-hint');
-    const confirmBtn = $('btn-las-redraw-confirm');
-
-    decks.forEach((el) => {
-      el.onclick = () => {
-        decks.forEach((d) => d.classList.remove('is-selected'));
-        el.classList.add('is-selected');
-        redrawSelectedDeck = el.dataset.deck;
-        const deckName =
-          redrawSelectedDeck === 'function'
-            ? t('lasidao.deckFunction')
-            : t('lasidao.deckBuilding');
-        if (hint) {
-          hint.textContent = t('lasidao.redrawHint', { name: deckName });
-        }
-        if (confirmBtn) confirmBtn.disabled = false;
-      };
-    });
+    /* 合堆顶抽：无需选堆 */
   }
 
 
@@ -4533,16 +4794,15 @@ window.LasidaoUi = (function () {
     // 绑定卡堆卡背（一次性）
     const Assets = window.LasidaoAssets;
     if (Assets && Assets.cardBackImageUrl) {
-      ['resource', 'function', 'building'].forEach((kind) => {
-        const el = $('las-deck-stack-' + kind);
-        const url = Assets.cardBackImageUrl(kind);
-        if (el && url) {
-          el.style.backgroundImage = 'url("' + url + '")';
-          el.style.backgroundSize = 'cover';
-          el.style.backgroundPosition = 'center';
-          el.style.backgroundRepeat = 'no-repeat';
-        }
-      });
+      const resEl = $('las-deck-stack-resource');
+      const resUrl = Assets.cardBackImageUrl('resource');
+      if (resEl && resUrl) {
+        resEl.style.backgroundImage = 'url("' + resUrl + '")';
+        resEl.style.backgroundSize = 'cover';
+        resEl.style.backgroundPosition = 'center';
+        resEl.style.backgroundRepeat = 'no-repeat';
+      }
+      if (lastGame) updateSpecialDeckTopArt(lastGame);
     }
     const rulesBtn = $('btn-las-rules');
     if (rulesBtn) {
@@ -4718,10 +4978,9 @@ window.LasidaoUi = (function () {
     const redrawConfirm = $('btn-las-redraw-confirm');
     if (redrawConfirm) {
       redrawConfirm.onclick = () => {
-        if (!redrawSelectedDeck || !redrawCardId) return;
+        if (!redrawCardId) return;
         net.sendAction('useFunc', {
           cardId: redrawCardId,
-          deck: redrawSelectedDeck,
         });
         setRedrawModalOpen(false);
         selectedFuncId = null;

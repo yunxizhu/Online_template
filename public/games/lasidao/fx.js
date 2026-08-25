@@ -202,12 +202,19 @@ window.LasidaoFx = (function () {
   const DEAL_STAGGER_MS = 300;
 
   function makeDealCard(item) {
+    const tile = item.tile || item;
+    const cardKind =
+      item.area === 'special'
+        ? tile.kind === 'building' || tile.buildType
+          ? 'building'
+          : 'function'
+        : item.area;
     const kind =
-      item.area === 'function' ? 'fn' : item.area === 'building' ? 'bld' : 'res';
+      cardKind === 'function' ? 'fn' : cardKind === 'building' ? 'bld' : 'res';
     const backKind =
-      item.area === 'building'
+      cardKind === 'building'
         ? 'building'
-        : item.area === 'function'
+        : cardKind === 'function'
           ? 'function'
           : 'resource';
     const wrap = document.createElement('div');
@@ -219,7 +226,6 @@ window.LasidaoFx = (function () {
     const front = document.createElement('div');
     front.className = 'las-fx-deal-face las-fx-deal-front';
     const Assets = window.LasidaoAssets;
-    const tile = item.tile || item;
 
     let hasBack = false;
     if (Assets && typeof Assets.applyCardBackArt === 'function') {
@@ -251,17 +257,17 @@ window.LasidaoFx = (function () {
       let hasFront = false;
       if (Assets) {
         if (
-          item.area === 'resource' &&
+          cardKind === 'resource' &&
           typeof Assets.applyResourceArt === 'function'
         ) {
           hasFront = Boolean(Assets.applyResourceArt(front, tile));
         } else if (
-          item.area === 'function' &&
+          cardKind === 'function' &&
           typeof Assets.applyFunctionArt === 'function'
         ) {
           hasFront = Boolean(Assets.applyFunctionArt(front, tile));
         } else if (
-          item.area === 'building' &&
+          cardKind === 'building' &&
           typeof Assets.applyBuildingArt === 'function'
         ) {
           hasFront = Boolean(Assets.applyBuildingArt(front, tile));
@@ -318,7 +324,7 @@ window.LasidaoFx = (function () {
     if (!layer || !newcomers || !newcomers.length) return;
     const list = newcomers.slice().sort((a, b) => {
       if (a.area !== b.area) {
-        const order = { resource: 0, function: 1, building: 2 };
+        const order = { resource: 0, special: 1 };
         return (order[a.area] || 0) - (order[b.area] || 0);
       }
       return (a.number || 0) - (b.number || 0);
@@ -327,7 +333,8 @@ window.LasidaoFx = (function () {
     const inflight = [];
     for (let i = 0; i < list.length; i++) {
       const item = list[i];
-      const fromEl = deckEl(item.area);
+      const fromDeck = item.area === 'special' ? 'special' : item.area;
+      const fromEl = deckEl(fromDeck);
       const toEl = tileEl(item.id) || slotEl(item.area, item.number);
       const from = rectCenter(fromEl);
       const to = rectCenter(toEl);
@@ -546,7 +553,9 @@ window.LasidaoFx = (function () {
         }
       }
     } else if (
-      (slot.area === 'function' || slot.area === 'building') &&
+      (slot.area === 'special' ||
+        slot.area === 'function' ||
+        slot.area === 'building') &&
       slot.claimedBy
     ) {
       const claim = slot.claimedBy;
@@ -558,9 +567,12 @@ window.LasidaoFx = (function () {
       const tiles = slot.tiles || [];
       for (let ti = 0; ti < tiles.length; ti++) {
         const tile = tiles[ti];
+        const isBld =
+          tile.kind === 'building' ||
+          tile.buildType ||
+          slot.area === 'building';
         const fly = document.createElement('div');
-        fly.className =
-          'las-fx-loot ' + (slot.area === 'function' ? 'is-fn' : 'is-bld');
+        fly.className = 'las-fx-loot ' + (isBld ? 'is-bld' : 'is-fn');
         fly.textContent =
           tile.faceDown && !tile.label
             ? t('lasidao.faceDown')

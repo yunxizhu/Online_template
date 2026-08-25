@@ -5,7 +5,7 @@ const zhExtra = {
   'lasidao.neutralName': '强盗',
   'lasidao.confirmBandit': '放置中立骰子',
   'lasidao.confirmUse': '确认发动',
-  'lasidao.func.breed': '消耗等同当前村民数的小麦，村民 +1（上限 12）',
+  'lasidao.func.breed': '消耗等同当前村民数的小麦，村民 +1（上限 15）',
   'lasidao.func.harvest': '获得任意 2 个资源（各 1）',
   'lasidao.func.remoteDice': '投掷前使用：可指定任意点数派遣',
   'lasidao.func.exile': '驱逐目标玩家在某数字格的 1 名村民',
@@ -14,14 +14,14 @@ const zhExtra = {
   'lasidao.func.banditRaid':
     '任意时间、无消耗：在任意板块的任意数字格放置 2 枚中立骰子；参与抵消并占用名次，不领取收益',
   'lasidao.buildHouseTooltip': '消耗 4木 3石 2铁，+1 分（建造阶段每回合限一次）',
-  'lasidao.breedTooltip': '消耗等同当前村民数的小麦，村民 +1，上限 12（建造阶段每回合限一次）',
+  'lasidao.breedTooltip': '消耗等同当前村民数的小麦，村民 +1，上限 15（建造阶段每回合限一次）',
 };
 
 const enExtra = {
   'lasidao.neutralName': 'Bandits',
   'lasidao.confirmBandit': 'Place neutral dice',
   'lasidao.confirmUse': 'Confirm',
-  'lasidao.func.breed': 'Pay food equal to villager count; +1 villager (max 12)',
+  'lasidao.func.breed': 'Pay food equal to villager count; +1 villager (max 15)',
   'lasidao.func.harvest': 'Gain any 2 resources (1 each)',
   'lasidao.func.remoteDice': 'Before rolling: dispatch with any faces',
   'lasidao.func.exile': 'Remove 1 villager of a player from a number slot',
@@ -30,7 +30,7 @@ const enExtra = {
   'lasidao.func.banditRaid':
     'Anytime, free: place 2 neutral dice on any board number slot; they cancel ties and occupy rank, but claim nothing',
   'lasidao.buildHouseTooltip': 'Cost 4 wood 3 stone 2 iron; +1 score (once per build phase)',
-  'lasidao.breedTooltip': 'Cost food equal to current villagers; +1 villager (max 12) (once per build phase)',
+  'lasidao.breedTooltip': 'Cost food equal to current villagers; +1 villager (max 15) (once per build phase)',
 };
 
 function setPath(obj, dotted, value) {

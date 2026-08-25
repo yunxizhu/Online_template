@@ -77,23 +77,17 @@
     <div class="modal-backdrop" id="las-redraw-backdrop"></div>
     <div class="modal-dialog panel las-redraw-dialog" role="dialog" aria-modal="true" aria-labelledby="las-redraw-title">
       <div class="las-redraw-head">
-        <h3 id="las-redraw-title" data-i18n="lasidao.redrawPickDeck">选择要抽取的卡堆</h3>
+        <h3 id="las-redraw-title" data-i18n="lasidao.redrawPickDeck">从合堆顶抽取</h3>
         <p id="las-redraw-hint" class="muted las-hint"></p>
       </div>
       <div id="las-redraw-body" class="las-redraw-body">
-        <div class="las-redraw-decks">
-          <div class="las-redraw-deck" data-deck="function">
-            <div class="las-redraw-deck-back" id="las-redraw-deck-fn-back"></div>
-            <span data-i18n="lasidao.redrawFunction">重抽功能卡</span>
-          </div>
-          <div class="las-redraw-deck" data-deck="building">
-            <div class="las-redraw-deck-back" id="las-redraw-deck-bld-back"></div>
-            <span data-i18n="lasidao.redrawBuilding">重抽建筑卡</span>
-          </div>
+        <div class="las-redraw-preview">
+          <div class="las-redraw-deck-back" id="las-redraw-deck-top-back"></div>
+          <span id="las-redraw-top-label"></span>
         </div>
       </div>
       <div class="las-redraw-foot row las-actions">
-        <button id="btn-las-redraw-confirm" type="button" data-i18n="lasidao.redrawConfirmDraw" disabled>确认抽取</button>
+        <button id="btn-las-redraw-confirm" type="button" data-i18n="lasidao.redrawConfirmDraw">确认抽取</button>
         <button id="btn-las-redraw-cancel" type="button" class="secondary" data-i18n="lasidao.cancel">取消</button>
       </div>
     </div>
@@ -134,7 +128,7 @@
     <div class="modal-dialog panel las-void-skip-dialog" role="dialog" aria-modal="true" aria-labelledby="las-void-skip-title">
       <div class="las-void-skip-head">
         <h3 id="las-void-skip-title" data-i18n="lasidao.voidSkipTitle">跳过本回合</h3>
-        <p id="las-void-skip-hint" class="muted las-hint" data-i18n="lasidao.voidSkipHint">选择要丢弃的 1 个资源</p>
+        <p id="las-void-skip-hint" class="muted las-hint" data-i18n="lasidao.voidSkipHint">爆掉 1 枚骰子，选择获得的 1 个资源</p>
       </div>
       <div id="las-void-skip-body" class="las-void-skip-body"></div>
       <div class="las-void-skip-foot row las-actions">
@@ -270,25 +264,19 @@
       <div class="las-deck-pile las-deck-pile-resource" data-deck="resource">
         <div class="las-deck-stack" id="las-deck-stack-resource"></div>
         <div class="las-deck-info">
-          <span class="las-deck-name" data-i18n="lasidao.area.resource">??</span>
+          <span class="las-deck-name" data-i18n="lasidao.area.resource">资源</span>
           <span class="las-deck-counts"><span id="las-deck-res">0</span>/<span id="las-discard-res">0</span></span>
         </div>
       </div>
-      <div class="las-deck-pile las-deck-pile-function" data-deck="function">
-        <div class="las-deck-stack" id="las-deck-stack-function"></div>
+      <div class="las-deck-pile las-deck-pile-special" data-deck="special">
+        <div class="las-deck-stack" id="las-deck-stack-special"></div>
         <div class="las-deck-info">
-          <span class="las-deck-name" data-i18n="lasidao.area.function">??</span>
-          <span class="las-deck-counts"><span id="las-deck-fn">0</span>/<span id="las-discard-fn">0</span></span>
+          <span class="las-deck-name" data-i18n="lasidao.area.special">功能/建筑</span>
+          <span class="las-deck-top" id="las-deck-special-top"></span>
+          <span class="las-deck-counts"><span id="las-deck-sp">0</span>/<span id="las-discard-sp">0</span></span>
         </div>
       </div>
-      <div class="las-deck-pile las-deck-pile-building" data-deck="building">
-        <div class="las-deck-stack" id="las-deck-stack-building"></div>
-        <div class="las-deck-info">
-          <span class="las-deck-name" data-i18n="lasidao.area.building">??</span>
-          <span class="las-deck-counts"><span id="las-deck-bld">0</span>/<span id="las-discard-bld">0</span></span>
-        </div>
-      </div>
-      <p class="las-deck-hint muted" data-i18n="lasidao.deckHint">?/?</p>
+      <p class="las-deck-hint muted" data-i18n="lasidao.deckHint">抽/弃</p>
     </aside>
 
     <div class="las-table-boards">
@@ -300,13 +288,9 @@
       </div>
 
       <div class="las-table-bottom">
-        <section class="las-board-section las-board-section-function">
-          <h3 class="game-sub" data-i18n="lasidao.areaFunction">????</h3>
-          <div id="las-board-function" class="las-board las-board-function" data-area="function"></div>
-        </section>
-        <section class="las-board-section las-board-section-building">
-          <h3 class="game-sub" data-i18n="lasidao.areaBuilding">????</h3>
-          <div id="las-board-building" class="las-board las-board-building" data-area="building"></div>
+        <section class="las-board-section las-board-section-special">
+          <h3 class="game-sub" data-i18n="lasidao.areaSpecial">功能/建筑板块</h3>
+          <div id="las-board-special" class="las-board las-board-special" data-area="special"></div>
         </section>
       </div>
     </div>
