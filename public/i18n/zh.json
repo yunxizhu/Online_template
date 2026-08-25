@@ -520,7 +520,7 @@
     "needCode": "请输入房间码",
     "roomNotFound": "未找到房间",
     "connectHostFail": "无法连接房主",
-    "dnsHint": "{base}（若持续失败，请以管理员身份运行 修复DNS.bat 后重开浏览器）",
+    "dnsHint": "{base}（多为房主 Cloudflare 隧道已换新地址。请刷新大厅后重试；若所有 trycloudflare 都解析失败，再以管理员运行 修复DNS.bat）",
     "backLocalFail": "返回本地大厅失败",
     "autoLobbyFail": "自动进入大厅失败，请手动进入",
     "rejoinPlaying": "对局进行中",

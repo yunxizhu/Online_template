@@ -520,7 +520,7 @@
     "needCode": "Enter a room code",
     "roomNotFound": "Room not found",
     "connectHostFail": "Cannot reach host",
-    "dnsHint": "{base} (if it persists, run FixDNS.bat as admin)",
+    "dnsHint": "{base} (often the host's Cloudflare tunnel URL expired. Refresh the lobby and retry; if all trycloudflare domains fail DNS, run FixDNS.bat as admin)",
     "backLocalFail": "Failed to return to local lobby",
     "autoLobbyFail": "Auto-enter lobby failed; please enter manually",
     "rejoinPlaying": "Game in progress",

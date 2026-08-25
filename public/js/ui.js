@@ -2496,7 +2496,10 @@
     } catch (err) {
       const base = (err && err.message) || t('toast.joinFail');
       showToast(
-        base.indexOf('websocket error') >= 0
+        base.indexOf('websocket error') >= 0 ||
+          base.indexOf('NAME_NOT_RESOLVED') >= 0 ||
+          base.indexOf('隧道') >= 0 ||
+          /dns|enotfound|name_not_resolved/i.test(base)
           ? t('toast.dnsHint', { base })
           : base
       );

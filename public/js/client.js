@@ -197,14 +197,21 @@ window.GameNet = (function () {
     return parts.filter(Boolean).join(' ').toLowerCase();
   }
 
-  function isRetryableRemoteJoinError(err) {
+  function isDnsNotResolvedError(err) {
     const msg = errText(err);
     return (
       msg.includes('err_name_not_resolved') ||
       msg.includes('name_not_resolved') ||
       msg.includes('enotfound') ||
       msg.includes('getaddrinfo') ||
-      msg.includes('dns') ||
+      msg.includes('dns')
+    );
+  }
+
+  function isRetryableRemoteJoinError(err) {
+    const msg = errText(err);
+    return (
+      isDnsNotResolvedError(err) ||
       msg.includes('xhr poll error') ||
       msg.includes('websocket error') ||
       msg.includes('transport error') ||
@@ -232,15 +239,18 @@ window.GameNet = (function () {
   }
 
   /**
-   * 按候选地址连接。远端隧道域名刚生成时 DNS 常未就绪（ERR_NAME_NOT_RESOLVED），
-   * 对同一地址做退避重试，而不是立刻放弃。
+   * 按候选地址连接。
+   * - 新域名 DNS 未就绪：短退避重试
+   * - ERR_NAME_NOT_RESOLVED 且多次失败：多半是旧隧道已作废，尽快换地址
    */
   async function connectAny(candidates, opts = {}) {
     const list = (candidates || []).filter(Boolean);
     if (!list.length) list.push(localOrigin);
     const retriesPerHost = Math.max(1, Number(opts.retriesPerHost) || 1);
+    const dnsFailFast = opts.dnsFailFast !== false;
     let lastErr = null;
     for (const target of list) {
+      let dnsFails = 0;
       for (let attempt = 0; attempt < retriesPerHost; attempt++) {
         try {
           return await connect(target);
@@ -248,6 +258,13 @@ window.GameNet = (function () {
           lastErr = err;
           const retryable = isRetryableRemoteJoinError(err);
           if (!retryable || attempt >= retriesPerHost - 1) break;
+          if (dnsFailFast && isDnsNotResolvedError(err)) {
+            dnsFails += 1;
+            // 同一 trycloudflare 域名连续 DNS 失败 → 几乎肯定隧道已换新，别空转
+            if (dnsFails >= 2) break;
+            await sleep(600);
+            continue;
+          }
           // 0.8s → 1.2s → 1.6s … 上限 3s；给 Cloudflare DNS 传播时间
           await sleep(Math.min(3000, 800 + attempt * 400));
         }
@@ -348,16 +365,45 @@ window.GameNet = (function () {
    */
   async function joinRoomOnHost(roomId, playerName, host, opts = {}) {
     const remote = !(opts.local || opts.preferLocal);
+    const deadHosts = new Set();
+
+    async function refreshHost(preferred) {
+      try {
+        if (
+          !socket ||
+          currentUrl !== normalizeUrl(localOrigin) ||
+          !socket.connected
+        ) {
+          await connect(localOrigin);
+        }
+        const resolved = await resolveRoom(roomId);
+        if (resolved && resolved.ok && resolved.host) {
+          return normalizeUrl(resolved.host);
+        }
+      } catch (_) {
+        /* ignore */
+      }
+      const fallback = preferred ? normalizeUrl(preferred) : '';
+      if (fallback && deadHosts.has(fallback)) return '';
+      return fallback;
+    }
 
     async function doJoin(targetHost) {
       let candidates = [];
       if (!remote) {
         candidates = [localOrigin];
       } else if (targetHost) {
-        candidates = [normalizeUrl(targetHost)];
+        const h = normalizeUrl(targetHost);
+        if (!deadHosts.has(h)) candidates = [h];
       }
-      // 远端：同一隧道 URL 多试几次（DNS 传播）；本机：一次即可
-      await connectAny(candidates, { retriesPerHost: remote ? 8 : 1 });
+      if (!candidates.length) {
+        throw new Error('隧道地址尚未就绪，请稍后再试');
+      }
+      // 远端：DNS 失败会快速放弃该域名；本机一次即可
+      await connectAny(candidates, {
+        retriesPerHost: remote ? 4 : 1,
+        dnsFailFast: remote,
+      });
       await joinLobbyAndWait(playerName, {
         sessionId: opts.sessionId || null,
         roomId: opts.roomId || roomId || null,
@@ -370,50 +416,49 @@ window.GameNet = (function () {
       }
     }
 
+    // 远端：先向本机 MQTT 拉最新隧道，避免大厅列表里的旧 trycloudflare 域名
+    let activeHost = host;
+    if (remote) {
+      const fresh = await refreshHost(host);
+      if (fresh) activeHost = fresh;
+    }
+
     try {
-      await doJoin(host);
+      await doJoin(activeHost);
       return;
     } catch (err) {
       if (!remote || !isRetryableRemoteJoinError(err)) {
         throw err;
       }
+      if (activeHost) deadHosts.add(normalizeUrl(activeHost));
     }
 
-    // 仍失败：回本地查「房间最新地址」，并对同一 host 继续重试（不再永久拉黑）
+    // 仍失败：回本地轮询最新地址；跳过已确认 DNS 失败的旧域名
     await connect(localOrigin);
     let lastResolved = null;
     let lastErr = null;
-    const deadline = Date.now() + 25000;
+    const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
-      const resolved = await resolveRoom(roomId);
-      lastResolved = resolved;
-      const nextHost =
-        resolved && resolved.ok && resolved.host
-          ? normalizeUrl(resolved.host)
-          : host
-            ? normalizeUrl(host)
-            : '';
-      if (nextHost) {
+      const nextHost = await refreshHost(host);
+      lastResolved = nextHost
+        ? { ok: true, host: nextHost }
+        : { ok: false, message: '未找到该房间码' };
+      if (nextHost && !deadHosts.has(nextHost)) {
         try {
-          // 每轮再给几次连接机会，覆盖 DNS 刚就绪的窗口
-          await connectAny([nextHost], { retriesPerHost: 3 });
-          await joinLobbyAndWait(playerName, {
-            sessionId: opts.sessionId || null,
-            roomId: opts.roomId || roomId || null,
-            oldPlayerId: opts.oldPlayerId || null,
-            rejoin: Boolean(opts.rejoin),
-            playerTag: opts.playerTag || null,
-          });
-          if (!opts.rejoin) {
-            joinRoom(roomId, playerName, opts);
-          }
+          await doJoin(nextHost);
           return;
         } catch (err) {
           lastErr = err;
           if (!isRetryableRemoteJoinError(err)) throw err;
+          deadHosts.add(nextHost);
         }
+      } else if (nextHost && deadHosts.has(nextHost)) {
+        // 房主还在广播同一个已死域名：等它换隧道
+        lastErr = new Error(
+          '房主隧道已失效，正在等待对方刷新公网地址…'
+        );
       }
-      await sleep(1200);
+      await sleep(1500);
     }
     if (lastErr) throw lastErr;
     throw new Error(
