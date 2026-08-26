@@ -33,7 +33,8 @@ window.LasidaoAssets = (function () {
   const CARD_BACK_IMAGE = {
     function: 'bankuaikabei_gongneng.png',
     building: 'bankuaikabei_jianzhu.png',
-    resource: 'ziyuankabei.png',
+    resource: 'bankuaikabei_ziyuan.png',
+    resourceCard: 'ziyuankabei.png',
     environment: 'bankuaikabei_shijian.png',
   };
 

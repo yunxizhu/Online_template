@@ -1214,7 +1214,9 @@ console.log('— settle act when building over cap —');
       built: false,
       workers: 0,
     },
+    newCards: [],
   };
+  p0.pendingDiscardBuild.newCards.push(p0.pendingDiscardBuild.newCard);
   g.phase = 'settle';
   g.lastSettle = { at: Date.now(), round: g.round, slots: [], buildings: [] };
   ok(finishSettleAnimForce(g));
@@ -1225,6 +1227,78 @@ console.log('— settle act when building over cap —');
   assert.strictEqual(p0.pendingDiscardBuild, null);
   assert.strictEqual(p0.buildings.length, 3);
   console.log('✓ settle act when building over cap');
+}
+
+console.log('— settle act discard order + pending build queue —');
+{
+  const g = createGameState(room(2));
+  const p0 = g.players[0];
+  p0.resources = { wood: 11, stone: 0, food: 0, iron: 0 };
+  p0.pendingDiscardRes = true;
+  p0.funcCards = [
+    { id: 'fn_over', kind: 'function', funcType: 'harvest', label: '丰收' },
+  ];
+  p0.pendingDiscardFunc = true;
+  p0.pendingDiscardBuild = {
+    newCard: {
+      id: 'b_q_1',
+      kind: 'building',
+      buildType: 'exchange',
+      label: '集市A',
+      cost: { wood: 2, stone: 2 },
+      faceDown: false,
+      slot: null,
+      built: false,
+      workers: 0,
+    },
+    newCards: [],
+  };
+  p0.pendingDiscardBuild.newCards.push(p0.pendingDiscardBuild.newCard);
+  p0.pendingDiscardBuild.newCards.push({
+    id: 'b_q_2',
+    kind: 'building',
+    buildType: 'exchange',
+    label: '集市B',
+    cost: { wood: 2, stone: 2 },
+    faceDown: false,
+    slot: null,
+    built: false,
+    workers: 0,
+  });
+  g.phase = 'settle_act';
+  g.currentPlayerId = p0.id;
+  g.settleActPassed = {};
+
+  let r = applyAction(g, p0.id, {
+    type: 'discardFunc',
+    payload: { cardId: 'fn_over' },
+  });
+  assert.ok(!r.ok && /先处理资源/.test(r.error || ''), '应先弃资源');
+  r = applyAction(g, p0.id, { type: 'discardPendingBuild' });
+  assert.ok(!r.ok && /先处理资源/.test(r.error || ''), '应先弃资源');
+
+  ok(
+    applyAction(g, p0.id, {
+      type: 'discardResources',
+      payload: { amounts: { wood: 1, stone: 0, food: 0, iron: 0 } },
+    })
+  );
+  assert.strictEqual(p0.pendingDiscardRes, false);
+
+  ok(applyAction(g, p0.id, { type: 'discardPendingBuild' }));
+  assert.ok(p0.pendingDiscardBuild && p0.pendingDiscardBuild.newCard, '应还有待取舍建筑');
+  assert.strictEqual(p0.pendingDiscardBuild.newCard.id, 'b_q_2');
+  ok(applyAction(g, p0.id, { type: 'discardPendingBuild' }));
+  assert.strictEqual(p0.pendingDiscardBuild, null, '待取舍建筑应清空');
+
+  ok(
+    applyAction(g, p0.id, {
+      type: 'discardFunc',
+      payload: { cardId: 'fn_over' },
+    })
+  );
+  assert.strictEqual(p0.pendingDiscardFunc, false);
+  console.log('✓ settle act discard order + pending build queue');
 }
 
 console.log('— wish well after produce —');

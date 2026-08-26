@@ -417,7 +417,8 @@ class MqttBulletin {
   #pub(topic, obj) {
     const c = this.client;
     if (!c || !c.connected) return false;
-    const payload = obj == null ? '' : JSON.stringify(obj);
+    // 空串用于清除 retained；不可 JSON.stringify('')，否则会发出 '""' 导致对端无法清空
+    const payload = obj === '' || obj == null ? '' : JSON.stringify(obj);
     c.publish(topic, payload, { qos: 1, retain: true });
     return true;
   }
@@ -640,14 +641,19 @@ class MqttBulletin {
     if (topic.startsWith(roomPrefix)) {
       const id = topic.slice(roomPrefix.length);
       if (!id || id === this.instanceId) return;
-      if (!raw.trim()) {
+      if (!raw.trim() || raw.trim() === '""') {
         this.rooms.delete(id);
         this.onChange();
         return;
       }
       try {
         const p = JSON.parse(raw);
-        if (!p || p.app !== APP_SIGNATURE) return;
+        if (!p || typeof p !== 'object' || p.app !== APP_SIGNATURE) {
+          // 兼容旧版误发 JSON.stringify('') → '""' 等无效载荷，直接视为清除
+          this.rooms.delete(id);
+          this.onChange();
+          return;
+        }
         const updateTime = Number(p.updateTime || 0);
         const host = String(p.host || '').replace(/\/$/, '');
         if (!host || !p.id) {

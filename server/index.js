@@ -261,6 +261,14 @@ function mqttAfterRoomChange() {
   if (mqttBulletin && mqttBulletin.enabled) mqttBulletin.pulseRoom();
 }
 
+/** 房间主动解散时立刻清掉 MQTT retained，不等心跳超时 */
+function mqttClearRoomOnDissolve() {
+  if (mqttBulletin && mqttBulletin.enabled) {
+    mqttBulletin.clearRoomBeacon();
+    mqttBulletin.pulseRoom();
+  }
+}
+
 function sanitizeChatText(raw) {
   return String(raw || '')
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
@@ -869,7 +877,8 @@ io.on('connection', (socket) => {
       roomId: result.leftRoomId || null,
     });
     mqttOnLogin();
-    mqttAfterRoomChange();
+    if (result.dissolved) mqttClearRoomOnDissolve();
+    else mqttAfterRoomChange();
   });
 
   socket.on('game:leave', () => {
@@ -904,7 +913,8 @@ io.on('connection', (socket) => {
     socket.emit('game:quit-ok', {});
     emitLobbyUpdate();
     mqttOnLogin();
-    mqttAfterRoomChange();
+    if (result.dissolved) mqttClearRoomOnDissolve();
+    else mqttAfterRoomChange();
   });
 
   socket.on('room:ready', (data = {}) => {
@@ -1007,7 +1017,8 @@ io.on('connection', (socket) => {
     }
     mqttOnLogin();
     if (result.leftRoomId || result.room || result.dissolved) {
-      mqttAfterRoomChange();
+      if (result.dissolved) mqttClearRoomOnDissolve();
+      else mqttAfterRoomChange();
     }
     emitLobbyUpdate();
   });

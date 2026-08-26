@@ -493,19 +493,22 @@
 }
 
 .las-deck-pile {
+  --las-deck-stack: calc(0.22 * var(--las-rem));
+  --las-deck-stack-2: calc(0.44 * var(--las-rem));
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: calc(0.35 * var(--las-rem));
+  /* gap + stack 的 margin-bottom 一起躲开向下的叠牌阴影 */
+  gap: calc(0.28 * var(--las-rem));
   flex: 0 0 auto;
   width: 100%;
-  /* 为伪元素叠层效果预留空间，避免与下方标签/下一堆重叠 */
-  padding: 0 calc(0.45 * var(--las-rem)) calc(0.45 * var(--las-rem)) 0;
+  padding: 0 var(--las-deck-stack-2) 0 0;
   box-sizing: border-box;
 }
 
 .las-deck-stack {
   position: relative;
+  z-index: 0;
   flex: 0 0 auto;
   width: var(--las-deck-w);
   height: calc(var(--las-deck-w) * 800 / 600);
@@ -521,12 +524,13 @@
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
-  /* 用阴影做叠牌厚度，避免伪元素盖住 background-image 卡背 */
+  /* 阴影落在布局外；用 margin 把名称/张数顶到阴影下方 */
+  margin-bottom: var(--las-deck-stack-2);
   box-shadow:
-    3px 3px 0 0 #1a242b,
-    3px 3px 0 1px var(--border),
-    6px 6px 0 0 #141c22,
-    6px 6px 0 1px var(--border);
+    var(--las-deck-stack) var(--las-deck-stack) 0 0 #1a242b,
+    var(--las-deck-stack) var(--las-deck-stack) 0 1px var(--border),
+    var(--las-deck-stack-2) var(--las-deck-stack-2) 0 0 #141c22,
+    var(--las-deck-stack-2) var(--las-deck-stack-2) 0 1px var(--border);
 }
 
 .las-deck-pile-resource .las-deck-stack {
@@ -563,6 +567,8 @@
   width: 100%;
   text-align: center;
   flex: 0 0 auto;
+  position: relative;
+  z-index: 1;
 }
 
 .las-deck-name {

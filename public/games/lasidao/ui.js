@@ -248,6 +248,9 @@ window.LasidaoUi = (function () {
 
   /** 颗粒无收：点选要放置标记的资源数字格 */
   let barrenPickNumber = null;
+  /** 以身入局：点选要放置中立骰的目标格 */
+  let neutralPickArea = null;
+  let neutralPickNumber = null;
 
   /** 弃牌阶段：待弃置的各资源数量 */
   let discardResPick = { wood: 0, stone: 0, food: 0, iron: 0 };
@@ -659,6 +662,7 @@ window.LasidaoUi = (function () {
   }
 
   function faceDownCardKind(tile, areaKey) {
+    if (tile && tile.backKind) return tile.backKind;
     if (tile && tile.kind === 'building') return 'building';
     if (tile && tile.kind === 'function') return 'function';
     if (tile && tile.kind === 'resource') return 'resource';
@@ -1483,12 +1487,29 @@ window.LasidaoUi = (function () {
     );
   }
 
+  function isNeutralPickMode(game, meId) {
+    const c = game && game.pendingEventChoice;
+    return Boolean(
+      c && c.forMe && c.needChoice === 'moveNeutral'
+    );
+  }
+
   function confirmBarrenMarkerPlace() {
     if (!netRef || barrenPickNumber == null) return;
     if (!isBarrenMarkerPickMode(lastGame, lastMeId)) return;
     const n = barrenPickNumber;
     barrenPickNumber = null;
     netRef.sendAction('eventMoveBarrenMarker', { number: n });
+  }
+
+  function confirmNeutralPlace() {
+    if (!netRef || !neutralPickArea || neutralPickNumber == null) return;
+    if (!isNeutralPickMode(lastGame, lastMeId)) return;
+    const area = neutralPickArea;
+    const number = neutralPickNumber;
+    neutralPickArea = null;
+    neutralPickNumber = null;
+    netRef.sendAction('eventMoveNeutral', { area, number });
   }
 
   function syncBarrenMarkerPickUi(game, meId) {
@@ -1535,6 +1556,56 @@ window.LasidaoUi = (function () {
     return true;
   }
 
+  function syncNeutralPickUi(game, meId) {
+    if (!isNeutralPickMode(game, meId)) {
+      return false;
+    }
+    const wrap = $('las-dice-wrap');
+    const hint = $('las-dice-hint');
+    const confirm = $('btn-las-confirm');
+    const voidBtn = $('btn-las-void');
+    const produceActions = $('las-produce-actions');
+    const preview = $('las-dispatch-preview');
+    if (wrap) wrap.hidden = false;
+    setDiceTitle(t('lasidao.eventMoveNeutralTitle') || t('lasidao.environmentSlot'));
+    if (hint) {
+      hint.textContent =
+        neutralPickArea && neutralPickNumber != null
+          ? t('lasidao.eventMoveNeutralPicked', {
+              area: areaLabel(neutralPickArea),
+              n: neutralPickNumber,
+            })
+          : t('lasidao.eventMoveNeutral');
+    }
+    if (preview) preview.hidden = true;
+    if (voidBtn) voidBtn.hidden = true;
+    if (produceActions) produceActions.hidden = false;
+    if (confirm) {
+      confirm.hidden = false;
+      confirm.disabled = !(neutralPickArea && neutralPickNumber != null);
+      confirm.textContent = t('lasidao.eventMoveNeutralConfirm');
+    }
+    const diceEl = $('las-dice');
+    const groupsEl = $('las-dice-groups');
+    if (diceEl) {
+      diceEl.hidden = false;
+      diceEl.innerHTML =
+        '<span class="muted">' +
+        (neutralPickArea && neutralPickNumber != null
+          ? t('lasidao.eventMoveNeutralPicked', {
+              area: areaLabel(neutralPickArea),
+              n: neutralPickNumber,
+            })
+          : t('lasidao.eventMoveNeutral')) +
+        '</span>';
+    }
+    if (groupsEl) {
+      groupsEl.hidden = true;
+      groupsEl.innerHTML = '';
+    }
+    return true;
+  }
+
   /** 资源区每数字格容量：1–3 格各 3 张，4–6 格各 2 张（合计上限 15） */
   function resourceSlotCapacity(num) {
     return num >= 4 ? 2 : 3;
@@ -1569,8 +1640,10 @@ window.LasidaoUi = (function () {
     const remote = isRemoteMode(game);
     const faces = availableFaces();
     const barrenPick = isBarrenMarkerPickMode(game, meId);
+    const neutralPick = isNeutralPickMode(game, meId);
     const canPickBase =
       !barrenPick &&
+      !neutralPick &&
       game.phase === 'produce' &&
       isMyTurn(game, meId) &&
       diceReady();
@@ -1601,14 +1674,23 @@ window.LasidaoUi = (function () {
       const slotCardCount =
         areaKey === 'resource' ? 3 : capacity;
       slot.style.setProperty('--las-slot-card-count', String(slotCardCount));
+      const round = game.round || 1;
+      const openCount = areaOpenSlotCount(areaKey, round);
+      const lockedByRound =
+        areaKey === 'special' &&
+        num > openCount;
 
       const hasTiles = tiles.length > 0;
       // ??????????????????????????????
       const matchFace = remote ? true : faces.indexOf(num) >= 0;
       const barrenSelectable = barrenPick && areaKey === 'resource';
+      const neutralSelectable =
+        neutralPick &&
+        (areaKey === 'resource' || areaKey === 'special') &&
+        !(areaKey === 'special' && lockedByRound);
       const dispatchable = canPick && matchFace && hasTiles;
-      slot.disabled = !(barrenSelectable || dispatchable);
-      if (barrenSelectable || dispatchable) {
+      slot.disabled = !(barrenSelectable || neutralSelectable || dispatchable);
+      if (barrenSelectable || neutralSelectable || dispatchable) {
         slot.classList.add('is-target');
       } else if (canPickBase) {
         slot.classList.add('is-dimmed');
@@ -1616,6 +1698,12 @@ window.LasidaoUi = (function () {
       if (
         barrenSelectable &&
         barrenPickNumber === num
+      ) {
+        slot.classList.add('is-picked');
+      } else if (
+        neutralSelectable &&
+        neutralPickArea === areaKey &&
+        neutralPickNumber === num
       ) {
         slot.classList.add('is-picked');
       } else if (
@@ -1650,7 +1738,6 @@ window.LasidaoUi = (function () {
       const stack = document.createElement('div');
       stack.className = 'las-slot-tiles';
 
-      const round = game.round || 1;
       for (let idx = 0; idx < capacity; idx++) {
         const tile = tiles[idx];
         if (tile) {
@@ -1756,6 +1843,7 @@ window.LasidaoUi = (function () {
                 {
                   id: (envTile.id || 'env') + ':stash',
                   kind: 'resource',
+                  backKind: 'resourceCard',
                   faceDown: true,
                   label: null,
                 },
@@ -1831,6 +1919,13 @@ window.LasidaoUi = (function () {
           barrenPickNumber = num;
           renderBoard(lastGame, lastMeId);
           syncBarrenMarkerPickUi(lastGame, lastMeId);
+          return;
+        }
+        if (neutralSelectable) {
+          neutralPickArea = areaKey;
+          neutralPickNumber = num;
+          renderBoard(lastGame, lastMeId);
+          syncNeutralPickUi(lastGame, lastMeId);
           return;
         }
         if (!dispatchable) return;
@@ -2399,8 +2494,15 @@ window.LasidaoUi = (function () {
     if (syncBarrenMarkerPickUi(game, meId)) {
       return;
     }
+    if (syncNeutralPickUi(game, meId)) {
+      return;
+    }
     if (!isBarrenMarkerPickMode(game, meId) && barrenPickNumber != null) {
       barrenPickNumber = null;
+    }
+    if (!isNeutralPickMode(game, meId) && neutralPickNumber != null) {
+      neutralPickArea = null;
+      neutralPickNumber = null;
     }
 
     const confirm = $('btn-las-confirm');
@@ -2757,7 +2859,12 @@ window.LasidaoUi = (function () {
         }
         funcsEl.appendChild(btn);
         filled += 1;
-        if (interactive && player && player.pendingDiscardFunc) {
+        if (
+          interactive &&
+          player &&
+          player.pendingDiscardFunc &&
+          !player.pendingDiscardRes
+        ) {
           const disc = document.createElement('button');
           disc.type = 'button';
           disc.className = 'las-card';
@@ -3125,10 +3232,10 @@ window.LasidaoUi = (function () {
     // 建造阶段的手牌与建筑已移至抽牌堆上方的建造手牌区
     if (game.phase === 'settle_act') {
       appendResourceDiscardRow(hand, game, me);
-      if (me.pendingDiscardBuild) {
+      if (me.pendingDiscardBuild && !me.pendingDiscardRes) {
         appendBuildDiscardChoiceUi(hand, game, meId, me);
       }
-      if (me.pendingDiscardFunc) {
+      if (me.pendingDiscardFunc && !me.pendingDiscardRes) {
         const tip = document.createElement('div');
         tip.className = 'muted las-pboard-tip';
         tip.textContent = t('lasidao.discardFuncTip');
@@ -4303,7 +4410,8 @@ window.LasidaoUi = (function () {
     const showChoice = Boolean(
       choice &&
         choice.forMe &&
-        choice.needChoice !== 'moveBarrenMarker'
+        choice.needChoice !== 'moveBarrenMarker' &&
+        choice.needChoice !== 'moveNeutral'
     );
     const showMerc = Boolean(
       merc && merc.forMe && game.phase === 'event_mercenary'
@@ -6162,6 +6270,10 @@ window.LasidaoUi = (function () {
       confirmBtn.onclick = () => {
         if (isBarrenMarkerPickMode(lastGame, lastMeId)) {
           confirmBarrenMarkerPlace();
+          return;
+        }
+        if (isNeutralPickMode(lastGame, lastMeId)) {
+          confirmNeutralPlace();
           return;
         }
         confirmDispatch();

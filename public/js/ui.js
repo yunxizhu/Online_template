@@ -2879,6 +2879,15 @@
     }
     // 房主退出会解散房间：在房内的人立刻回大厅，不要当成断线去抢座位
     if (data && data.reason === 'dissolved') {
+      const closedId = data.roomId
+        ? String(data.roomId).toUpperCase()
+        : null;
+      if (closedId && Array.isArray(state.lobbyRooms)) {
+        state.lobbyRooms = state.lobbyRooms.filter(
+          (r) => String((r && r.id) || '').toUpperCase() !== closedId
+        );
+        renderLobbyRooms(state.lobbyRooms);
+      }
       await bounceToLocalLobby(t('toast.roomClosed'));
       return;
     }

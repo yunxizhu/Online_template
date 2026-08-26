@@ -53,6 +53,12 @@ const ENVIRONMENT_DECK_SIZE = 10;
 const ENVIRONMENT_DRAW_PER_ROUND = 3;
 const ENVIRONMENT_SLOT_NUMBERS = [4, 5, 6];
 
+function areaOpenSlotCount(areaKey, round) {
+  const n = Math.max(0, (round || 1) - 1);
+  if (areaKey === 'special') return Math.min(6, 2 + n);
+  return 6;
+}
+
 function isNoneSlot(slot) {
   return slot === 'none' || (typeof slot === 'string' && /^none(:\d+)?$/.test(slot));
 }
@@ -1722,10 +1728,49 @@ function takeBuildingCard(game, player, tile) {
     workers: 0,
   };
   if (!assignBuildingSlot(player, neu)) {
-    player.pendingDiscardBuild = { newCard: neu };
+    queuePendingBuildCard(player, neu);
   } else {
     player.buildings.push(neu);
   }
+}
+
+function ensurePendingBuildQueue(player) {
+  if (!player || !player.pendingDiscardBuild) return [];
+  const pending = player.pendingDiscardBuild;
+  if (Array.isArray(pending.newCards)) return pending.newCards;
+  if (pending.newCard) {
+    pending.newCards = [pending.newCard];
+    return pending.newCards;
+  }
+  pending.newCards = [];
+  return pending.newCards;
+}
+
+function queuePendingBuildCard(player, card) {
+  if (!player || !card) return;
+  if (!player.pendingDiscardBuild) {
+    player.pendingDiscardBuild = { newCard: card, newCards: [card] };
+    return;
+  }
+  const q = ensurePendingBuildQueue(player);
+  q.push(card);
+  player.pendingDiscardBuild.newCard = q[0] || null;
+}
+
+function popPendingBuildCard(player) {
+  if (!player || !player.pendingDiscardBuild) return null;
+  const q = ensurePendingBuildQueue(player);
+  if (!q.length) {
+    player.pendingDiscardBuild = null;
+    return null;
+  }
+  const card = q.shift() || null;
+  if (!q.length) {
+    player.pendingDiscardBuild = null;
+  } else {
+    player.pendingDiscardBuild.newCard = q[0];
+  }
+  return card;
 }
 
 /** 幸运一抽等：发放暗置的功能/建筑牌 */
@@ -1812,6 +1857,9 @@ function actEventMoveNeutral(game, player, payload) {
   }
   if (!Number.isInteger(toNumber) || toNumber < 1 || toNumber > 6) {
     return { ok: false, error: '请选择数字格 1–6' };
+  }
+  if (toArea === 'special' && toNumber > areaOpenSlotCount('special', game.round)) {
+    return { ok: false, error: '该功能/建筑区数字格尚未解锁' };
   }
   const fromArea = pending.fromArea || 'resource';
   const fromNumber = Number(pending.fromNumber) || Number(pending.number);
@@ -2126,11 +2174,20 @@ function actResetBuildTurn(game, player) {
       game.specialDiscard.push(cleanCardForPile(b));
     }
   }
-  // 清理 pendingDiscardBuild 中的新卡
-  if (player.pendingDiscardBuild && player.pendingDiscardBuild.newCard) {
-    const neu = player.pendingDiscardBuild.newCard;
-    if (!snap.pendingDiscardBuild || snap.pendingDiscardBuild.newCard?.id !== neu.id) {
-      game.specialDiscard.push(cleanCardForPile(neu));
+  // 清理 pendingDiscardBuild 中的新卡（兼容单张与队列）
+  if (player.pendingDiscardBuild) {
+    const pendingCards = ensurePendingBuildQueue(player);
+    const snapCards = (() => {
+      const snapPending = snap.pendingDiscardBuild;
+      if (!snapPending) return [];
+      if (Array.isArray(snapPending.newCards)) return snapPending.newCards;
+      return snapPending.newCard ? [snapPending.newCard] : [];
+    })();
+    const snapIds = new Set(snapCards.map((c) => c && c.id).filter(Boolean));
+    for (const neu of pendingCards) {
+      if (neu && neu.id && !snapIds.has(neu.id)) {
+        game.specialDiscard.push(cleanCardForPile(neu));
+      }
     }
   }
 
@@ -2679,6 +2736,9 @@ function actPlaceBuildingSlot(game, player, payload) {
 }
 
 function actDiscardUnbuilt(game, player, payload) {
+  if (game.phase === 'settle_act' && player.pendingDiscardRes) {
+    return { ok: false, error: '请先处理资源手牌超上限弃置' };
+  }
   const buildingId = payload.buildingId;
   const b = findPersonalBuilding(player, buildingId);
   if (!b) return { ok: false, error: '建筑不存在' };
@@ -2694,28 +2754,39 @@ function actDiscardUnbuilt(game, player, payload) {
   pushToDiscard(game, 'building', b);
   // 满上限 pending：弃后收下新卡，放到原格子
   if (player.pendingDiscardBuild) {
-    const neu = player.pendingDiscardBuild.newCard;
-    neu.built = false;
-    neu.workers = 0;
-    if (!assignBuildingSlot(player, neu)) {
-      if (
-        slotKeep != null &&
-        (buildingsOnSlot(player, slotKeep).length === 0 ||
-          (neu.buildType === 'exchange' &&
-            isExchangeOnlySlot(player, slotKeep)))
-      ) {
-        neu.slot = slotKeep;
-      } else {
-        neu.slot = slotKeep != null ? slotKeep : nextFreeBuildSlot(player) || 'none';
+    const neu = popPendingBuildCard(player);
+    if (neu) {
+      neu.built = false;
+      neu.workers = 0;
+      if (!assignBuildingSlot(player, neu)) {
+        if (
+          slotKeep != null &&
+          (buildingsOnSlot(player, slotKeep).length === 0 ||
+            (neu.buildType === 'exchange' &&
+              isExchangeOnlySlot(player, slotKeep)))
+        ) {
+          neu.slot = slotKeep;
+        } else {
+          neu.slot = slotKeep != null ? slotKeep : nextFreeBuildSlot(player) || 'none';
+        }
       }
+      player.buildings.push(neu);
+      let msg = `${player.name} 弃置${wasBuilt ? '已建' : '未建'}「${b.label}」（入弃牌堆），新建筑「${neu.label}」放到原格子`;
+      if (wasBuilt && b.buildType === 'score2' && b.score) {
+        msg += `，宫殿被弃置，失去 +${b.score} 分`;
+      }
+      pushLog(game, msg);
+    } else {
+      let msg = `${player.name} 弃置${wasBuilt ? '已建' : '未建'}「${b.label}」` +
+        (slotKeep != null
+          ? `（格子 ${slotLabel(slotKeep)}）`
+          : '') +
+        '（入弃牌堆）';
+      if (wasBuilt && b.buildType === 'score2' && b.score) {
+        msg += `，宫殿被弃置，失去 +${b.score} 分`;
+      }
+      pushLog(game, msg);
     }
-    player.buildings.push(neu);
-    player.pendingDiscardBuild = null;
-    let msg = `${player.name} 弃置${wasBuilt ? '已建' : '未建'}「${b.label}」（入弃牌堆），新建筑「${neu.label}」放到原格子`;
-    if (wasBuilt && b.buildType === 'score2' && b.score) {
-      msg += `，宫殿被弃置，失去 +${b.score} 分`;
-    }
-    pushLog(game, msg);
   } else {
     let msg = `${player.name} 主动弃置${wasBuilt ? '已建' : '未建'}「${b.label}」` +
       (slotKeep != null
@@ -2744,13 +2815,16 @@ function actDiscardUnbuilt(game, player, payload) {
 
 /** 建筑达上限：弃掉刚获得、尚未入手的建筑，保留现有建筑 */
 function actDiscardPendingBuild(game, player) {
+  if (game.phase === 'settle_act' && player.pendingDiscardRes) {
+    return { ok: false, error: '请先处理资源手牌超上限弃置' };
+  }
   const pending = player.pendingDiscardBuild;
-  if (!pending || !pending.newCard) {
+  const neu = pending ? pending.newCard : null;
+  if (!neu) {
     return { ok: false, error: '没有待取舍的新建筑' };
   }
-  const neu = pending.newCard;
-  pushToDiscard(game, 'building', cleanCardForPile(neu));
-  player.pendingDiscardBuild = null;
+  popPendingBuildCard(player);
+  pushToDiscard(game, 'building', neu);
   pushLog(
     game,
     `${player.name} 弃置刚获得的建筑「${neu.label || '?'}」（入弃牌堆），保留现有建筑`
@@ -2851,6 +2925,9 @@ function maybeAdvanceAfterResourceDiscard(game, player) {
 }
 
 function actDiscardFunc(game, player, payload) {
+  if (game.phase === 'settle_act' && player.pendingDiscardRes) {
+    return { ok: false, error: '请先处理资源手牌超上限弃置' };
+  }
   const cardId = payload.cardId;
   const idx = player.funcCards.findIndex((c) => c.id === cardId);
   if (idx < 0) return { ok: false, error: '功能卡不存在' };
@@ -3321,7 +3398,7 @@ function useRedraw(game, player, _payload) {
       workers: 0,
     };
     if (!assignBuildingSlot(player, neu)) {
-      player.pendingDiscardBuild = { newCard: neu };
+      queuePendingBuildCard(player, neu);
     } else {
       player.buildings.push(neu);
     }
