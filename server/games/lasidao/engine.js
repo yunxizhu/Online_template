@@ -14,10 +14,25 @@ const {
   buildFunctionDeck,
   buildBuildingDeck,
   buildSpecialDeck,
+  buildEnvironmentDeck,
+  ENVIRONMENT_CATALOG,
+  getEnvironmentDef,
   BUILD_HOUSE_COST,
   BREED_FOOD_PER_VILLAGER,
   breedFoodCost,
 } = require('./decks');
+
+const {
+  applyEnvironmentOnDispatch,
+  applyEnvironmentOnSettleSlot,
+  applyEnvironmentAfterShare,
+  applyResistBarbariansAfterSettle,
+  setupEnvironmentOnBoard,
+  isBarrenSlot,
+  grantMap,
+  neutralCountOn,
+  addNeutral,
+} = require('./environmentEffects');
 
 const WIN_SCORE = 15;
 const START_VILLAGERS = 3;
@@ -29,20 +44,24 @@ const MAX_RESOURCE_HAND = 10;
 /** 每位玩家最多拥有的强化骰数量 */
 const MAX_ENHANCED_DICE = 3;
 /** 征召：下一轮生产临时村民数量 */
-const RECRUIT_TEMP_VILLAGERS = 1;
+const RECRUIT_TEMP_VILLAGERS = 2;
 const EXPAND_RESOURCE_BONUS = 4;
-/** 资源板块摆放上限（6 数字格 × 每格 3 张） */
-const MAX_RESOURCE_BOARD_TILES = 18;
+/** 资源板块摆放上限（1–3 格各 3 张，4–6 格各 2 张） */
+const MAX_RESOURCE_BOARD_TILES = 15;
+/** 事件牌堆总量；每轮洗混后抽 3 张摆到 4/5/6 号格 */
+const ENVIRONMENT_DECK_SIZE = 10;
+const ENVIRONMENT_DRAW_PER_ROUND = 3;
+const ENVIRONMENT_SLOT_NUMBERS = [4, 5, 6];
 
 function isNoneSlot(slot) {
   return slot === 'none' || (typeof slot === 'string' && /^none(:\d+)?$/.test(slot));
 }
 
 function noneSlotList(player) {
-  const n = Number(player && player.expandSlots) || 0;
-  const out = ['none'];
-  for (let i = 1; i <= n; i++) {
-    out.push(`none:${i}`);
+  const max = maxBuildingsFor(player);
+  const out = [];
+  for (let i = 0; i < max; i++) {
+    out.push(i === 0 ? 'none' : `none:${i}`);
   }
   return out;
 }
@@ -53,6 +72,76 @@ function personalSlotsFor(player) {
 
 function maxBuildingsFor(player) {
   return MAX_BUILDINGS + (Number(player && player.expandSlots) || 0);
+}
+
+/** 已占用的建筑格（按 slot 去重；集市叠放只占 1 格） */
+function occupiedBuildSlots(player) {
+  const set = new Set();
+  for (const b of player.buildings || []) {
+    if (b.slot == null) continue;
+    set.add(String(b.slot));
+  }
+  return set;
+}
+
+function occupiedBuildSlotCount(player) {
+  return occupiedBuildSlots(player).size;
+}
+
+function buildingsOnSlot(player, slot) {
+  const key = String(slot);
+  return (player.buildings || []).filter(
+    (b) => b.slot != null && String(b.slot) === key
+  );
+}
+
+function isExchangeOnlySlot(player, slot) {
+  const on = buildingsOnSlot(player, slot);
+  return on.length > 0 && on.every((b) => b.buildType === 'exchange');
+}
+
+function findExchangeStackSlot(player) {
+  for (const slot of occupiedBuildSlots(player)) {
+    if (isExchangeOnlySlot(player, slot)) return slot;
+  }
+  return null;
+}
+
+function nextFreeBuildSlot(player) {
+  const used = occupiedBuildSlots(player);
+  for (const s of personalSlotsFor(player)) {
+    if (!used.has(String(s))) return s;
+  }
+  return null;
+}
+
+/**
+ * 为新建筑分配格子：集市可叠到已有纯集市格；否则取空位。
+ * 成功则写入 neu.slot 并返回 true；无位则 slot 保持 null 并返回 false。
+ */
+function assignBuildingSlot(player, neu) {
+  if (!neu) return false;
+  if (neu.buildType === 'exchange') {
+    const stack = findExchangeStackSlot(player);
+    if (stack != null) {
+      neu.slot = stack;
+      return true;
+    }
+  }
+  const free = nextFreeBuildSlot(player);
+  if (free != null) {
+    neu.slot = free;
+    return true;
+  }
+  neu.slot = null;
+  return false;
+}
+
+function normalizeBuildSlot(slot) {
+  if (slot == null || slot === '') return 'none';
+  if (slot === 'none' || slot === 0 || slot === '0') return 'none';
+  if (typeof slot === 'string' && /^none:\d+$/.test(slot)) return slot;
+  return 'none';
 }
 
 function maxFuncHandFor(player) {
@@ -73,18 +162,19 @@ function freeHousesFor(player) {
   return Math.max(0, houses - villagers);
 }
 
-/** 累计扩容次数（功能卡与常驻均计入，用于常驻扩容造价） */
+/** 累计扩建次数（三栏同步 +1，取任一栏即可；兼容旧存档取 max） */
 function expandCountFor(player) {
-  return (
-    (Number(player && player.expandSlots) || 0) +
-    (Number(player && player.expandFuncSlots) || 0) +
-    (Number(player && player.expandResSlots) || 0)
+  return Math.max(
+    Number(player && player.expandSlots) || 0,
+    Number(player && player.expandFuncSlots) || 0,
+    Number(player && player.expandResSlots) || 0
   );
 }
 
+/** 常驻扩建造价：首次 2 木 2 石，之后每次各 +2 */
 function expandPermanentCost(player) {
   const n = expandCountFor(player);
-  const amt = 2 + n;
+  const amt = 2 + 2 * n;
   return { wood: amt, stone: amt };
 }
 
@@ -120,10 +210,29 @@ function sumRes(r) {
   return RESOURCES.reduce((s, k) => s + (r[k] || 0), 0);
 }
 
-function syncResourceHandPending(player) {
+function syncResourceHandPending(player, game) {
   if (!player) return;
+  // 建造阶段内再获得资源超上限不强制弃牌
+  if (game && game.phase === 'build') {
+    player.pendingDiscardRes = false;
+    return;
+  }
   player.pendingDiscardRes =
     sumRes(player.resources) > maxResourceHandFor(player);
+}
+
+function syncFuncHandPending(player) {
+  if (!player) return;
+  if ((player.funcCards || []).length > maxFuncHandFor(player)) {
+    player.pendingDiscardFunc = true;
+  }
+}
+
+function syncAllDiscardPending(game) {
+  for (const p of alivePlayers(game)) {
+    syncResourceHandPending(p, game);
+    syncFuncHandPending(p);
+  }
 }
 
 function canPay(have, cost) {
@@ -158,29 +267,190 @@ function playersNeedingWishWell(game) {
 }
 
 function anyoneNeedsDiscard(game) {
-  for (const p of alivePlayers(game)) {
-    syncResourceHandPending(p);
-  }
+  syncAllDiscardPending(game);
   return alivePlayers(game).some(
     (p) =>
       p.pendingDiscardFunc || p.pendingDiscardBuild || p.pendingDiscardRes
   );
 }
 
-function tryBeginDiscardOrNextRound(game) {
+/** 结算动画结束后：个人产出 → 弃牌 → 许愿井 → 弃牌 → 囚徒弃牌 → 建造
+ * （建造阶段内再获得的资源超上限不强制弃牌）
+ * 雇佣军在全员放置完毕、生产判定开始前单独处理，见 tryEnterPreSettleMercenaryOrSettle
+ */
+function advancePostSettlePipeline(game) {
+  if (game.over) return;
+
+  if (!game.personalProduceApplied) {
+    const report = game.lastSettle;
+    if (report) {
+      applySettleBuildingProduce(game, report);
+      logSettleRoundMvp(game);
+    }
+    game.personalProduceApplied = true;
+  }
+
+  syncAllDiscardPending(game);
   if (anyoneNeedsDiscard(game)) {
     beginSettleActPhase(game);
-  } else {
-    endRound(game);
+    return;
+  }
+
+  if (playersNeedingWishWell(game).length > 0) {
+    beginWishWell(game);
+    return;
+  }
+
+  if (anyoneNeedsPrisonerDiscard(game)) {
+    beginPrisonerDiscardPhase(game);
+    return;
+  }
+
+  beginBuildIfCompliant(game);
+}
+
+function anyoneNeedsPrisonerDiscard(game) {
+  const map = game.pendingPrisonerDiscards || {};
+  return Object.keys(map).some((id) => (Number(map[id]) || 0) > 0);
+}
+
+function beginPrisonerDiscardPhase(game) {
+  game.phase = 'event_discard';
+  const order = game.produceFinishOrder || [];
+  const ids = Object.keys(game.pendingPrisonerDiscards || {}).filter(
+    (id) => (Number(game.pendingPrisonerDiscards[id]) || 0) > 0
+  );
+  game.currentPlayerId =
+    ids.find((id) => order.includes(id)) || ids[0] || null;
+  pushLog(game, '—— 事件弃牌：囚徒困境 ——');
+  ensurePrisonerDiscardPlayer(game);
+}
+
+function ensurePrisonerDiscardPlayer(game) {
+  if (game.phase !== 'event_discard') return;
+  if (!anyoneNeedsPrisonerDiscard(game)) {
+    advancePostSettlePipeline(game);
+    return;
+  }
+  const map = game.pendingPrisonerDiscards || {};
+  const order = game.produceFinishOrder || [];
+  const candidates = Object.keys(map).filter((id) => (Number(map[id]) || 0) > 0);
+  let pick =
+    (game.currentPlayerId && candidates.includes(game.currentPlayerId)
+      ? game.currentPlayerId
+      : null) ||
+    candidates.find((id) => order.includes(id)) ||
+    candidates[0];
+  game.currentPlayerId = pick;
+}
+
+function beginMercenaryPhase(game) {
+  const q = game.pendingMercenaryQueue || [];
+  if (!q.length) {
+    finishMercenaryGate(game);
+    return;
+  }
+  game.phase = 'event_mercenary';
+  const cur = q[0];
+  game.currentPlayerId = cur.playerId;
+  game.mercenaryRoll = null;
+  game.mercenaryPlaced = [];
+  pushLog(
+    game,
+    `—— 雇佣军：${(playerById(game, cur.playerId) || {}).name || '?'} 请投掷并放置 ——`
+  );
+}
+
+/** 雇佣军全部处理完：进入正式生产判定（结算） */
+function finishMercenaryGate(game) {
+  const gate = game.mercenaryGate;
+  game.mercenaryGate = null;
+  game.mercenaryRoll = null;
+  game.mercenaryPlaced = [];
+  game.pendingMercenaryQueue = [];
+  if (gate === 'preSettle') {
+    startSettle(game);
+    return;
+  }
+  advancePostSettlePipeline(game);
+}
+
+/**
+ * 全员放置后、抵消前的唯一第一名（强度并列则无人；中立独占第一也不触发）
+ */
+function uniqueFirstPlayerId(workers, boosts) {
+  const strength = slotStrengthMap(workers, boosts);
+  const entries = Object.entries(strength).filter(([, c]) => (Number(c) || 0) > 0);
+  if (!entries.length) return null;
+  let max = 0;
+  for (const [, c] of entries) {
+    if (c > max) max = c;
+  }
+  const tops = entries.filter(([, c]) => c === max);
+  if (tops.length !== 1) return null;
+  const pid = tops[0][0];
+  if (pid === NEUTRAL_WORKER_ID) return null;
+  return pid;
+}
+
+/** 全员放置完毕、生产判定前：收集雇佣军队列（仅唯一第一名） */
+function queueMercenariesBeforeSettle(game) {
+  game.pendingMercenaryQueue = [];
+  const envs =
+    (game.board && game.board.resource && game.board.resource.environments) ||
+    {};
+  for (const num of ENVIRONMENT_SLOT_NUMBERS) {
+    const env = envs[num];
+    if (!env || env.envType !== 'mercenaries') continue;
+    const diceN = Number(env.mercenaryDice) || 0;
+    if (diceN <= 0) continue;
+    const workers = (game.board.resource.workers && game.board.resource.workers[num]) || {};
+    const boosts =
+      (game.board.resource.boosts && game.board.resource.boosts[num]) || {};
+    const firstId = uniqueFirstPlayerId(workers, boosts);
+    if (!firstId) {
+      pushLog(
+        game,
+        `「${env.label}」：资源格 ${num} 无唯一第一名，效果不触发`
+      );
+      continue;
+    }
+    const p = playerById(game, firstId);
+    game.pendingMercenaryQueue.push({
+      playerId: firstId,
+      envNumber: num,
+      diceCount: diceN,
+      label: env.label,
+    });
+    env.mercenaryDice = 0;
+    pushLog(
+      game,
+      `「${env.label}」：${(p && p.name) || firstId} 为资源格 ${num} 唯一第一，可投掷雇佣骰 ${diceN} 枚`
+    );
   }
 }
 
-function tryBeginWishWellOrBuild(game) {
-  if (playersNeedingWishWell(game).length > 0) {
-    beginWishWell(game);
-  } else {
-    beginBuild(game);
+/** 全员放置结束：先处理雇佣军，再进入生产判定（结算抵消与获资源） */
+function tryEnterPreSettleMercenaryOrSettle(game) {
+  queueMercenariesBeforeSettle(game);
+  if ((game.pendingMercenaryQueue || []).length > 0) {
+    game.mercenaryGate = 'preSettle';
+    beginMercenaryPhase(game);
+    return;
   }
+  game.mercenaryGate = null;
+  startSettle(game);
+}
+
+function beginBuildIfCompliant(game) {
+  if (game.over) return;
+  syncAllDiscardPending(game);
+  if (anyoneNeedsDiscard(game)) {
+    beginSettleActPhase(game);
+    return;
+  }
+  game.personalProduceApplied = false;
+  beginBuild(game);
 }
 
 function beginWishWell(game) {
@@ -197,7 +467,7 @@ function beginWishWell(game) {
 function tryFinishWishWellPhase(game) {
   if (game.phase !== 'wish_well') return;
   if (playersNeedingWishWell(game).length === 0) {
-    beginBuild(game);
+    advancePostSettlePipeline(game);
   }
 }
 
@@ -234,6 +504,14 @@ function grantBoardResourceShare(p, tiles, shareKey) {
 function pushLog(game, text) {
   game.log.push({ at: Date.now(), text });
   if (game.log.length > 60) game.log.shift();
+}
+
+function pushProduceFx(game, payload) {
+  game.lastProduceFx = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    at: Date.now(),
+    ...payload,
+  };
 }
 
 function playerById(game, id) {
@@ -274,10 +552,11 @@ function idleVillagers(p) {
 }
 
 function playerScore(p) {
-  let s = p.score || 0;
+  let s = Number(p.houses) || 0;
   for (const b of p.buildings || []) {
     if (b.built && b.score) s += b.score;
   }
+  s += Number(p.bonusScore) || 0;
   return s;
 }
 
@@ -316,6 +595,7 @@ function emptySlotWorkers() {
 function emptyAreaBoard() {
   return {
     tiles: [], // { ...card, number }
+    environments: { 4: null, 5: null, 6: null }, // 4/5/6 事件牌卡位
     workers: emptySlotWorkers(), // number -> { playerId: physical die count }
     boosts: emptySlotWorkers(), // number -> { playerId: enhanced die count among workers }
   };
@@ -347,11 +627,13 @@ const DECK_KIND_LABEL = {
   special: '功能/建筑',
   function: '功能',
   building: '建筑',
+  environment: '事件',
 };
 
-/** 功能/建筑统一进合堆弃牌 */
+/** 功能/建筑统一进合堆弃牌；事件牌独立 */
 function normalizeDeckKind(kind) {
   if (kind === 'function' || kind === 'building') return 'special';
+  if (kind === 'environment') return 'environment';
   return kind;
 }
 
@@ -427,6 +709,27 @@ function deckKindOfTile(tile) {
   return tile.kind === 'resource' ? 'resource' : 'function';
 }
 
+function drawEnvironmentBoard(game) {
+  // 每轮先将抽牌堆+弃牌堆全部洗混，同一事件牌可连续多轮出现
+  const pool = [
+    ...(game.environmentDeck || []),
+    ...(game.environmentDiscard || []),
+  ];
+  game.environmentDeck = shuffle(pool);
+  game.environmentDiscard = [];
+  game.barrenMarkerNumber = null;
+
+  const environments = { 4: null, 5: null, 6: null };
+  for (const num of ENVIRONMENT_SLOT_NUMBERS) {
+    const card = drawOne(game, 'environment');
+    if (!card) continue;
+    const env = { ...card, number: num };
+    setupEnvironmentOnBoard(game, env, num, { pushLog, drawOne });
+    environments[num] = env;
+  }
+  return environments;
+}
+
 function setupBoard(game) {
   const n = Math.max(0, game.round - 1);
   const resCount = Math.min(MAX_RESOURCE_BOARD_TILES, 6 + n);
@@ -434,11 +737,15 @@ function setupBoard(game) {
 
   game.board = emptyBoard();
   game.board.resource.tiles = drawToArea(game, 'resource', resCount);
+  game.board.resource.environments = drawEnvironmentBoard(game);
   game.board.special.tiles = drawToArea(game, 'special', specialCount);
 
+  const envOnBoard = ENVIRONMENT_SLOT_NUMBERS.filter(
+    (num) => game.board.resource.environments[num]
+  ).length;
   pushLog(
     game,
-    `第 ${game.round} 轮摆放：资源 ${game.board.resource.tiles.length}、功能/建筑 ${game.board.special.tiles.length}`
+    `第 ${game.round} 轮摆放：资源 ${game.board.resource.tiles.length}、事件 ${envOnBoard}、功能/建筑 ${game.board.special.tiles.length}`
   );
 }
 
@@ -450,6 +757,21 @@ function clearAllSlotWorkers(game) {
   for (const area of BOARD_AREAS) {
     game.board[area].workers = emptySlotWorkers();
     game.board[area].boosts = emptySlotWorkers();
+  }
+}
+
+/** 清空工人后：按场上事件牌补回「以身入局」等上场中立骰（setupBoard 已放过，beginProduce 会清掉） */
+function restoreEnvironmentNeutrals(game) {
+  const envs =
+    (game.board && game.board.resource && game.board.resource.environments) ||
+    {};
+  for (const num of ENVIRONMENT_SLOT_NUMBERS) {
+    const env = envs[num];
+    if (!env) continue;
+    const setup = env.setup || (getEnvironmentDef(env.envType) || {}).setup;
+    if (setup === 'neutral6') {
+      addNeutral(game, 'resource', num, 6);
+    }
   }
 }
 
@@ -477,6 +799,10 @@ function findPersonalBuilding(player, buildingId) {
 function recycleBoard(game) {
   for (const t of game.board.resource.tiles) {
     pushToDiscard(game, 'resource', t);
+  }
+  const envs = (game.board.resource && game.board.resource.environments) || {};
+  for (const num of ENVIRONMENT_SLOT_NUMBERS) {
+    if (envs[num]) pushToDiscard(game, 'environment', envs[num]);
   }
   for (const t of game.board.special.tiles) {
     pushToDiscard(game, 'special', t);
@@ -679,6 +1005,7 @@ function createGameState(room) {
     enhancedPlaced: 0, // 本轮已派出的强化骰数
     recruitPending: 0, // 下一轮生产开始时生效的临时村民数
     tempVillagers: 0, // 本轮生产可用的临时村民（生产结束后清零）
+    bonusScore: 0, // 事件等额外胜利点
     resources: startRes(),
     score: 0,
     funcCards: [],
@@ -690,9 +1017,9 @@ function createGameState(room) {
     pendingDiscardBuild: null, // 总建筑达上限时需弃一张（已建或未建）腾位
     pendingDiscardRes: false, // 手牌资源超上限
     pendingWishWellBonus: 0, // 本轮许愿井待选取资源次数
-    expandSlots: 0, // 扩容建筑格后增加的无数字格数量
-    expandFuncSlots: 0, // 扩容功能卡格后增加的上限
-    expandResSlots: 0, // 扩容资源卡位次数（每次 +4 手牌资源上限）
+    expandSlots: 0, // 扩建建筑格后增加的无数字格数量
+    expandFuncSlots: 0, // 扩建功能卡格后增加的上限
+    expandResSlots: 0, // 扩建资源卡位次数（每次 +4 手牌资源上限）
   }));
 
   const game = {
@@ -704,9 +1031,18 @@ function createGameState(room) {
     players,
     resourceDeck: buildResourceDeck(),
     specialDeck: buildSpecialDeck(),
+    environmentDeck: buildEnvironmentDeck(),
     resourceDiscard: [],
     specialDiscard: [],
+    environmentDiscard: [],
     board: emptyBoard(),
+    barrenMarkerNumber: null,
+    pendingEventChoice: null,
+    pendingPrisonerDiscards: {},
+    pendingMercenaryQueue: [],
+    mercenaryRoll: null,
+    mercenaryPlaced: [],
+    mercenaryGate: null,
     // 生产阶段
     produceOrderStartId: null,
     currentPlayerId: null,
@@ -898,8 +1234,9 @@ function beginProduce(game) {
     p.roundBuiltHouse = false;
     p.roundBred = false;
   }
-  // 清空各大区数字格工人
+  // 清空各大区数字格工人（再补回事件牌上场中立骰）
   clearAllSlotWorkers(game);
+  restoreEnvironmentNeutrals(game);
   for (const p of game.players) {
     for (const b of p.buildings) b.workers = 0;
   }
@@ -956,12 +1293,12 @@ function anyIdleLeft(game) {
  */
 function advanceToNextProducer(game, stayIfSelf) {
   if (!anyIdleLeft(game)) {
-    startSettle(game);
+    tryEnterPreSettleMercenaryOrSettle(game);
     return;
   }
   const startId = game.currentPlayerId || game.produceOrderStartId;
   if (!startId) {
-    startSettle(game);
+    tryEnterPreSettleMercenaryOrSettle(game);
     return;
   }
   let cur = playerById(game, startId);
@@ -979,8 +1316,8 @@ function advanceToNextProducer(game, stayIfSelf) {
       return;
     }
   }
-  // 一圈都没人有空闲 → 结算
-  startSettle(game);
+  // 一圈都没人有空闲 → 结算（先雇佣军）
+  tryEnterPreSettleMercenaryOrSettle(game);
 }
 
 function afterProduceAction(game, playerId) {
@@ -993,7 +1330,7 @@ function afterProduceAction(game, playerId) {
     }
   }
   if (!anyIdleLeft(game)) {
-    startSettle(game);
+    tryEnterPreSettleMercenaryOrSettle(game);
     return;
   }
   advanceToNextProducer(game, false);
@@ -1062,7 +1399,7 @@ function logSettleRoundMvp(game) {
 
 function beginSettleActPhase(game) {
   if (!anyoneNeedsDiscard(game)) {
-    endRound(game);
+    advancePostSettlePipeline(game);
     return;
   }
   game.phase = 'settle_act';
@@ -1074,23 +1411,21 @@ function beginSettleActPhase(game) {
     game.lastPlacerId ||
     game.produceOrderStartId;
   if (!game.currentPlayerId) {
-    endRound(game);
+    advancePostSettlePipeline(game);
     return;
   }
-  pushLog(game, '—— 弃牌阶段：处理功能/建筑超上限弃牌 ——');
+  pushLog(game, '—— 弃牌阶段：处理超上限手牌 ——');
   ensureSettleActPlayer(game);
 }
 
 function completeSettleAfterAnim(game) {
   if (!game || game.phase !== 'settle') return { ok: false };
-  const report = game.lastSettle;
-  if (report) {
-    applySettleBuildingProduce(game, report);
-    logSettleRoundMvp(game);
-  }
   game.settleAnimAcks = {};
   game.settleAnimUntil = 0;
-  tryBeginWishWellOrBuild(game);
+  game.personalProduceApplied = false;
+  // 结算动画结束后再回收场上未取走的板块（客户端会先播回收动画）
+  recycleBoard(game);
+  advancePostSettlePipeline(game);
   return { ok: true };
 }
 
@@ -1125,6 +1460,11 @@ function startSettle(game) {
   game.currentPlayerId = null;
   game.dice = {};
   game.diceBoosted = {};
+  game.pendingEventChoice = null;
+  game.pendingPrisonerDiscards = {};
+  game.pendingMercenaryQueue = [];
+  game.mercenaryRoll = null;
+  game.mercenaryPlaced = [];
   for (const p of alivePlayers(game)) {
     const temp = Number(p.tempVillagers) || 0;
     if (temp > 0) {
@@ -1145,6 +1485,7 @@ function startSettle(game) {
   }
 
   // 资源区：按数字格汇总派遣强度（强化骰计 2），最多者拿大份，第二拿小份
+  const skipSecondShare = new Set();
   for (let num = 1; num <= 6; num++) {
     const workers = game.board.resource.workers[num] || {};
     const boosts =
@@ -1156,8 +1497,25 @@ function startSettle(game) {
     const remain = cancelEqualCounts(before);
     const ranked = mapRanked(game, remain);
     const gains = [];
+    const barren = isBarrenSlot(game, num);
 
-    if (ranked[0] && tiles.length) {
+    // 事件牌：结算触发（在发放资源前）
+    applyEnvironmentOnSettleSlot(game, {
+      number: num,
+      tiles,
+      ranked,
+      before,
+      remain,
+      playerById,
+      pushLog,
+      syncResourceHandPending,
+      skipSecondShare,
+      alivePlayers,
+      checkWin,
+      takeEventSideCard,
+    });
+
+    if (!barren && ranked[0] && tiles.length && ranked[0].pid !== NEUTRAL_WORKER_ID) {
       const p = playerById(game, ranked[0].pid);
       if (p) {
         const got = grantBoardResourceShare(p, tiles, 'large');
@@ -1171,7 +1529,13 @@ function startSettle(game) {
         });
       }
     }
-    if (ranked[1] && tiles.length) {
+    if (
+      !barren &&
+      ranked[1] &&
+      tiles.length &&
+      !skipSecondShare.has(num) &&
+      ranked[1].pid !== NEUTRAL_WORKER_ID
+    ) {
       const p = playerById(game, ranked[1].pid);
       if (p) {
         const got = grantBoardResourceShare(p, tiles, 'small');
@@ -1184,7 +1548,24 @@ function startSettle(game) {
           detail: got.detail,
         });
       }
+    } else if (!barren && ranked[1] && tiles.length && skipSecondShare.has(num)) {
+      pushLog(
+        game,
+        `资源格 ${num}：一山不容二虎，第二名 ${ranked[1].name} 未获得小份`
+      );
     }
+    if (barren && (tiles.length || Object.keys(before).length)) {
+      pushLog(game, `资源格 ${num}：颗粒无收标记生效，本格不发放资源`);
+    }
+
+    applyEnvironmentAfterShare(game, {
+      number: num,
+      ranked,
+      gains,
+      playerById,
+      pushLog,
+      syncResourceHandPending,
+    });
 
     report.slots.push({
       area: 'resource',
@@ -1198,6 +1579,8 @@ function startSettle(game) {
       claimedBy: null,
       boosts: { ...boosts },
       physical: { ...workers },
+      barren: Boolean(barren),
+      barrenMarker: Number(game.barrenMarkerNumber) === num,
     });
 
     if (gains.length) {
@@ -1206,10 +1589,13 @@ function startSettle(game) {
         `资源格 ${num}（${tiles.map((t) => t.label).join('、')}）：` +
           gains.map((g) => `${g.name}+${g.amount}`).join('，')
       );
-    } else if (Object.keys(before).length) {
+    } else if (Object.keys(before).length && !barren) {
       pushLog(game, `资源格 ${num}：全部抵消，无人采集`);
     }
   }
+
+  game.pendingPrisonerDiscards = game.pendingPrisonerDiscards || {};
+  game.pendingMercenaryQueue = game.pendingMercenaryQueue || [];
 
   for (const p of alivePlayers(game)) {
     const n = countBuiltWishWell(p);
@@ -1278,10 +1664,30 @@ function startSettle(game) {
 
   collectSettleBuildingReport(game, report);
 
+  // 生产结算后、弃牌前：抵抗南蛮等（按名次从第一名起发分，达 15 立刻结束）
+  applyResistBarbariansAfterSettle(game, report, {
+    playerById,
+    pushLog,
+    checkWin,
+  });
+  if (game.over) {
+    game.lastSettle = report;
+    clearAllSlotWorkers(game);
+    for (const p of game.players) {
+      for (const b of p.buildings || []) b.workers = 0;
+    }
+    return;
+  }
+
   game.lastSettle = report;
 
-  recycleBoard(game);
+  // 结算演算结束即清空场上工人；卡牌保留至动画结束后再回收
+  clearAllSlotWorkers(game);
+  for (const p of game.players) {
+    for (const b of p.buildings || []) b.workers = 0;
+  }
 
+  // 版面卡牌保留至结算动画结束再回收（见 completeSettleAfterAnim）
   game.phase = 'settle';
   game.currentPlayerId = null;
   game.settleAnimAcks = {};
@@ -1311,15 +1717,302 @@ function takeBuildingCard(game, player, tile) {
   const neu = {
     ...card,
     faceDown: false,
-    slot: 'none',
+    slot: null,
     built: false,
     workers: 0,
   };
-  if (player.buildings.length >= maxBuildingsFor(player)) {
+  if (!assignBuildingSlot(player, neu)) {
     player.pendingDiscardBuild = { newCard: neu };
   } else {
     player.buildings.push(neu);
   }
+}
+
+/** 幸运一抽等：发放暗置的功能/建筑牌 */
+function takeEventSideCard(game, player, card) {
+  if (!card) return;
+  if (deckKindOfTile(card) === 'building') {
+    takeBuildingCard(game, player, { ...card, number: undefined });
+  } else {
+    receiveFunctionCard(game, player, card);
+  }
+}
+
+function finishPendingEventChoice(game) {
+  const choice = game.pendingEventChoice;
+  game.pendingEventChoice = null;
+  if (!choice || !choice.playerId) return;
+  // 雇佣军放置触发的派遣事件：选择完成后继续雇佣军流程，勿走生产推进
+  if (choice.resume === 'mercenary') {
+    continueAfterMercenaryDie(game);
+    return;
+  }
+  afterProduceAction(game, choice.playerId);
+}
+
+function actEventPickResource(game, player, payload) {
+  const pending = game.pendingEventChoice;
+  if (
+    !pending ||
+    pending.playerId !== player.id ||
+    pending.needChoice !== 'pickResource'
+  ) {
+    return { ok: false, error: '当前无需选择资源' };
+  }
+  const resource = payload && payload.resource;
+  if (!RESOURCES.includes(resource)) {
+    return { ok: false, error: '请选择一种资源' };
+  }
+  player.resources[resource] = (player.resources[resource] || 0) + 1;
+  player.roundGained = (player.roundGained || 0) + 1;
+  syncResourceHandPending(player, game);
+  pushLog(
+    game,
+    `${player.name}「${pending.label}」：获得 1 ${RESOURCE_LABELS[resource]}`
+  );
+  finishPendingEventChoice(game);
+  return { ok: true };
+}
+
+function actEventMoveBarrenMarker(game, player, payload) {
+  const pending = game.pendingEventChoice;
+  if (
+    !pending ||
+    pending.playerId !== player.id ||
+    pending.needChoice !== 'moveBarrenMarker'
+  ) {
+    return { ok: false, error: '当前无需移动标记' };
+  }
+  const number = Number(payload && payload.number);
+  if (!Number.isInteger(number) || number < 1 || number > 6) {
+    return { ok: false, error: '请选择数字格 1–6' };
+  }
+  game.barrenMarkerNumber = number;
+  pushLog(
+    game,
+    `${player.name}「${pending.label}」：将标记移到资源格 ${number}`
+  );
+  finishPendingEventChoice(game);
+  return { ok: true };
+}
+
+function actEventMoveNeutral(game, player, payload) {
+  const pending = game.pendingEventChoice;
+  if (
+    !pending ||
+    pending.playerId !== player.id ||
+    pending.needChoice !== 'moveNeutral'
+  ) {
+    return { ok: false, error: '当前无需移动中立骰' };
+  }
+  const toArea = payload && payload.area;
+  const toNumber = Number(payload && payload.number);
+  if (!BOARD_AREAS.includes(toArea)) {
+    return { ok: false, error: '请选择资源或功能/建筑区' };
+  }
+  if (!Number.isInteger(toNumber) || toNumber < 1 || toNumber > 6) {
+    return { ok: false, error: '请选择数字格 1–6' };
+  }
+  const fromArea = pending.fromArea || 'resource';
+  const fromNumber = Number(pending.fromNumber) || Number(pending.number);
+  if (neutralCountOn(game, fromArea, fromNumber) <= 0) {
+    return { ok: false, error: '本格已无中立骰' };
+  }
+  const fromW =
+    game.board[fromArea].workers[fromNumber] ||
+    (game.board[fromArea].workers[fromNumber] = {});
+  fromW[NEUTRAL_WORKER_ID] -= 1;
+  if (fromW[NEUTRAL_WORKER_ID] <= 0) delete fromW[NEUTRAL_WORKER_ID];
+  const toW =
+    game.board[toArea].workers[toNumber] ||
+    (game.board[toArea].workers[toNumber] = {});
+  toW[NEUTRAL_WORKER_ID] = (toW[NEUTRAL_WORKER_ID] || 0) + 1;
+  pushLog(
+    game,
+    `${player.name}「${pending.label}」：中立骰 ${fromArea}${fromNumber} → ${toArea}${toNumber}`
+  );
+  finishPendingEventChoice(game);
+  return { ok: true };
+}
+
+function actMercenaryRoll(game, player) {
+  if (game.phase !== 'event_mercenary') {
+    return { ok: false, error: '当前不在雇佣军阶段' };
+  }
+  const cur = (game.pendingMercenaryQueue || [])[0];
+  if (!cur || cur.playerId !== player.id) {
+    return { ok: false, error: '未轮到你处理雇佣军' };
+  }
+  if (game.mercenaryRoll && game.mercenaryRoll.length) {
+    return { ok: false, error: '已投掷过' };
+  }
+  const n = Number(cur.diceCount) || 2;
+  game.mercenaryRoll = rollDice(n);
+  game.mercenaryPlaced = [];
+  pushLog(
+    game,
+    `${player.name} 雇佣军投掷：[${game.mercenaryRoll.join(', ')}]`
+  );
+  return { ok: true };
+}
+
+function actMercenaryPlace(game, player, payload) {
+  if (game.phase !== 'event_mercenary') {
+    return { ok: false, error: '当前不在雇佣军阶段' };
+  }
+  if (game.pendingEventChoice) {
+    return { ok: false, error: '请先完成事件牌选择' };
+  }
+  const cur = (game.pendingMercenaryQueue || [])[0];
+  if (!cur || cur.playerId !== player.id) {
+    return { ok: false, error: '未轮到你处理雇佣军' };
+  }
+  const roll = game.mercenaryRoll || [];
+  if (!roll.length) return { ok: false, error: '请先投掷' };
+  const idx = Number(payload && payload.index);
+  if (!Number.isInteger(idx) || idx < 0 || idx >= roll.length) {
+    return { ok: false, error: '骰子序号无效' };
+  }
+  if ((game.mercenaryPlaced || []).includes(idx)) {
+    return { ok: false, error: '该骰已处理' };
+  }
+  const face = roll[idx];
+  const skip = Boolean(payload && payload.skip);
+  game.mercenaryPlaced = [...(game.mercenaryPlaced || []), idx];
+
+  if (!skip) {
+    const tiles = tilesOnNumber(game.board.resource, face);
+    if (tiles.length) {
+      const got = grantBoardResourceShare(player, tiles, 'large');
+      player.roundGained += got.total;
+      syncResourceHandPending(player, game);
+      pushLog(
+        game,
+        `${player.name} 雇佣军放置 ${face}：获得大份 +${got.total}`
+      );
+    } else {
+      pushLog(
+        game,
+        `${player.name} 雇佣军放置 ${face}：该格本轮无资源牌`
+      );
+    }
+    // 放到有「派遣触发」事件的格上时，同样触发
+    const ev = applyEnvironmentOnDispatch(game, {
+      player,
+      area: 'resource',
+      number: face,
+      count: 1,
+      pushLog,
+      syncResourceHandPending,
+    });
+    if (ev && ev.needChoice) {
+      game.pendingEventChoice = {
+        ...ev,
+        playerId: player.id,
+        resume: 'mercenary',
+      };
+      pushLog(
+        game,
+        `${player.name} 雇佣军放置触发「${ev.label}」，请完成事件选择`
+      );
+      return { ok: true, pendingEvent: game.pendingEventChoice };
+    }
+  } else {
+    pushLog(game, `${player.name} 跳过雇佣军骰 ${face}`);
+  }
+
+  continueAfterMercenaryDie(game);
+  return { ok: true };
+}
+
+/** 一枚雇佣骰处理完（含事件选择结束后）推进队列 */
+function continueAfterMercenaryDie(game) {
+  if (game.phase !== 'event_mercenary') return;
+  if (game.pendingEventChoice) return;
+  const roll = game.mercenaryRoll || [];
+  if (game.mercenaryPlaced.length < roll.length) return;
+  game.pendingMercenaryQueue.shift();
+  game.mercenaryRoll = null;
+  game.mercenaryPlaced = [];
+  if ((game.pendingMercenaryQueue || []).length) {
+    beginMercenaryPhase(game);
+  } else {
+    finishMercenaryGate(game);
+  }
+}
+
+function actMercenarySkipAll(game, player) {
+  if (game.phase !== 'event_mercenary') {
+    return { ok: false, error: '当前不在雇佣军阶段' };
+  }
+  const cur = (game.pendingMercenaryQueue || [])[0];
+  if (!cur || cur.playerId !== player.id) {
+    return { ok: false, error: '未轮到你' };
+  }
+  pushLog(game, `${player.name} 跳过全部雇佣军放置`);
+  game.pendingMercenaryQueue.shift();
+  game.mercenaryRoll = null;
+  game.mercenaryPlaced = [];
+  if ((game.pendingMercenaryQueue || []).length) {
+    beginMercenaryPhase(game);
+  } else {
+    finishMercenaryGate(game);
+  }
+  return { ok: true };
+}
+
+function actEventDiscard(game, player, payload) {
+  if (game.phase !== 'event_discard') {
+    return { ok: false, error: '当前不在事件弃牌阶段' };
+  }
+  const left = Number((game.pendingPrisonerDiscards || {})[player.id]) || 0;
+  if (left <= 0) return { ok: false, error: '你无需弃牌' };
+  if (game.currentPlayerId !== player.id) {
+    return { ok: false, error: '未轮到你弃牌' };
+  }
+
+  const kind = payload && payload.kind;
+  if (kind === 'resource') {
+    const resource = payload.resource;
+    if (!RESOURCES.includes(resource) || (player.resources[resource] || 0) < 1) {
+      return { ok: false, error: '该资源不足' };
+    }
+    player.resources[resource] -= 1;
+    pushLog(
+      game,
+      `${player.name} 囚徒困境弃置 1 ${RESOURCE_LABELS[resource]}`
+    );
+  } else if (kind === 'func') {
+    const cardId = payload.cardId;
+    const idx = (player.funcCards || []).findIndex((c) => c.id === cardId);
+    if (idx < 0) return { ok: false, error: '功能卡无效' };
+    const [card] = player.funcCards.splice(idx, 1);
+    pushToDiscard(game, 'special', card);
+    pushLog(game, `${player.name} 囚徒困境弃置功能卡「${card.label}」`);
+  } else if (kind === 'building') {
+    const buildingId = payload.buildingId;
+    const idx = (player.buildings || []).findIndex(
+      (b) => b.id === buildingId && !b.built
+    );
+    if (idx < 0) return { ok: false, error: '只能弃未建造建筑' };
+    const [b] = player.buildings.splice(idx, 1);
+    pushToDiscard(game, 'special', b);
+    pushLog(game, `${player.name} 囚徒困境弃置建筑「${b.label}」`);
+  } else {
+    return { ok: false, error: '请选择弃置资源/功能卡/未建造建筑' };
+  }
+
+  game.pendingPrisonerDiscards[player.id] = left - 1;
+  if (game.pendingPrisonerDiscards[player.id] <= 0) {
+    delete game.pendingPrisonerDiscards[player.id];
+  }
+  ensurePrisonerDiscardPlayer(game);
+  return { ok: true };
+}
+
+function finishSettleActPhase(game) {
+  if (game.over) return;
+  advancePostSettlePipeline(game);
 }
 
 function ensureSettleActPlayer(game) {
@@ -1328,9 +2021,9 @@ function ensureSettleActPlayer(game) {
     endRound(game);
     return;
   }
-  // 若所有人都跳过，进入下一轮
+  // 弃牌阶段全员处理完毕 → 许愿井或建造
   if (alive.every((p) => game.settleActPassed[p.id])) {
-    endRound(game);
+    finishSettleActPhase(game);
     return;
   }
   let id = game.currentPlayerId;
@@ -1357,7 +2050,7 @@ function ensureSettleActPlayer(game) {
     if (!next) break;
     id = next.id;
   }
-  endRound(game);
+  finishSettleActPhase(game);
 }
 
 function beginBuild(game) {
@@ -1365,6 +2058,10 @@ function beginBuild(game) {
   game.phase = 'build';
   game.buildPassed = {};
   game.buildIdleLoops = 0;
+  // 建造阶段获得的资源即使超上限也不再强制弃牌
+  for (const p of alivePlayers(game)) {
+    p.pendingDiscardRes = false;
+  }
   // 按生产阶段派遣完毕顺序决定建造阶段行动顺序（第一个派遣完的先建造）
   const order = game.produceFinishOrder || [];
   let startId = order[0] || game.lastPlacerId || game.produceOrderStartId;
@@ -1491,7 +2188,7 @@ function advanceBuildTurn(game) {
     return;
   }
   if (alive.every((p) => game.buildPassed[p.id])) {
-    tryBeginDiscardOrNextRound(game);
+    endRound(game);
     return;
   }
 
@@ -1548,10 +2245,12 @@ function startNextRound(game) {
   }
   recycleBoard(game);
   game.round += 1;
-  game.produceFinishOrder = []; // 新回合重新统计派遣顺序
-  // 下一轮生产从「最后一个结束建造动作」的玩家开始
-  game.produceOrderStartId =
-    game.lastBuilderId || game.lastPlacerId || game.produceOrderStartId;
+  game.personalProduceApplied = false;
+  // 下一轮生产从本轮「最先派遣完毕」的玩家开始（与建造阶段先手一致）
+  const nextProduceStart =
+    (game.produceFinishOrder || [])[0] || game.produceOrderStartId;
+  game.produceFinishOrder = [];
+  game.produceOrderStartId = nextProduceStart;
   setupBoard(game);
   beginProduce(game);
 }
@@ -1589,11 +2288,34 @@ function applyAction(game, playerId, action) {
   if (type === 'discardUnbuilt') {
     return actDiscardUnbuilt(game, player, payload);
   }
+  if (type === 'discardPendingBuild') {
+    return actDiscardPendingBuild(game, player);
+  }
   if (type === 'discardResource') {
     return actDiscardResource(game, player, payload);
   }
+  if (type === 'discardResources') {
+    return actDiscardResources(game, player, payload);
+  }
   if (type === 'placeBuildingSlot') {
     return actPlaceBuildingSlot(game, player, payload);
+  }
+
+  // 派遣 / 雇佣军放置触发的事件选择（跨阶段）
+  if (game.pendingEventChoice) {
+    if (game.pendingEventChoice.playerId !== playerId) {
+      return { ok: false, error: '等待其他玩家完成事件选择' };
+    }
+    if (type === 'eventPickResource') {
+      return actEventPickResource(game, player, payload);
+    }
+    if (type === 'eventMoveBarrenMarker') {
+      return actEventMoveBarrenMarker(game, player, payload);
+    }
+    if (type === 'eventMoveNeutral') {
+      return actEventMoveNeutral(game, player, payload);
+    }
+    return { ok: false, error: '请先完成事件牌选择' };
   }
 
   if (game.phase === 'init_announce') {
@@ -1658,6 +2380,23 @@ function applyAction(game, playerId, action) {
     return { ok: false, error: '请选择许愿井资源并确认' };
   }
 
+  if (game.phase === 'event_mercenary') {
+    if (type === 'mercenaryRoll') return actMercenaryRoll(game, player);
+    if (type === 'mercenaryPlace') return actMercenaryPlace(game, player, payload);
+    if (type === 'mercenarySkipAll') {
+      if (game.pendingEventChoice) {
+        return { ok: false, error: '请先完成事件牌选择' };
+      }
+      return actMercenarySkipAll(game, player);
+    }
+    return { ok: false, error: '雇佣军：请投掷、放置或跳过' };
+  }
+
+  if (game.phase === 'event_discard') {
+    if (type === 'eventDiscard') return actEventDiscard(game, player, payload);
+    return { ok: false, error: '请按囚徒困境要求弃牌' };
+  }
+
   if (game.phase === 'build') {
     if (game.currentPlayerId !== playerId) {
       return { ok: false, error: '还没轮到你' };
@@ -1712,6 +2451,7 @@ function actAllocateWishWell(game, player, payload = {}) {
     parts.push(`${RESOURCE_LABELS[r]}+${counts[r]}`);
   }
   player.pendingWishWellBonus = 0;
+  syncResourceHandPending(player, game);
   pushLog(
     game,
     `${player.name} 许愿井：${parts.join('、') || '无'}`
@@ -1810,13 +2550,42 @@ function actPlaceDice(game, player, payload) {
     player.enhancedPlaced = (Number(player.enhancedPlaced) || 0) + boostAdd;
   }
   player.dispatched += count;
+  pushProduceFx(game, {
+    type: 'dispatch',
+    actorId: player.id,
+    area,
+    number: face,
+    face,
+    count,
+    boostAdd,
+  });
   pushLog(
     game,
     `${player.name} 派遣 ${count} 名村民到${AREA_LABELS[area]}区 ${face} 号格` +
       (boostAdd ? `（强化 ${boostAdd}）` : '') +
       (remote ? '（遥控）' : '')
   );
+  // 事件牌：派遣触发（资源区 4/5/6）
+  const ev = applyEnvironmentOnDispatch(game, {
+    player,
+    area,
+    number: face,
+    count,
+    pushLog,
+    syncResourceHandPending,
+  });
   game.remoteDiceMode = false;
+  if (ev && ev.needChoice) {
+    game.pendingEventChoice = {
+      ...ev,
+      playerId: player.id,
+    };
+    pushLog(
+      game,
+      `${player.name} 触发「${ev.label}」，请完成事件选择`
+    );
+    return { ok: true, pendingEvent: game.pendingEventChoice };
+  }
   afterProduceAction(game, player.id);
   return { ok: true };
 }
@@ -1845,7 +2614,7 @@ function actVoidSkip(game, player, payload) {
   player.dispatched += 1;
   player.resources[resource] = (player.resources[resource] || 0) + 1;
   player.roundGained = (player.roundGained || 0) + 1;
-  syncResourceHandPending(player);
+  syncResourceHandPending(player, game);
   game.dice[player.id] = [];
   if (!game.diceBoosted) game.diceBoosted = {};
   game.diceBoosted[player.id] = [];
@@ -1868,9 +2637,6 @@ function actConstruct(game, player, payload) {
   if (!canPay(player.resources, b.cost || {})) {
     return { ok: false, error: '资源不足' };
   }
-  if (player.buildings.filter((b) => b.built).length >= maxBuildingsFor(player)) {
-    return { ok: false, error: `已建建筑已达上限 ${maxBuildingsFor(player)}` };
-  }
   pay(player.resources, b.cost || {});
   b.built = true;
   b.faceDown = false; // 建造后公开
@@ -1886,28 +2652,29 @@ function actConstruct(game, player, payload) {
 
 function actPlaceBuildingSlot(game, player, payload) {
   const buildingId = payload.buildingId;
-  let slot = payload.slot;
-  if (slot == null || slot === '') slot = 'none';
-  else if (slot === 'none' || slot === 0 || slot === '0') slot = 'none';
-  else if (typeof slot === 'string' && /^none:\d+$/.test(slot)) {
-    // keep none:N
-  } else {
-    // 数字格已不再使用，全部转为无数字格
-    slot = 'none';
-  }
+  let slot = normalizeBuildSlot(payload && payload.slot);
 
   const b = findPersonalBuilding(player, buildingId);
   if (!b) return { ok: false, error: '建筑不存在' };
   if (b.slot != null) return { ok: false, error: '已放置过格子' };
 
-  if (player.buildings.filter((x) => x.slot != null).length >= maxBuildingsFor(player)) {
-    return { ok: false, error: `建筑已达上限 ${maxBuildingsFor(player)}` };
+  const allowed = personalSlotsFor(player).map(String);
+  if (!allowed.includes(String(slot))) {
+    return { ok: false, error: '无效的建筑格' };
   }
+
+  const onSlot = buildingsOnSlot(player, slot);
+  if (onSlot.length > 0) {
+    if (b.buildType !== 'exchange' || onSlot.some((x) => x.buildType !== 'exchange')) {
+      return { ok: false, error: '该建筑格已被占用（仅集市可互相叠放）' };
+    }
+    // 集市叠放到已有纯集市格：不新增占用格
+  } else if (occupiedBuildSlotCount(player) >= maxBuildingsFor(player)) {
+    return { ok: false, error: `建筑格已达上限 ${maxBuildingsFor(player)}` };
+  }
+
   b.slot = slot;
-  pushLog(
-    game,
-    `${player.name} 将「${b.label}」放置好`
-  );
+  pushLog(game, `${player.name} 将「${b.label}」放置好`);
   return { ok: true };
 }
 
@@ -1928,9 +2695,20 @@ function actDiscardUnbuilt(game, player, payload) {
   // 满上限 pending：弃后收下新卡，放到原格子
   if (player.pendingDiscardBuild) {
     const neu = player.pendingDiscardBuild.newCard;
-    neu.slot = slotKeep;
     neu.built = false;
     neu.workers = 0;
+    if (!assignBuildingSlot(player, neu)) {
+      if (
+        slotKeep != null &&
+        (buildingsOnSlot(player, slotKeep).length === 0 ||
+          (neu.buildType === 'exchange' &&
+            isExchangeOnlySlot(player, slotKeep)))
+      ) {
+        neu.slot = slotKeep;
+      } else {
+        neu.slot = slotKeep != null ? slotKeep : nextFreeBuildSlot(player) || 'none';
+      }
+    }
     player.buildings.push(neu);
     player.pendingDiscardBuild = null;
     let msg = `${player.name} 弃置${wasBuilt ? '已建' : '未建'}「${b.label}」（入弃牌堆），新建筑「${neu.label}」放到原格子`;
@@ -1964,22 +2742,18 @@ function actDiscardUnbuilt(game, player, payload) {
   return { ok: true };
 }
 
-function actDiscardResource(game, player, payload) {
-  if (game.phase !== 'settle_act') {
-    return { ok: false, error: '仅弃牌阶段可弃置超限资源' };
+/** 建筑达上限：弃掉刚获得、尚未入手的建筑，保留现有建筑 */
+function actDiscardPendingBuild(game, player) {
+  const pending = player.pendingDiscardBuild;
+  if (!pending || !pending.newCard) {
+    return { ok: false, error: '没有待取舍的新建筑' };
   }
-  const resource = payload && payload.resource;
-  if (!resource || !RESOURCES.includes(resource)) {
-    return { ok: false, error: '请选择要丢弃的资源' };
-  }
-  if ((player.resources[resource] || 0) < 1) {
-    return { ok: false, error: `${RESOURCE_LABELS[resource]}不足` };
-  }
-  player.resources[resource] -= 1;
-  syncResourceHandPending(player);
+  const neu = pending.newCard;
+  pushToDiscard(game, 'building', cleanCardForPile(neu));
+  player.pendingDiscardBuild = null;
   pushLog(
     game,
-    `${player.name} 弃置 1 ${RESOURCE_LABELS[resource]}（手牌超上限）`
+    `${player.name} 弃置刚获得的建筑「${neu.label || '?'}」（入弃牌堆），保留现有建筑`
   );
   if (
     game.phase === 'settle_act' &&
@@ -1994,6 +2768,86 @@ function actDiscardResource(game, player, payload) {
     ensureSettleActPlayer(game);
   }
   return { ok: true };
+}
+
+function actDiscardResource(game, player, payload) {
+  if (game.phase !== 'settle_act') {
+    return { ok: false, error: '仅弃牌阶段可弃置超限资源' };
+  }
+  const resource = payload && payload.resource;
+  if (!resource || !RESOURCES.includes(resource)) {
+    return { ok: false, error: '请选择要丢弃的资源' };
+  }
+  if ((player.resources[resource] || 0) < 1) {
+    return { ok: false, error: `${RESOURCE_LABELS[resource]}不足` };
+  }
+  player.resources[resource] -= 1;
+  syncResourceHandPending(player, game);
+  pushLog(
+    game,
+    `${player.name} 弃置 1 ${RESOURCE_LABELS[resource]}（手牌超上限）`
+  );
+  maybeAdvanceAfterResourceDiscard(game, player);
+  return { ok: true };
+}
+
+/** 一次性弃置多种资源，合计须恰好等于超限数量 */
+function actDiscardResources(game, player, payload) {
+  if (game.phase !== 'settle_act') {
+    return { ok: false, error: '仅弃牌阶段可弃置超限资源' };
+  }
+  const max = maxResourceHandFor(player);
+  const need = sumRes(player.resources) - max;
+  if (need <= 0) {
+    player.pendingDiscardRes = false;
+    return { ok: false, error: '当前无需弃置资源' };
+  }
+  const amounts = (payload && payload.amounts) || {};
+  let total = 0;
+  const detail = [];
+  for (const r of RESOURCES) {
+    const n = Math.floor(Number(amounts[r]) || 0);
+    if (n < 0) return { ok: false, error: '弃置数量无效' };
+    if (n > (player.resources[r] || 0)) {
+      return { ok: false, error: `${RESOURCE_LABELS[r]}不足` };
+    }
+    if (n > 0) {
+      total += n;
+      detail.push({ resource: r, amount: n });
+    }
+  }
+  if (total !== need) {
+    return { ok: false, error: `请恰好弃置 ${need} 个资源` };
+  }
+  for (const d of detail) {
+    player.resources[d.resource] -= d.amount;
+  }
+  syncResourceHandPending(player, game);
+  pushLog(
+    game,
+    `${player.name} 弃置 ` +
+      detail
+        .map((d) => `${d.amount} ${RESOURCE_LABELS[d.resource]}`)
+        .join('、') +
+      `（手牌超上限）`
+  );
+  maybeAdvanceAfterResourceDiscard(game, player);
+  return { ok: true };
+}
+
+function maybeAdvanceAfterResourceDiscard(game, player) {
+  if (
+    game.phase === 'settle_act' &&
+    !player.pendingDiscardFunc &&
+    !player.pendingDiscardBuild &&
+    !player.pendingDiscardRes &&
+    game.currentPlayerId === player.id
+  ) {
+    game.settleActPassed[player.id] = true;
+    const next = nextAlive(game, player.id);
+    game.currentPlayerId = next ? next.id : player.id;
+    ensureSettleActPlayer(game);
+  }
 }
 
 function actDiscardFunc(game, player, payload) {
@@ -2027,20 +2881,28 @@ function countBuiltExchanges(player) {
   ).length;
 }
 
+/** 集市兑换比例最多按 3 座计算（可叠更多张但不再生效） */
+const MAX_EXCHANGE_EFFECT = 3;
+
+function effectiveExchangeCount(player) {
+  return Math.min(countBuiltExchanges(player), MAX_EXCHANGE_EFFECT);
+}
+
 /**
  * 集市兑换率：0座（默认银行）→4换1，1座→3换1，2座→2换1，≥3座→1换1
- * 每个玩家独立按自己已建集市数量计算。
+ * 每个玩家独立按自己已建集市数量计算（超过 3 座仍按 3 座）。
  */
 function exchangeCostN(exchangeCount) {
-  const n = Number(exchangeCount) || 0;
+  const n = Math.min(Number(exchangeCount) || 0, MAX_EXCHANGE_EFFECT);
   if (n === 0) return 4;
   if (n === 1) return 3;
   if (n === 2) return 2;
-  return 1; // 3 座及以上
+  return 1;
 }
 
 function actExchange(game, player, payload) {
-  const exCount = countBuiltExchanges(player);
+  const built = countBuiltExchanges(player);
+  const exCount = effectiveExchangeCount(player);
   const need = exchangeCostN(exCount);
   const from = payload.from;
   const to = payload.to;
@@ -2055,12 +2917,17 @@ function actExchange(game, player, payload) {
   if ((player.resources[from] || 0) < totalNeed) {
     return {
       ok: false,
-      error: `需要 ${totalNeed} 个相同的${RESOURCE_LABELS[from]}${exCount > 0 ? '（当前持有 ' + exCount + ' 座集市）' : ''}`,
+      error: `需要 ${totalNeed} 个相同的${RESOURCE_LABELS[from]}${exCount > 0 ? '（集市生效 ' + exCount + ' 座）' : ''}`,
     };
   }
   player.resources[from] -= totalNeed;
   player.resources[to] = (player.resources[to] || 0) + count;
-  const sourceLabel = exCount > 0 ? `用集市（${exCount}座，${need}换1）` : `银行兑换（${need}换1）`;
+  const sourceLabel =
+    exCount > 0
+      ? built > exCount
+        ? `用集市（建成 ${built} 座，生效 ${exCount} 座，${need}换1）`
+        : `用集市（${exCount}座，${need}换1）`
+      : `银行兑换（${need}换1）`;
   pushLog(
     game,
     `${player.name} ${sourceLabel}：${totalNeed}${RESOURCE_LABELS[from]} → ${count}${RESOURCE_LABELS[to]}`
@@ -2202,6 +3069,16 @@ function useExile(game, player, payload) {
     if (owner.id !== targetId) return { ok: false, error: '目标不匹配' };
     b.workers -= 1;
     target.dispatched = Math.max(0, target.dispatched - 1);
+    pushProduceFx(game, {
+      type: 'exile',
+      actorId: player.id,
+      targetId,
+      buildingId,
+    });
+    pushLog(
+      game,
+      `${player.name} 驱逐了 ${target.name} 在建筑上的 1 名村民`
+    );
     return { ok: true };
   }
 
@@ -2238,6 +3115,17 @@ function useExile(game, player, payload) {
   if (slotW[targetId] <= 0) delete slotW[targetId];
   game.board[area].workers[number] = slotW;
   target.dispatched = Math.max(0, target.dispatched - 1);
+  pushProduceFx(game, {
+    type: 'exile',
+    actorId: player.id,
+    targetId,
+    area,
+    number,
+  });
+  pushLog(
+    game,
+    `${player.name} 驱逐了 ${target.name} 在${AREA_LABELS[area]}区 ${number} 号格的 1 名村民`
+  );
   return { ok: true };
 }
 
@@ -2268,6 +3156,13 @@ function useBanditRaid(game, player, payload) {
   const slotW = areaBoard.workers[number] || (areaBoard.workers[number] = {});
   slotW[NEUTRAL_WORKER_ID] =
     (slotW[NEUTRAL_WORKER_ID] || 0) + BANDIT_RAID_COUNT;
+  pushProduceFx(game, {
+    type: 'banditRaid',
+    actorId: player.id,
+    area,
+    number,
+    count: BANDIT_RAID_COUNT,
+  });
   pushLog(
     game,
     `${player.name} 强盗来袭：在${AREA_LABELS[area]}区 ${number} 号格放置 ${BANDIT_RAID_COUNT} 枚中立骰子`
@@ -2304,7 +3199,6 @@ function actBuildHousePermanent(game, player) {
   }
   pay(player.resources, BUILD_HOUSE_COST);
   player.houses = (Number(player.houses) || 0) + 1;
-  player.score += 1;
   pushLog(
     game,
     `${player.name} 建造房子，+1 房 +1 分（房子 ${player.houses}，空闲 ${freeHousesFor(player)}，分数 ${playerScore(player)}）`
@@ -2347,7 +3241,7 @@ function actExpandPermanent(game, player, payload) {
   if (!canPay(player.resources, cost)) {
     return {
       ok: false,
-      error: `需要 ${cost.wood} 木 ${cost.stone} 石（已扩容 ${expandCountFor(player)} 次）`,
+      error: `需要 ${cost.wood} 木 ${cost.stone} 石（已扩建 ${expandCountFor(player)} 次）`,
     };
   }
   pay(player.resources, cost);
@@ -2359,42 +3253,25 @@ function actExpandPermanent(game, player, payload) {
   }
   pushLog(
     game,
-    `${player.name} 常驻扩容（-${cost.wood} 木 -${cost.stone} 石）`
+    `${player.name} 常驻扩建（-${cost.wood} 木 -${cost.stone} 石）`
   );
   if (checkWin(game)) return { ok: true };
   game.lastBuilderId = player.id;
   return { ok: true };
 }
 
-function useExpand(game, player, payload) {
-  const dir = payload && payload.direction;
-  if (dir === 'building') {
-    player.expandSlots = (Number(player.expandSlots) || 0) + 1;
-    pushLog(
-      game,
-      `${player.name} 扩容：建筑区 +1 无数字格（建筑上限 ${maxBuildingsFor(player)}）`
-    );
-  } else if (dir === 'function') {
-    player.expandFuncSlots = (Number(player.expandFuncSlots) || 0) + 1;
-    pushLog(
-      game,
-      `${player.name} 扩容：功能手牌上限 +1（当前 ${maxFuncHandFor(player)}）`
-    );
-    if (player.funcCards.length > maxFuncHandFor(player)) {
-      player.pendingDiscardFunc = true;
-    }
-  } else if (dir === 'resource') {
-    player.expandResSlots = (Number(player.expandResSlots) || 0) + 1;
-    pushLog(
-      game,
-      `${player.name} 扩容：资源卡位 +1（手牌资源上限 ${maxResourceHandFor(player)}）`
-    );
-  } else {
-    return {
-      ok: false,
-      error:
-        '请选择扩容方向：building（建筑格）、function（功能卡格）或 resource（资源卡位）',
-    };
+function useExpand(game, player, _payload) {
+  player.expandSlots = (Number(player.expandSlots) || 0) + 1;
+  player.expandFuncSlots = (Number(player.expandFuncSlots) || 0) + 1;
+  player.expandResSlots = (Number(player.expandResSlots) || 0) + 1;
+  pushLog(
+    game,
+    `${player.name} 扩建：建筑格 / 功能卡格 / 资源卡位各 +1` +
+      `（建筑上限 ${maxBuildingsFor(player)}，功能上限 ${maxFuncHandFor(player)}，` +
+      `资源上限 ${maxResourceHandFor(player)}）`
+  );
+  if (player.funcCards.length > maxFuncHandFor(player)) {
+    player.pendingDiscardFunc = true;
   }
   return { ok: true };
 }
@@ -2439,11 +3316,11 @@ function useRedraw(game, player, _payload) {
     const neu = {
       ...card,
       faceDown: false,
-      slot: 'none',
+      slot: null,
       built: false,
       workers: 0,
     };
-    if (player.buildings.length >= maxBuildingsFor(player)) {
+    if (!assignBuildingSlot(player, neu)) {
       player.pendingDiscardBuild = { newCard: neu };
     } else {
       player.buildings.push(neu);
@@ -2495,6 +3372,30 @@ function publicTile(t) {
   };
 }
 
+function publicEnvironment(env) {
+  if (!env) return null;
+  const def = getEnvironmentDef(env.envType);
+  const sideCardKind = env.sideCard ? deckKindOfTile(env.sideCard) : null;
+  return {
+    id: env.id,
+    kind: 'environment',
+    label: env.label || (def && def.label) || env.envType,
+    number: env.number,
+    envType: env.envType || null,
+    trigger: env.trigger || (def && def.trigger) || null,
+    desc: env.desc || (def && def.desc) || '',
+    setup: env.setup || (def && def.setup) || null,
+    faceDown: false,
+    placeholder: false,
+    mercenaryDice: Number(env.mercenaryDice) || 0,
+    stash: env.stash ? { ...env.stash } : null,
+    stashClaimed: Boolean(env.stashClaimed),
+    hasSideCard: Boolean(env.sideCard),
+    /** 幸运一抽暗置牌类型（仅 kind，不泄露正面） */
+    sideCardKind,
+  };
+}
+
 function publicArea(areaBoard) {
   const slots = [];
   for (let num = 1; num <= 6; num++) {
@@ -2503,22 +3404,35 @@ function publicArea(areaBoard) {
     const boosts = {
       ...((areaBoard.boosts && areaBoard.boosts[num]) || {}),
     };
+    const environment =
+      areaBoard.environments && areaBoard.environments[num]
+        ? publicEnvironment(areaBoard.environments[num])
+        : null;
     if (
       !tiles.length &&
+      !environment &&
       !Object.keys(workers).length &&
       !Object.keys(boosts).length
     ) {
-      slots.push({ number: num, tiles: [], workers: {}, boosts: {} });
+      slots.push({ number: num, tiles: [], workers: {}, boosts: {}, environment: null });
       continue;
     }
-    slots.push({ number: num, tiles, workers, boosts });
+    slots.push({ number: num, tiles, workers, boosts, environment });
   }
   const boostAll = {};
   for (let n = 1; n <= 6; n++) {
     boostAll[n] = { ...((areaBoard.boosts && areaBoard.boosts[n]) || {}) };
   }
+  const environments = {};
+  for (const num of ENVIRONMENT_SLOT_NUMBERS) {
+    environments[num] =
+      areaBoard.environments && areaBoard.environments[num]
+        ? publicEnvironment(areaBoard.environments[num])
+        : null;
+  }
   return {
     tiles: (areaBoard.tiles || []).map(publicTile),
+    environments,
     slots,
     workers: {
       1: { ...(areaBoard.workers[1] || {}) },
@@ -2563,10 +3477,12 @@ function publicGameState(game, viewerId) {
     decksLeft: {
       resource: game.resourceDeck.length,
       special: (game.specialDeck || []).length,
+      environment: (game.environmentDeck || []).length,
     },
     discardsLeft: {
       resource: (game.resourceDiscard || []).length,
       special: (game.specialDiscard || []).length,
+      environment: (game.environmentDiscard || []).length,
     },
     specialDeckTopKind: peekSpecialTopKind(game),
     initRolls:
@@ -2620,6 +3536,7 @@ function publicGameState(game, viewerId) {
         game.currentPlayerId === viewerId
     ),
     lastSettle: publicLastSettle(game.lastSettle, viewerId),
+    lastProduceFx: game.lastProduceFx ? { ...game.lastProduceFx } : null,
     settleAnimUntil:
       game.phase === 'settle' ? Number(game.settleAnimUntil) || 0 : 0,
     settleAnimPending: game.phase === 'settle',
@@ -2647,6 +3564,35 @@ function publicGameState(game, viewerId) {
               res: Boolean(p.pendingDiscardRes),
             }))
         : [],
+    barrenMarkerNumber:
+      game.barrenMarkerNumber != null ? Number(game.barrenMarkerNumber) : null,
+    pendingEventChoice: game.pendingEventChoice
+      ? {
+          ...game.pendingEventChoice,
+          forMe:
+            Boolean(viewerId) &&
+            game.pendingEventChoice.playerId === viewerId,
+        }
+      : null,
+    pendingPrisonerDiscard: viewerId
+      ? Number((game.pendingPrisonerDiscards || {})[viewerId]) || 0
+      : 0,
+    mercenary: game.phase === 'event_mercenary'
+      ? {
+          forMe:
+            Boolean(viewerId) &&
+            (game.pendingMercenaryQueue || [])[0] &&
+            (game.pendingMercenaryQueue || [])[0].playerId === viewerId,
+          queue: (game.pendingMercenaryQueue || []).map((q) => ({
+            playerId: q.playerId,
+            diceCount: q.diceCount,
+            label: q.label,
+            envNumber: q.envNumber,
+          })),
+          roll: (game.mercenaryRoll || []).slice(),
+          placed: (game.mercenaryPlaced || []).slice(),
+        }
+      : null,
     log: game.log.slice(-20),
     players: game.players.map((p) => {
       const isMe = p.id === viewerId;
@@ -2665,6 +3611,7 @@ function publicGameState(game, viewerId) {
         enhancedPlaced: Number(p.enhancedPlaced) || 0,
         tempVillagers: Number(p.tempVillagers) || 0,
         recruitPending: Number(p.recruitPending) || 0,
+        bonusScore: Number(p.bonusScore) || 0,
         resources: cloneRes(p.resources),
         score: playerScore(p),
         roundGained: p.roundGained,
@@ -2721,8 +3668,10 @@ function publicGameState(game, viewerId) {
           hasRemoteDice: (me.funcCards || []).some(
             (c) => c.funcType === 'remoteDice'
           ),
-          exchangeCount: countBuiltExchanges(me),
-          exchangeCost: exchangeCostN(countBuiltExchanges(me)),
+          exchangeCount: effectiveExchangeCount(me),
+          exchangeBuilt: countBuiltExchanges(me),
+          exchangeCost: exchangeCostN(effectiveExchangeCount(me)),
+          exchangeEffectCap: MAX_EXCHANGE_EFFECT,
           pendingDiscardFunc: me.pendingDiscardFunc,
           pendingDiscardBuild: me.pendingDiscardBuild,
           pendingDiscardRes: me.pendingDiscardRes,
@@ -2808,8 +3757,20 @@ function getActingPlayerIds(game) {
   if (game.phase === 'wish_well') {
     return playersNeedingWishWell(game).map((p) => p.id);
   }
+  if (game.pendingEventChoice && game.pendingEventChoice.playerId) {
+    return [game.pendingEventChoice.playerId];
+  }
+  if (game.phase === 'event_mercenary') {
+    const cur = (game.pendingMercenaryQueue || [])[0];
+    return cur && cur.playerId ? [cur.playerId] : [];
+  }
+  if (game.phase === 'event_discard') {
+    return game.currentPlayerId ? [game.currentPlayerId] : [];
+  }
   if (
-    ['produce', 'settle_act', 'build'].includes(game.phase) &&
+    ['produce', 'settle_act', 'build', 'event_mercenary', 'event_discard'].includes(
+      game.phase
+    ) &&
     game.currentPlayerId
   ) {
     return [game.currentPlayerId];
@@ -2844,16 +3805,16 @@ function forceTimeout(game, playerId) {
   }
   if (
     game.phase === 'settle_act' &&
-    p.pendingDiscardBuild &&
-    p.buildings.length
+    p.pendingDiscardBuild
   ) {
-    // 超时优先弃未建，否则弃任意一张腾位
-    const pick =
-      p.buildings.find((b) => !b.built) || p.buildings[0];
-    return applyAction(game, playerId, {
-      type: 'discardUnbuilt',
-      payload: { buildingId: pick.id },
-    });
+    if (p.buildings.length) {
+      const pick = p.buildings.find((b) => !b.built) || p.buildings[0];
+      return applyAction(game, playerId, {
+        type: 'discardUnbuilt',
+        payload: { buildingId: pick.id },
+      });
+    }
+    return applyAction(game, playerId, { type: 'discardPendingBuild' });
   }
   if (game.phase === 'wish_well' && (p.pendingWishWellBonus || 0) > 0) {
     const alloc = emptyRes();
@@ -2864,10 +3825,84 @@ function forceTimeout(game, playerId) {
     });
   }
 
+  if (
+    game.pendingEventChoice &&
+    game.pendingEventChoice.playerId === playerId
+  ) {
+    const need = game.pendingEventChoice.needChoice;
+    if (need === 'pickResource') {
+      return applyAction(game, playerId, {
+        type: 'eventPickResource',
+        payload: { resource: 'wood' },
+      });
+    }
+    if (need === 'moveBarrenMarker') {
+      return applyAction(game, playerId, {
+        type: 'eventMoveBarrenMarker',
+        payload: { number: Number(game.pendingEventChoice.envNumber) || 4 },
+      });
+    }
+    if (need === 'moveNeutral') {
+      return applyAction(game, playerId, {
+        type: 'eventMoveNeutral',
+        payload: {
+          area: 'resource',
+          number: Number(game.pendingEventChoice.envNumber) || 4,
+        },
+      });
+    }
+  }
+
+  if (game.phase === 'event_mercenary') {
+    const cur = (game.pendingMercenaryQueue || [])[0];
+    if (cur && cur.playerId === playerId) {
+      return applyAction(game, playerId, {
+        type: 'mercenarySkipAll',
+        payload: {},
+      });
+    }
+  }
+
+  if (
+    game.phase === 'event_discard' &&
+    game.currentPlayerId === playerId &&
+    (Number((game.pendingPrisonerDiscards || {})[playerId]) || 0) > 0
+  ) {
+    const pick = RESOURCES.find((r) => (p.resources[r] || 0) > 0);
+    if (pick) {
+      return applyAction(game, playerId, {
+        type: 'eventDiscard',
+        payload: { kind: 'resource', resource: pick },
+      });
+    }
+    if ((p.funcCards || []).length) {
+      return applyAction(game, playerId, {
+        type: 'eventDiscard',
+        payload: {
+          kind: 'func',
+          cardId: p.funcCards[p.funcCards.length - 1].id,
+        },
+      });
+    }
+    const unbuilt = (p.buildings || []).find((b) => !b.built);
+    if (unbuilt) {
+      return applyAction(game, playerId, {
+        type: 'eventDiscard',
+        payload: { kind: 'building', buildingId: unbuilt.id },
+      });
+    }
+    // 无牌可弃：清零并推进
+    delete game.pendingPrisonerDiscards[playerId];
+    ensurePrisonerDiscardPlayer(game);
+    return { ok: true };
+  }
+
   const unplaced = (p.buildings || []).find((b) => !b.built && b.slot == null);
   if (unplaced) {
-    // 自动放到第一个可用无格槽
-    for (const slot of personalSlotsFor(p)) {
+    const stack =
+      unplaced.buildType === 'exchange' ? findExchangeStackSlot(p) : null;
+    const slot = stack != null ? stack : nextFreeBuildSlot(p);
+    if (slot != null) {
       return applyAction(game, playerId, {
         type: 'placeBuildingSlot',
         payload: { buildingId: unplaced.id, slot },
@@ -2984,8 +4019,13 @@ module.exports = {
   playerScore,
   exchangeCostN,
   countBuiltExchanges,
+  effectiveExchangeCount,
+  MAX_EXCHANGE_EFFECT,
   WIN_SCORE,
   MAX_RESOURCE_BOARD_TILES,
+  ENVIRONMENT_DECK_SIZE,
+  ENVIRONMENT_DRAW_PER_ROUND,
+  ENVIRONMENT_SLOT_NUMBERS,
   MAX_RESOURCE_HAND,
   MAX_ENHANCED_DICE,
   RECRUIT_TEMP_VILLAGERS,
@@ -2993,10 +4033,16 @@ module.exports = {
   maxResourceHandFor,
   expandCountFor,
   expandPermanentCost,
+  maxBuildingsFor,
+  occupiedBuildSlotCount,
+  assignBuildingSlot,
+  findExchangeStackSlot,
+  nextFreeBuildSlot,
   freeHousesFor,
   idleVillagers,
   beginProduce,
   startSettle,
+  tryEnterPreSettleMercenaryOrSettle,
   START_HOUSES,
   START_VILLAGERS,
 };

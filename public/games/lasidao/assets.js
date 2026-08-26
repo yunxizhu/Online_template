@@ -33,7 +33,22 @@ window.LasidaoAssets = (function () {
   const CARD_BACK_IMAGE = {
     function: 'bankuaikabei_gongneng.png',
     building: 'bankuaikabei_jianzhu.png',
-    resource: 'bankuaikabei_ziyuan.png',
+    resource: 'ziyuankabei.png',
+    environment: 'bankuaikabei_shijian.png',
+  };
+
+  /** 事件卡面（envType → 文件名） */
+  const ENVIRONMENT_IMAGE = {
+    prisonersDilemma: 'shijianka_qiutukunjing.png',
+    barrenHarvest: 'shijianka_keliwushou.png',
+    resistBarbarians: 'shijianka_diyunanman.png',
+    clearSky: 'shijianka_qingkongwanli.png',
+    enterFray: 'shijianka_yishenruju.png',
+    mercenaries: 'shijianka_guyongjun.png',
+    oneMountain: 'shijianka_yishanburongerhu.png',
+    luckyDraw: 'shijianka_manghe.png',
+    fishermanProfit: 'shijianka_yuwengdeli.png',
+    firstCome: 'shijianka_xiandaoxiande.png',
   };
 
   /** 功能卡面（funcType → 文件名） */
@@ -116,6 +131,12 @@ window.LasidaoAssets = (function () {
     return file ? picUrl(file) : '';
   }
 
+  function environmentImageUrl(tile) {
+    const file =
+      tile && tile.envType ? ENVIRONMENT_IMAGE[tile.envType] : null;
+    return file ? picUrl(file) : '';
+  }
+
   function applyResourceArt(artEl, tile) {
     if (!artEl) return false;
     const url = resourceImageUrl(tile);
@@ -145,6 +166,19 @@ window.LasidaoAssets = (function () {
   function applyBuildingArt(artEl, tile) {
     if (!artEl) return false;
     const url = buildingImageUrl(tile);
+    if (!url) {
+      artEl.classList.remove('has-image');
+      artEl.style.backgroundImage = '';
+      return false;
+    }
+    artEl.classList.add('has-image');
+    artEl.style.backgroundImage = 'url("' + url + '")';
+    return true;
+  }
+
+  function applyEnvironmentArt(artEl, tile) {
+    if (!artEl) return false;
+    const url = environmentImageUrl(tile);
     if (!url) {
       artEl.classList.remove('has-image');
       artEl.style.backgroundImage = '';
@@ -189,6 +223,10 @@ window.LasidaoAssets = (function () {
             }
           : { buildType: kind };
       return buildingImageUrl(tile) || cardBackImageUrl('building');
+    }
+    if (parts[0] === 'env') {
+      const file = ENVIRONMENT_IMAGE[parts[1]];
+      return file ? picUrl(file) : cardBackImageUrl('environment');
     }
     return '';
   }
@@ -335,6 +373,8 @@ window.LasidaoAssets = (function () {
     buildingImageUrl,
     applyFunctionArt,
     applyBuildingArt,
+    applyEnvironmentArt,
+    environmentImageUrl,
     applyCardBackArt,
     ruleCardImageUrl,
     playBgm,

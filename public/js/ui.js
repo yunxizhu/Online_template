@@ -99,6 +99,8 @@
     menuBgmValue: document.getElementById('menu-bgm-value'),
     turnTimer: document.getElementById('turn-timer'),
     turnTimerSec: document.getElementById('turn-timer-sec'),
+    matchClock: document.getElementById('match-clock'),
+    matchClockTime: document.getElementById('match-clock-time'),
     peopleCtx: document.getElementById('people-ctx'),
     rejoinModal: document.getElementById('rejoin-modal'),
     rejoinMessage: document.getElementById('rejoin-message'),
@@ -187,6 +189,41 @@
   let chatDockDragStart = null;
   let chatDockPreserveActive = false;
   let chatDockFocusHoldTimer = null;
+  const chatScrollState = {
+    all: { scrollTop: 0, atBottom: true },
+    room: { scrollTop: 0, atBottom: true },
+  };
+
+  function chatChannelKey(channel) {
+    const ch = channel != null ? channel : state.chatChannel;
+    return ch === 'room' ? 'room' : 'all';
+  }
+
+  function saveChatScroll(channel) {
+    if (!el.chatLog) return;
+    const key = chatChannelKey(channel);
+    const log = el.chatLog;
+    const threshold = 28;
+    const maxScroll = Math.max(0, log.scrollHeight - log.clientHeight);
+    const atBottom = maxScroll - log.scrollTop <= threshold;
+    chatScrollState[key] = {
+      scrollTop: log.scrollTop,
+      atBottom,
+    };
+  }
+
+  function restoreChatScroll(channel) {
+    if (!el.chatLog) return;
+    const key = chatChannelKey(channel);
+    const st = chatScrollState[key] || { scrollTop: 0, atBottom: true };
+    const maxScroll = Math.max(0, el.chatLog.scrollHeight - el.chatLog.clientHeight);
+    if (st.atBottom) {
+      el.chatLog.scrollTop = el.chatLog.scrollHeight;
+    } else {
+      el.chatLog.scrollTop = Math.min(st.scrollTop, maxScroll);
+    }
+    saveChatScroll(channel);
+  }
 
   function markSelfRoomLeave(roomId) {
     ignoreRoomLeftId = roomId ? String(roomId).toUpperCase() : null;
@@ -229,9 +266,13 @@
   function setChatDockActive(active) {
     if (!el.chatDock) return;
     const on = Boolean(active);
+    if (!on && el.chatDock.classList.contains('is-active')) {
+      saveChatScroll();
+    }
     el.chatDock.classList.toggle('is-active', on);
     if (on) {
       clearChatAttention();
+      requestAnimationFrame(() => restoreChatScroll());
     }
     syncChatTabs();
     updateChatCollapsedPreview();
@@ -482,10 +523,13 @@
     const laneTop = 88 + Math.floor(Math.random() * 220);
     node.style.top = `${laneTop}px`;
     document.body.appendChild(node);
+    const textLen = String(node.textContent || '').length;
+    const durationMs = Math.min(18000, Math.max(8000, 6500 + textLen * 70));
+    node.style.animationDuration = `${durationMs}ms`;
     node.addEventListener('animationend', () => node.remove(), { once: true });
     setTimeout(() => {
       if (node.isConnected) node.remove();
-    }, 8200);
+    }, durationMs + 300);
   }
 
   function chatKey(msg) {
@@ -543,6 +587,7 @@
 
   function setChatChannel(channel) {
     if (channel === 'room' && !(state.room && state.room.id)) return;
+    saveChatScroll();
     state.chatChannel = channel === 'room' ? 'room' : 'all';
     if (state.chatChannel === 'all') state.unreadAll = 0;
     else state.unreadRoom = 0;
@@ -550,12 +595,19 @@
     renderChatLog();
   }
 
-  function renderChatLog() {
+  function renderChatLog(options) {
     if (!el.chatLog) return;
     const list =
       state.chatChannel === 'room' ? state.chatRoom : state.chatAll;
     const myTagNow = myTag();
     const myName = window.PlayerNick.stripBaseName(state.playerName || '');
+    const key = chatChannelKey();
+    const prev = chatScrollState[key] || { scrollTop: 0, atBottom: true };
+    const isActive =
+      el.chatDock && el.chatDock.classList.contains('is-active');
+    const forceBottom = options && options.scrollToBottom;
+    const stickBottom = forceBottom || (isActive && prev.atBottom);
+
     el.chatLog.innerHTML = '';
     if (!list.length) {
       const empty = document.createElement('li');
@@ -563,6 +615,7 @@
       empty.textContent =
         state.chatChannel === 'room' ? t('chat.emptyRoom') : t('chat.empty');
       el.chatLog.appendChild(empty);
+      chatScrollState[key] = { scrollTop: 0, atBottom: true };
       return;
     }
     for (const msg of list) {
@@ -581,7 +634,29 @@
         `</span>`;
       el.chatLog.appendChild(li);
     }
-    el.chatLog.scrollTop = el.chatLog.scrollHeight;
+
+    const applyScroll = () => {
+      if (!el.chatLog) return;
+      const maxScroll = Math.max(
+        0,
+        el.chatLog.scrollHeight - el.chatLog.clientHeight
+      );
+      if (stickBottom) {
+        el.chatLog.scrollTop = el.chatLog.scrollHeight;
+        chatScrollState[key] = {
+          scrollTop: el.chatLog.scrollTop,
+          atBottom: true,
+        };
+      } else {
+        el.chatLog.scrollTop = Math.min(prev.scrollTop, maxScroll);
+        if (prev.atBottom && !isActive) {
+          chatScrollState[key] = { scrollTop: prev.scrollTop, atBottom: true };
+        } else {
+          saveChatScroll();
+        }
+      }
+    };
+    requestAnimationFrame(applyScroll);
   }
 
   function pushChatMessage(msg) {
@@ -609,7 +684,15 @@
       if (state.chatChannel !== 'all') state.unreadAll += 1;
     }
     syncChatTabs();
-    if (state.chatChannel === channel) renderChatLog();
+    if (state.chatChannel === channel) {
+      const active =
+        el.chatDock && el.chatDock.classList.contains('is-active');
+      renderChatLog({
+        scrollToBottom:
+          isMyChatMessage(msg) ||
+          (active && (chatScrollState[channel]?.atBottom ?? true)),
+      });
+    }
     if (
       !isMyChatMessage(msg) &&
       (!el.chatDock || !el.chatDock.classList.contains('is-active'))
@@ -1151,6 +1234,7 @@
     updateMeLabel();
     syncBgm(name);
     syncChatTabs();
+    updateMatchClock();
   }
 
   function escapeHtml(s) {
@@ -1608,6 +1692,7 @@
         window.LasidaoUi.hide({ reset: true });
       }
     }
+    updateMatchClock();
   }
 
   function renderGomoku() {
@@ -1720,6 +1805,7 @@
         window.LasidaoUi.render(game, net, {
           meId: state.me && state.me.id,
           playerNameById,
+          onLeaveLobby: leaveAndReturnLocal,
         });
       }
     } else if (game.type === 'sgs') {
@@ -1735,7 +1821,46 @@
     return n > 0 ? t('common.sec', { n }) : t('common.unlimited');
   }
 
+  function formatMatchElapsed(ms) {
+    const totalSec = Math.max(0, Math.floor(Number(ms) / 1000) || 0);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    if (h > 0) return `${h}:${pad(m)}:${pad(s)}`;
+    return `${pad(m)}:${pad(s)}`;
+  }
+
+  function playingStartedAt() {
+    const fromGame =
+      state.game && Number(state.game.playingStartedAt)
+        ? Number(state.game.playingStartedAt)
+        : 0;
+    const fromRoom =
+      state.room && Number(state.room.playingStartedAt)
+        ? Number(state.room.playingStartedAt)
+        : 0;
+    return fromGame || fromRoom || 0;
+  }
+
+  function updateMatchClock() {
+    if (!el.matchClock || !el.matchClockTime) return;
+    const started = playingStartedAt();
+    const inMatch =
+      started > 0 &&
+      ((state.room && state.room.status === 'playing') ||
+        Boolean(state.game));
+    if (!inMatch) {
+      el.matchClock.hidden = true;
+      return;
+    }
+    const elapsed = Math.max(0, Date.now() - started);
+    el.matchClock.hidden = false;
+    el.matchClockTime.textContent = formatMatchElapsed(elapsed);
+  }
+
   function updateTurnTimer() {
+    updateMatchClock();
     if (!el.turnTimer || !el.turnTimerSec) return;
     const game = state.game;
     const timer = game && game.turnTimer;
@@ -2190,6 +2315,18 @@
   }
 
   // 聊天：半隐形拖动 + 点击/回车聚焦输入
+  if (el.chatLog) {
+    el.chatLog.addEventListener(
+      'scroll',
+      () => {
+        if (el.chatDock && el.chatDock.classList.contains('is-active')) {
+          saveChatScroll();
+        }
+      },
+      { passive: true }
+    );
+  }
+
   if (el.chatInput) {
     el.chatInput.addEventListener('focus', () => {
       setChatDockActive(true);
@@ -2349,6 +2486,7 @@
       if (!text) return;
       holdChatDockFocus();
       setChatDockActive(true);
+      chatScrollState[chatChannelKey()] = { scrollTop: 0, atBottom: true };
       net.sendChat(state.chatChannel, text);
       el.chatInput.value = '';
       focusChatInput();
@@ -2986,6 +3124,7 @@
   }
 
   setInterval(() => {
+    updateMatchClock();
     if (el.viewGame && !el.viewGame.hidden) updateTurnTimer();
   }, 250);
 })();

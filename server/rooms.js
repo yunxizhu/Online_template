@@ -34,6 +34,7 @@ function publicRoomView(room) {
     gameMode: room.gameMode || null,
     gameModeLabel: room.gameModeLabel || null,
     turnTimeSec: Number(room.turnTimeSec) || 0,
+    playingStartedAt: room.playingStartedAt || null,
   };
 }
 
@@ -59,6 +60,7 @@ function fullRoomView(room) {
     gameMode: room.gameMode || null,
     gameModeLabel: room.gameModeLabel || null,
     turnTimeSec: Number(room.turnTimeSec) || 0,
+    playingStartedAt: room.playingStartedAt || null,
   };
 }
 
@@ -323,6 +325,7 @@ class RoomManager {
       turnTimer: null,
       game: null,
       createdAt: Date.now(),
+      playingStartedAt: null,
       // 隧道就绪并房主进房前：不进大厅列表、人员仍显示空闲、不广播房间
       pendingLobby: true,
     };
@@ -436,6 +439,7 @@ class RoomManager {
       clearTurnTimer(room);
       room.status = 'waiting';
       room.game = null;
+      room.playingStartedAt = null;
       for (const p of room.players) {
         p.ready = true;
         p.offline = false;
@@ -758,10 +762,12 @@ class RoomManager {
     if (!game) return { ok: false, error: '不支持的游戏类型' };
 
     room.status = 'playing';
+    room.playingStartedAt = Date.now();
     try {
       room.game = game.createGameState(room);
     } catch (err) {
       room.status = 'waiting';
+      room.playingStartedAt = null;
       return { ok: false, error: err.message || '开局失败' };
     }
     return { ok: true, room, gameModule: game };

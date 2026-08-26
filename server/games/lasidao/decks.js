@@ -17,7 +17,7 @@ const FUNC_TYPES = {
   buildHouse: '建造房子',
   redraw: '重抽',
   banditRaid: '强盗来袭',
-  expand: '扩容',
+  expand: '扩建',
   robbery: '抢劫',
   enhance: '强化',
   recruit: '征召',
@@ -109,15 +109,15 @@ function makeFunc(type, extra = {}) {
 /** 功能板块卡堆（未洗，供合堆组装） */
 function buildFunctionDeckRaw() {
   const cards = [];
-  for (let i = 0; i < 3; i++) cards.push(makeFunc('harvest'));
-  for (let i = 0; i < 3; i++) cards.push(makeFunc('remoteDice'));
-  for (let i = 0; i < 3; i++) cards.push(makeFunc('exile'));
-  for (let i = 0; i < 3; i++) cards.push(makeFunc('redraw'));
-  for (let i = 0; i < 3; i++) cards.push(makeFunc('banditRaid'));
+  for (let i = 0; i < 6; i++) cards.push(makeFunc('harvest'));
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('remoteDice'));
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('exile'));
+  for (let i = 0; i < 2; i++) cards.push(makeFunc('redraw'));
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('banditRaid'));
   //for (let i = 0; i < 3; i++) cards.push(makeFunc('expand'));
-  for (let i = 0; i < 3; i++) cards.push(makeFunc('robbery'));
-  for (let i = 0; i < 3; i++) cards.push(makeFunc('enhance'));
-  for (let i = 0; i < 3; i++) cards.push(makeFunc('recruit'));
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('robbery'));
+  for (let i = 0; i < 2; i++) cards.push(makeFunc('enhance'));
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('recruit'));
   return cards;
 }
 
@@ -225,7 +225,7 @@ function buildBuildingDeckRaw() {
   cards.push(makeProduceBuild('iron', false));
   cards.push(makeProduceBuild('iron', false));
   for (let i = 0; i < 4; i++) cards.push(makeScore2());
-  for (let i = 0; i < 3; i++) cards.push(makeExchange());
+  for (let i = 0; i < 5; i++) cards.push(makeExchange());
   for (let i = 0; i < 3; i++) cards.push(makeWishWell());
   return cards;
 }
@@ -240,8 +240,106 @@ function buildSpecialDeck() {
   return shuffle(buildFunctionDeckRaw().concat(buildBuildingDeckRaw()));
 }
 
+/**
+ * 事件牌目录（共 10 张）
+ * trigger: dispatch=派遣时 / settle=结算抵消后
+ * setup: 上场初始化
+ */
+const ENVIRONMENT_CATALOG = [
+  {
+    envType: 'prisonersDilemma',
+    label: '囚徒困境',
+    trigger: 'settle',
+    desc: '结算抵消后：骰子最少的玩家（可并列，可为 0）各弃 n 张牌，n=第一名骰子数；该弃牌在弃牌阶段之后进行',
+  },
+  {
+    envType: 'barrenHarvest',
+    label: '颗粒无收',
+    trigger: 'dispatch',
+    setup: 'marker',
+    desc: '上场时在本格放置标记。派遣时可将标记移到任一数字格；有标记的数字格结算时不获得资源',
+  },
+  {
+    envType: 'resistBarbarians',
+    label: '抵抗南蛮',
+    trigger: 'settle',
+    desc: '生产结算（抵消并发资源）后、弃牌前：本格仍有至少 2 个骰子的玩家按名次从第一名起各获得 1 胜利点；有人达到 15 分则立刻结束游戏',
+  },
+  {
+    envType: 'clearSky',
+    label: '晴空万里',
+    trigger: 'dispatch',
+    desc: '派遣时：派遣者任选获得 1 个资源（每次派遣触发一次，与数量无关）',
+  },
+  {
+    envType: 'enterFray',
+    label: '以身入局',
+    trigger: 'dispatch',
+    setup: 'neutral6',
+    desc: '上场时在本格放置 6 枚中立骰。派遣时可将本格 1 枚中立骰移到任意板块数字格（无中立骰则不可发动）',
+  },
+  {
+    envType: 'mercenaries',
+    label: '雇佣军',
+    trigger: 'preSettle',
+    setup: 'mercenary2',
+    desc: '上场时放置 2 枚雇佣骰。全员放置完骰子后、生产判定（抵消与获资源）开始前：若本格有唯一第一名则由其投掷并放置（并列第一不触发）；放置后按对应格大份立即获得资源；若放到有派遣触发事件的格上则同样触发该效果，然后才进入生产判定',
+  },
+  {
+    envType: 'oneMountain',
+    label: '一山不容二虎',
+    trigger: 'settle',
+    desc: '结算抵消后：第二名不获得本格小份资源',
+  },
+  {
+    envType: 'luckyDraw',
+    label: '幸运一抽',
+    trigger: 'settle',
+    setup: 'sideCard',
+    desc: '上场时将功能/建筑合堆顶 1 张暗置在旁。结算抵消后，第一名获得该暗置牌',
+  },
+  {
+    envType: 'fishermanProfit',
+    label: '渔翁得利',
+    trigger: 'settle',
+    desc: '结算抵消后：第三名额外获得第一名与第二名在本格所得资源之和（双人时中立骰仍可占名次）',
+  },
+  {
+    envType: 'firstCome',
+    label: '先到先得',
+    trigger: 'dispatch',
+    setup: 'stashResources',
+    desc: '上场时放置每种资源各 2 个。某玩家在本格农民达 5 时立即获得这些资源（仅一次）',
+  },
+];
+
+const ENVIRONMENT_BY_TYPE = Object.fromEntries(
+  ENVIRONMENT_CATALOG.map((d) => [d.envType, d])
+);
+
+function makeEnvironmentFromDef(def) {
+  return {
+    id: nextId('env'),
+    kind: 'environment',
+    label: def.label,
+    envType: def.envType,
+    trigger: def.trigger,
+    desc: def.desc,
+    setup: def.setup || null,
+  };
+}
+
+/** 事件牌堆（10 张；每轮摆板前整堆洗混） */
+function buildEnvironmentDeck() {
+  return shuffle(ENVIRONMENT_CATALOG.map((def) => makeEnvironmentFromDef(def)));
+}
+
+function getEnvironmentDef(envType) {
+  return ENVIRONMENT_BY_TYPE[envType] || null;
+}
+
 /** 常驻「建造房子」造价 */
-const BUILD_HOUSE_COST = { wood: 3, stone: 3,  iron: 2 };
+const BUILD_HOUSE_COST = { wood: 3, stone: 3, iron: 2 };
 
 /** 常驻「繁殖村民」：小麦消耗 = 当前村民数 × 该系数 */
 const BREED_FOOD_PER_VILLAGER = 1;
@@ -271,4 +369,7 @@ module.exports = {
   buildFunctionDeck,
   buildBuildingDeck,
   buildSpecialDeck,
+  buildEnvironmentDeck,
+  ENVIRONMENT_CATALOG,
+  getEnvironmentDef,
 };

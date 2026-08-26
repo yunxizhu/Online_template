@@ -359,6 +359,9 @@ function publicStateForRoom(room, viewerId) {
       limitSec: room.turnTimer.limitSec,
     };
   }
+  if (room.playingStartedAt) {
+    state.playingStartedAt = room.playingStartedAt;
+  }
   return state;
 }
 

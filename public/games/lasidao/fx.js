@@ -208,15 +208,25 @@ window.LasidaoFx = (function () {
         ? tile.kind === 'building' || tile.buildType
           ? 'building'
           : 'function'
-        : item.area;
+        : item.area === 'environment'
+          ? 'environment'
+          : item.area;
     const kind =
-      cardKind === 'function' ? 'fn' : cardKind === 'building' ? 'bld' : 'res';
+      cardKind === 'function'
+        ? 'fn'
+        : cardKind === 'building'
+          ? 'bld'
+          : cardKind === 'environment'
+            ? 'env'
+            : 'res';
     const backKind =
       cardKind === 'building'
         ? 'building'
         : cardKind === 'function'
           ? 'function'
-          : 'resource';
+          : cardKind === 'environment'
+            ? 'environment'
+            : 'resource';
     const wrap = document.createElement('div');
     wrap.className = 'las-fx-deal is-' + kind;
     const inner = document.createElement('div');
@@ -261,6 +271,11 @@ window.LasidaoFx = (function () {
           typeof Assets.applyResourceArt === 'function'
         ) {
           hasFront = Boolean(Assets.applyResourceArt(front, tile));
+        } else if (
+          cardKind === 'environment' &&
+          typeof Assets.applyEnvironmentArt === 'function'
+        ) {
+          hasFront = Boolean(Assets.applyEnvironmentArt(front, tile));
         } else if (
           cardKind === 'function' &&
           typeof Assets.applyFunctionArt === 'function'
@@ -324,7 +339,7 @@ window.LasidaoFx = (function () {
     if (!layer || !newcomers || !newcomers.length) return;
     const list = newcomers.slice().sort((a, b) => {
       if (a.area !== b.area) {
-        const order = { resource: 0, special: 1 };
+        const order = { resource: 0, environment: 1, special: 2 };
         return (order[a.area] || 0) - (order[b.area] || 0);
       }
       return (a.number || 0) - (b.number || 0);
@@ -333,7 +348,12 @@ window.LasidaoFx = (function () {
     const inflight = [];
     for (let i = 0; i < list.length; i++) {
       const item = list[i];
-      const fromDeck = item.area === 'special' ? 'special' : item.area;
+      const fromDeck =
+        item.area === 'special'
+          ? 'special'
+          : item.area === 'environment'
+            ? 'environment'
+            : item.area;
       const fromEl = deckEl(fromDeck);
       const toEl = tileEl(item.id) || slotEl(item.area, item.number);
       const from = rectCenter(fromEl);
@@ -486,6 +506,29 @@ window.LasidaoFx = (function () {
       for (const c of cancelChips) c.el.remove();
     }
 
+    // 歉收标记：抵消后额外展示一次「颗粒无收」
+    if (slot.barren || slot.barrenMarker) {
+      setBanner(
+        t('lasidao.fx.barrenHarvest', {
+          area: areaLab,
+          number: slot.number,
+        })
+      );
+      boardSlot.classList.add('las-settle-barren');
+      const barrenPop = document.createElement('div');
+      barrenPop.className = 'las-fx-pop is-barren';
+      barrenPop.textContent = t('lasidao.fx.barrenMark');
+      const center = rectCenter(boardSlot);
+      if (center) {
+        barrenPop.style.left = center.x + 'px';
+        barrenPop.style.top = center.y - 12 + 'px';
+        layer.appendChild(barrenPop);
+        setTimeout(() => barrenPop.remove(), 1200);
+      }
+      await sleep(1100);
+      boardSlot.classList.remove('las-settle-barren');
+    }
+
     const winner = (slot.ranked && slot.ranked[0]) || null;
     const remainChips = chips.filter((c) => !c.cancelled);
     if (winner) {
@@ -597,7 +640,7 @@ window.LasidaoFx = (function () {
     for (const c of remainChips) {
       if (c.el && c.el.parentNode) c.el.remove();
     }
-    boardSlot.classList.remove('las-settle-focus', 'las-settle-winner');
+    boardSlot.classList.remove('las-settle-focus', 'las-settle-winner', 'las-settle-barren');
     await sleep(200);
   }
 
@@ -609,7 +652,11 @@ window.LasidaoFx = (function () {
     clearLayer();
 
     const slots = (report.slots || []).filter(
-      (s) => s && Object.keys(s.before || {}).length > 0
+      (s) =>
+        s &&
+        (Object.keys(s.before || {}).length > 0 ||
+          s.barren ||
+          s.barrenMarker)
     );
 
     if (!slots.length) {
@@ -670,5 +717,313 @@ window.LasidaoFx = (function () {
     clearLayer();
   }
 
-  return { playSettle, playDeal, playDispatch, clearLayer, setBanner };
+  /** 结算后：场上未取走的卡飞回对应弃牌堆 */
+  async function playRecycleBoard(game) {
+    const layer = ensureLayer();
+    if (!layer) return;
+
+    const tileNodes = Array.from(
+      document.querySelectorAll(
+        '#las-board-resource .las-tile, #las-board-special .las-tile'
+      )
+    ).filter((el) => el && el.getBoundingClientRect().width > 0);
+
+    setBanner(t('lasidao.fx.recycleBoard'));
+
+    if (!tileNodes.length) {
+      await sleep(500);
+      setBanner('');
+      return;
+    }
+
+    const layerRect = layer.getBoundingClientRect();
+    const toLayerPt = (p) => ({
+      x: p.x - layerRect.left,
+      y: p.y - layerRect.top,
+    });
+
+    const jobs = [];
+    for (let i = 0; i < tileNodes.length; i++) {
+      const el = tileNodes[i];
+      const discardKind = el.classList.contains('environment')
+        ? 'environment'
+        : el.classList.contains('resource')
+          ? 'resource'
+          : 'special';
+      const fromClient = rectCenter(el);
+      const toEl = deckEl(discardKind);
+      const toClient = rectCenter(toEl) || fromClient;
+      if (!fromClient) continue;
+
+      el.classList.add('is-recycling');
+      el.style.opacity = '0.15';
+
+      const fly = document.createElement('div');
+      fly.className =
+        'las-fx-deal is-' +
+        (discardKind === 'resource'
+          ? 'res'
+          : discardKind === 'environment'
+            ? 'env'
+            : el.classList.contains('building')
+              ? 'bld'
+              : 'fn');
+      const face = document.createElement('div');
+      face.className = 'las-fx-deal-face las-fx-deal-front has-image';
+      const art = el.querySelector('.las-tile-art, .las-hand-card-art');
+      if (art && art.style && art.style.backgroundImage) {
+        face.style.backgroundImage = art.style.backgroundImage;
+        face.style.backgroundSize = 'cover';
+        face.style.backgroundPosition = 'center';
+      } else {
+        face.classList.remove('has-image');
+        face.textContent =
+          el.getAttribute('aria-label') ||
+          (el.querySelector('.las-tile-name') &&
+            el.querySelector('.las-tile-name').textContent) ||
+          '';
+      }
+      fly.appendChild(face);
+      const from = toLayerPt(fromClient);
+      fly.style.left = from.x + 'px';
+      fly.style.top = from.y + 'px';
+      layer.appendChild(fly);
+
+      const to = toLayerPt(toClient);
+      const ms = Math.max(280, flyDurationMs(fromClient, toClient));
+      jobs.push(
+        (async () => {
+          await sleep(i * 55);
+          await flyToPoint(fly, from, to, ms, {
+            fade: true,
+            fadeTo: 0.05,
+            ease: 'linear',
+          });
+          if (fly.parentNode) fly.remove();
+        })()
+      );
+    }
+
+    await Promise.all(jobs);
+    await sleep(200);
+    setBanner('');
+    clearLayer();
+  }
+
+  /** 驱逐：高亮格子，村民被逐出 */
+  async function playExile(opts) {
+    opts = opts || {};
+    const layer = ensureLayer();
+    if (!layer) return;
+    const game = opts.game || {};
+    let focusEl = null;
+    if (opts.buildingId) {
+      focusEl =
+        personalBuildNumEl(opts.buildingId) ||
+        personalBuildEl(opts.buildingId);
+    } else if (opts.area != null && opts.number != null) {
+      focusEl = slotEl(opts.area, opts.number);
+    }
+    const targetName = nameOf(game, opts.targetId);
+    const actorName = nameOf(game, opts.actorId);
+    const areaLab = opts.area ? areaLabel(opts.area) : '';
+
+    setBanner(
+      opts.buildingId
+        ? t('lasidao.fx.exileBuilding', {
+            actor: actorName,
+            target: targetName,
+          })
+        : t('lasidao.fx.exile', {
+            actor: actorName,
+            target: targetName,
+            area: areaLab,
+            number: opts.number,
+          })
+    );
+
+    if (focusEl) focusEl.classList.add('las-fx-exile-focus');
+    await sleep(450);
+
+    const chip = spawnWorkerChip(
+      layer,
+      focusEl,
+      opts.targetId,
+      1,
+      targetName,
+      false
+    );
+    if (chip) {
+      chip.classList.add('is-exile-victim');
+      const from = rectCenter(chip);
+      const mark = document.createElement('div');
+      mark.className = 'las-fx-pop is-exile';
+      mark.textContent = t('lasidao.fx.exileMark');
+      if (from) {
+        mark.style.left = from.x + 'px';
+        mark.style.top = from.y - 28 + 'px';
+        layer.appendChild(mark);
+        setTimeout(() => mark.remove(), 1000);
+      }
+      await sleep(250);
+      chip.classList.add('is-exile-out');
+      await sleep(700);
+      if (chip.parentNode) chip.remove();
+    }
+
+    if (focusEl) focusEl.classList.remove('las-fx-exile-focus');
+    await sleep(300);
+    setBanner('');
+  }
+
+  /** 强盗来袭：中立骰飞入目标格子 */
+  async function playBanditRaid(opts) {
+    opts = opts || {};
+    const layer = ensureLayer();
+    if (!layer) return;
+    const game = opts.game || {};
+    const area = opts.area;
+    const number = opts.number;
+    const count = Math.max(1, Number(opts.count) || 2);
+    const areaLab = areaLabel(area);
+    const actorName = nameOf(game, opts.actorId);
+    const neutralName =
+      (game && game.neutralWorkerName) || t('lasidao.neutralName');
+
+    setBanner(
+      t('lasidao.fx.banditRaid', {
+        name: actorName,
+        area: areaLab,
+        number,
+        count,
+        neutral: neutralName,
+      })
+    );
+    await sleep(400);
+
+    const boardSlot = slotEl(area, number);
+    if (boardSlot) boardSlot.classList.add('las-fx-bandit-hit');
+
+    const toEl = slotNumEl(area, number) || boardSlot;
+    const toClient = rectCenter(toEl);
+    if (!toClient) {
+      await sleep(800);
+      if (boardSlot) boardSlot.classList.remove('las-fx-bandit-hit');
+      setBanner('');
+      return;
+    }
+
+    const layerRect = layer.getBoundingClientRect();
+    const toLayer = (p) => ({
+      x: p.x - layerRect.left,
+      y: p.y - layerRect.top,
+    });
+    const to = toLayer(toClient);
+    const fromEl = playerEl(opts.actorId) || $('las-act-hand');
+    const fromClient =
+      rectCenter(fromEl) || rectCenter($('las-dice-stage')) || toClient;
+
+    const flies = [];
+    try {
+      const jobs = [];
+      for (let i = 0; i < count; i++) {
+        const jitterClient = {
+          x: fromClient.x + (Math.random() * 24 - 12),
+          y: fromClient.y + (Math.random() * 16 - 8),
+        };
+        const jitter = toLayer(jitterClient);
+        const fly = document.createElement('div');
+        fly.className = 'las-die is-mini las-fx-dispatch-die color-neutral is-bandit';
+        fly.textContent = '?';
+        fly.style.left = jitter.x + 'px';
+        fly.style.top = jitter.y + 'px';
+        fly.style.opacity = '1';
+        layer.appendChild(fly);
+        flies.push(fly);
+        const dest = {
+          x: to.x + (Math.random() * 10 - 5),
+          y: to.y + (Math.random() * 10 - 5),
+        };
+        const ms = flyDurationMs(jitterClient, {
+          x: dest.x + layerRect.left,
+          y: dest.y + layerRect.top,
+        });
+        jobs.push(
+          flyToPoint(fly, jitter, dest, ms, {
+            fade: true,
+            fadeTo: 0.15,
+            ease: 'linear',
+            keep: true,
+          })
+        );
+        if (i < count - 1) await sleep(80);
+      }
+      await Promise.all(jobs);
+
+      const pop = document.createElement('div');
+      pop.className = 'las-fx-pop is-bandit';
+      pop.textContent = t('lasidao.fx.banditMark', { name: neutralName, count });
+      pop.style.left = toClient.x + 'px';
+      pop.style.top = toClient.y - 24 + 'px';
+      layer.appendChild(pop);
+      setTimeout(() => pop.remove(), 1100);
+      await sleep(700);
+    } finally {
+      for (const f of flies) {
+        if (f && f.parentNode) f.parentNode.removeChild(f);
+      }
+      if (boardSlot) boardSlot.classList.remove('las-fx-bandit-hit');
+    }
+
+    setBanner('');
+  }
+
+  async function playVictory(game) {
+    const layer = ensureLayer();
+    if (!layer) return;
+    clearLayer();
+    const winners = new Set(game && game.winners ? game.winners : []);
+    const winnerEl =
+      winners.size === 1
+        ? playerEl(Array.from(winners)[0])
+        : $('las-victory-dialog');
+    const center = rectCenter(winnerEl) || {
+      x: window.innerWidth / 2,
+      y: window.innerHeight * 0.38,
+    };
+    const colors = ['#f3e7b8', '#e8c85a', '#7ec8ff', '#8fd694', '#ff9f7a', '#c89bff'];
+    const jobs = [];
+    for (let i = 0; i < 42; i++) {
+      jobs.push(
+        (async () => {
+          await sleep(Math.random() * 180);
+          const bit = document.createElement('div');
+          bit.className = 'las-fx-confetti';
+          bit.style.left = center.x + (Math.random() - 0.5) * 220 + 'px';
+          bit.style.top = center.y + (Math.random() - 0.5) * 80 + 'px';
+          bit.style.background = colors[i % colors.length];
+          bit.style.setProperty('--dx', (Math.random() - 0.5) * 160 + 'px');
+          bit.style.setProperty('--dy', 80 + Math.random() * 140 + 'px');
+          bit.style.setProperty('--dur', 0.85 + Math.random() * 0.55 + 's');
+          layer.appendChild(bit);
+          setTimeout(() => bit.remove(), 1600);
+        })()
+      );
+    }
+    await Promise.all(jobs);
+    await sleep(500);
+    clearLayer();
+  }
+
+  return {
+    playSettle,
+    playRecycleBoard,
+    playDeal,
+    playDispatch,
+    playExile,
+    playBanditRaid,
+    playVictory,
+    clearLayer,
+    setBanner,
+  };
 })();

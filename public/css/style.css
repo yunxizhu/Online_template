@@ -76,6 +76,56 @@ body.phase-game {
   display: none !important;
 }
 
+.match-clock {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--text);
+  font-size: 0.9rem;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.match-clock[hidden] {
+  display: none !important;
+}
+
+.match-clock-label {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.match-clock-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+body.phase-room .match-clock {
+  border-color: rgba(201, 133, 58, 0.45);
+  background: rgba(44, 36, 28, 0.85);
+  color: #f0c78a;
+}
+
+body.phase-room .match-clock-label {
+  color: #b8956a;
+}
+
+body.phase-game .match-clock {
+  border-color: rgba(104, 162, 104, 0.4);
+  background: rgba(24, 32, 26, 0.9);
+  color: #c8e0c4;
+}
+
+body.phase-game .match-clock-label {
+  color: #8aaa88;
+}
+
 .game-menu-btn {
   width: 2.25rem;
   height: 2.25rem;
@@ -812,15 +862,20 @@ body.phase-room .room-chat-bubble::after {
 .game-chat-fly {
   position: fixed;
   right: -18rem;
-  max-width: min(40vw, 33rem);
+  width: fit-content;
+  max-width: min(94vw, 64rem);
   padding: 0.57rem 1.08rem;
-  border-radius: 999px;
+  border-radius: 1.15rem;
   background: rgba(26, 36, 42, 0.92);
   border: 1.5px solid rgba(61, 155, 143, 0.55);
   color: var(--text);
   font-size: 1.35rem;
   line-height: 1.35;
-  white-space: nowrap;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  overflow: visible;
+  box-sizing: border-box;
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
   pointer-events: none;
   z-index: 40;
@@ -838,7 +893,7 @@ body.phase-game .game-chat-fly {
     opacity: 0.96;
   }
   to {
-    transform: translateX(calc(-100vw - 39rem));
+    transform: translateX(calc(-100vw - 100% - 3rem));
     opacity: 0.96;
   }
 }
