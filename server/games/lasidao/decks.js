@@ -82,7 +82,7 @@ function buildResourceDeck() {
   }
 
 
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 5; i++) {
     cards.push({
       id: nextId('res'),
       kind: 'resource',
@@ -115,7 +115,7 @@ function buildFunctionDeckRaw() {
   for (let i = 0; i < 2; i++) cards.push(makeFunc('redraw'));
   for (let i = 0; i < 4; i++) cards.push(makeFunc('banditRaid'));
   //for (let i = 0; i < 3; i++) cards.push(makeFunc('expand'));
-  for (let i = 0; i < 4; i++) cards.push(makeFunc('robbery'));
+  for (let i = 0; i < 6; i++) cards.push(makeFunc('robbery'));
   for (let i = 0; i < 2; i++) cards.push(makeFunc('enhance'));
   for (let i = 0; i < 4; i++) cards.push(makeFunc('recruit'));
   return cards;
