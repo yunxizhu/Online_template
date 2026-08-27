@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 允许局域网 http 直连房主；公网隧道一般为 https -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

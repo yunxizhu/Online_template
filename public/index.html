@@ -6,6 +6,26 @@
   <title data-i18n="app.pageTitle">联机大厅</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/css/style.css" />
+  <script>
+    /* 访客深链：首屏即显示「正在加入」，避免先闪出昵称门 */
+    (function () {
+      try {
+        var q = new URLSearchParams(location.search || '');
+        if (q.get('guest') === '1' || q.get('join')) {
+          document.documentElement.classList.add('boot-joining');
+        }
+      } catch (e) {}
+    })();
+  </script>
+  <style>
+    html.boot-joining #lobby-gate { display: none !important; }
+    html.boot-joining #lobby-main { display: none !important; }
+    html.boot-joining #lobby-people-aside { display: none !important; }
+    html.boot-joining #chat-dock { display: none !important; }
+    html.boot-joining #room-busy-overlay {
+      display: flex !important;
+    }
+  </style>
 </head>
 <body>
   <main class="app">
@@ -134,16 +154,24 @@
               <div class="row lobby-toolbar-actions">
                 <button id="btn-toggle-create" type="button" data-i18n="lobby.createRoom">创建房间</button>
                 <button id="btn-toggle-join" type="button" class="secondary" data-i18n="lobby.joinByCode">房间码加入</button>
+                <button id="btn-toggle-spectate" type="button" class="secondary">观战</button>
                 <button id="btn-refresh-lobby" type="button" class="secondary" data-i18n="lobby.refresh">刷新</button>
               </div>
+              <label class="passive-toggle row" id="passive-toggle-wrap">
+                <input id="chk-passive-mode" type="checkbox" />
+                <span>被动模式（他人可在你机器上开房，你纯观战）</span>
+              </label>
               <p id="peers-label" class="muted" data-i18n="lobby.peersSearching">广播：搜索中…</p>
               <p id="lobby-refresh-hint" class="muted lobby-refresh-hint" data-i18n="lobby.refreshHint">大厅列表每 3 秒自动刷新</p>
             </div>
 
             <div class="panel lobby-rooms">
-              <h2 data-i18n="lobby.publicRooms">公开房间</h2>
+              <h2>空闲房间</h2>
               <ul id="room-list" class="room-list"></ul>
-              <p id="room-list-empty" class="muted" data-i18n="lobby.noPublicRooms">暂无公开房间</p>
+              <p id="room-list-empty" class="muted" data-i18n="lobby.noPublicRooms">暂无空闲房间</p>
+              <h2 class="lobby-playing-title">对局中</h2>
+              <ul id="room-list-playing" class="room-list"></ul>
+              <p id="room-list-playing-empty" class="muted">暂无进行中的房间</p>
             </div>
           </div>
         </section>
@@ -172,8 +200,13 @@
               </p>
               <h3 class="room-members-title" data-i18n="room.members">房间成员</h3>
               <ul id="member-list" class="member-list"></ul>
+              <div id="observer-section" class="room-observer-section" hidden>
+                <h3 class="room-members-title room-observers-title">观战席</h3>
+                <ul id="observer-list" class="member-list observer-list"></ul>
+              </div>
               <div class="row room-actions">
                 <button id="btn-start" type="button" hidden data-i18n="room.start">开始游戏</button>
+                <button id="btn-edit-room" type="button" class="secondary" hidden data-i18n="room.edit">修改房间</button>
                 <button id="btn-room-rules" type="button" class="secondary" hidden data-i18n="lasidao.rules.btn">游戏规则</button>
                 <button id="btn-leave" type="button" class="secondary btn-leave-room" data-i18n="room.leave">离开房间</button>
               </div>
@@ -329,7 +362,14 @@
 
   <div id="people-ctx" class="ctx-menu" hidden>
     <button type="button" data-action="join-their-room" data-i18n="lobby.joinTheirRoom">加入其房间</button>
+    <button type="button" data-action="create-on-host">在此开房</button>
     <p class="ctx-hint muted" id="people-ctx-hint" hidden></p>
+  </div>
+
+  <div id="room-ctx" class="ctx-menu" hidden>
+    <button type="button" data-action="room-join">加入房间</button>
+    <button type="button" data-action="room-spectate">观战</button>
+    <p class="ctx-hint muted" id="room-ctx-hint" hidden></p>
   </div>
 
   <div id="room-busy-overlay" class="room-busy-overlay" hidden aria-live="polite" aria-busy="true">
@@ -337,6 +377,32 @@
       <p id="room-busy-message" class="room-busy-message" data-i18n="create.creating">创建中…</p>
     </div>
   </div>
+
+  <div
+    id="passive-lock-overlay"
+    class="passive-lock-overlay"
+    hidden
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="passive-lock-title"
+  >
+    <div class="passive-lock-panel panel">
+      <p id="passive-lock-title" class="passive-lock-title">处于被动模式中</p>
+      <p class="passive-lock-desc muted" id="passive-lock-desc">
+        无人值守：他人可在你的主机上开房与对局；本机保持锁定，不观战、不操作。结束后仍留在被动模式。
+      </p>
+      <button id="btn-exit-passive" type="button">退出被动模式</button>
+    </div>
+  </div>
+  <script>
+    (function () {
+      if (!document.documentElement.classList.contains('boot-joining')) return;
+      var msg = document.getElementById('room-busy-message');
+      var overlay = document.getElementById('room-busy-overlay');
+      if (overlay) overlay.hidden = false;
+      if (msg) msg.textContent = '正在加入…';
+    })();
+  </script>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/js/i18n.js"></script>

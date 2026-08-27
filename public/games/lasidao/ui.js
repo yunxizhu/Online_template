@@ -595,6 +595,26 @@ window.LasidaoUi = (function () {
     tip.style.top = '';
   }
 
+  /** 点击后立刻关掉悬停：自定义大图 tip + 浏览器原生 title（否则会粘在点击后的按钮上） */
+  function dismissHoverHints(fromEl) {
+    hideCardTip();
+    const el =
+      fromEl && fromEl.closest
+        ? fromEl.closest('button,[title]') || fromEl
+        : fromEl;
+    if (!el || !el.getAttribute) return;
+    const saved = el.getAttribute('title');
+    if (!saved) return;
+    el.removeAttribute('title');
+    const restore = () => {
+      if (!el.getAttribute('title')) el.setAttribute('title', saved);
+      el.removeEventListener('pointerleave', restore);
+      el.removeEventListener('blur', restore);
+    };
+    el.addEventListener('pointerleave', restore);
+    el.addEventListener('blur', restore);
+  }
+
   function positionCardTip(tip, evt, anchorEl) {
     let x = 12;
     let y = 12;
@@ -607,8 +627,8 @@ window.LasidaoUi = (function () {
       y = r.top;
     }
     const pad = 8;
-    const tw = tip.offsetWidth || 220;
-    const th = tip.offsetHeight || 120;
+    const tw = tip.offsetWidth || (tip.classList.contains('has-preview') ? 480 : 220);
+    const th = tip.offsetHeight || (tip.classList.contains('has-preview') ? 640 : 120);
     if (x + tw > window.innerWidth - pad) {
       x = Math.max(pad, (evt && evt.clientX != null ? evt.clientX : x) - tw - 16);
     }
@@ -823,6 +843,7 @@ window.LasidaoUi = (function () {
       positionCardTip(tip, e, card);
     });
     card.addEventListener('mouseleave', () => hideCardTip());
+    card.addEventListener('pointerdown', () => hideCardTip());
     card.addEventListener('mousedown', (e) => {
       e.stopPropagation();
     });
@@ -888,6 +909,20 @@ window.LasidaoUi = (function () {
       const tip = $('las-card-tip');
       if (tip && tip._lasTipPinned) hideCardTip();
     });
+    // 操作栏 / 侧栏按钮：点击后立刻清掉原生 title 悬停，避免粘滞
+    document.addEventListener(
+      'pointerdown',
+      (e) => {
+        const t = e.target;
+        if (!t || !t.closest) return;
+        const btn = t.closest(
+          '.lasidao-panel .las-actions button, .lasidao-panel .las-act-wrap button, .lasidao-panel .las-build-hand-bar button, .lasidao-panel .las-permanent-actions button, .lasidao-panel .las-pass-row button'
+        );
+        if (!btn) return;
+        dismissHoverHints(btn);
+      },
+      true
+    );
   }
 
   function makeTileCard(tile, areaKey) {
@@ -3167,6 +3202,9 @@ window.LasidaoUi = (function () {
     const hint = $('las-act-hint');
     if (!wrap || !hand) return;
 
+    // 重绘手牌区会拆掉悬停目标，主动清 tip，避免大图粘住
+    hideCardTip();
+
     const show = shouldShowActRail(game, meId);
     wrap.hidden = !show;
     if (!show) {
@@ -3547,6 +3585,15 @@ window.LasidaoUi = (function () {
   }
 
   function selectPermanent(kind, game, me) {
+    dismissHoverHints(
+      kind === 'buildHouse'
+        ? $('btn-las-build-house')
+        : kind === 'breed'
+          ? $('btn-las-breed')
+          : kind === 'expand'
+            ? $('btn-las-expand-perm')
+            : $('btn-las-exchange')
+    );
     selectedFuncId = null;
     selectedBuildingId = null;
     selectedPermanent = selectedPermanent === kind ? null : kind;
@@ -3765,7 +3812,7 @@ window.LasidaoUi = (function () {
       head.appendChild(title);
       const stats = document.createElement('div');
       stats.className = 'las-pboard-stats muted';
-      stats.textContent = t('lasidao.playerStats', {
+      const statsPayload = {
         score: p.score,
         villagers: p.villagers,
         houses: p.houses != null ? p.houses : 3,
@@ -3779,11 +3826,19 @@ window.LasidaoUi = (function () {
         funcMax: maxFunc,
         build: buildN,
         buildMax: maxB,
-      });
+      };
+      const line1 = document.createElement('div');
+      line1.className = 'las-pboard-stats-line';
+      line1.textContent = t('lasidao.playerStatsLine1', statsPayload);
+      const line2 = document.createElement('div');
+      line2.className = 'las-pboard-stats-line';
+      line2.textContent = t('lasidao.playerStatsLine2', statsPayload);
+      stats.appendChild(line1);
+      stats.appendChild(line2);
       head.appendChild(stats);
       board.appendChild(head);
 
-      // 自己与其他玩家都显示资源手牌上限
+      // 资源行：仅本人显示各资源数量；村民空闲/资源上限只给其他玩家看（本人已在上方派遣栏等处可见）
       const resRow = document.createElement('div');
       resRow.className = 'las-pboard-res las-res';
       if (isMe) {
@@ -3793,16 +3848,17 @@ window.LasidaoUi = (function () {
           span.textContent = (labels[k] || k) + ' ' + v;
           resRow.appendChild(span);
         }
+      } else {
+        appendIdleVillagerBadge(resRow, p);
+        const cap = document.createElement('span');
+        cap.className = 'badge' + (totalRes > maxRes ? ' las-res-over' : '');
+        cap.textContent = t('lasidao.resourceHandCap', {
+          total: totalRes,
+          max: maxRes,
+        });
+        resRow.appendChild(cap);
       }
-      appendIdleVillagerBadge(resRow, p);
-      const cap = document.createElement('span');
-      cap.className = 'badge' + (totalRes > maxRes ? ' las-res-over' : '');
-      cap.textContent = t('lasidao.resourceHandCap', {
-        total: totalRes,
-        max: maxRes,
-      });
-      resRow.appendChild(cap);
-      board.appendChild(resRow);
+      if (resRow.childNodes.length) board.appendChild(resRow);
 
       const slotsTitle = document.createElement('div');
       slotsTitle.className = 'las-pboard-label';

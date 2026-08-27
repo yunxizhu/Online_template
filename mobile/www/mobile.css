@@ -1,0 +1,415 @@
+/* 手机端独立布局（不套电脑双栏大厅）；宽屏 PC 纯客户端仍用 style.css */
+
+[hidden] {
+  display: none !important;
+}
+
+.gate-hint {
+  margin: 0.75rem 0 0;
+  line-height: 1.45;
+}
+
+.joining-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 12, 16, 0.78);
+  padding: 1rem;
+}
+
+.joining-overlay[hidden] {
+  display: none !important;
+}
+
+.joining-panel {
+  min-width: 12rem;
+  text-align: center;
+  padding: 1.25rem 1.5rem;
+}
+
+.joining-message {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.45;
+}
+
+/* ========== 手机壳 ========== */
+body.is-mobile-chat {
+  --page-pad: 0.85rem;
+  --mobile-chat-h: min(30vh, 260px);
+  --people-width: 0px;
+}
+
+body.is-mobile-chat .app {
+  min-height: 100dvh;
+  min-height: 100vh;
+}
+
+body.is-mobile-chat .app-top {
+  padding: max(0.7rem, env(safe-area-inset-top)) var(--page-pad) 0.55rem;
+  border-bottom: 1px solid var(--border);
+}
+
+body.is-mobile-chat .app-top h1 {
+  font-size: 1.2rem;
+  margin: 0;
+}
+
+body.is-mobile-chat .app-top-title-row {
+  gap: 0.5rem;
+  align-items: center;
+}
+
+body.is-mobile-chat .me-label {
+  margin: 0.2rem 0 0;
+  font-size: 0.8rem;
+}
+
+body.is-mobile-chat .header-nick {
+  font-size: 0.9rem;
+}
+
+/* 纵向：内容 → 人员 →（底部聊天固定） */
+body.is-mobile-chat .app-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  padding-bottom: calc(var(--mobile-chat-h) + 0.35rem);
+}
+
+body.is-mobile-chat .app-content,
+body.is-mobile-chat .app-body:has(.lobby-people:not([hidden])) .app-content,
+body.is-mobile-chat .app-body:has(.lobby-people:not([hidden])) .app-top {
+  padding-right: var(--page-pad) !important;
+  width: 100%;
+}
+
+body.is-mobile-chat .app-content {
+  padding: 0.65rem var(--page-pad) 0.5rem;
+  flex: 0 0 auto;
+}
+
+body.is-mobile-chat .panel-narrow {
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  padding: 1rem 1rem 1.1rem;
+}
+
+body.is-mobile-chat #lobby-gate label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 0.85rem;
+}
+
+body.is-mobile-chat #lobby-gate input {
+  min-height: 2.75rem;
+  font-size: 1rem;
+}
+
+body.is-mobile-chat #lobby-gate button {
+  width: 100%;
+  min-height: 2.85rem;
+  font-size: 1.05rem;
+}
+
+body.is-mobile-chat .gate-hint {
+  font-size: 0.85rem;
+}
+
+body.is-mobile-chat .lobby-toolbar {
+  margin-bottom: 0.65rem;
+  padding: 0.75rem 0.85rem;
+}
+
+body.is-mobile-chat .lobby-toolbar-actions {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 0.5rem;
+}
+
+body.is-mobile-chat .lobby-toolbar-actions button {
+  flex: unset;
+  min-height: 2.55rem;
+  width: 100%;
+}
+
+body.is-mobile-chat #peers-label {
+  margin: 0.55rem 0 0;
+  font-size: 0.82rem;
+}
+
+body.is-mobile-chat .lobby-refresh-hint {
+  display: none;
+}
+
+body.is-mobile-chat .lobby-rooms {
+  padding: 0.75rem 0.85rem 0.9rem;
+  margin: 0;
+}
+
+body.is-mobile-chat .lobby-rooms h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+}
+
+/* 房间卡片：信息在上，加入全宽 */
+body.is-mobile-chat .room-list li {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.55rem;
+  padding: 0.8rem 0;
+}
+
+body.is-mobile-chat .room-list li > span {
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+body.is-mobile-chat .room-list .mobile-room-title {
+  display: block;
+  font-weight: 650;
+  font-size: 1rem;
+  margin-bottom: 0.2rem;
+}
+
+body.is-mobile-chat .room-list .mobile-room-meta {
+  display: block;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+body.is-mobile-chat .room-list li > button {
+  width: 100%;
+  min-height: 2.55rem;
+  font-size: 1rem;
+}
+
+/* 人员栏改为正文下方卡片，不再贴右侧 */
+body.is-mobile-chat .lobby-people {
+  position: static !important;
+  top: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: auto !important;
+  height: auto !important;
+  z-index: 1;
+  margin: 0 var(--page-pad) 0.75rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(36, 48, 56, 0.96);
+  overflow: hidden;
+}
+
+body.is-mobile-chat .lobby-people .people-list {
+  max-height: 34vh;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+body.is-mobile-chat .people-list li {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+}
+
+body.is-mobile-chat .people-list .people-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
+}
+
+body.is-mobile-chat .people-list .people-status {
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+body.is-mobile-chat .people-list .people-client {
+  font-size: 0.72rem;
+  opacity: 0.85;
+}
+
+/* 底栏聊天：全宽常驻 */
+body.is-mobile-chat .chat-dock {
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  max-width: none !important;
+  transform: none !important;
+  opacity: 1 !important;
+  z-index: 30;
+}
+
+body.is-mobile-chat .chat-dock.is-custom-pos {
+  left: 0 !important;
+  top: auto !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  transform: none !important;
+}
+
+body.is-mobile-chat .chat-dock .chat-panel {
+  height: var(--mobile-chat-h) !important;
+  max-height: none;
+  margin: 0;
+  border-radius: 12px 12px 0 0;
+  border-left: none;
+  border-right: none;
+  border-bottom: none;
+  box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.35);
+  padding: 0.55rem 0.75rem max(0.55rem, env(safe-area-inset-bottom));
+}
+
+body.is-mobile-chat .chat-dock .chat-head {
+  padding-bottom: 0.25rem;
+}
+
+body.is-mobile-chat .chat-dock .chat-log {
+  max-height: none;
+  flex: 1 1 auto;
+  min-height: 0;
+  font-size: 0.9rem;
+}
+
+body.is-mobile-chat .chat-dock .chat-collapsed-preview {
+  display: none !important;
+}
+
+body.is-mobile-chat .chat-dock:not(.is-active) .chat-log {
+  display: block !important;
+}
+
+body.is-mobile-chat .chat-dock:not(.is-active) .chat-form {
+  display: flex !important;
+}
+
+body.is-mobile-chat .chat-form input {
+  min-height: 2.35rem;
+  font-size: 1rem;
+}
+
+body.is-mobile-chat .chat-form button {
+  min-height: 2.35rem;
+  min-width: 4.2rem;
+}
+
+body.is-mobile-chat .modal-dialog {
+  width: min(100%, 26rem);
+  margin: 0.75rem;
+  max-height: min(88vh, 640px);
+  overflow: auto;
+}
+
+body.is-mobile-chat .modal-dialog input,
+body.is-mobile-chat .modal-dialog button {
+  min-height: 2.55rem;
+  font-size: 1rem;
+}
+
+/* JS 尚未挂 class：窄屏先按手机布局兜底 */
+@media (max-width: 719px) {
+  body:not(.is-mobile-chat) {
+    --page-pad: 0.85rem;
+    --mobile-chat-h: min(30vh, 260px);
+  }
+
+  body:not(.is-mobile-chat) .app-body {
+    padding-bottom: calc(var(--mobile-chat-h) + 0.35rem);
+  }
+
+  body:not(.is-mobile-chat) .app-content,
+  body:not(.is-mobile-chat) .app-body:has(.lobby-people:not([hidden])) .app-content {
+    padding-right: var(--page-pad) !important;
+  }
+
+  body:not(.is-mobile-chat) .lobby-people {
+    position: static !important;
+    width: auto !important;
+    margin: 0 var(--page-pad) 0.75rem;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+  }
+
+  body:not(.is-mobile-chat) .chat-dock {
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+
+  body:not(.is-mobile-chat) .chat-dock .chat-panel {
+    height: var(--mobile-chat-h) !important;
+    border-radius: 12px 12px 0 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    padding-bottom: max(0.55rem, env(safe-area-inset-bottom));
+  }
+
+  body:not(.is-mobile-chat) .chat-dock .chat-collapsed-preview {
+    display: none !important;
+  }
+
+  body:not(.is-mobile-chat) .room-list li {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.55rem;
+  }
+
+  body:not(.is-mobile-chat) .room-list li > button {
+    width: 100%;
+  }
+}
+
+.lobby-playing-title {
+  margin-top: 0.85rem;
+}
+
+.ctx-menu {
+  position: fixed;
+  z-index: 2500;
+  min-width: 10rem;
+  padding: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(28, 36, 42, 0.98);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+.ctx-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 0;
+  border: none;
+  background: transparent;
+  padding: 0.7rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.95rem;
+}
+
+.ctx-menu button:disabled {
+  opacity: 0.45;
+}
+
+.ctx-menu .ctx-hint {
+  margin: 0.25rem 0.45rem 0.4rem;
+  font-size: 0.8rem;
+}

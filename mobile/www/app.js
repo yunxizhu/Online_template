@@ -1,0 +1,1191 @@
+/* 加入端大厅：MQTT 发现 + 聊天 + 加入（无创建房间；安卓 App / PC 纯客户端共用） */
+(function () {
+  'use strict';
+
+  const APP = 'lianji';
+  const BROKER = 'wss://broker.emqx.io:8084/mqtt';
+  /** 与电脑端默认频道一致，加入端不提供切换 */
+  const DEFAULT_CHANNEL = 'xiyun_lianjidating_public';
+  const LOGIN_HB_MS = 10000;
+  const ROOM_OFFLINE_MS = 25000;
+  const LOGIN_OFFLINE_MS = 25000;
+  const STALE_CLEAR_MS = 120000;
+  const STORAGE_NICK = 'lianji.nick';
+  const STORAGE_TAG = 'lianji.tag';
+  const STORAGE_SID = 'lianji.sessionId';
+
+  function detectClient() {
+    const ua = String(navigator.userAgent || '');
+    const plat = String(navigator.platform || '');
+    if (/Android/i.test(ua) || /iPhone|iPod|iPad/i.test(ua)) return 'mobile';
+    if (/Capacitor/i.test(ua) || /; wv\)/i.test(ua)) return 'mobile';
+    if (/Mac|Darwin/i.test(plat) || /Mac OS X/i.test(ua)) return 'mac';
+    if (/Win/i.test(plat) || /Windows/i.test(ua)) return 'windows';
+    return 'mobile';
+  }
+
+  const MY_CLIENT = detectClient();
+  const MY_ROLE = 'client';
+  const CLIENT_LABEL =
+    MY_CLIENT === 'windows'
+      ? 'Windows 纯客户端'
+      : MY_CLIENT === 'mac'
+        ? 'Mac 纯客户端'
+        : '手机加入端';
+
+  const el = {
+    gate: document.getElementById('lobby-gate'),
+    main: document.getElementById('lobby-main'),
+    peopleAside: document.getElementById('lobby-people-aside'),
+    playerName: document.getElementById('player-name'),
+    btnEnter: document.getElementById('btn-enter-lobby'),
+    btnJoin: document.getElementById('btn-toggle-join'),
+    btnSpectate: document.getElementById('btn-toggle-spectate'),
+    btnRefresh: document.getElementById('btn-refresh-lobby'),
+    peersLabel: document.getElementById('peers-label'),
+    roomList: document.getElementById('room-list'),
+    roomEmpty: document.getElementById('room-list-empty'),
+    roomListPlaying: document.getElementById('room-list-playing'),
+    roomPlayingEmpty: document.getElementById('room-list-playing-empty'),
+    peopleList: document.getElementById('lobby-people-list'),
+    peopleEmpty: document.getElementById('lobby-people-empty'),
+    peopleCount: document.getElementById('lobby-people-count'),
+    headerNick: document.getElementById('header-nick'),
+    nickDisplay: document.getElementById('nick-display'),
+    meLabel: document.getElementById('me-label'),
+    toast: document.getElementById('toast'),
+    chatDock: document.getElementById('chat-dock'),
+    chatPanel: document.getElementById('chat-panel'),
+    chatLog: document.getElementById('chat-log'),
+    chatForm: document.getElementById('chat-form'),
+    chatInput: document.getElementById('chat-input'),
+    chatCollapsedPreview: document.getElementById('chat-collapsed-preview'),
+    chatHead: document.getElementById('chat-drag-handle'),
+    btnRefreshPeople: document.getElementById('btn-refresh-doc'),
+    joinModal: document.getElementById('join-code-modal'),
+    joinCode: document.getElementById('join-code'),
+    joinCodeTitle: document.getElementById('join-code-title'),
+    hostUrl: document.getElementById('host-url'),
+    btnJoinConfirm: document.getElementById('btn-join-code'),
+    btnCloseJoin: document.getElementById('btn-close-join'),
+    joiningOverlay: document.getElementById('joining-overlay'),
+    joiningMessage: document.getElementById('joining-message'),
+    roomCtx: document.getElementById('room-ctx'),
+    peopleCtx: document.getElementById('people-ctx'),
+  };
+
+  /** @type {Map<string, object>} */
+  const rooms = new Map();
+  /** @type {Map<string, object>} */
+  const logins = new Map();
+
+  let client = null;
+  let pruneTimer = null;
+  let loginTimer = null;
+  let entered = false;
+  let playerName = '';
+  let playerTag = '';
+  let sessionId = '';
+  let instanceId = '';
+  let loginAt = 0;
+  let lastChatAt = 0;
+  let toastTimer = null;
+
+  function uid(prefix) {
+    return (
+      prefix +
+      Math.random().toString(36).slice(2, 10) +
+      Date.now().toString(36).slice(-4)
+    );
+  }
+
+  function channelName() {
+    return DEFAULT_CHANNEL;
+  }
+
+  function prefix() {
+    return 'lianji/v1/' + channelName();
+  }
+
+  function showToast(text) {
+    if (!el.toast) return;
+    el.toast.textContent = text;
+    el.toast.hidden = false;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      el.toast.hidden = true;
+    }, 2800);
+  }
+
+  function normalizeHost(raw) {
+    let s = String(raw || '').trim();
+    if (!s) return '';
+    if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+    return s.replace(/\/+$/, '');
+  }
+
+  let joining = false;
+  let codeModalMode = 'join'; // 'join' | 'spectate'
+  let roomCtxTarget = null;
+  let peopleCtxTarget = null;
+
+  function showJoining(message) {
+    joining = true;
+    if (el.joiningMessage) {
+      el.joiningMessage.textContent = message || '正在加入…';
+    }
+    if (el.joiningOverlay) el.joiningOverlay.hidden = false;
+    setJoinOpen(false);
+  }
+
+  function openHost(host, roomId, opts = {}) {
+    if (joining) return;
+    const base = normalizeHost(host);
+    if (!base) {
+      showToast('无效的房主地址');
+      return;
+    }
+    try {
+      // eslint-disable-next-line no-new
+      new URL(base);
+    } catch (_) {
+      showToast('地址格式不正确');
+      return;
+    }
+    const mode = opts.mode === 'spectate' ? 'spectate' : opts.mode === 'createPassive' ? 'createPassive' : 'join';
+    const u = new URL(base + '/');
+    u.searchParams.set('guest', '1');
+    u.searchParams.set('client', MY_CLIENT);
+    u.searchParams.set('role', MY_ROLE);
+    if (playerName) u.searchParams.set('name', playerName);
+    if (playerTag) u.searchParams.set('tag', playerTag);
+    if (sessionId) u.searchParams.set('sid', sessionId);
+    if (mode === 'createPassive') {
+      u.searchParams.set('createPassive', '1');
+    } else if (roomId) {
+      u.searchParams.set('join', String(roomId).toUpperCase());
+      if (mode === 'spectate') u.searchParams.set('spectate', '1');
+    }
+    const busy =
+      mode === 'createPassive'
+        ? '正在前往被动主机开房…'
+        : mode === 'spectate'
+          ? '正在观战 ' + String(roomId).toUpperCase() + '…'
+          : roomId
+            ? '正在加入房间 ' + String(roomId).toUpperCase() + '…'
+            : '正在加入…';
+    showJoining(busy);
+    clearLoginBeacon();
+    const href = u.toString();
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        window.location.href = href;
+      }, 40);
+    });
+  }
+
+  function setJoinOpen(open, mode) {
+    if (!el.joinModal) return;
+    if (mode) codeModalMode = mode;
+    el.joinModal.hidden = !open;
+    if (open && el.joinCodeTitle) {
+      el.joinCodeTitle.textContent =
+        codeModalMode === 'spectate' ? '房间码观战' : '加入房间';
+    }
+    if (open && el.btnJoinConfirm) {
+      el.btnJoinConfirm.textContent =
+        codeModalMode === 'spectate' ? '观战' : '加入';
+    }
+  }
+
+  function clientLabel(client, role) {
+    const c = String(client || '').toLowerCase();
+    const r = String(role || '').toLowerCase();
+    let plat = '';
+    if (c === 'windows') plat = 'Windows';
+    else if (c === 'mac') plat = 'Mac';
+    else if (c === 'mobile' || c === 'android' || c === 'ios') plat = '手机';
+    let roleBit = '';
+    if (r === 'host') roleBit = '主机';
+    else if (r === 'client') roleBit = '客户端';
+    const parts = [plat, roleBit].filter(Boolean);
+    return parts.join('·');
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function nickHtml(name, tag) {
+    const base = escapeHtml(String(name || '玩家').trim() || '玩家');
+    const t = tag ? String(tag).slice(-5) : '';
+    return t
+      ? base + '<span class="nick-tag">#' + escapeHtml(t) + '</span>'
+      : base;
+  }
+
+  function remoteBadgeHtml(client, role) {
+    const label = clientLabel(client, role);
+    if (!label) return '';
+    return (
+      ' <span class="people-client" title="' +
+      escapeHtml(label) +
+      '">[' +
+      escapeHtml(label) +
+      ']</span>'
+    );
+  }
+
+  function statusText(st, roomName) {
+    if (st === 'playing') return '对局中';
+    if (st === 'offline') return '离线';
+    if (st === 'spectating') {
+      return roomName ? '观战 · ' + roomName : '观战中';
+    }
+    if (st === 'room') {
+      return roomName ? '房间中 · ' + roomName : '房间中';
+    }
+    if (st === 'passive') return '被动模式';
+    return '空闲';
+  }
+
+  function isNarrowUi() {
+    return window.matchMedia('(max-width: 719px)').matches;
+  }
+
+  function isMobileChatUi() {
+    if (MY_CLIENT === 'mobile') return true;
+    try {
+      if (window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function') {
+        if (window.Capacitor.isNativePlatform()) return true;
+      }
+    } catch (_) {}
+    return isNarrowUi();
+  }
+
+  function applyMobileChatChrome() {
+    document.body.classList.toggle('is-mobile-chat', isMobileChatUi());
+    if (!el.chatDock) return;
+    if (isMobileChatUi()) {
+      el.chatDock.classList.add('is-active');
+      el.chatDock.classList.remove('is-custom-pos');
+      el.chatDock.style.left = '';
+      el.chatDock.style.top = '';
+      el.chatDock.style.right = '';
+      el.chatDock.style.bottom = '';
+      el.chatDock.style.transform = '';
+    }
+  }
+
+  function setChatDockActive(active) {
+    if (!el.chatDock) return;
+    // 手机端常驻展开，不受失焦/点击折叠影响
+    if (isMobileChatUi()) {
+      el.chatDock.classList.add('is-active');
+      return;
+    }
+    el.chatDock.classList.toggle('is-active', Boolean(active));
+  }
+
+  function updateChatPreview(msg) {
+    if (!el.chatCollapsedPreview) return;
+    if (!msg || !msg.text) {
+      el.chatCollapsedPreview.textContent = '还没有人发言';
+      return;
+    }
+    const who =
+      (msg.name || '玩家') + (msg.tag ? '#' + String(msg.tag).slice(-5) : '');
+    el.chatCollapsedPreview.textContent = who + '：' + msg.text;
+  }
+
+  function isRoomFull(room) {
+    const count = Number(room && room.playerCount);
+    const max = Number(room && room.maxPlayers);
+    return Number.isFinite(count) && Number.isFinite(max) && max > 0 && count >= max;
+  }
+
+  function roomCanJoin(room) {
+    if (!room || !room.host) return false;
+    if (room.canJoin != null) return Boolean(room.canJoin);
+    const waiting = !room.status || room.status === 'waiting';
+    return waiting && !isRoomFull(room);
+  }
+
+  function roomCanSpectate(room) {
+    if (!room || !room.host) return false;
+    if (room.canSpectate != null) return Boolean(room.canSpectate);
+    return (
+      !room.status ||
+      room.status === 'waiting' ||
+      room.status === 'playing'
+    );
+  }
+
+  function bindLongPress(node, onLongPress) {
+    if (!node || typeof onLongPress !== 'function') return;
+    let timer = null;
+    let startX = 0;
+    let startY = 0;
+    const clear = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
+    node.addEventListener(
+      'pointerdown',
+      (ev) => {
+        if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+        startX = ev.clientX;
+        startY = ev.clientY;
+        clear();
+        timer = setTimeout(() => {
+          timer = null;
+          onLongPress(ev.clientX, ev.clientY);
+        }, 480);
+      },
+      { passive: true }
+    );
+    node.addEventListener(
+      'pointermove',
+      (ev) => {
+        if (!timer) return;
+        if (
+          Math.abs(ev.clientX - startX) > 12 ||
+          Math.abs(ev.clientY - startY) > 12
+        ) {
+          clear();
+        }
+      },
+      { passive: true }
+    );
+    node.addEventListener('pointerup', clear, { passive: true });
+    node.addEventListener('pointercancel', clear, { passive: true });
+  }
+
+  function placeCtxMenu(menu, x, y) {
+    if (!menu) return;
+    menu.hidden = false;
+    const pad = 8;
+    const rect = menu.getBoundingClientRect();
+    const w = rect.width || 180;
+    const h = rect.height || 90;
+    let left = x;
+    let top = y;
+    if (left + w > window.innerWidth - pad) left = window.innerWidth - w - pad;
+    if (top + h > window.innerHeight - pad) top = window.innerHeight - h - pad;
+    menu.style.left = Math.max(pad, left) + 'px';
+    menu.style.top = Math.max(pad, top) + 'px';
+  }
+
+  function hideRoomCtx() {
+    if (!el.roomCtx) return;
+    el.roomCtx.hidden = true;
+    roomCtxTarget = null;
+  }
+
+  function hidePeopleCtx() {
+    if (!el.peopleCtx) return;
+    el.peopleCtx.hidden = true;
+    peopleCtxTarget = null;
+  }
+
+  function showRoomCtx(room, x, y) {
+    if (!el.roomCtx || !room) return;
+    hidePeopleCtx();
+    roomCtxTarget = room;
+    const btnJoin = el.roomCtx.querySelector('[data-action="room-join"]');
+    const btnSpec = el.roomCtx.querySelector('[data-action="room-spectate"]');
+    const hint = document.getElementById('room-ctx-hint');
+    const canJoin = roomCanJoin(room);
+    const canSpec = roomCanSpectate(room);
+    if (btnJoin) {
+      btnJoin.disabled = !canJoin;
+      btnJoin.title = canJoin
+        ? ''
+        : room.status === 'playing'
+          ? '对局已开始'
+          : '房间已满或不可加入';
+    }
+    if (btnSpec) btnSpec.disabled = !canSpec;
+    if (hint) {
+      hint.hidden = canJoin || canSpec;
+      hint.textContent = canJoin || canSpec ? '' : '暂无可用操作';
+    }
+    placeCtxMenu(el.roomCtx, x, y);
+  }
+
+  function showPeopleCtx(person, x, y) {
+    if (!el.peopleCtx || !person) return;
+    hideRoomCtx();
+    peopleCtxTarget = person;
+    const btnCreate = el.peopleCtx.querySelector('[data-action="create-on-host"]');
+    const hint = document.getElementById('people-ctx-hint');
+    const canCreate =
+      !person.self &&
+      person.passive &&
+      person.status === 'idle' &&
+      Boolean(person.host);
+    let reason = '';
+    if (person.self) reason = '不能在自己这里代开';
+    else if (!person.passive || person.status !== 'idle') {
+      reason = '对方未开被动模式或已在房间';
+    } else if (!person.host) reason = '缺少对方公网地址';
+    if (btnCreate) {
+      btnCreate.disabled = !canCreate;
+      btnCreate.title = canCreate ? '' : reason;
+    }
+    if (hint) {
+      hint.hidden = canCreate;
+      hint.textContent = canCreate ? '' : reason || '暂无可用操作';
+    }
+    placeCtxMenu(el.peopleCtx, x, y);
+  }
+
+  function appendRoomListItem(ul, room, { preferSpectate = false } = {}) {
+    if (!ul || !room) return;
+    const li = document.createElement('li');
+    const info = document.createElement('span');
+    const gameLabel = room.gameLabel || room.gameType || '游戏';
+    const modeBit = room.gameModeLabel ? '·' + room.gameModeLabel : '';
+    let playerBit =
+      room.playerCount != null && room.maxPlayers != null
+        ? room.playerCount + '/' + room.maxPlayers
+        : String(room.playerCount != null ? room.playerCount : '?');
+    if (Array.isArray(room.playerNames) && room.playerNames.length) {
+      const tags = Array.isArray(room.playerTags) ? room.playerTags : [];
+      const joined = room.playerNames
+        .map((n, i) =>
+          String(n || '') + (tags[i] ? '#' + String(tags[i]).slice(-5) : '')
+        )
+        .filter(Boolean)
+        .join(' · ');
+      if (joined) {
+        playerBit =
+          joined +
+          ' (' +
+          (room.playerCount != null ? room.playerCount : '?') +
+          '/' +
+          (room.maxPlayers != null ? room.maxPlayers : '?') +
+          ')';
+      }
+    }
+    const mobile = isMobileChatUi();
+    if (mobile) {
+      const title = document.createElement('span');
+      title.className = 'mobile-room-title';
+      title.textContent = room.name || room.id || '房间';
+      const meta = document.createElement('span');
+      meta.className = 'mobile-room-meta';
+      meta.textContent = [
+        gameLabel + modeBit,
+        playerBit,
+        room.id ? '码 ' + room.id : null,
+        room.status === 'playing' ? '对局中' : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      info.appendChild(title);
+      info.appendChild(meta);
+    } else {
+      info.innerHTML =
+        '<span class="badge game-badge">' +
+        escapeHtml(gameLabel) +
+        escapeHtml(modeBit) +
+        '</span> ' +
+        escapeHtml(room.name || room.id || '房间') +
+        '  ' +
+        escapeHtml(playerBit) +
+        (room.status === 'playing'
+          ? ' <span class="badge">对局中</span>'
+          : '');
+    }
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    const canJoin = roomCanJoin(room);
+    const canSpec = roomCanSpectate(room);
+    if (preferSpectate || (!canJoin && canSpec)) {
+      btn.textContent = '观战';
+      btn.className = 'secondary';
+      if (!canSpec) {
+        btn.disabled = true;
+        btn.title = !room.host ? '暂无可用地址' : '不可观战';
+      } else {
+        btn.addEventListener('click', () =>
+          openHost(room.host, room.id, { mode: 'spectate' })
+        );
+      }
+    } else {
+      btn.textContent = '加入';
+      if (!canJoin) {
+        btn.disabled = true;
+        btn.title = !room.host
+          ? '暂无可用地址'
+          : room.status === 'playing'
+            ? '对局已开始，请观战'
+            : '房间已满';
+        li.classList.add('is-full');
+      } else {
+        btn.addEventListener('click', () => openHost(room.host, room.id));
+      }
+    }
+    li.appendChild(info);
+    li.appendChild(btn);
+    li.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      showRoomCtx(room, ev.clientX, ev.clientY);
+    });
+    bindLongPress(li, (x, y) => showRoomCtx(room, x, y));
+    ul.appendChild(li);
+  }
+
+  function renderRooms() {
+    const now = Date.now();
+    const items = [...rooms.values()]
+      .filter(
+        (r) =>
+          r.updateTime &&
+          now - r.updateTime <= ROOM_OFFLINE_MS &&
+          (!r.status || r.status === 'waiting' || r.status === 'playing')
+      )
+      .sort((a, b) => (b.updateTime || 0) - (a.updateTime || 0));
+
+    const waiting = items.filter((r) => r.status !== 'playing');
+    const playing = items.filter((r) => r.status === 'playing');
+
+    if (el.roomList) el.roomList.replaceChildren();
+    if (el.roomListPlaying) el.roomListPlaying.replaceChildren();
+    for (const r of waiting) appendRoomListItem(el.roomList, r);
+    for (const r of playing) {
+      appendRoomListItem(el.roomListPlaying, r, { preferSpectate: true });
+    }
+    if (el.roomEmpty) el.roomEmpty.hidden = waiting.length > 0;
+    if (el.roomPlayingEmpty) el.roomPlayingEmpty.hidden = playing.length > 0;
+  }
+
+  function renderPeople() {
+    const now = Date.now();
+    const out = [];
+    for (const [id, p] of logins) {
+      if (!p || !p.updateTime || now - p.updateTime > LOGIN_OFFLINE_MS) continue;
+      const people = Array.isArray(p.people) && p.people.length ? p.people : null;
+      const loginHost = p.host ? String(p.host).replace(/\/$/, '') : '';
+      if (people) {
+        people.forEach((pp, i) => {
+          const name = String((pp && pp.name) || '').trim();
+          if (!name) return;
+          const passive = Boolean((pp && pp.passive) || p.passive);
+          const status = (pp && pp.status) || 'idle';
+          out.push({
+            key: id + ':' + i,
+            name,
+            tag: (pp && pp.tag) || null,
+            status,
+            roomName: (pp && pp.roomName) || null,
+            client: (pp && pp.client) || null,
+            role: (pp && pp.role) || null,
+            passive,
+            host: passive ? loginHost || null : null,
+            self: id === instanceId,
+          });
+        });
+      } else if (p.displayName) {
+        out.push({
+          key: id,
+          name: p.displayName,
+          tag: p.displayTag || null,
+          status: 'idle',
+          roomName: null,
+          client: null,
+          role: null,
+          passive: Boolean(p.passive),
+          host: p.passive ? loginHost || null : null,
+          self: id === instanceId,
+        });
+      }
+    }
+    out.sort((a, b) => {
+      if (a.status === 'offline' && b.status !== 'offline') return 1;
+      if (a.status !== 'offline' && b.status === 'offline') return -1;
+      if (a.self !== b.self) return a.self ? -1 : 1;
+      return a.name.localeCompare(b.name, 'zh');
+    });
+
+    el.peopleList.replaceChildren();
+    const available = out.filter(
+      (p) => p.status !== 'offline' && p.status !== 'playing'
+    ).length;
+    for (const p of out) {
+      const li = document.createElement('li');
+      const name = document.createElement('span');
+      name.className = 'people-name';
+      name.innerHTML =
+        nickHtml(p.name, p.tag) +
+        (p.self ? ' <span class="you">(我)</span>' : '') +
+        (p.passive && p.status === 'idle'
+          ? ' <span class="badge">被动</span>'
+          : '') +
+        remoteBadgeHtml(p.client, p.role);
+      name.title =
+        p.name + (p.tag ? '#' + String(p.tag).slice(-5) : '');
+      const st = document.createElement('span');
+      st.className = 'people-status';
+      st.textContent =
+        p.passive && p.status === 'idle'
+          ? statusText('passive')
+          : statusText(p.status, p.roomName);
+      if (p.status === 'offline') li.classList.add('is-offline');
+      li.appendChild(name);
+      li.appendChild(st);
+      li.addEventListener('contextmenu', (ev) => {
+        ev.preventDefault();
+        showPeopleCtx(p, ev.clientX, ev.clientY);
+      });
+      bindLongPress(li, (x, y) => showPeopleCtx(p, x, y));
+      el.peopleList.appendChild(li);
+    }
+    el.peopleEmpty.hidden = out.length > 0;
+    if (el.peopleCount) {
+      el.peopleCount.textContent = out.length
+        ? '（可组队 ' + available + ' / 共 ' + out.length + '）'
+        : '';
+    }
+  }
+
+  function appendChat(msg) {
+    if (!el.chatLog || !msg || !msg.text) return;
+    const li = document.createElement('li');
+    const from = document.createElement('span');
+    from.className = 'chat-from';
+    from.textContent =
+      (msg.name || '玩家') + (msg.tag ? '#' + String(msg.tag).slice(-5) : '');
+    const text = document.createElement('span');
+    text.className = 'chat-text';
+    text.textContent = msg.text;
+    li.appendChild(from);
+    li.appendChild(document.createTextNode(' '));
+    li.appendChild(text);
+    el.chatLog.appendChild(li);
+    while (el.chatLog.children.length > 80) {
+      el.chatLog.removeChild(el.chatLog.firstChild);
+    }
+    el.chatLog.scrollTop = el.chatLog.scrollHeight;
+    updateChatPreview(msg);
+  }
+
+  function prune() {
+    const now = Date.now();
+    let changed = false;
+    for (const [id, p] of logins) {
+      if (!p || !p.updateTime || now - p.updateTime > STALE_CLEAR_MS) {
+        logins.delete(id);
+        changed = true;
+      }
+    }
+    for (const [id, r] of rooms) {
+      if (!r || !r.updateTime || now - r.updateTime > STALE_CLEAR_MS) {
+        rooms.delete(id);
+        changed = true;
+      }
+    }
+    if (changed) {
+      renderRooms();
+      renderPeople();
+    } else {
+      // 轻量刷新超时项
+      renderRooms();
+      renderPeople();
+    }
+  }
+
+  function clearLoginBeacon() {
+    if (!client || !client.connected || !instanceId) return;
+    try {
+      client.publish(prefix() + '/login/' + instanceId, '', {
+        qos: 0,
+        retain: true,
+      });
+    } catch (_) {}
+  }
+
+  function publishLogin() {
+    if (!client || !client.connected || !entered) return;
+    const payload = {
+      app: APP,
+      instanceId,
+      displayName: playerName,
+      displayTag: playerTag || null,
+      people: [
+        {
+          name: playerName,
+          tag: playerTag || null,
+          status: 'idle',
+          roomId: null,
+          roomName: null,
+          sessionId,
+          client: MY_CLIENT,
+          role: MY_ROLE,
+        },
+      ],
+      loginAt,
+      updateTime: Date.now(),
+    };
+    client.publish(prefix() + '/login/' + instanceId, JSON.stringify(payload), {
+      qos: 1,
+      retain: true,
+    });
+  }
+
+  function handleMessage(topic, buf) {
+    const raw = buf ? buf.toString() : '';
+    const chatTopic = prefix() + '/chat/all';
+    if (topic === chatTopic || topic.endsWith('/chat/all')) {
+      if (!raw.trim()) return;
+      try {
+        const p = JSON.parse(raw);
+        if (!p || p.app !== APP || p.kind !== 'chat') return;
+        if (p.instanceId && p.instanceId === instanceId) return;
+        appendChat(p);
+      } catch (_) {}
+      return;
+    }
+
+    const loginPrefix = prefix() + '/login/';
+    const roomPrefix = prefix() + '/room/';
+    if (topic.startsWith(loginPrefix)) {
+      const id = topic.slice(loginPrefix.length);
+      if (!id) return;
+      if (!raw.trim()) {
+        logins.delete(id);
+        renderPeople();
+        return;
+      }
+      try {
+        const p = JSON.parse(raw);
+        if (!p || p.app !== APP) return;
+        logins.set(id, {
+          ...p,
+          updateTime: Number(p.updateTime) || Date.now(),
+        });
+        renderPeople();
+      } catch (_) {}
+      return;
+    }
+
+    if (topic.startsWith(roomPrefix)) {
+      const id = topic.slice(roomPrefix.length);
+      if (!id) return;
+      if (!raw.trim()) {
+        rooms.delete(id);
+        renderRooms();
+        return;
+      }
+      try {
+        const p = JSON.parse(raw);
+        if (!p || p.app !== APP || !p.host || !p.id) return;
+        rooms.set(id, {
+          instanceId: id,
+          id: String(p.id),
+          name: String(p.name || ''),
+          host: String(p.host).replace(/\/$/, ''),
+          gameType: p.gameType || '',
+          gameLabel: p.gameLabel || '',
+          gameMode: p.gameMode || '',
+          gameModeLabel: p.gameModeLabel || '',
+          playerCount: p.playerCount,
+          maxPlayers: p.maxPlayers,
+          status: p.status || 'waiting',
+          creatorName: p.creatorName || '',
+          playerNames: Array.isArray(p.playerNames) ? p.playerNames : [],
+          playerTags: Array.isArray(p.playerTags) ? p.playerTags : [],
+          canJoin: p.canJoin,
+          canSpectate: p.canSpectate,
+          updateTime: Number(p.updateTime) || Date.now(),
+        });
+        renderRooms();
+      } catch (_) {}
+    }
+  }
+
+  function disconnectMqtt() {
+    if (pruneTimer) {
+      clearInterval(pruneTimer);
+      pruneTimer = null;
+    }
+    if (loginTimer) {
+      clearInterval(loginTimer);
+      loginTimer = null;
+    }
+    clearLoginBeacon();
+    if (client) {
+      try {
+        client.end(true);
+      } catch (_) {}
+      client = null;
+    }
+  }
+
+  function connectMqtt() {
+    const mqttLib =
+      typeof mqtt !== 'undefined'
+        ? mqtt
+        : typeof window !== 'undefined'
+          ? window.mqtt
+          : null;
+    if (!mqttLib || !mqttLib.connect) {
+      if (el.peersLabel) el.peersLabel.textContent = '广播：MQTT 库未加载';
+      showToast('发现服务未就绪，仍可用「房间码 / 地址」加入');
+      return;
+    }
+    disconnectMqtt();
+    rooms.clear();
+    logins.clear();
+    renderRooms();
+    renderPeople();
+
+    if (el.peersLabel) el.peersLabel.textContent = '广播：连接中…';
+    client = mqttLib.connect(BROKER, {
+      clientId: 'lianji-and-' + instanceId.slice(0, 8),
+      protocolVersion: 4,
+      clean: true,
+      keepalive: 60,
+      reconnectPeriod: 8000,
+      connectTimeout: 12000,
+      will: {
+        topic: prefix() + '/login/' + instanceId,
+        payload: '',
+        qos: 1,
+        retain: true,
+      },
+    });
+
+    client.on('connect', () => {
+      const base = prefix();
+      client.subscribe(
+        [base + '/login/+', base + '/room/+', base + '/chat/all'],
+        { qos: 1 },
+        (err) => {
+          if (err) {
+            if (el.peersLabel) el.peersLabel.textContent = '广播：订阅失败';
+            return;
+          }
+          if (el.peersLabel) el.peersLabel.textContent = '广播：已连接';
+          publishLogin();
+        }
+      );
+    });
+    client.on('message', handleMessage);
+    client.on('error', () => {
+      if (el.peersLabel) el.peersLabel.textContent = '广播：连接异常';
+    });
+    client.on('close', () => {
+      if (entered && el.peersLabel) {
+        el.peersLabel.textContent = '广播：已断开，重连中…';
+      }
+    });
+
+    pruneTimer = setInterval(prune, 5000);
+    loginTimer = setInterval(publishLogin, LOGIN_HB_MS);
+  }
+
+  function enterLobby() {
+    try {
+      const name = String((el.playerName && el.playerName.value) || '')
+        .trim()
+        .slice(0, 16);
+      if (!name) {
+        showToast('请输入昵称');
+        return;
+      }
+      playerName = name;
+      try {
+        localStorage.setItem(STORAGE_NICK, name);
+        if (!localStorage.getItem(STORAGE_TAG)) {
+          localStorage.setItem(
+            STORAGE_TAG,
+            String(Math.floor(10000 + Math.random() * 90000))
+          );
+        }
+        if (!localStorage.getItem(STORAGE_SID)) {
+          localStorage.setItem(STORAGE_SID, uid('s'));
+        }
+        playerTag = localStorage.getItem(STORAGE_TAG) || '';
+        sessionId = localStorage.getItem(STORAGE_SID) || uid('s');
+      } catch (_) {
+        playerTag = String(Math.floor(10000 + Math.random() * 90000));
+        sessionId = uid('s');
+      }
+      if (!instanceId) instanceId = uid('and');
+      loginAt = Date.now();
+      entered = true;
+
+      if (el.gate) el.gate.hidden = true;
+      if (el.main) el.main.hidden = false;
+      if (el.peopleAside) el.peopleAside.hidden = false;
+      if (el.chatDock) {
+        el.chatDock.hidden = false;
+        applyMobileChatChrome();
+        setChatDockActive(true);
+      }
+      if (el.headerNick) el.headerNick.hidden = false;
+      if (el.nickDisplay) el.nickDisplay.textContent = playerName;
+      if (el.meLabel) {
+        el.meLabel.textContent = CLIENT_LABEL + ' · 已进入大厅';
+      }
+
+      // 先切界面，再连 MQTT（避免库异常导致“点了没反应”）
+      setTimeout(() => {
+        try {
+          connectMqtt();
+        } catch (err) {
+          if (el.peersLabel) {
+            el.peersLabel.textContent = '广播：连接失败';
+          }
+          showToast(
+            (err && err.message) || '广播连接失败，仍可用地址加入房间'
+          );
+        }
+      }, 0);
+    } catch (err) {
+      showToast((err && err.message) || '进入大厅失败');
+      console.error('[lianji] enterLobby', err);
+    }
+  }
+
+  function resolveAndJoinByCode(code, mode) {
+    const id = String(code || '').trim().toUpperCase();
+    if (!id) {
+      showToast('请输入房间码');
+      return;
+    }
+    const now = Date.now();
+    for (const r of rooms.values()) {
+      if (
+        r.id === id &&
+        r.host &&
+        r.updateTime &&
+        now - r.updateTime <= ROOM_OFFLINE_MS
+      ) {
+        if (mode === 'spectate') {
+          openHost(r.host, r.id, { mode: 'spectate' });
+        } else if (!roomCanJoin(r)) {
+          showToast(
+            r.status === 'playing' ? '对局已开始，请用观战' : '房间已满'
+          );
+        } else {
+          openHost(r.host, r.id);
+        }
+        return;
+      }
+    }
+    showToast('未找到该房间码（对方需在线且房间未隐藏）');
+  }
+
+  function joinFromModal() {
+    const url = String(el.hostUrl.value || '').trim();
+    const code = String(el.joinCode.value || '').trim();
+    const mode = codeModalMode === 'spectate' ? 'spectate' : 'join';
+    if (url) {
+      openHost(url, code || undefined, { mode });
+      return;
+    }
+    resolveAndJoinByCode(code, mode);
+  }
+
+  function sendChat(text) {
+    const body = String(text || '')
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 120);
+    if (!body) return;
+    const now = Date.now();
+    if (now - lastChatAt < 700) {
+      showToast('发送太快，请稍候');
+      return;
+    }
+    lastChatAt = now;
+    if (!client || !client.connected) {
+      showToast('广播未连接，无法发送');
+      return;
+    }
+    const msg = {
+      app: APP,
+      kind: 'chat',
+      channel: 'all',
+      roomId: null,
+      name: playerName,
+      tag: playerTag || null,
+      sessionId,
+      instanceId,
+      text: body,
+      at: now,
+    };
+    client.publish(prefix() + '/chat/all', JSON.stringify(msg), {
+      qos: 0,
+      retain: false,
+    });
+    appendChat(msg);
+  }
+
+  function bindUi() {
+    if (el.btnEnter) {
+      el.btnEnter.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        enterLobby();
+      });
+    } else {
+      console.error('[lianji] missing #btn-enter-lobby');
+    }
+    if (el.playerName) {
+      el.playerName.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          enterLobby();
+        }
+      });
+    }
+    if (el.btnJoin) {
+      el.btnJoin.addEventListener('click', () => setJoinOpen(true, 'join'));
+    }
+    if (el.btnSpectate) {
+      el.btnSpectate.addEventListener('click', () =>
+        setJoinOpen(true, 'spectate')
+      );
+    }
+    if (el.btnCloseJoin) {
+      el.btnCloseJoin.addEventListener('click', () => setJoinOpen(false));
+    }
+    document.querySelectorAll('[data-close="join"]').forEach((node) => {
+      node.addEventListener('click', () => setJoinOpen(false));
+    });
+    if (el.btnJoinConfirm) {
+      el.btnJoinConfirm.addEventListener('click', joinFromModal);
+    }
+    if (el.roomCtx) {
+      el.roomCtx.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('[data-action]');
+        if (!btn || !roomCtxTarget) return;
+        if (btn.disabled) {
+          showToast(btn.title || '不可用');
+          return;
+        }
+        const action = btn.getAttribute('data-action');
+        const room = roomCtxTarget;
+        hideRoomCtx();
+        if (action === 'room-join') openHost(room.host, room.id);
+        else if (action === 'room-spectate') {
+          openHost(room.host, room.id, { mode: 'spectate' });
+        }
+      });
+    }
+    if (el.peopleCtx) {
+      el.peopleCtx.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('[data-action]');
+        if (!btn || !peopleCtxTarget) return;
+        if (btn.disabled) {
+          showToast(btn.title || '不可用');
+          return;
+        }
+        const action = btn.getAttribute('data-action');
+        const person = peopleCtxTarget;
+        hidePeopleCtx();
+        if (action === 'create-on-host') {
+          if (!person.host) {
+            showToast('缺少对方公网地址');
+            return;
+          }
+          openHost(person.host, null, { mode: 'createPassive' });
+        }
+      });
+    }
+    document.addEventListener('pointerdown', (ev) => {
+      if (ev.button === 2) return;
+      if (el.peopleCtx && !el.peopleCtx.hidden && !el.peopleCtx.contains(ev.target)) {
+        hidePeopleCtx();
+      }
+      if (el.roomCtx && !el.roomCtx.hidden && !el.roomCtx.contains(ev.target)) {
+        hideRoomCtx();
+      }
+    });
+    if (el.btnRefresh) {
+      el.btnRefresh.addEventListener('click', () => {
+        if (!entered) return;
+        connectMqtt();
+        showToast('已刷新广播连接');
+      });
+    }
+    if (el.btnRefreshPeople) {
+      el.btnRefreshPeople.addEventListener('click', () => {
+        if (!entered) return;
+        prune();
+        renderPeople();
+        renderRooms();
+        showToast('已刷新大厅列表');
+      });
+    }
+    if (el.chatForm) {
+      el.chatForm.addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        sendChat(el.chatInput.value);
+        el.chatInput.value = '';
+        // 手机端发送后保持输入焦点，避免键盘收起
+        if (isMobileChatUi() && el.chatInput) {
+          el.chatInput.focus();
+        }
+      });
+    }
+    if (el.chatInput) {
+      el.chatInput.addEventListener('focus', () => setChatDockActive(true));
+      el.chatInput.addEventListener('blur', (ev) => {
+        if (isMobileChatUi()) {
+          setChatDockActive(true);
+          return;
+        }
+        const next = ev.relatedTarget;
+        if (next && el.chatDock && el.chatDock.contains(next)) return;
+        setChatDockActive(false);
+      });
+    }
+    if (el.chatPanel) {
+      el.chatPanel.addEventListener('pointerdown', (ev) => {
+        if (isMobileChatUi()) {
+          setChatDockActive(true);
+          return;
+        }
+        if (el.chatHead && el.chatHead.contains(ev.target)) return;
+        setChatDockActive(true);
+      });
+    }
+    if (el.chatHead) {
+      el.chatHead.addEventListener('click', () => {
+        if (!el.chatDock || isMobileChatUi()) return;
+        setChatDockActive(!el.chatDock.classList.contains('is-active'));
+      });
+    }
+    applyMobileChatChrome();
+    window.addEventListener('resize', () => {
+      applyMobileChatChrome();
+      if (!entered || !el.chatDock || el.chatDock.hidden) return;
+      if (isMobileChatUi()) setChatDockActive(true);
+    });
+
+    try {
+      const nick = localStorage.getItem(STORAGE_NICK);
+      if (nick && el.playerName) el.playerName.value = nick;
+    } catch (_) {}
+
+    window.addEventListener('pagehide', clearLoginBeacon);
+    window.addEventListener('beforeunload', clearLoginBeacon);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bindUi);
+  } else {
+    bindUi();
+  }
+})();

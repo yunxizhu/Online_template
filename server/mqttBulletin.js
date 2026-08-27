@@ -8,7 +8,7 @@ const DEFAULT_BROKERS = [
   'wss://broker.emqx.io:8084/mqtt',
   'mqtt://broker.emqx.io:1883',
 ];
-const DEFAULT_CHANNEL = 'lianji-public';
+const DEFAULT_CHANNEL = 'xiyun_lianjidating_public';
 const APP_SIGNATURE = 'lianji';
 const LOGIN_HB_MS = 10000;
 const ROOM_HB_MS = 10000;
@@ -21,7 +21,7 @@ const ROOM_OFFLINE_MS = 25000;
  * 超过该阈值直接丢弃，避免「离线幽灵」永远挂在别人大厅里 */
 const STALE_CLEAR_MS =
   Number(process.env.MQTT_STALE_CLEAR_MS) || 120000;
-const VALID_STATUS = new Set(['idle', 'room', 'playing']);
+const VALID_STATUS = new Set(['idle', 'room', 'playing', 'spectating']);
 
 function sanitizePeople(list) {
   const out = [];
@@ -30,6 +30,8 @@ function sanitizePeople(list) {
     const name = String(p.name || '').trim();
     if (!name) continue;
     const status = VALID_STATUS.has(p.status) ? p.status : 'idle';
+    const client = normalizeClient(p.client);
+    const role = normalizeRole(p.role);
     out.push({
       name,
       tag: p.tag ? String(p.tag).slice(0, 12) : null,
@@ -37,10 +39,46 @@ function sanitizePeople(list) {
       roomId: p.roomId ? String(p.roomId).slice(0, 12).toUpperCase() : null,
       roomName: p.roomName ? String(p.roomName).slice(0, 40) : null,
       sessionId: p.sessionId ? String(p.sessionId).slice(0, 48) : null,
+      client: client || null,
+      role: role || null,
+      passive: Boolean(p.passive),
     });
     if (out.length >= 12) break;
   }
   return out;
+}
+
+/** 登录端：windows | mac | mobile */
+function normalizeClient(raw) {
+  const s = String(raw || '')
+    .toLowerCase()
+    .trim();
+  if (s === 'windows' || s === 'win' || s === 'win32') return 'windows';
+  if (s === 'mac' || s === 'macos' || s === 'darwin') return 'mac';
+  if (
+    s === 'mobile' ||
+    s === 'android' ||
+    s === 'ios' ||
+    s === 'phone' ||
+    s === '手机'
+  ) {
+    return 'mobile';
+  }
+  return '';
+}
+
+/** 程序角色：host=完整主机包；client=纯加入端 */
+function normalizeRole(raw) {
+  const s = String(raw || '')
+    .toLowerCase()
+    .trim();
+  if (s === 'host' || s === 'server' || s === '主机' || s === '服务端') {
+    return 'host';
+  }
+  if (s === 'client' || s === 'guest' || s === '客户端' || s === '加入端') {
+    return 'client';
+  }
+  return '';
 }
 
 function readOptionalLine(file) {
@@ -328,7 +366,11 @@ class MqttBulletin {
   /**
    * 等待 MQTT 与公网隧道就绪（含隧道稳定延迟），用于隐藏房或登录心跳。
    */
-  async waitForInfrastructureReady({ timeoutMs = 90000, onProgress } = {}) {
+  async waitForInfrastructureReady({
+    timeoutMs = 90000,
+    onProgress,
+    skipTouchLogin = false,
+  } = {}) {
     if (!this.enabled || !this._started) {
       return { ok: true, reason: 'disabled' };
     }
@@ -351,7 +393,8 @@ class MqttBulletin {
         await this.#sleep(300);
         continue;
       }
-      await this.touchLogin();
+      // 被动模式进入前会自行发心跳，避免在标记尚未打开时提前广播
+      if (!skipTouchLogin) await this.touchLogin();
       return { ok: true, tunnelUrl };
     }
     return { ok: false, message: '公网隧道或 MQTT 连接超时，请稍后重试' };
@@ -469,12 +512,16 @@ class MqttBulletin {
       return;
     }
     const first = people[0];
+    const tunnelUrl = this.#peekUrl() || '';
+    const anyPassive = people.some((p) => p.passive);
     this.#pub(this.#loginTopic(), {
       app: APP_SIGNATURE,
       instanceId: this.instanceId,
       displayName: first.name,
       displayTag: first.tag || null,
       people,
+      passive: anyPassive,
+      host: anyPassive ? String(tunnelUrl || '').replace(/\/$/, '') : '',
       loginAt: this.loginAt,
       updateTime: now,
     });
@@ -562,6 +609,12 @@ class MqttBulletin {
       playerCount: room.playerCount,
       maxPlayers: room.maxPlayers,
       status: room.status || 'waiting',
+      observerCount: Number(room.observerCount || 0),
+      passiveHosted: Boolean(room.passiveHosted),
+      canJoin:
+        (!room.status || room.status === 'waiting') &&
+        Number(room.playerCount || 0) < Number(room.maxPlayers || 0),
+      canSpectate: true,
       createTime: room._createdAt || now,
       updateTime: now,
     };
@@ -631,6 +684,8 @@ class MqttBulletin {
           ),
           displayTag: p.displayTag ? String(p.displayTag) : null,
           people,
+          passive: Boolean(p.passive),
+          host: String(p.host || '').replace(/\/$/, ''),
           loginAt: Number(p.loginAt || 0),
           updateTime,
         });
@@ -677,6 +732,14 @@ class MqttBulletin {
           playerCount: Number(p.playerCount || (p.playerNames && p.playerNames.length) || 0),
           maxPlayers: Number(p.maxPlayers || 0) || undefined,
           status: String(p.status || 'waiting'),
+          observerCount: Number(p.observerCount || 0),
+          passiveHosted: Boolean(p.passiveHosted),
+          canJoin:
+            p.canJoin != null
+              ? Boolean(p.canJoin)
+              : (!p.status || p.status === 'waiting') &&
+                Number(p.playerCount || 0) < Number(p.maxPlayers || 0),
+          canSpectate: p.canSpectate != null ? Boolean(p.canSpectate) : true,
           createTime: Number(p.createTime || 0),
           updateTime,
           instanceId: id,
@@ -734,8 +797,14 @@ class MqttBulletin {
           status: String(pp.status || 'idle'),
           roomId,
           roomName: (pp && pp.roomName) || null,
+          client: normalizeClient(pp && pp.client) || null,
+          role: normalizeRole(pp && pp.role) || null,
+          passive: Boolean((pp && pp.passive) || p.passive),
           instanceId: p.instanceId,
-          host: (knownRoom && knownRoom.host) || null,
+          host:
+            (pp && pp.passive) || p.passive
+              ? p.host || (knownRoom && knownRoom.host) || null
+              : (knownRoom && knownRoom.host) || p.host || null,
           local: false,
           alive: true,
           via: 'mqtt',
@@ -754,7 +823,7 @@ class MqttBulletin {
       (r) =>
         r.updateTime &&
         now - r.updateTime <= ROOM_OFFLINE_MS &&
-        (!r.status || r.status === 'waiting')
+        (!r.status || r.status === 'waiting' || r.status === 'playing')
     );
   }
 
@@ -777,4 +846,6 @@ module.exports = {
   ROOM_HB_MS,
   LOGIN_OFFLINE_MS,
   ROOM_OFFLINE_MS,
+  normalizeClient,
+  normalizeRole,
 };

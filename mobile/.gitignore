@@ -1,0 +1,3 @@
+node_modules/
+dist/*.apk
+.DS_Store

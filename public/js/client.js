@@ -74,6 +74,100 @@ window.PlayerNick = (function () {
 })();
 
 /**
+ * 登录端识别：windows | mac | mobile
+ * 程序角色：host=完整主机包；client=纯加入端
+ * 纯客户端进房时用 URL 参数 client= / role= 保留真实信息。
+ */
+window.ClientPlatform = (function () {
+  const GUEST_CLIENT_KEY = 'lianji.guestClientPlatform';
+  const GUEST_ROLE_KEY = 'lianji.guestClientRole';
+  const GUEST_FLAG_KEY = 'lianji.guestClient';
+
+  function normalize(raw) {
+    const s = String(raw || '')
+      .toLowerCase()
+      .trim();
+    if (s === 'windows' || s === 'win' || s === 'win32') return 'windows';
+    if (s === 'mac' || s === 'macos' || s === 'darwin') return 'mac';
+    if (
+      s === 'mobile' ||
+      s === 'android' ||
+      s === 'ios' ||
+      s === 'phone'
+    ) {
+      return 'mobile';
+    }
+    return '';
+  }
+
+  function normalizeRole(raw) {
+    const s = String(raw || '')
+      .toLowerCase()
+      .trim();
+    if (s === 'host' || s === 'server') return 'host';
+    if (s === 'client' || s === 'guest') return 'client';
+    return '';
+  }
+
+  function detect() {
+    const ua = String(navigator.userAgent || '');
+    const plat = String(navigator.platform || '');
+    if (/Android/i.test(ua) || /iPhone|iPod|iPad/i.test(ua)) return 'mobile';
+    if (/Capacitor/i.test(ua) || /; wv\)/i.test(ua)) return 'mobile';
+    if (/Mac|Darwin/i.test(plat) || /Mac OS X/i.test(ua)) return 'mac';
+    if (/Win/i.test(plat) || /Windows/i.test(ua)) return 'windows';
+    return '';
+  }
+
+  function rememberGuestClient(raw) {
+    const n = normalize(raw) || detect();
+    try {
+      if (n) sessionStorage.setItem(GUEST_CLIENT_KEY, n);
+    } catch (_) {}
+    return n;
+  }
+
+  function rememberGuestRole(raw) {
+    const n = normalizeRole(raw) || 'client';
+    try {
+      sessionStorage.setItem(GUEST_ROLE_KEY, n);
+      sessionStorage.setItem(GUEST_FLAG_KEY, '1');
+    } catch (_) {}
+    return n;
+  }
+
+  function current() {
+    try {
+      const remembered = normalize(sessionStorage.getItem(GUEST_CLIENT_KEY));
+      if (remembered) return remembered;
+    } catch (_) {}
+    return detect();
+  }
+
+  function currentRole() {
+    try {
+      if (sessionStorage.getItem(GUEST_FLAG_KEY) === '1') {
+        return normalizeRole(sessionStorage.getItem(GUEST_ROLE_KEY)) || 'client';
+      }
+      const remembered = normalizeRole(sessionStorage.getItem(GUEST_ROLE_KEY));
+      if (remembered) return remembered;
+    } catch (_) {}
+    // 完整主机包页面（本机服务）默认主机
+    return 'host';
+  }
+
+  return {
+    current,
+    currentRole,
+    detect,
+    normalize,
+    normalizeRole,
+    rememberGuestClient,
+    rememberGuestRole,
+  };
+})();
+
+/**
  * Socket.IO client: can switch host when joining a remote room.
  */
 window.GameNet = (function () {
@@ -106,6 +200,7 @@ window.GameNet = (function () {
       'room:update',
       'room:creating',
       'room:error',
+      'room:settingsUpdated',
       'room:left',
       'room:probe-result',
       'room:resolved',
@@ -273,6 +368,28 @@ window.GameNet = (function () {
     throw lastErr || new Error('无法连接房主');
   }
 
+  function clientOf(opts = {}) {
+    if (opts.client) return opts.client;
+    try {
+      return window.ClientPlatform && window.ClientPlatform.current
+        ? window.ClientPlatform.current()
+        : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function roleOf(opts = {}) {
+    if (opts.role) return opts.role;
+    try {
+      return window.ClientPlatform && window.ClientPlatform.currentRole
+        ? window.ClientPlatform.currentRole()
+        : 'host';
+    } catch (_) {
+      return 'host';
+    }
+  }
+
   function joinLobby(playerName, opts = {}) {
     ensureSocket().emit('lobby:join', {
       playerName,
@@ -281,6 +398,8 @@ window.GameNet = (function () {
       roomId: opts.roomId || null,
       oldPlayerId: opts.oldPlayerId || null,
       rejoin: Boolean(opts.rejoin),
+      client: clientOf(opts),
+      role: roleOf(opts),
     });
   }
 
@@ -310,6 +429,8 @@ window.GameNet = (function () {
         roomId: opts.roomId || null,
         oldPlayerId: opts.oldPlayerId || null,
         rejoin: Boolean(opts.rejoin),
+        client: clientOf(opts),
+        role: roleOf(opts),
       });
     });
   }
@@ -343,11 +464,25 @@ window.GameNet = (function () {
       playerName,
       playerTag: opts.playerTag || window.PlayerNick.ensureTag(),
       sessionId: opts.sessionId || null,
+      client: clientOf(opts),
+      role: roleOf(opts),
     });
   }
 
   function createRoom(opts) {
-    ensureSocket().emit('room:create', opts);
+    ensureSocket().emit('room:create', {
+      ...opts,
+      client: clientOf(opts),
+      role: roleOf(opts),
+    });
+  }
+
+  function setPassive(on) {
+    ensureSocket().emit('lobby:setPassive', { on: Boolean(on) });
+  }
+
+  function updateRoomSettings(opts) {
+    ensureSocket().emit('room:updateSettings', opts);
   }
 
   function joinRoom(roomId, playerName, opts = {}) {
@@ -356,6 +491,19 @@ window.GameNet = (function () {
       playerName,
       playerTag: opts.playerTag || window.PlayerNick.ensureTag(),
       sessionId: opts.sessionId || null,
+      client: clientOf(opts),
+      role: roleOf(opts),
+    });
+  }
+
+  function spectateRoom(roomId, playerName, opts = {}) {
+    ensureSocket().emit('room:spectate', {
+      roomId,
+      playerName,
+      playerTag: opts.playerTag || window.PlayerNick.ensureTag(),
+      sessionId: opts.sessionId || null,
+      client: clientOf(opts),
+      role: roleOf(opts),
     });
   }
 
@@ -467,6 +615,121 @@ window.GameNet = (function () {
     );
   }
 
+  /** 观战远端/本机房间 */
+  async function spectateRoomOnHost(roomId, playerName, host, opts = {}) {
+    return joinRoomOnHost(roomId, playerName, host, {
+      ...opts,
+      _spectate: true,
+    }).then(() => {
+      /* joinRoomOnHost 已进大厅；若标记 spectate 需改发 spectate */
+    });
+  }
+
+  async function enterRoomOnHost(roomId, playerName, host, opts = {}) {
+    const remote = !(opts.local || opts.preferLocal);
+    const mode = opts.mode === 'spectate' ? 'spectate' : 'join';
+    const deadHosts = new Set();
+
+    async function refreshHost(preferred) {
+      try {
+        if (
+          !socket ||
+          currentUrl !== normalizeUrl(localOrigin) ||
+          !socket.connected
+        ) {
+          await connect(localOrigin);
+        }
+        const resolved = await resolveRoom(roomId);
+        if (resolved && resolved.ok && resolved.host) {
+          return normalizeUrl(resolved.host);
+        }
+      } catch (_) {
+        /* ignore */
+      }
+      const fallback = preferred ? normalizeUrl(preferred) : '';
+      if (fallback && deadHosts.has(fallback)) return '';
+      return fallback;
+    }
+
+    async function doEnter(targetHost) {
+      let candidates = [];
+      if (!remote) {
+        candidates = [localOrigin];
+      } else if (targetHost) {
+        const h = normalizeUrl(targetHost);
+        if (!deadHosts.has(h)) candidates = [h];
+      }
+      if (!candidates.length) {
+        throw new Error('隧道地址尚未就绪，请稍后再试');
+      }
+      await connectAny(candidates, {
+        retriesPerHost: remote ? 4 : 1,
+        dnsFailFast: remote,
+      });
+      await joinLobbyAndWait(playerName, {
+        sessionId: opts.sessionId || null,
+        roomId: opts.roomId || roomId || null,
+        oldPlayerId: opts.oldPlayerId || null,
+        rejoin: Boolean(opts.rejoin),
+        playerTag: opts.playerTag || null,
+      });
+      if (!opts.rejoin) {
+        if (mode === 'spectate') spectateRoom(roomId, playerName, opts);
+        else joinRoom(roomId, playerName, opts);
+      }
+    }
+
+    let activeHost = host;
+    if (remote) {
+      const fresh = await refreshHost(host);
+      if (fresh) activeHost = fresh;
+    }
+    try {
+      await doEnter(activeHost);
+      return;
+    } catch (err) {
+      if (!remote || !isRetryableRemoteJoinError(err)) throw err;
+      if (activeHost) deadHosts.add(normalizeUrl(activeHost));
+    }
+    await connect(localOrigin);
+    let lastErr = null;
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      const nextHost = await refreshHost(host);
+      if (nextHost && !deadHosts.has(nextHost)) {
+        try {
+          await doEnter(nextHost);
+          return;
+        } catch (err) {
+          lastErr = err;
+          if (!isRetryableRemoteJoinError(err)) throw err;
+          deadHosts.add(nextHost);
+        }
+      }
+      await sleep(1500);
+    }
+    if (lastErr) throw lastErr;
+    throw new Error('隧道地址尚未就绪（DNS），请稍后再试');
+  }
+
+  /** 在被动主机上开房（切到对方隧道后 createRoom + passiveHost） */
+  async function createRoomOnHost(playerName, host, opts = {}) {
+    const target = host ? normalizeUrl(host) : '';
+    if (!target) throw new Error('缺少被动主机地址');
+    await connectAny([target], { retriesPerHost: 4, dnsFailFast: true });
+    await joinLobbyAndWait(playerName, {
+      sessionId: opts.sessionId || null,
+      playerTag: opts.playerTag || null,
+    });
+    createRoom({
+      ...opts,
+      playerName,
+      playerTag: opts.playerTag || window.PlayerNick.ensureTag(),
+      sessionId: opts.sessionId || null,
+      passiveHost: true,
+    });
+  }
+
   function resolveRoom(roomId) {
     return new Promise((resolve) => {
       const s = ensureSocket();
@@ -538,8 +801,13 @@ window.GameNet = (function () {
     refreshLobby,
     renamePlayer,
     createRoom,
+    createRoomOnHost,
+    setPassive,
+    updateRoomSettings,
     joinRoom,
+    spectateRoom,
     joinRoomOnHost,
+    enterRoomOnHost,
     resolveRoom,
     probeRoom,
     returnToLocalLobby,

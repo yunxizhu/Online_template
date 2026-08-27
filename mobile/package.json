@@ -1,0 +1,19 @@
+{
+  "name": "lianji-android",
+  "version": "1.0.0",
+  "private": true,
+  "description": "联机大厅 Android 客户端（加入端）",
+  "scripts": {
+    "sync": "npx cap sync android",
+    "open": "npx cap open android",
+    "build:apk": "cd android && .\\gradlew.bat assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/core": "^6.2.0",
+    "mqtt": "^5.10.4"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.0"
+  }
+}

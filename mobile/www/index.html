@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover"
+  />
+  <meta name="color-scheme" content="dark" />
+  <title>联机大厅</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="./css/style.css" />
+  <link rel="stylesheet" href="./mobile.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="app-top">
+      <div class="app-top-mid">
+        <div class="app-top-title-row">
+          <h1>联机大厅</h1>
+          <div class="header-nick" id="header-nick" hidden>
+            <span id="nick-display" class="nick-display">玩家</span>
+          </div>
+        </div>
+        <p id="me-label" class="me-label">未进入大厅</p>
+      </div>
+    </header>
+
+    <div class="app-body">
+      <div class="app-content">
+        <p id="toast" class="toast" hidden></p>
+
+        <section id="view-lobby" class="view">
+          <div class="panel panel-narrow" id="lobby-gate">
+            <label>
+              <span>昵称</span>
+              <input id="player-name" type="text" maxlength="16" placeholder="输入昵称" />
+            </label>
+            <button id="btn-enter-lobby" type="button">进入大厅</button>
+            <p class="muted gate-hint">仅加入房间；建房请用电脑主机端。</p>
+          </div>
+
+          <div id="lobby-main" hidden>
+            <div class="panel lobby-toolbar">
+              <div class="row lobby-toolbar-actions">
+                <button id="btn-toggle-join" type="button" class="secondary">房间码加入</button>
+                <button id="btn-toggle-spectate" type="button" class="secondary">观战</button>
+                <button id="btn-refresh-lobby" type="button" class="secondary">刷新</button>
+              </div>
+              <p id="peers-label" class="muted">广播：连接中…</p>
+              <p id="lobby-refresh-hint" class="muted lobby-refresh-hint">公开房间与人员来自 MQTT 广播</p>
+            </div>
+
+            <div class="panel lobby-rooms">
+              <h2>空闲房间</h2>
+              <ul id="room-list" class="room-list"></ul>
+              <p id="room-list-empty" class="muted">暂无空闲房间</p>
+              <h2 class="lobby-playing-title">对局中</h2>
+              <ul id="room-list-playing" class="room-list"></ul>
+              <p id="room-list-playing-empty" class="muted">暂无进行中的房间</p>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <aside class="lobby-people" id="lobby-people-aside" hidden aria-label="大厅人员">
+        <h2 class="people-header">
+          <span>
+            <span id="lobby-people-title">大厅人员</span>
+            <span id="lobby-people-count" class="muted people-count"></span>
+          </span>
+          <button
+            id="btn-refresh-doc"
+            type="button"
+            class="icon-btn"
+            title="刷新大厅状态"
+            aria-label="刷新大厅状态"
+          >
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 0 0-8 8 8 8 0 0 0 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18a6 6 0 0 1-6-6 6 6 0 0 1 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"
+              />
+            </svg>
+          </button>
+        </h2>
+        <ul id="lobby-people-list" class="people-list"></ul>
+        <p id="lobby-people-empty" class="muted">暂无在线玩家</p>
+      </aside>
+    </div>
+  </main>
+
+  <aside class="chat-dock" id="chat-dock" hidden aria-label="聊天室">
+    <div class="chat-panel" id="chat-panel">
+      <header class="chat-head" id="chat-drag-handle">
+        <span class="chat-head-title">
+          <span class="chat-head-channel" id="chat-head-channel">所有人</span>
+          <span>聊天室</span>
+          <span class="chat-head-unread" id="chat-head-unread" hidden>新消息</span>
+        </span>
+      </header>
+      <div class="chat-collapsed-preview" id="chat-collapsed-preview">还没有人发言</div>
+      <ul id="chat-log" class="chat-log" aria-live="polite"></ul>
+      <form id="chat-form" class="chat-form">
+        <input
+          id="chat-input"
+          type="text"
+          maxlength="120"
+          autocomplete="off"
+          placeholder="输入消息…"
+          aria-label="聊天内容"
+        />
+        <button type="submit">发送</button>
+      </form>
+    </div>
+  </aside>
+
+  <div class="modal" id="join-code-modal" hidden>
+    <div class="modal-backdrop" data-close="join"></div>
+    <div class="modal-dialog panel" role="dialog" aria-labelledby="join-code-title">
+      <div class="row panel-head">
+        <h2 id="join-code-title">加入房间</h2>
+        <button id="btn-close-join" type="button" class="icon-btn" title="关闭" aria-label="关闭">×</button>
+      </div>
+      <label>
+        <span>房间码</span>
+        <input id="join-code" type="text" maxlength="8" placeholder="输入房间码" />
+      </label>
+      <label>
+        <span>或房主地址</span>
+        <input id="host-url" type="url" inputmode="url" placeholder="https://xxxx.trycloudflare.com" />
+      </label>
+      <button id="btn-join-code" type="button">加入</button>
+    </div>
+  </div>
+
+  <div id="people-ctx" class="ctx-menu" hidden>
+    <button type="button" data-action="create-on-host">在此开房</button>
+    <p class="ctx-hint muted" id="people-ctx-hint" hidden></p>
+  </div>
+
+  <div id="room-ctx" class="ctx-menu" hidden>
+    <button type="button" data-action="room-join">加入房间</button>
+    <button type="button" data-action="room-spectate">观战</button>
+    <p class="ctx-hint muted" id="room-ctx-hint" hidden></p>
+  </div>
+
+  <div id="joining-overlay" class="joining-overlay" hidden aria-live="polite" aria-busy="true">
+    <div class="joining-panel panel">
+      <p id="joining-message" class="joining-message">正在加入…</p>
+    </div>
+  </div>
+
+  <script src="./vendor/mqtt.min.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

@@ -3,7 +3,7 @@ const fs = require('fs');
 
 const lasPanel = `<!-- Lasidao panel -->
 <div class="panel game-panel lasidao-panel" id="panel-lasidao" hidden>
-  <h2 data-i18n="lasidao.title">拉斯岛</h2>
+  <h2 data-i18n="lasidao.title">卡拉斯坦</h2>
   <p id="las-round" class="game-status"></p>
   <p id="las-status" class="muted"></p>
   <div id="las-settle-banner" class="las-settle-banner" hidden></div>

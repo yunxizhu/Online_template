@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">联机大厅</string>
+    <string name="title_activity_main">联机大厅</string>
+    <string name="package_name">com.lianji.join</string>
+    <string name="custom_url_scheme">com.lianji.join</string>
+</resources>

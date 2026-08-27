@@ -4,12 +4,121 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const http = require('http');
+const dns = require('dns').promises;
 const { spawn } = require('child_process');
 const { pipeline } = require('stream/promises');
 const { createWriteStream } = require('fs');
 
 const TOOLS_DIR = path.join(__dirname, '..', '.tools');
 const URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i;
+
+/** 公网地址探活间隔（进程仍在但 trycloudflare 域名已死时靠此换新） */
+const HEALTH_INTERVAL_MS = Math.max(
+  5000,
+  Number(process.env.TUNNEL_HEALTH_MS) || 15000
+);
+/** 拿到新 URL 后多久再开始探活（给 DNS 传播留时间） */
+const HEALTH_WARMUP_MS = Math.max(
+  0,
+  Number(process.env.TUNNEL_HEALTH_WARMUP_MS) || 25000
+);
+/** 连续探活失败几次后强制换隧道（DNS 不再一票否决） */
+const HEALTH_FAILS = Math.max(
+  1,
+  Number(process.env.TUNNEL_HEALTH_FAILS) || 4
+);
+const HEALTH_TIMEOUT_MS = Math.max(
+  2000,
+  Number(process.env.TUNNEL_HEALTH_TIMEOUT_MS) || 8000
+);
+
+/**
+ * 本机 DNS 对 trycloudflare 经常假阴性；系统解析失败时再用公共 DNS 复核。
+ */
+function resolveHostname(hostname) {
+  return dns.lookup(hostname).then(
+    () => ({ ok: true, via: 'system' }),
+    async (err) => {
+      try {
+        const resolver = new dns.Resolver();
+        resolver.setServers(['1.1.1.1', '8.8.8.8']);
+        await resolver.resolve4(hostname);
+        return { ok: true, via: 'public-dns' };
+      } catch (err2) {
+        const code =
+          (err2 && err2.code) || (err && err.code) || 'ENOTFOUND';
+        return {
+          ok: false,
+          code,
+          reason: `dns:${code}`,
+        };
+      }
+    }
+  );
+}
+
+/**
+ * 探测公网隧道是否仍可达。
+ * - HTTPS 任意响应（含 502/530）→ 域名仍在边缘，视为存活
+ * - DNS / 超时 / 连接失败 → 可累计后换址（不再把 ENOTFOUND 当 fatal）
+ */
+function probeTunnelUrl(urlString, ops = {}) {
+  const opts = ops || {};
+  const timeoutMs = Math.max(1000, Number(opts.timeoutMs) || HEALTH_TIMEOUT_MS);
+  let hostname;
+  let href;
+  try {
+    const u = new URL(urlString);
+    hostname = u.hostname;
+    href = u.href;
+  } catch (_) {
+    return Promise.resolve({ ok: false, reason: 'bad-url', fatal: true });
+  }
+  if (!hostname) {
+    return Promise.resolve({ ok: false, reason: 'bad-url', fatal: true });
+  }
+
+  return resolveHostname(hostname).then((dnsResult) => {
+    if (!dnsResult.ok) {
+      return {
+        ok: false,
+        reason: dnsResult.reason || 'dns:ENOTFOUND',
+        fatal: false,
+      };
+    }
+    return new Promise((resolve) => {
+      const getter = href.startsWith('https') ? https : http;
+      const req = getter.get(
+        href,
+        {
+          timeout: timeoutMs,
+          headers: { 'User-Agent': 'lianji-tunnel-health' },
+        },
+        (res) => {
+          res.resume();
+          // 边缘还能回状态码 ⇒ 域名未作废（本地服务挂了也可能 502）
+          resolve({
+            ok: true,
+            status: res.statusCode,
+            dnsVia: dnsResult.via,
+          });
+        }
+      );
+      req.on('timeout', () => {
+        req.destroy();
+        resolve({ ok: false, reason: 'timeout', fatal: false });
+      });
+      req.on('error', (err) => {
+        const code = (err && err.code) || '';
+        resolve({
+          ok: false,
+          reason: code || (err && err.message) || 'http-error',
+          fatal: false,
+        });
+      });
+    });
+  });
+}
 
 function cloudflaredBinaryName() {
   if (process.platform === 'win32') return 'cloudflared.exe';
@@ -90,7 +199,7 @@ async function ensureCloudflared() {
 
 /**
  * Cloudflare Quick Tunnel for a local HTTP port.
- * trycloudflare 快速隧道不稳定，进程退出后必须自动拉起并换新域名。
+ * trycloudflare 快速隧道不稳定：进程退出或公网域名僵死时都必须自动拉起并换新域名。
  */
 class QuickTunnel {
   constructor(opts = {}) {
@@ -103,8 +212,13 @@ class QuickTunnel {
     this._restartTimer = null;
     this._backoffMs = 1500;
     this._logLines = [];
+    this._healthTimer = null;
+    this._healthFails = 0;
+    this._healthRunning = false;
     this.onUrl = typeof opts.onUrl === 'function' ? opts.onUrl : null;
     this.onLost = typeof opts.onLost === 'function' ? opts.onLost : null;
+    this._probe =
+      typeof opts.probe === 'function' ? opts.probe : probeTunnelUrl;
   }
 
   /** @returns {Promise<string>} public https URL */
@@ -132,6 +246,7 @@ class QuickTunnel {
     if (this._stopped) throw new Error('tunnel stopped');
     this._port = port;
     this.publicUrl = null;
+    this._clearHealth();
     const gen = ++this._gen;
 
     const protocol = String(process.env.TUNNEL_PROTOCOL || 'http2').trim() || 'http2';
@@ -169,6 +284,7 @@ class QuickTunnel {
         if (m && !this.publicUrl) {
           this.publicUrl = m[0].replace(/\/$/, '');
           this._backoffMs = 1500;
+          this._healthFails = 0;
           console.log('[tunnel] 公网地址:', this.publicUrl);
           if (typeof this.onUrl === 'function') {
             try {
@@ -177,6 +293,7 @@ class QuickTunnel {
               /* ignore */
             }
           }
+          this._armHealth();
           if (!settled) {
             settled = true;
             clearTimeout(failTimer);
@@ -191,6 +308,7 @@ class QuickTunnel {
       proc.on('error', (err) => {
         if (gen !== this._gen) return;
         if (this.proc === proc) this.proc = null;
+        this._clearHealth();
         if (settled) {
           this._scheduleRestart();
           return;
@@ -208,6 +326,7 @@ class QuickTunnel {
           this.proc = null;
           this.publicUrl = null;
         }
+        this._clearHealth();
         const tail = this._logLines.slice(-6).join(' | ');
         const why = `code=${code} signal=${signal || '-'}${
           tail ? ` 日志: ${tail}` : ''
@@ -252,6 +371,99 @@ class QuickTunnel {
     }
   }
 
+  _clearHealth() {
+    if (this._healthTimer) {
+      clearTimeout(this._healthTimer);
+      this._healthTimer = null;
+    }
+    this._healthRunning = false;
+  }
+
+  _armHealth() {
+    this._clearHealth();
+    if (this._stopped || !this.publicUrl) return;
+    this._healthTimer = setTimeout(() => {
+      this._healthTimer = null;
+      this._runHealthTick();
+    }, HEALTH_WARMUP_MS);
+    if (typeof this._healthTimer.unref === 'function') this._healthTimer.unref();
+  }
+
+  _scheduleHealthTick() {
+    this._clearHealth();
+    if (this._stopped || !this.publicUrl || !this.proc) return;
+    this._healthTimer = setTimeout(() => {
+      this._healthTimer = null;
+      this._runHealthTick();
+    }, HEALTH_INTERVAL_MS);
+    if (typeof this._healthTimer.unref === 'function') this._healthTimer.unref();
+  }
+
+  async _runHealthTick() {
+    if (this._stopped || this._healthRunning) return;
+    const url = this.publicUrl;
+    if (!url || !this.proc) return;
+    this._healthRunning = true;
+    let result;
+    try {
+      result = await this._probe(url, { timeoutMs: HEALTH_TIMEOUT_MS });
+    } catch (err) {
+      result = {
+        ok: false,
+        reason: (err && err.message) || 'probe-error',
+        fatal: false,
+      };
+    } finally {
+      this._healthRunning = false;
+    }
+    // 探活期间已换址 / 进程已死则忽略
+    if (this._stopped || this.publicUrl !== url || !this.proc) return;
+
+    if (result && result.ok) {
+      this._healthFails = 0;
+      this._scheduleHealthTick();
+      return;
+    }
+
+    this._healthFails += 1;
+    const reason = (result && result.reason) || 'unknown';
+    const fatal = Boolean(result && result.fatal);
+    console.warn(
+      `[tunnel] 公网探活失败 (${this._healthFails}/${HEALTH_FAILS}` +
+        `${fatal ? ', fatal' : ''}): ${reason}`
+    );
+    if (fatal || this._healthFails >= HEALTH_FAILS) {
+      this._forceRotate(reason);
+      return;
+    }
+    this._scheduleHealthTick();
+  }
+
+  /**
+   * 进程可能仍在，但 trycloudflare 域名已死：清 beacon、杀进程、换新隧道。
+   * （_killProc 会抬高 _gen，exit 回调不会再走 onLost/_scheduleRestart）
+   */
+  _forceRotate(reason) {
+    if (this._stopped) return;
+    const dead = this.publicUrl;
+    console.warn(
+      `[tunnel] 公网地址失效，强制换新` +
+        `${dead ? `（旧址 ${dead}）` : ''}: ${reason || 'health'}`
+    );
+    this._clearHealth();
+    this.publicUrl = null;
+    this._healthFails = 0;
+    if (typeof this.onLost === 'function') {
+      try {
+        this.onLost();
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    this._killProc();
+    this._scheduleRestart();
+  }
+
   _scheduleRestart() {
     if (this._stopped || this.proc || this._restartTimer) return;
     const port = this._port;
@@ -269,6 +481,7 @@ class QuickTunnel {
         );
       });
     }, delay);
+    if (typeof this._restartTimer.unref === 'function') this._restartTimer.unref();
   }
 
   _killProc() {
@@ -276,24 +489,27 @@ class QuickTunnel {
     const proc = this.proc;
     this.proc = null;
     this.publicUrl = null;
+    this._clearHealth();
     if (!proc) return;
     try {
       proc.kill('SIGTERM');
     } catch (_) {
       /* ignore */
     }
-    setTimeout(() => {
+    const killer = setTimeout(() => {
       try {
         if (!proc.killed) proc.kill('SIGKILL');
       } catch (_) {
         /* ignore */
       }
     }, 2000);
+    if (typeof killer.unref === 'function') killer.unref();
   }
 
   stop() {
     this._stopped = true;
     this._clearRestart();
+    this._clearHealth();
     this._killProc();
     this._port = null;
   }
@@ -303,4 +519,8 @@ class QuickTunnel {
   }
 }
 
-module.exports = { QuickTunnel, ensureCloudflared };
+module.exports = {
+  QuickTunnel,
+  ensureCloudflared,
+  probeTunnelUrl,
+};

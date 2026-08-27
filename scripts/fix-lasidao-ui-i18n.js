@@ -124,7 +124,7 @@ let ui = fs.readFileSync('public/games/lasidao/ui.js', 'utf8');
 ui = ui.replace(
   /\/\*\*\r?\n \* \?+\? UI\r?\n \* [^\n]*\r?\n \*\//,
   `/**
- * 拉斯岛 UI
+ * 卡拉斯坦 UI
  * 骰子：投掷动画 → 定格 → 同点聚合 → 选点/选格 → 确认派遣
  */`
 );

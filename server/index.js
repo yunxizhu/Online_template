@@ -71,7 +71,7 @@ function getSgsResourseDir() {
 const sgsResourseDir = getSgsResourseDir();
 app.use('/games/sgs/res', express.static(sgsResourseDir));
 
-// 拉斯岛资源：server/games/lasidao/resourse → /games/lasidao/res/
+// 卡拉斯坦资源：server/games/lasidao/resourse → /games/lasidao/res/
 function getLasidaoResourseDir() {
   const envPath = process.env.LIANJI_LASIDAO_RESOURSE;
   if (envPath) return envPath;
@@ -112,7 +112,7 @@ function beaconRooms() {
       id: room.id,
       name: room.name,
       hidden: room.hidden,
-      playerCount: room.players.length,
+      playerCount: (room.players || []).filter((p) => !p.left).length,
       maxPlayers: room.maxPlayers,
       minPlayers: room.minPlayers,
       status: room.status,
@@ -120,6 +120,9 @@ function beaconRooms() {
       gameLabel: room.gameLabel,
       gameMode: room.gameMode,
       gameModeLabel: room.gameModeLabel,
+      observerCount: (room.observers || []).length,
+      passiveHosted: Boolean(room.passiveHosted),
+      players: room.players || [],
     }));
 }
 
@@ -132,9 +135,11 @@ function resolveRoomRemote(roomId) {
 
 function buildLobbyPayload() {
   const localHost = localBaseUrl();
+  const publicUrl = tunnel ? tunnel.getPublicUrl() : null;
+  const advertiseHost = publicUrl || localHost;
   const localRooms = rooms.listLobbyRooms().map((room) => ({
     ...room,
-    host: localHost,
+    host: advertiseHost,
     local: true,
   }));
 
@@ -144,7 +149,7 @@ function buildLobbyPayload() {
   const localPeople = rooms.listLobbyPeople().map((p) => ({
     ...p,
     local: true,
-    host: localHost,
+    host: p.passive ? advertiseHost : localHost,
   }));
   const remotePeople = mqttBulletin ? mqttBulletin.getRemotePeople() : [];
   const people = mergeLobbyPeople(localPeople, remotePeople);
@@ -155,8 +160,11 @@ function buildLobbyPayload() {
     people,
     localHost,
     mqttBulletin: Boolean(mqttBulletin && mqttBulletin.enabled),
-    publicUrl: tunnel ? tunnel.getPublicUrl() : null,
+    publicUrl,
     games: listGames(),
+    passiveMode: Boolean(
+      [...rooms.players.values()].some((p) => p.passive && !p.roomId)
+    ),
   };
 }
 
@@ -235,20 +243,39 @@ function dropIdleSessionGhosts(sessionId, keepId) {
   }
 }
 
+function playerRegisterOpts(data = {}) {
+  return {
+    sessionId: data.sessionId || null,
+    playerTag: data.playerTag || null,
+    client: data.client || null,
+    role: data.role || null,
+  };
+}
+
 function hostedBeaconRooms() {
   return beaconRooms()
     .filter((r) => {
       const full = rooms.getRoom(r.id);
-      return full && full.hostId && rooms.getPlayer(full.hostId);
+      if (!full) return false;
+      if (full.hostId && rooms.getPlayer(full.hostId)) return true;
+      return (
+        (full.players && full.players.some((p) => !p.left)) ||
+        (full.observers && full.observers.length)
+      );
     })
     .map((r) => {
       const full = rooms.getRoom(r.id);
       return {
         ...r,
         _createdAt: (full && full.createdAt) || Date.now(),
-        players: (full && full.players)
+        players: full && full.players
           ? full.players.map((p) => ({ name: p.name, tag: p.tag || null }))
           : [],
+        observers: full && full.observers
+          ? full.observers.map((p) => ({ name: p.name, tag: p.tag || null }))
+          : [],
+        observerCount: full && full.observers ? full.observers.length : 0,
+        passiveHosted: Boolean(full && full.passiveHosted),
       };
     });
 }
@@ -381,6 +408,14 @@ function emitGameState(room) {
       state: publicStateForRoom(room, p.id),
     });
   }
+  // 观战：中立视角（无个人手牌）
+  for (const o of room.observers || []) {
+    if (o.offline) continue;
+    io.to(o.id).emit('game:state', {
+      state: publicStateForRoom(room, null),
+      spectator: true,
+    });
+  }
   scheduleLasidaoSettleAnim(room);
 }
 
@@ -392,9 +427,16 @@ function emitGameStarted(room) {
       state: publicStateForRoom(room, p.id),
     });
   }
+  for (const o of room.observers || []) {
+    if (o.offline) continue;
+    io.to(o.id).emit('game:started', {
+      state: publicStateForRoom(room, null),
+      spectator: true,
+    });
+  }
 }
 
-/** 拉斯岛：先手宣布结束后再发牌进入生产 */
+/** 卡拉斯坦：先手宣布结束后再发牌进入生产 */
 function scheduleLasidaoInitAnnounce(room) {
   if (!room || room.gameType !== 'lasidao' || !room.game) return;
   if (room.game.phase !== 'init_announce') return;
@@ -415,7 +457,7 @@ function scheduleLasidaoInitAnnounce(room) {
   }, delay);
 }
 
-/** 拉斯岛：结算动画超时后强制进入下一阶段 */
+/** 卡拉斯坦：结算动画超时后强制进入下一阶段 */
 function scheduleLasidaoSettleAnim(room) {
   if (!room || room.gameType !== 'lasidao' || !room.game) return;
   if (room.game.phase !== 'settle') {
@@ -565,6 +607,8 @@ io.on('connection', (socket) => {
       const player = rooms.registerPlayer(socket.id, data.playerName, {
         sessionId,
         playerTag,
+        client: data.client,
+        role: data.role,
       });
       socket.join(reclaimed.room.id);
       joinHallChat(socket);
@@ -592,6 +636,8 @@ io.on('connection', (socket) => {
       const player = rooms.registerPlayer(socket.id, data.playerName, {
         sessionId,
         playerTag,
+        client: data.client,
+        role: data.role,
       });
       socket.data.playerName = player.name;
       joinHallChat(socket);
@@ -615,6 +661,8 @@ io.on('connection', (socket) => {
     const player = rooms.registerPlayer(socket.id, data.playerName, {
       sessionId,
       playerTag,
+      client: data.client,
+      role: data.role,
     });
     socket.data.playerName = player.name;
     joinHallChat(socket);
@@ -682,15 +730,12 @@ io.on('connection', (socket) => {
 
   socket.on('player:rename', (data = {}) => {
     if (!rooms.getPlayer(socket.id)) {
-      rooms.registerPlayer(socket.id, data.playerName || '玩家', {
-        sessionId: data.sessionId,
-        playerTag: data.playerTag,
-      });
+      rooms.registerPlayer(socket.id, data.playerName || '玩家', playerRegisterOpts(data));
     }
     const { player, room } = rooms.setPlayerName(
       socket.id,
       data.playerName,
-      { sessionId: data.sessionId, playerTag: data.playerTag }
+      playerRegisterOpts(data)
     );
     socket.data.playerName = player.name;
     mqttOnLogin();
@@ -738,15 +783,30 @@ io.on('connection', (socket) => {
 
   socket.on('room:create', async (data = {}) => {
     if (!rooms.getPlayer(socket.id)) {
-      rooms.registerPlayer(socket.id, data.playerName || '玩家', {
-        sessionId: data.sessionId,
-        playerTag: data.playerTag,
-      });
-    } else if (data.sessionId || data.playerTag) {
-      rooms.registerPlayer(socket.id, data.playerName || '玩家', {
-        sessionId: data.sessionId,
-        playerTag: data.playerTag,
-      });
+      rooms.registerPlayer(socket.id, data.playerName || '玩家', playerRegisterOpts(data));
+    } else if (data.sessionId || data.playerTag || data.client) {
+      rooms.registerPlayer(socket.id, data.playerName || '玩家', playerRegisterOpts(data));
+    }
+
+    const wantPassive = Boolean(data.passiveHost);
+    let operatorId = null;
+    if (wantPassive) {
+      // 被动开房：找本机已开启被动模式、且空闲的操作者
+      const op = [...rooms.players.values()].find(
+        (p) => p.passive && !p.roomId && p.id !== socket.id
+      );
+      if (!op) {
+        // 也允许操作者自己指定（本机创建到观战）——若创建者自己就是被动者则无效
+        const self = rooms.getPlayer(socket.id);
+        if (!(self && self.passive)) {
+          socket.emit('room:error', {
+            message: '目标未处于被动模式，或已在房间中',
+          });
+          return;
+        }
+      } else {
+        operatorId = op.id;
+      }
     }
 
     const result = rooms.createRoom(socket.id, {
@@ -756,6 +816,8 @@ io.on('connection', (socket) => {
       gameType: data.gameType,
       gameMode: data.gameMode,
       turnTimeSec: data.turnTimeSec,
+      passiveHost: wantPassive && Boolean(operatorId),
+      operatorId,
     });
 
     if (!result.ok) {
@@ -768,6 +830,16 @@ io.on('connection', (socket) => {
     joinHallChat(socket);
     const me = rooms.getPlayer(socket.id);
     dropIdleSessionGhosts(me && me.sessionId, socket.id);
+
+    // 把被动操作者拉进房间频道
+    if (operatorId) {
+      const opSock = io.sockets.sockets.get(operatorId);
+      if (opSock) {
+        opSock.join(room.id);
+        joinHallChat(opSock);
+      }
+    }
+
     // pendingLobby 期间仍按空闲发登录心跳，不广播房间
     mqttOnLogin();
 
@@ -815,6 +887,13 @@ io.on('connection', (socket) => {
     } catch (err) {
       const leave = rooms.leaveRoom(socket.id);
       if (leave.leftRoomId) socket.leave(leave.leftRoomId);
+      if (operatorId) {
+        const opLeave = rooms.leaveRoom(operatorId);
+        if (opLeave.leftRoomId) {
+          const opSock = io.sockets.sockets.get(operatorId);
+          if (opSock) opSock.leave(opLeave.leftRoomId);
+        }
+      }
       mqttOnLogin();
       mqttAfterRoomChange();
       emitLobbyUpdate();
@@ -824,17 +903,37 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('room:spectate', (data = {}) => {
+    if (!rooms.getPlayer(socket.id)) {
+      rooms.registerPlayer(socket.id, data.playerName || '玩家', playerRegisterOpts(data));
+    } else if (data.sessionId || data.playerTag || data.client) {
+      rooms.registerPlayer(socket.id, data.playerName || '玩家', playerRegisterOpts(data));
+    }
+
+    const result = rooms.spectateRoom(socket.id, data.roomId);
+    if (!result.ok) {
+      socket.emit('room:error', { message: result.error });
+      return;
+    }
+
+    socket.join(result.room.id);
+    joinHallChat(socket);
+    const me = rooms.getPlayer(socket.id);
+    dropIdleSessionGhosts(me && me.sessionId, socket.id);
+    emitRoomUpdate(result.room);
+    if (result.room.status === 'playing' && result.room.game) {
+      emitGameState(result.room);
+    }
+    emitLobbyUpdate();
+    mqttOnLogin();
+    mqttAfterRoomChange();
+  });
+
   socket.on('room:join', (data = {}) => {
     if (!rooms.getPlayer(socket.id)) {
-      rooms.registerPlayer(socket.id, data.playerName || '玩家', {
-        sessionId: data.sessionId,
-        playerTag: data.playerTag,
-      });
-    } else if (data.sessionId || data.playerTag) {
-      rooms.registerPlayer(socket.id, data.playerName || '玩家', {
-        sessionId: data.sessionId,
-        playerTag: data.playerTag,
-      });
+      rooms.registerPlayer(socket.id, data.playerName || '玩家', playerRegisterOpts(data));
+    } else if (data.sessionId || data.playerTag || data.client) {
+      rooms.registerPlayer(socket.id, data.playerName || '玩家', playerRegisterOpts(data));
     }
 
     const result = rooms.joinRoom(socket.id, data.roomId);
@@ -851,6 +950,140 @@ io.on('connection', (socket) => {
     emitLobbyUpdate();
     mqttOnLogin();
     mqttAfterRoomChange();
+  });
+
+  socket.on('lobby:setPassive', async (data = {}) => {
+    const on = Boolean(data && data.on);
+    if (!rooms.getPlayer(socket.id)) {
+      socket.emit('lobby:error', { message: '请先进入大厅' });
+      return;
+    }
+
+    // 关闭被动：对局进行中禁止；若已在房间则解散房间后再关
+    if (!on) {
+      // 取消正在进行的「进入被动」准备
+      socket.data.passivePreparing = false;
+      const cur = rooms.getPlayer(socket.id);
+      const room = cur && cur.roomId ? rooms.getRoom(cur.roomId) : null;
+      if (
+        room &&
+        room.status === 'playing' &&
+        room.game &&
+        !room.game.over
+      ) {
+        socket.emit('lobby:error', {
+          message: '对局进行中，请等待本局结束后再退出被动模式',
+        });
+        socket.emit('lobby:passive', { passive: true });
+        return;
+      }
+      if (room) {
+        const leftRoomId = room.id;
+        const dissolve = rooms.dissolveRoom(leftRoomId, socket.id);
+        socket.leave(leftRoomId);
+        for (const otherId of dissolve.affectedPlayerIds || []) {
+          const otherSocket = io.sockets.sockets.get(otherId);
+          if (otherSocket) otherSocket.leave(leftRoomId);
+          io.to(otherId).emit('room:left', {
+            reason: 'dissolved',
+            roomId: leftRoomId,
+          });
+        }
+        socket.emit('room:left', {
+          reason: 'dissolved',
+          roomId: leftRoomId,
+        });
+        mqttClearRoomOnDissolve();
+      }
+
+      const result = rooms.setPlayerPassive(socket.id, false);
+      if (!result.ok) {
+        const p = rooms.getPlayer(socket.id);
+        socket.emit('lobby:error', { message: result.error });
+        socket.emit('lobby:passive', {
+          passive: Boolean(p && p.passive),
+        });
+        return;
+      }
+      socket.emit('lobby:passive', { passive: false });
+      emitLobbyUpdate();
+      mqttOnLogin();
+      mqttAfterRoomChange();
+      return;
+    }
+
+    // 开启被动：公网隧道就绪前不设标记、不发被动心跳
+    const already = rooms.getPlayer(socket.id);
+    if (already && already.passive) {
+      socket.emit('lobby:passive', { passive: true });
+      return;
+    }
+    if (socket.data.passivePreparing) {
+      socket.emit('lobby:passiveProgress', {
+        message: '正在进入被动模式…',
+      });
+      return;
+    }
+
+    socket.data.passivePreparing = true;
+    socket.emit('lobby:passiveProgress', {
+      message: '正在进入被动模式…',
+    });
+
+    try {
+      if (mqttBulletin && mqttBulletin.enabled) {
+        const progress = (phase) => {
+          if (!socket.data.passivePreparing) return;
+          let message = '正在进入被动模式…';
+          if (phase === 'mqtt') message = '正在进入被动模式…（连接广播）';
+          else if (phase === 'tunnel') {
+            message = '正在进入被动模式…（准备公网隧道）';
+          } else if (phase === 'tunnel-warmup') {
+            message = '正在进入被动模式…（隧道就绪中）';
+          }
+          socket.emit('lobby:passiveProgress', { message });
+        };
+        progress('tunnel');
+        await ensurePublicTunnelUrl();
+        const ready = await mqttBulletin.waitForInfrastructureReady({
+          timeoutMs: 90000,
+          onProgress: progress,
+          skipTouchLogin: true,
+        });
+        if (!socket.data.passivePreparing) return;
+        if (!ready.ok) {
+          throw new Error(ready.message || '公网隧道准备失败');
+        }
+      } else {
+        try {
+          await ensurePublicTunnelUrl();
+        } catch (_) {
+          /* 无 MQTT 时隧道可选 */
+        }
+        if (!socket.data.passivePreparing) return;
+      }
+
+      const result = rooms.setPlayerPassive(socket.id, true);
+      socket.data.passivePreparing = false;
+      if (!result.ok) {
+        socket.emit('lobby:error', { message: result.error });
+        socket.emit('lobby:passive', { passive: false });
+        return;
+      }
+      socket.emit('lobby:passive', { passive: true });
+      emitLobbyUpdate();
+      mqttOnLogin();
+    } catch (err) {
+      socket.data.passivePreparing = false;
+      const still = rooms.getPlayer(socket.id);
+      if (still) still.passive = false;
+      socket.emit('lobby:error', {
+        message: (err && err.message) || '进入被动模式失败',
+      });
+      socket.emit('lobby:passive', { passive: false });
+      emitLobbyUpdate();
+      mqttOnLogin();
+    }
   });
 
   socket.on('room:leave', () => {
@@ -941,6 +1174,27 @@ io.on('connection', (socket) => {
     scheduleLasidaoInitAnnounce(result.room);
   });
 
+  socket.on('room:updateSettings', (data = {}) => {
+    const result = rooms.updateSettings(socket.id, {
+      name: data.name,
+      hidden: data.hidden,
+      maxPlayers: data.maxPlayers,
+      gameType: data.gameType,
+      gameMode: data.gameMode,
+      turnTimeSec: data.turnTimeSec,
+    });
+    if (!result.ok) {
+      socket.emit('room:error', { message: result.error });
+      return;
+    }
+    // 立刻同步房内成员 + 本机大厅 + MQTT 公网列表
+    emitRoomUpdate(result.room);
+    emitLobbyUpdate();
+    mqttOnLogin();
+    mqttAfterRoomChange();
+    socket.emit('room:settingsUpdated', { ok: true, roomId: result.room.id });
+  });
+
   socket.on('game:action', (data = {}) => {
     const player = rooms.getPlayer(socket.id);
     if (!player || !player.roomId) {
@@ -951,6 +1205,10 @@ io.on('connection', (socket) => {
     const room = rooms.getRoom(player.roomId);
     if (!room || room.status !== 'playing' || !room.game) {
       socket.emit('game:error', { message: '对局未开始' });
+      return;
+    }
+    if ((room.observers || []).some((o) => o.id === socket.id)) {
+      socket.emit('game:error', { message: '观战中无法操作' });
       return;
     }
 

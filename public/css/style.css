@@ -346,6 +346,14 @@ body.phase-game .match-clock-label {
   color: var(--muted);
 }
 
+.people-list .people-client {
+  color: var(--muted);
+  font-size: 0.82em;
+  font-weight: 600;
+  margin-left: 0.2rem;
+  white-space: nowrap;
+}
+
 .nick-input {
   display: none;
   width: 8.5rem;
@@ -793,6 +801,23 @@ button.secondary:hover {
   font-size: 0.92rem;
   color: #e8d2b0;
   font-weight: 650;
+}
+
+.room-observer-section {
+  margin-top: 0.75rem;
+}
+
+.room-observers-title {
+  color: #9eb6c2;
+}
+
+.room-panel .observer-list {
+  border-color: rgba(90, 120, 140, 0.45);
+  background: rgba(12, 18, 24, 0.35);
+}
+
+.room-panel .observer-list li {
+  border-bottom-color: rgba(90, 120, 140, 0.35);
 }
 
 .room-panel .member-list {
@@ -1477,4 +1502,121 @@ body.phase-room .chat-tabs button.is-on {
   .chat-panel {
     height: 240px;
   }
+}
+
+.lobby-playing-title {
+  margin-top: 1.1rem;
+}
+
+.passive-toggle {
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.65rem 0 0;
+  font-size: 0.88rem;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.passive-toggle input {
+  width: auto;
+  margin: 0;
+}
+
+.ctx-menu {
+  position: fixed;
+  z-index: 2500;
+  min-width: 10rem;
+  padding: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(28, 36, 42, 0.98);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+}
+
+.ctx-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 0;
+  border: none;
+  background: transparent;
+  padding: 0.55rem 0.65rem;
+  border-radius: 6px;
+}
+
+.ctx-menu button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.ctx-menu button:disabled {
+  opacity: 0.45;
+}
+
+.ctx-menu .ctx-hint {
+  margin: 0.25rem 0.4rem 0.35rem;
+  font-size: 0.8rem;
+}
+
+body.is-passive-locked .app,
+body.is-passive-locked .chat-dock,
+body.is-passive-locked .ctx-menu,
+body.is-passive-locked .modal {
+  pointer-events: none !important;
+  filter: grayscale(0.55) brightness(0.55);
+  transition: filter 0.2s ease;
+}
+
+body.is-passive-locked .game-menu,
+body.is-passive-locked .game-menu-panel {
+  pointer-events: none !important;
+  filter: grayscale(0.55) brightness(0.55);
+}
+
+.passive-lock-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgba(6, 10, 14, 0.55);
+  pointer-events: auto;
+}
+
+.passive-lock-overlay[hidden] {
+  display: none !important;
+}
+
+.passive-lock-panel {
+  width: min(26rem, 100%);
+  text-align: center;
+  padding: 1.75rem 1.5rem 1.5rem;
+  border: 1px solid var(--border);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+
+.passive-lock-title {
+  margin: 0 0 0.65rem;
+  font-size: 1.55rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.passive-lock-desc {
+  margin: 0 0 1.35rem;
+  line-height: 1.55;
+  font-size: 0.95rem;
+}
+
+.passive-lock-panel #btn-exit-passive {
+  min-width: 10rem;
+  font-size: 1rem;
+  padding: 0.7rem 1.2rem;
+}
+
+.passive-lock-panel #btn-exit-passive:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }

@@ -4,7 +4,7 @@ const engine = require('./engine');
 
 module.exports = {
   id: 'lasidao',
-  label: '拉斯岛',
+  label: '卡拉斯坦',
   minPlayers: 2,
   maxPlayers: 5,
   modes: [{ id: 'standard', label: '标准模式' }],

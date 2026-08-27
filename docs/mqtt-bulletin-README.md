@@ -15,7 +15,7 @@
 | 文件 / 环境变量 | 作用 |
 |----------------|------|
 | `mqtt.off`（空文件）或 `MQTT_BULLETIN=0` | 关闭 MQTT 广播 |
-| `mqtt.channel` 一行文字，或 `MQTT_CHANNEL` | 小群隔离频道（默认 `lianji-public`） |
+| `mqtt.channel` 一行文字，或 `MQTT_CHANNEL` | 小群隔离频道（默认 `xiyun_lianjidating_public`） |
 | `mqtt.broker` 或 `MQTT_BROKER` | 换成自己的 MQTT 地址 |
 
 同一频道的人才能互相看见。若不想和所有用这个游戏的人挤在一起，把同一串频道名发给朋友即可（仍不用填服务器地址）。

@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 拉斯岛卡牌图片映射
+ * 卡拉斯坦卡牌图片映射
  * 静态根：server/games/lasidao/resourse → /games/lasidao/res/
  * 图片：resourse/picture/* → /games/lasidao/res/picture/*
  */

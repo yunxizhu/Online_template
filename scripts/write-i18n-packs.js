@@ -83,7 +83,7 @@ const zh = {
     modeStandard: '标准模式',
     hintGomoku: '五子棋：双人局，房主执黑先手。',
     hintIncan: '印加宝藏：2–8 人，合作/竞争探险。',
-    hintLasidao: '拉斯岛：2–5 人，标准模式。',
+    hintLasidao: '卡拉斯坦：2–5 人，标准模式。',
     hintSgs: '三国杀：按模式与人数开局。',
     creating: '创建中…',
     createTimeout: '创建房间超时，请重试',
@@ -116,7 +116,7 @@ const zh = {
     sgs: '三国杀',
     gomoku: '五子棋',
     incan: '印加宝藏',
-    lasidao: '拉斯岛',
+    lasidao: '卡拉斯坦',
     modes: {
       identity: '标准身份',
       standard: '标准模式',
@@ -145,7 +145,7 @@ const zh = {
     draw: '和棋',
   },
   lasidao: {
-    title: '拉斯岛',
+    title: '卡拉斯坦',
     roundPhase: '第 {round} 轮 · {phase}',
     deckMeta:
       '牌堆：资源 抽{resDraw}/弃{resDiscard} · 功能 抽{fnDraw}/弃{fnDiscard} · 建筑 抽{bldDraw}/弃{bldDiscard}',
@@ -318,7 +318,7 @@ const en = {
     modeStandard: 'Standard',
     hintGomoku: 'Gomoku: 2 players, host plays black first.',
     hintIncan: 'Incan Gold: 2–8 players.',
-    hintLasidao: 'Lasidao: 2–5 players, standard mode.',
+    hintLasidao: 'Kalastan: 2–5 players, standard mode.',
     hintSgs: 'Sanguosha: start by mode and player count.',
     creating: 'Creating…',
     createTimeout: 'Create timed out, please retry',
@@ -351,7 +351,7 @@ const en = {
     sgs: 'Sanguosha',
     gomoku: 'Gomoku',
     incan: 'Incan Gold',
-    lasidao: 'Lasidao',
+    lasidao: 'Kalastan',
     modes: {
       identity: 'Identity',
       standard: 'Standard',
@@ -380,7 +380,7 @@ const en = {
     draw: 'Draw',
   },
   lasidao: {
-    title: 'Lasidao',
+    title: 'Kalastan',
     roundPhase: 'Round {round} · {phase}',
     deckMeta:
       'Decks: Res draw{resDraw}/disc{resDiscard} · Func draw{fnDraw}/disc{fnDiscard} · Bld draw{bldDraw}/disc{bldDiscard}',

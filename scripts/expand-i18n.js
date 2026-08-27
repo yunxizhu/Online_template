@@ -16,7 +16,7 @@ const extraZh = {
   'create.hintIncanFull':
     '印加宝藏：3–8 人；同时抉择继续/返回，全员锁定后才揭晓并结算。',
   'create.hintLasidaoFull':
-    '拉斯岛：2–5 人；生产派遣→拉斯维加斯式抵消结算→建造；先到 10 分获胜。',
+    '卡拉斯坦：2–5 人；生产派遣→拉斯维加斯式抵消结算→建造；先到 10 分获胜。',
   'create.hintSgsH2h':
     '三国杀·2V2：4 人交叉座位（1·4 vs 2·3）；队友手牌共享；先 Ban 将再选将。',
   'create.hintSgs1v2':
@@ -116,7 +116,7 @@ const extraEn = {
   'create.hintIncanFull':
     'Incan Gold: 3–8 players; choose together, reveal after all lock.',
   'create.hintLasidaoFull':
-    'Lasidao: 2–5 players; produce → cancel settle → build; first to 10 wins.',
+    'Kalastan: 2–5 players; produce → cancel settle → build; first to 10 wins.',
   'create.hintSgsH2h': 'Sanguosha 2v2: 4 players, shared teammate hands, ban then pick.',
   'create.hintSgs1v2': 'Sanguosha 1v2: 3 players, landlord mode.',
   'create.hintSgsXianzhu': 'Sanguosha Xianzhu mode: 5/8 players.',

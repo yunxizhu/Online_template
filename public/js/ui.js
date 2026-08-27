@@ -35,6 +35,8 @@
     lobbyMain: document.getElementById('lobby-main'),
     btnToggleCreate: document.getElementById('btn-toggle-create'),
     btnToggleJoin: document.getElementById('btn-toggle-join'),
+    btnToggleSpectate: document.getElementById('btn-toggle-spectate'),
+    chkPassiveMode: document.getElementById('chk-passive-mode'),
     btnRefreshLobby: document.getElementById('btn-refresh-lobby'),
     lobbyRefreshHint: document.getElementById('lobby-refresh-hint'),
     btnCloseCreate: document.getElementById('btn-close-create'),
@@ -73,19 +75,26 @@
     roomTurnTime: document.getElementById('room-turn-time'),
     gameHint: document.getElementById('game-hint'),
     btnCreateRoom: document.getElementById('btn-create-room'),
+    createRoomTitle: document.getElementById('create-room-title'),
     joinCode: document.getElementById('join-code'),
     btnJoinCode: document.getElementById('btn-join-code'),
     roomList: document.getElementById('room-list'),
     roomListEmpty: document.getElementById('room-list-empty'),
+    roomListPlaying: document.getElementById('room-list-playing'),
+    roomListPlayingEmpty: document.getElementById('room-list-playing-empty'),
     roomTitle: document.getElementById('room-title'),
     roomGameLabel: document.getElementById('room-game-label'),
     roomCode: document.getElementById('room-code'),
     roomHiddenBadge: document.getElementById('room-hidden-badge'),
     memberList: document.getElementById('member-list'),
+    observerList: document.getElementById('observer-list'),
+    observerSection: document.getElementById('observer-section'),
     btnStart: document.getElementById('btn-start'),
+    btnEditRoom: document.getElementById('btn-edit-room'),
     btnRoomRules: document.getElementById('btn-room-rules'),
     btnLeave: document.getElementById('btn-leave'),
     roomStartHint: document.getElementById('room-start-hint'),
+    roomBannerHint: document.querySelector('.room-banner-hint'),
     gameMenu: document.getElementById('game-menu'),
     btnGameMenu: document.getElementById('btn-game-menu'),
     gameMenuPop: document.getElementById('game-menu-pop'),
@@ -102,6 +111,7 @@
     matchClock: document.getElementById('match-clock'),
     matchClockTime: document.getElementById('match-clock-time'),
     peopleCtx: document.getElementById('people-ctx'),
+    roomCtx: document.getElementById('room-ctx'),
     rejoinModal: document.getElementById('rejoin-modal'),
     rejoinMessage: document.getElementById('rejoin-message'),
     btnAcceptRejoin: document.getElementById('btn-accept-rejoin'),
@@ -109,6 +119,9 @@
     btnCloseRejoin: document.getElementById('btn-close-rejoin'),
     roomBusyOverlay: document.getElementById('room-busy-overlay'),
     roomBusyMessage: document.getElementById('room-busy-message'),
+    passiveLockOverlay: document.getElementById('passive-lock-overlay'),
+    passiveLockDesc: document.getElementById('passive-lock-desc'),
+    btnExitPassive: document.getElementById('btn-exit-passive'),
   };
 
   const state = {
@@ -124,6 +137,12 @@
     ctxTarget: null,
     mqttBulletin: false,
     mqttHintShown: false,
+    createModalMode: 'create', // 'create' | 'edit' | 'create-on-host'
+    createOnHostTarget: null,
+    codeModalMode: 'join', // 'join' | 'spectate'
+    isSpectator: false,
+    passiveMode: false,
+    roomCtxTarget: null,
     chatChannel: 'all',
     chatAll: [],
     chatRoom: [],
@@ -147,6 +166,96 @@
   const ROOM_BUBBLE_MS = 3000;
   const LOBBY_REFRESH_MS = 3000;
   const NICK_STORAGE_KEY = 'lianji.playerName';
+  const GUEST_FLAG_KEY = 'lianji.guestClient';
+
+  function readBootQuery() {
+    try {
+      return new URLSearchParams(window.location.search || '');
+    } catch (_) {
+      return new URLSearchParams();
+    }
+  }
+
+  function isGuestClient() {
+    try {
+      if (sessionStorage.getItem(GUEST_FLAG_KEY) === '1') return true;
+    } catch (_) {}
+    return false;
+  }
+
+  function markGuestClient(on) {
+    try {
+      if (on) sessionStorage.setItem(GUEST_FLAG_KEY, '1');
+      else sessionStorage.removeItem(GUEST_FLAG_KEY);
+    } catch (_) {}
+  }
+
+  function syncGuestChrome() {
+    const guest = isGuestClient();
+    if (el.btnToggleCreate) el.btnToggleCreate.hidden = guest;
+    if (el.chkPassiveMode) {
+      const wrap = document.getElementById('passive-toggle-wrap');
+      if (wrap) wrap.hidden = guest;
+    }
+    // 加入端不可本机开房，但允许在被动主机上代开（create-on-host）
+    if (
+      guest &&
+      el.createRoomModal &&
+      !el.createRoomModal.hidden &&
+      state.createModalMode !== 'create-on-host'
+    ) {
+      setCreatePanelOpen(false);
+    }
+    if (guest) applyPassiveLockUi(false);
+  }
+
+  /** 对局进行中不可退出被动 */
+  function isPassiveExitBlocked() {
+    const room = state.room;
+    if (!room || room.status !== 'playing') return false;
+    if (state.game && state.game.over) return false;
+    return true;
+  }
+
+  function syncPassiveExitButton() {
+    if (!el.btnExitPassive) return;
+    const blocked = state.passiveMode && isPassiveExitBlocked();
+    el.btnExitPassive.disabled = blocked;
+    el.btnExitPassive.title = blocked
+      ? '对局进行中，请等待本局结束后再退出'
+      : '';
+    if (el.passiveLockDesc) {
+      el.passiveLockDesc.textContent = blocked
+        ? '本机正在托管对局，无法退出被动模式，请等待本局结束。'
+        : state.room && state.room.id
+          ? '无人值守中。退出被动模式将解散当前房间。'
+          : '无人值守：他人可在你的主机上开房与对局；本机保持锁定，不观战、不操作。结束后仍留在被动模式。';
+    }
+  }
+
+  /** 被动模式锁定：暗屏 + 屏蔽点击，仅保留退出按钮 */
+  function applyPassiveLockUi(on) {
+    const locked = Boolean(on) && !isGuestClient();
+    state.passiveMode = locked;
+    document.body.classList.toggle('is-passive-locked', locked);
+    if (el.passiveLockOverlay) el.passiveLockOverlay.hidden = !locked;
+    if (el.chkPassiveMode) el.chkPassiveMode.checked = locked;
+    if (locked) {
+      hidePeopleCtx();
+      hideRoomCtx();
+      closeAllModals();
+      if (el.roomBusyOverlay) el.roomBusyOverlay.hidden = true;
+    }
+    syncPassiveExitButton();
+  }
+
+  function clearBootQueryFromUrl() {
+    try {
+      if (!window.location.search) return;
+      const url = window.location.pathname + (window.location.hash || '');
+      window.history.replaceState({}, '', url);
+    } catch (_) {}
+  }
 
   function loadSavedNick() {
     try {
@@ -437,9 +546,12 @@
   }
 
   function findMemberRowForSpeaker(key) {
-    if (!el.memberList || !key) return null;
-    for (const li of el.memberList.querySelectorAll('li[data-speaker-key]')) {
-      if (li.dataset.speakerKey === key) return li;
+    if (!key) return null;
+    const lists = [el.memberList, el.observerList].filter(Boolean);
+    for (const list of lists) {
+      for (const li of list.querySelectorAll('li[data-speaker-key]')) {
+        if (li.dataset.speakerKey === key) return li;
+      }
     }
     return null;
   }
@@ -448,8 +560,9 @@
     for (const timer of roomBubbleTimers.values()) clearTimeout(timer);
     roomBubbleTimers.clear();
     state.roomChatBubbles = {};
-    if (el.memberList) {
-      el.memberList.querySelectorAll('.room-chat-bubble').forEach((node) => node.remove());
+    for (const list of [el.memberList, el.observerList]) {
+      if (!list) continue;
+      list.querySelectorAll('.room-chat-bubble').forEach((node) => node.remove());
     }
   }
 
@@ -759,6 +872,11 @@
     return {
       sessionId: getTabSessionId(),
       playerTag: myTag(),
+      client:
+        (window.ClientPlatform && window.ClientPlatform.current()) || '',
+      role:
+        (window.ClientPlatform && window.ClientPlatform.currentRole()) ||
+        'host',
       // 普通进大厅不带房间认领，避免刷新后自动抢座
       roomId: null,
       oldPlayerId: null,
@@ -777,6 +895,11 @@
     return {
       sessionId: getTabSessionId(),
       playerTag: myTag(),
+      client:
+        (window.ClientPlatform && window.ClientPlatform.current()) || '',
+      role:
+        (window.ClientPlatform && window.ClientPlatform.currentRole()) ||
+        'host',
       roomId,
       oldPlayerId: archive && archive.seatId ? archive.seatId : null,
       rejoin: true,
@@ -1015,14 +1138,25 @@
     if (el.roomBusyOverlay) el.roomBusyOverlay.hidden = false;
     if (el.roomBusyMessage) {
       el.roomBusyMessage.textContent =
-        message || (mode === 'create' ? t('create.creating') : t('create.joining'));
+        message ||
+        (mode === 'passive'
+          ? '正在进入被动模式…'
+          : mode === 'create'
+            ? t('create.creating')
+            : t('create.joining'));
     }
     clearTimeout(roomBusyTimer);
     roomBusyTimer = setTimeout(() => {
       if (!state.roomBusy) return;
       const was = state.roomBusy;
       hideRoomBusy();
-      showToast(was === 'create' ? t('create.createTimeout') : t('create.joinTimeout'));
+      if (was === 'passive') {
+        if (el.chkPassiveMode) el.chkPassiveMode.checked = false;
+        applyPassiveLockUi(false);
+        showToast('进入被动模式超时，请重试');
+      } else {
+        showToast(was === 'create' ? t('create.createTimeout') : t('create.joinTimeout'));
+      }
     }, 90000);
   }
 
@@ -1031,6 +1165,7 @@
     clearTimeout(roomBusyTimer);
     roomBusyTimer = null;
     if (el.roomBusyOverlay) el.roomBusyOverlay.hidden = true;
+    document.documentElement.classList.remove('boot-joining');
   }
 
   function updateRoomBusyMessage(message) {
@@ -1039,12 +1174,17 @@
   }
 
   async function joinRoomWithBusy(joinFn) {
-    if (state.roomBusy) return;
-    showRoomBusy('join', t('create.joining'));
+    if (state.roomBusy && state.roomBusy !== 'join') return;
+    if (!state.roomBusy) {
+      showRoomBusy('join', t('create.joining'));
+    } else {
+      updateRoomBusyMessage(t('create.joining'));
+    }
     try {
       await joinFn();
     } catch (err) {
       hideRoomBusy();
+      document.documentElement.classList.remove('boot-joining');
       throw err;
     }
   }
@@ -1155,7 +1295,7 @@
           ? 'game'
           : 'lobby');
     if (!el.chatDock) return;
-    // 大厅 / 房间等待 / 对局中均显示聊天室（含拉斯岛等）
+    // 大厅 / 房间等待 / 对局中均显示聊天室（含卡拉斯坦等）
     const shouldShow =
       state.inLobby &&
       (name === 'lobby' || name === 'room' || name === 'game');
@@ -1323,7 +1463,25 @@
   }
 
   function remoteBadge(person) {
-    return '';
+    const client = String((person && person.client) || '').toLowerCase();
+    const role = String((person && person.role) || '').toLowerCase();
+    let plat = '';
+    if (client === 'windows') plat = t('lobby.clientWindows');
+    else if (client === 'mac') plat = t('lobby.clientMac');
+    else if (client === 'mobile') plat = t('lobby.clientMobile');
+    let roleLabel = '';
+    if (role === 'host') roleLabel = t('lobby.roleHost');
+    else if (role === 'client') roleLabel = t('lobby.roleClient');
+    const parts = [plat, roleLabel].filter(Boolean);
+    if (!parts.length) return '';
+    const label = parts.join('·');
+    return (
+      ' <span class="people-client" title="' +
+      label +
+      '">[' +
+      label +
+      ']</span>'
+    );
   }
 
   function selectedGameMeta() {
@@ -1373,8 +1531,8 @@
       el.gameHint.textContent = t('create.hintIncanFull');
     } else if (g.id === 'lasidao') {
       el.maxPlayersWrap.hidden = false;
-      restoreMaxOptions();
-      // 仅保留 2–5
+      const cur = el.roomMax.value;
+      // 仅保留 2–5；勿在每次 lobby:update 时强制写回默认 4
       el.roomMax.innerHTML = '';
       for (let n = 2; n <= 5; n++) {
         const opt = document.createElement('option');
@@ -1382,13 +1540,18 @@
         opt.textContent = String(n);
         el.roomMax.appendChild(opt);
       }
-      el.roomMax.value = '4';
+      if ([...el.roomMax.options].some((o) => o.value === cur)) {
+        el.roomMax.value = cur;
+      } else {
+        el.roomMax.value = '4';
+      }
       el.gameHint.textContent = t('create.hintLasidaoFull');
     } else if (g.id === 'sgs') {
       el.maxPlayersWrap.hidden = false;
       const modeId = el.gameMode ? el.gameMode.value : 'identity';
       const mode = (g.modes || []).find((m) => m.id === modeId) || g.modes[0];
       const seats = (mode && mode.seats) || [5, 8];
+      const cur = el.roomMax.value;
       el.roomMax.innerHTML = '';
       for (const n of seats) {
         const opt = document.createElement('option');
@@ -1396,7 +1559,11 @@
         opt.textContent = String(n);
         el.roomMax.appendChild(opt);
       }
-      el.roomMax.value = String(seats[0]);
+      if ([...el.roomMax.options].some((o) => o.value === cur)) {
+        el.roomMax.value = cur;
+      } else {
+        el.roomMax.value = String(seats[0]);
+      }
       if (modeId === 'h2h') {
         el.gameHint.textContent = t('create.hintSgsH2h');
       } else if (modeId === '1v2') {
@@ -1453,42 +1620,205 @@
     return Number.isFinite(count) && Number.isFinite(max) && max > 0 && count >= max;
   }
 
-  function renderLobbyRooms(rooms) {
-    el.roomList.innerHTML = '';
-    const list = rooms || [];
-    state.lobbyRooms = list;
-    el.roomListEmpty.hidden = list.length > 0;
+  function roomCanJoin(room) {
+    if (!room) return false;
+    if (room.canJoin != null) return Boolean(room.canJoin);
+    const waiting = !room.status || room.status === 'waiting';
+    return waiting && !isRoomFull(room);
+  }
 
-    for (const room of list) {
-      const li = document.createElement('li');
-      const info = document.createElement('span');
-      const where = hostHint(room);
-      const gameLabel = gameLabelOf(room.gameType, room.gameLabel || room.gameType || t('room.gameFallback'));
-      const modeBit = room.gameModeLabel ? `·${room.gameModeLabel}` : '';
-      let playerBitHtml = `${escapeHtml(room.playerCount)}/${escapeHtml(room.maxPlayers)}`;
-      if (room.playerNames && room.playerNames.length) {
-        const tags = Array.isArray(room.playerTags) ? room.playerTags : [];
-        const joined = room.playerNames.map((name, i) => nickHtml(name, tags[i])).join(' · ');
-        playerBitHtml = `${joined} (${escapeHtml(room.playerCount)}/${escapeHtml(room.maxPlayers)})`;
-      }
-      info.innerHTML =
-        `<span class="badge game-badge">${escapeHtml(gameLabel)}${escapeHtml(modeBit)}</span> ` +
-        `${escapeHtml(room.name)}  ${playerBitHtml}` +
-        (where ? `  · ${escapeHtml(where)}` : '');
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.textContent = t('lobby.join');
-      if (isRoomFull(room)) {
+  function roomCanSpectate(room) {
+    if (!room) return false;
+    if (room.canSpectate != null) return Boolean(room.canSpectate);
+    return (
+      !room.status ||
+      room.status === 'waiting' ||
+      room.status === 'playing'
+    );
+  }
+
+  function appendRoomListItem(ul, room, { preferSpectate = false } = {}) {
+    const li = document.createElement('li');
+    li.dataset.roomId = room.id || '';
+    const info = document.createElement('span');
+    const where = hostHint(room);
+    const gameLabel = gameLabelOf(
+      room.gameType,
+      room.gameLabel || room.gameType || t('room.gameFallback')
+    );
+    const modeBit = room.gameModeLabel ? `·${room.gameModeLabel}` : '';
+    let playerBitHtml = `${escapeHtml(room.playerCount)}/${escapeHtml(room.maxPlayers)}`;
+    if (room.playerNames && room.playerNames.length) {
+      const tags = Array.isArray(room.playerTags) ? room.playerTags : [];
+      const joined = room.playerNames
+        .map((name, i) => nickHtml(name, tags[i]))
+        .join(' · ');
+      playerBitHtml = `${joined} (${escapeHtml(room.playerCount)}/${escapeHtml(room.maxPlayers)})`;
+    }
+    const statusBit =
+      room.status === 'playing'
+        ? ' <span class="badge">对局中</span>'
+        : '';
+    info.innerHTML =
+      `<span class="badge game-badge">${escapeHtml(gameLabel)}${escapeHtml(modeBit)}</span> ` +
+      `${escapeHtml(room.name)}  ${playerBitHtml}` +
+      statusBit +
+      (where ? `  · ${escapeHtml(where)}` : '');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    const canJoin = roomCanJoin(room);
+    const canSpec = roomCanSpectate(room);
+    if (preferSpectate || (!canJoin && canSpec)) {
+      btn.textContent = '观战';
+      btn.className = 'secondary';
+      if (!canSpec) {
         btn.disabled = true;
-        btn.title = t('lobby.roomFull');
-        btn.setAttribute('aria-disabled', 'true');
+      } else {
+        btn.addEventListener('click', () => spectateDiscoveredRoom(room));
+      }
+    } else {
+      btn.textContent = t('lobby.join');
+      if (!canJoin) {
+        btn.disabled = true;
+        btn.title = room.status === 'playing' ? '对局已开始，请观战' : t('lobby.roomFull');
         li.classList.add('is-full');
       } else {
         btn.addEventListener('click', () => joinDiscoveredRoom(room));
       }
-      li.appendChild(info);
-      li.appendChild(btn);
-      el.roomList.appendChild(li);
+    }
+    li.appendChild(info);
+    li.appendChild(btn);
+    li.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      showRoomCtx(room, ev.clientX, ev.clientY);
+    });
+    bindLongPress(li, (x, y) => showRoomCtx(room, x, y));
+    ul.appendChild(li);
+  }
+
+  function renderLobbyRooms(rooms) {
+    const list = rooms || [];
+    state.lobbyRooms = list;
+    const waiting = list.filter((r) => !r.status || r.status === 'waiting');
+    const playing = list.filter((r) => r.status === 'playing');
+
+    if (el.roomList) el.roomList.innerHTML = '';
+    if (el.roomListPlaying) el.roomListPlaying.innerHTML = '';
+    if (el.roomListEmpty) el.roomListEmpty.hidden = waiting.length > 0;
+    if (el.roomListPlayingEmpty) {
+      el.roomListPlayingEmpty.hidden = playing.length > 0;
+    }
+
+    for (const room of waiting) {
+      if (el.roomList) appendRoomListItem(el.roomList, room);
+    }
+    for (const room of playing) {
+      if (el.roomListPlaying) {
+        appendRoomListItem(el.roomListPlaying, room, { preferSpectate: true });
+      }
+    }
+  }
+
+  function hideRoomCtx() {
+    if (!el.roomCtx) return;
+    el.roomCtx.hidden = true;
+    state.roomCtxTarget = null;
+  }
+
+  function showRoomCtx(room, x, y) {
+    if (!el.roomCtx || !room) return;
+    hidePeopleCtx();
+    state.roomCtxTarget = room;
+    const btnJoin = el.roomCtx.querySelector('[data-action="room-join"]');
+    const btnSpec = el.roomCtx.querySelector('[data-action="room-spectate"]');
+    const hint = document.getElementById('room-ctx-hint');
+    const canJoin = roomCanJoin(room);
+    const canSpec = roomCanSpectate(room);
+    if (btnJoin) {
+      btnJoin.disabled = !canJoin;
+      btnJoin.title = canJoin
+        ? ''
+        : room.status === 'playing'
+          ? '对局已开始'
+          : '房间已满或不可加入';
+    }
+    if (btnSpec) {
+      btnSpec.disabled = !canSpec;
+    }
+    if (hint) {
+      hint.hidden = canJoin || canSpec;
+      hint.textContent = canJoin || canSpec ? '' : '暂无可用操作';
+    }
+    el.roomCtx.hidden = false;
+    const pad = 8;
+    const rect = el.roomCtx.getBoundingClientRect();
+    const w = rect.width || 180;
+    const h = rect.height || 90;
+    let left = x;
+    let top = y;
+    if (left + w > window.innerWidth - pad) left = window.innerWidth - w - pad;
+    if (top + h > window.innerHeight - pad) top = window.innerHeight - h - pad;
+    el.roomCtx.style.left = `${Math.max(pad, left)}px`;
+    el.roomCtx.style.top = `${Math.max(pad, top)}px`;
+  }
+
+  function bindLongPress(node, onLongPress) {
+    if (!node || typeof onLongPress !== 'function') return;
+    let timer = null;
+    let startX = 0;
+    let startY = 0;
+    const clear = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+    };
+    node.addEventListener(
+      'pointerdown',
+      (ev) => {
+        if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+        startX = ev.clientX;
+        startY = ev.clientY;
+        clear();
+        timer = setTimeout(() => {
+          timer = null;
+          onLongPress(startX, startY);
+        }, 520);
+      },
+      { passive: true }
+    );
+    node.addEventListener('pointerup', clear, { passive: true });
+    node.addEventListener('pointercancel', clear, { passive: true });
+    node.addEventListener(
+      'pointermove',
+      (ev) => {
+        if (!timer) return;
+        if (
+          Math.abs(ev.clientX - startX) > 12 ||
+          Math.abs(ev.clientY - startY) > 12
+        ) {
+          clear();
+        }
+      },
+      { passive: true }
+    );
+  }
+
+  async function spectateDiscoveredRoom(room) {
+    if (!room || !room.id) return;
+    const name =
+      state.playerName ||
+      (el.playerName && el.playerName.value) ||
+      t('app.playerDefault');
+    try {
+      showRoomBusy('join', '正在观战…');
+      await net.enterRoomOnHost(room.id, name, room.host, {
+        local: Boolean(room.local),
+        mode: 'spectate',
+        sessionId: getTabSessionId(),
+        playerTag: window.PlayerNick.ensureTag(),
+      });
+    } catch (err) {
+      hideRoomBusy();
+      showToast((err && err.message) || '观战失败');
     }
   }
 
@@ -1514,9 +1844,15 @@
   function peopleStatusText(person) {
     if (person.status === 'offline') return t('lobby.statusOffline');
     if (person.status === 'playing') return t('lobby.statusPlaying');
+    if (person.status === 'spectating') {
+      return person.roomName
+        ? '观战 · ' + person.roomName
+        : '观战中';
+    }
     if (person.status === 'room') {
       return person.roomName ? t('lobby.statusInRoomNamed', { name: person.roomName }) : t('lobby.statusInRoom');
     }
+    if (person.passive) return '被动模式';
     return t('lobby.statusIdle');
   }
 
@@ -1533,6 +1869,9 @@
 
     let joinEnabled = false;
     let joinReason = '';
+    let createOnHostEnabled = false;
+    let createOnHostReason = '';
+
     if (person.status === 'offline') joinReason = t('lobby.reasonOffline');
     else if (isMe) joinReason = t('lobby.reasonSelf');
     else if (state.room) joinReason = t('lobby.reasonLeaveFirst');
@@ -1542,17 +1881,36 @@
       const theirRoom = (state.lobbyRooms || []).find(
         (r) => String(r.id).toUpperCase() === String(person.roomId).toUpperCase()
       );
-      if (theirRoom && isRoomFull(theirRoom)) joinReason = t('lobby.reasonFull');
-      else joinEnabled = true;
+      if (theirRoom && !roomCanJoin(theirRoom)) {
+        joinReason = theirRoom.status === 'playing' ? '对局已开始' : t('lobby.reasonFull');
+      } else joinEnabled = true;
     }
 
-    return { isMe, joinEnabled, joinReason };
+    if (isMe) createOnHostReason = '不能在自己这里代开';
+    else if (state.room) createOnHostReason = t('lobby.reasonLeaveFirst');
+    else if (!person.passive || person.status === 'room' || person.status === 'playing' || person.status === 'spectating') {
+      createOnHostReason = '对方未开被动模式或已在房间';
+    } else if (!person.host && !person.local) {
+      createOnHostReason = '缺少对方公网地址';
+    } else {
+      createOnHostEnabled = true;
+    }
+
+    return {
+      isMe,
+      joinEnabled,
+      joinReason,
+      createOnHostEnabled,
+      createOnHostReason,
+    };
   }
 
   function showPeopleCtx(person, x, y) {
     if (!el.peopleCtx || !person) return;
+    hideRoomCtx();
     const actions = getPeopleCtxActions(person);
     const btnJoin = el.peopleCtx.querySelector('[data-action="join-their-room"]');
+    const btnCreate = el.peopleCtx.querySelector('[data-action="create-on-host"]');
     const hint = document.getElementById('people-ctx-hint');
 
     if (btnJoin) {
@@ -1560,10 +1918,18 @@
       btnJoin.disabled = !actions.joinEnabled;
       btnJoin.title = actions.joinEnabled ? '' : actions.joinReason;
     }
+    if (btnCreate) {
+      btnCreate.hidden = false;
+      btnCreate.disabled = !actions.createOnHostEnabled;
+      btnCreate.title = actions.createOnHostEnabled
+        ? ''
+        : actions.createOnHostReason;
+    }
     if (hint) {
-      if (!actions.joinEnabled) {
+      if (!actions.joinEnabled && !actions.createOnHostEnabled) {
         hint.hidden = false;
-        hint.textContent = actions.joinReason || t('lobby.noActions');
+        hint.textContent =
+          actions.createOnHostReason || actions.joinReason || t('lobby.noActions');
       } else {
         hint.hidden = true;
         hint.textContent = '';
@@ -1572,7 +1938,6 @@
 
     state.ctxTarget = person;
     el.peopleCtx.hidden = false;
-    // 先显示再量宽高，避免 hidden 时尺寸为 0
     const pad = 8;
     const rect = el.peopleCtx.getBoundingClientRect();
     const w = rect.width || 180;
@@ -1617,6 +1982,9 @@
       name.innerHTML =
         nickHtml(person.name, person.tag) +
         (isMe ? ' <span class="you">(' + t('common.you') + ')</span>' : '') +
+        (person.passive && person.status === 'idle'
+          ? ' <span class="badge">被动</span>'
+          : '') +
         remoteBadge(person);
       name.title = window.PlayerNick.fullLabel(person.name, person.tag);
       const status = document.createElement('span');
@@ -1627,6 +1995,11 @@
       }
       li.appendChild(name);
       li.appendChild(status);
+      li.addEventListener('contextmenu', (ev) => {
+        ev.preventDefault();
+        showPeopleCtx(person, ev.clientX, ev.clientY);
+      });
+      bindLongPress(li, (x, y) => showPeopleCtx(person, x, y));
       el.lobbyPeopleList.appendChild(li);
     }
   }
@@ -1664,16 +2037,66 @@
       li.appendChild(right);
       el.memberList.appendChild(li);
     }
+
+    const observers = room.observers || [];
+    if (el.observerList) el.observerList.innerHTML = '';
+    for (const o of observers) {
+      if (!el.observerList) break;
+      const li = document.createElement('li');
+      li.dataset.speakerKey = memberSpeakerKey(o);
+      const isMe = state.me && o.id === state.me.id;
+      const left = document.createElement('span');
+      left.innerHTML =
+        nickHtml(o.name, o.tag) +
+        (isMe ? ' <span class="you">(我)</span>' : '');
+      left.title = window.PlayerNick.fullLabel(o.name, o.tag);
+      const right = document.createElement('span');
+      right.className = 'muted';
+      right.textContent = '观战';
+      li.appendChild(left);
+      li.appendChild(right);
+      el.observerList.appendChild(li);
+    }
+    if (el.observerSection) {
+      el.observerSection.hidden = observers.length === 0;
+    }
     syncRoomChatBubbles();
 
     const min = room.minPlayers || 2;
-    el.roomStartHint.textContent = t('room.startHintCount', { min, cur: room.players.length, max: room.maxPlayers });
+    // 仅统计座位玩家，观战席不计入开局人数
+    const seated = (room.players || []).filter((p) => !p.left).length;
+    el.roomStartHint.textContent = t('room.startHintCount', {
+      min,
+      cur: seated,
+      max: room.maxPlayers,
+    });
 
-    const isHost = state.me && room.hostId === state.me.id;
+    const isSpectator =
+      state.me &&
+      (room.observers || []).some((o) => o.id === state.me.id);
+    state.isSpectator = Boolean(isSpectator);
+    const isHost = state.me && room.hostId === state.me.id && !isSpectator;
     el.btnStart.hidden = !isHost;
-    el.btnStart.disabled = room.players.length < min;
+    el.btnStart.disabled = seated < min;
+    if (el.btnEditRoom) {
+      el.btnEditRoom.hidden = !isHost || room.status === 'playing';
+    }
+    if (el.btnLeave) {
+      el.btnLeave.textContent = isHost
+        ? '解散房间'
+        : isSpectator
+          ? '退出观战'
+          : t('room.leave');
+    }
     if (el.btnRoomRules) {
       el.btnRoomRules.hidden = room.gameType !== 'lasidao';
+    }
+    if (el.roomBannerHint) {
+      el.roomBannerHint.textContent = isSpectator
+        ? '观战中'
+        : room.status === 'playing'
+          ? '对局中'
+          : '等待开局';
     }
   }
 
@@ -1682,7 +2105,7 @@
     if (window.IncanUi) window.IncanUi.hide();
     if (window.SgsUi) window.SgsUi.hide();
     if (window.LasidaoUi) {
-      // 仍在拉斯岛对局中：只藏面板，不清发牌/骰子会话（否则每次状态同步都会重播发牌）
+      // 仍在卡拉斯坦对局中：只藏面板，不清发牌/骰子会话（否则每次状态同步都会重播发牌）
       if (state.game && state.game.type === 'lasidao') {
         window.LasidaoUi.hide();
       } else if (typeof window.LasidaoUi.resetSession === 'function') {
@@ -1889,8 +2312,12 @@
   }
 
   async function joinDiscoveredRoom(room) {
-    if (isRoomFull(room)) {
-      showToast(t('toast.roomFull'));
+    if (!roomCanJoin(room)) {
+      showToast(
+        room && room.status === 'playing'
+          ? '对局已开始，请观战'
+          : t('toast.roomFull')
+      );
       return;
     }
     if (state.roomBusy) return;
@@ -1936,6 +2363,7 @@
 
   /** 房间失效/解散：退出并回到本机大厅 */
   async function bounceToLocalLobby(message) {
+    const keepPassiveLock = state.passiveMode;
     markSelfRoomLeave((state.room && state.room.id) || state._lastRoomId);
     cancelRemoteRecover();
     remoteRecovering = false;
@@ -1964,7 +2392,9 @@
     showView('lobby');
     showLobbyHome();
     updateMeLabel();
-    if (message) showToast(message);
+    // 无人值守：对局结束回大厅后仍保持被动锁定
+    if (keepPassiveLock) applyPassiveLockUi(true);
+    if (message && !keepPassiveLock) showToast(message);
     leavingToLocal = false;
   }
 
@@ -1975,6 +2405,7 @@
     if (el.lobbyPeopleAside) {
       el.lobbyPeopleAside.hidden = !state.inLobby;
     }
+    syncGuestChrome();
     syncChatVisibility();
     refreshNickUi();
     updateMeLabel();
@@ -1982,8 +2413,72 @@
     else stopLobbyAutoRefresh();
   }
 
-  function setCreatePanelOpen(open) {
+  function syncCreateModalChrome() {
+    const editing = state.createModalMode === 'edit';
+    const onHost = state.createModalMode === 'create-on-host';
+    if (el.createRoomTitle) {
+      el.createRoomTitle.textContent = editing
+        ? t('create.editTitle')
+        : onHost
+          ? '在被动主机上开房'
+          : t('create.title');
+    }
+    if (el.btnCreateRoom) {
+      el.btnCreateRoom.textContent = editing
+        ? t('create.editConfirm')
+        : t('create.confirm');
+    }
+  }
+
+  function fillCreateFormFromRoom(room) {
+    if (!room) return;
+    if (el.gameType && room.gameType) {
+      if ([...el.gameType.options].some((o) => o.value === room.gameType)) {
+        el.gameType.value = room.gameType;
+      }
+    }
+    updateCreateForm();
+    if (el.gameMode && room.gameMode) {
+      if ([...el.gameMode.options].some((o) => o.value === room.gameMode)) {
+        el.gameMode.value = room.gameMode;
+        updateCreateForm();
+      }
+    }
+    if (el.roomMax && room.maxPlayers != null) {
+      const v = String(room.maxPlayers);
+      if ([...el.roomMax.options].some((o) => o.value === v)) {
+        el.roomMax.value = v;
+      }
+    }
+    if (el.roomName) el.roomName.value = room.name || '';
+    if (el.roomHidden) el.roomHidden.checked = Boolean(room.hidden);
+    if (el.roomTurnTime && room.turnTimeSec != null) {
+      const v = String(Number(room.turnTimeSec) || 0);
+      if ([...el.roomTurnTime.options].some((o) => o.value === v)) {
+        el.roomTurnTime.value = v;
+      }
+    }
+  }
+
+  function setCreatePanelOpen(open, mode = 'create') {
     if (!el.createRoomModal) return;
+    if (open) {
+      state.createModalMode =
+        mode === 'edit'
+          ? 'edit'
+          : mode === 'create-on-host'
+            ? 'create-on-host'
+            : 'create';
+      syncCreateModalChrome();
+      if (state.createModalMode === 'edit' && state.room) {
+        fillCreateFormFromRoom(state.room);
+      } else {
+        updateCreateForm();
+      }
+    } else {
+      state.createModalMode = 'create';
+      syncCreateModalChrome();
+    }
     el.createRoomModal.hidden = !open;
     if (open) {
       if (el.joinCodeModal) el.joinCodeModal.hidden = true;
@@ -2011,6 +2506,8 @@
     if (el.joinCodeModal) el.joinCodeModal.hidden = true;
     if (el.rejoinModal) el.rejoinModal.hidden = true;
     state.pendingRejoin = null;
+    state.createModalMode = 'create';
+    syncCreateModalChrome();
   }
 
   let nickEditing = false;
@@ -2239,7 +2736,11 @@
 
   if (el.btnToggleCreate) {
     el.btnToggleCreate.addEventListener('click', () => {
-      setCreatePanelOpen(el.createRoomModal.hidden);
+      if (isGuestClient()) {
+        showToast(t('toast.guestNoCreate') || '手机端不能创建房间，请用电脑开房');
+        return;
+      }
+      setCreatePanelOpen(el.createRoomModal.hidden, 'create');
     });
   }
   if (el.btnCloseCreate) {
@@ -2247,7 +2748,65 @@
   }
   if (el.btnToggleJoin) {
     el.btnToggleJoin.addEventListener('click', () => {
+      state.codeModalMode = 'join';
+      const title = document.getElementById('join-code-title');
+      if (title) title.textContent = '房间码加入';
       setJoinPanelOpen(el.joinCodeModal.hidden);
+    });
+  }
+  if (el.btnToggleSpectate) {
+    el.btnToggleSpectate.addEventListener('click', () => {
+      state.codeModalMode = 'spectate';
+      const title = document.getElementById('join-code-title');
+      if (title) title.textContent = '房间码观战';
+      setJoinPanelOpen(el.joinCodeModal.hidden);
+    });
+  }
+  function requestExitPassive() {
+    if (isGuestClient()) return;
+    if (isPassiveExitBlocked()) {
+      showToast('对局进行中，请等待本局结束后再退出被动模式');
+      syncPassiveExitButton();
+      return;
+    }
+    const inRoom = Boolean(state.room && state.room.id);
+    if (inRoom) {
+      const ok = window.confirm(
+        '退出被动模式将解散当前房间（房内玩家会回到大厅）。确定退出吗？'
+      );
+      if (!ok) return;
+    }
+    applyPassiveLockUi(false);
+    net.setPassive(false);
+  }
+
+  if (el.chkPassiveMode) {
+    el.chkPassiveMode.addEventListener('change', () => {
+      if (!state.inLobby) {
+        el.chkPassiveMode.checked = false;
+        showToast('请先进入大厅');
+        return;
+      }
+      if (isGuestClient()) {
+        el.chkPassiveMode.checked = false;
+        showToast('加入端不能开启被动模式');
+        return;
+      }
+      const on = el.chkPassiveMode.checked;
+      if (on) {
+        // 隧道就绪前只显示准备中，不提前锁定/不视为已被动
+        showRoomBusy('passive', '正在进入被动模式…');
+        net.setPassive(true);
+      } else {
+        // 锁定层下一般走「退出被动模式」按钮；此处兜底
+        if (el.chkPassiveMode) el.chkPassiveMode.checked = true;
+        requestExitPassive();
+      }
+    });
+  }
+  if (el.btnExitPassive) {
+    el.btnExitPassive.addEventListener('click', () => {
+      requestExitPassive();
     });
   }
   if (el.btnCloseJoin) {
@@ -2563,35 +3122,117 @@
         } catch (err) {
           showToast(err.message || t('toast.joinFail'));
         }
+      } else if (action === 'create-on-host') {
+        if (!target.passive) return;
+        state.createOnHostTarget = target;
+        setCreatePanelOpen(true, 'create-on-host');
       }
+    });
+  }
+
+  if (el.roomCtx) {
+    el.roomCtx.addEventListener('click', async (ev) => {
+      const btn = ev.target.closest('[data-action]');
+      if (!btn || !state.roomCtxTarget) return;
+      if (btn.disabled) {
+        showToast(btn.title || '不可用');
+        return;
+      }
+      const action = btn.getAttribute('data-action');
+      const room = state.roomCtxTarget;
+      hideRoomCtx();
+      if (action === 'room-join') joinDiscoveredRoom(room);
+      else if (action === 'room-spectate') spectateDiscoveredRoom(room);
     });
   }
 
   document.addEventListener('pointerdown', (ev) => {
     if (ev.button === 2) return; // 右键留给菜单
-    if (!el.peopleCtx || el.peopleCtx.hidden) return;
-    if (el.peopleCtx.contains(ev.target)) return;
-    hidePeopleCtx();
+    if (el.peopleCtx && !el.peopleCtx.hidden && !el.peopleCtx.contains(ev.target)) {
+      hidePeopleCtx();
+    }
+    if (el.roomCtx && !el.roomCtx.hidden && !el.roomCtx.contains(ev.target)) {
+      hideRoomCtx();
+    }
   });
 
   el.btnCreateRoom.addEventListener('click', async () => {
     if (state.roomBusy) return;
+    const g = selectedGameMeta();
+    const payload = {
+      name: el.roomName.value.trim(),
+      hidden: el.roomHidden.checked,
+      gameType: el.gameType.value || 'sgs',
+      gameMode: el.gameMode ? el.gameMode.value : undefined,
+      maxPlayers: g ? Number(el.roomMax.value) || g.maxPlayers : 2,
+      turnTimeSec: el.roomTurnTime
+        ? Number(el.roomTurnTime.value) || 0
+        : 0,
+    };
+
+    if (state.createModalMode === 'edit') {
+      if (!state.room || !state.me || state.room.hostId !== state.me.id) {
+        showToast(t('toast.updateRoomFail'));
+        return;
+      }
+      try {
+        if (typeof net.updateRoomSettings !== 'function') {
+          showToast(t('toast.updateRoomFail'));
+          return;
+        }
+        net.updateRoomSettings(payload);
+        closeAllModals();
+      } catch (err) {
+        showToast(err.message || t('toast.updateRoomFail'));
+      }
+      return;
+    }
+
+    if (state.createModalMode === 'create-on-host') {
+      const target = state.createOnHostTarget;
+      const alreadyOnHost = Boolean(target && target.alreadyOnHost);
+      if (!alreadyOnHost && (!target || !target.host)) {
+        showToast('缺少被动主机地址');
+        return;
+      }
+      try {
+        showRoomBusy('create', '正在对方主机上创建房间…');
+        closeAllModals();
+        if (alreadyOnHost) {
+          net.createRoom({
+            ...payload,
+            playerName: state.playerName || el.playerName.value.trim(),
+            playerTag: myTag(),
+            sessionId: getTabSessionId(),
+            passiveHost: true,
+          });
+        } else {
+          await net.createRoomOnHost(
+            state.playerName || el.playerName.value.trim(),
+            target.host,
+            {
+              ...payload,
+              playerTag: myTag(),
+              sessionId: getTabSessionId(),
+            }
+          );
+        }
+        state.createOnHostTarget = null;
+      } catch (err) {
+        hideRoomBusy();
+        showToast(err.message || t('toast.createFail'));
+      }
+      return;
+    }
+
     try {
       if (net.isOnRemoteHost()) {
         await net.returnToLocalLobby(state.playerName, lobbyJoinOpts());
       }
-      const g = selectedGameMeta();
       showRoomBusy('create', t('create.creating'));
       closeAllModals();
       net.createRoom({
-        name: el.roomName.value.trim(),
-        hidden: el.roomHidden.checked,
-        gameType: el.gameType.value || 'sgs',
-        gameMode: el.gameMode ? el.gameMode.value : undefined,
-        maxPlayers: g ? Number(el.roomMax.value) || g.maxPlayers : 2,
-        turnTimeSec: el.roomTurnTime
-          ? Number(el.roomTurnTime.value) || 0
-          : 0,
+        ...payload,
         playerName: state.playerName || el.playerName.value.trim(),
         playerTag: myTag(),
         sessionId: getTabSessionId(),
@@ -2610,6 +3251,7 @@
     }
     if (state.roomBusy) return;
     const name = state.playerName || el.playerName.value.trim() || t('app.playerDefault');
+    const asSpectate = state.codeModalMode === 'spectate';
     try {
       await net.connect(net.getLocalOrigin());
       net.joinLobby(name, lobbyJoinOpts());
@@ -2620,31 +3262,31 @@
       }
       closeAllModals();
       await joinRoomWithBusy(async () => {
-        await net.joinRoomOnHost(
+        await net.enterRoomOnHost(
           resolved.roomId,
           name,
           resolved.host,
           {
             ...lobbyJoinOpts(),
             local: resolved.local === true,
-            preferLocal: resolved.local === true,
+            mode: asSpectate ? 'spectate' : 'join',
           }
         );
       });
     } catch (err) {
-      const base = (err && err.message) || t('toast.joinFail');
-      showToast(
-        base.indexOf('websocket error') >= 0 ||
-          base.indexOf('NAME_NOT_RESOLVED') >= 0 ||
-          base.indexOf('隧道') >= 0 ||
-          /dns|enotfound|name_not_resolved/i.test(base)
-          ? t('toast.dnsHint', { base })
-          : base
-      );
+      hideRoomBusy();
+      showToast(err.message || (asSpectate ? '观战失败' : t('toast.joinFail')));
     }
   });
 
   el.btnStart.addEventListener('click', () => net.startGame());
+  if (el.btnEditRoom) {
+    el.btnEditRoom.addEventListener('click', () => {
+      if (!state.room || !state.me || state.room.hostId !== state.me.id) return;
+      if (state.room.status === 'playing') return;
+      setCreatePanelOpen(true, 'edit');
+    });
+  }
   if (el.btnRoomRules) {
     el.btnRoomRules.addEventListener('click', () => {
       if (
@@ -2717,6 +3359,7 @@
     showView(currentViewName);
     updateCreateForm();
     fillGameOptions(state.games);
+    syncCreateModalChrome();
     if (state.lobbyRooms) renderLobbyRooms(state.lobbyRooms);
     if (state.room) renderRoom();
     if (state.game) renderGame();
@@ -2768,14 +3411,53 @@
     updateMeLabel();
   });
 
+  net.on('lobby:passiveProgress', (data) => {
+    const msg =
+      (data && data.message) || '正在进入被动模式…';
+    if (state.roomBusy === 'passive') updateRoomBusyMessage(msg);
+    else showRoomBusy('passive', msg);
+  });
+
+  net.on('lobby:passive', (data) => {
+    const on = Boolean(data && data.passive);
+    if (state.roomBusy === 'passive') hideRoomBusy();
+    applyPassiveLockUi(on);
+    if (el.chkPassiveMode) el.chkPassiveMode.checked = on;
+  });
+  net.on('lobby:error', (data) => {
+    showToast((data && data.message) || t('toast.opFail'));
+    if (state.roomBusy === 'passive') {
+      hideRoomBusy();
+      if (el.chkPassiveMode) el.chkPassiveMode.checked = false;
+      applyPassiveLockUi(false);
+    }
+  });
+
   net.on('lobby:update', (data) => {
     if (data && Object.prototype.hasOwnProperty.call(data, 'mqttBulletin')) {
       state.mqttBulletin = Boolean(data.mqttBulletin);
     }
-    fillGameOptions(data.games);
+    const editing =
+      state.createModalMode === 'edit' &&
+      el.createRoomModal &&
+      !el.createRoomModal.hidden;
+    if (editing) {
+      // 编辑中勿重建表单，避免大厅刷新冲掉正在改的选项
+      if (data && data.games) state.games = data.games;
+    } else {
+      fillGameOptions(data.games);
+    }
     renderLobbyRooms(data.rooms);
     renderPeers(data.peers);
     renderLobbyPeople(data.people);
+    if (el.chkPassiveMode && state.me && state.roomBusy !== 'passive') {
+      const mePerson = (data.people || []).find(
+        (p) => p.id === state.me.id || p.socketId === state.me.id
+      );
+      if (mePerson) {
+        applyPassiveLockUi(Boolean(mePerson.passive));
+      }
+    }
     markLobbyRefreshed();
     if (
       state.inLobby &&
@@ -2795,9 +3477,19 @@
 
   net.on('room:update', (data) => {
     hideRoomBusy();
+    // 被动主机进房后仍保持锁定（无人值守）；不在此解除
+    if (state.passiveMode) applyPassiveLockUi(true);
     const prevRoomId = state._lastRoomId;
+    const prev = state.room;
     state.room = data.room;
-    closeAllModals();
+    syncPassiveExitButton();
+    const keepEdit =
+      state.createModalMode === 'edit' &&
+      el.createRoomModal &&
+      !el.createRoomModal.hidden &&
+      data.room &&
+      data.room.status === 'waiting';
+    if (!keepEdit) closeAllModals();
     if (data.room.status === 'playing') {
       rememberActivePlay(data.room);
       showView('game');
@@ -2807,6 +3499,16 @@
       state.game = null;
       showView('room');
       renderRoom();
+      if (keepEdit && prev) {
+        const gameChanged =
+          prev.gameType !== data.room.gameType ||
+          prev.gameMode !== data.room.gameMode ||
+          prev.maxPlayers !== data.room.maxPlayers ||
+          prev.name !== data.room.name ||
+          Boolean(prev.hidden) !== Boolean(data.room.hidden) ||
+          Number(prev.turnTimeSec) !== Number(data.room.turnTimeSec);
+        if (gameChanged) fillCreateFormFromRoom(data.room);
+      }
       if (data.room.id && data.room.id !== prevRoomId) {
         showToast(t('room.enteredNamed', { name: data.room.name || data.room.id }));
       }
@@ -2911,8 +3613,13 @@
     hideRoomBusy();
     showToast(data.message || t('toast.roomError'));
   });
+  net.on('room:settingsUpdated', () => {
+    closeAllModals();
+    showToast(t('toast.roomUpdated'));
+  });
   net.on('game:started', (data) => {
     state.game = data.state;
+    if (data && data.spectator) state.isSpectator = true;
     if (state.room) rememberActivePlay(state.room);
     else if (state._lastRoomId) {
       rememberActivePlay({ id: state._lastRoomId, status: 'playing' });
@@ -2924,11 +3631,22 @@
       seatId,
       phase: data && data.state ? data.state.phase : null,
     });
+    // 被动无人值守：对局结束立刻离席回大厅，锁定不解除
+    if (state.passiveMode && data && data.state && data.state.over) {
+      try {
+        net.leaveRoom();
+      } catch (_) {
+        /* ignore */
+      }
+      return;
+    }
+    if (state.passiveMode) applyPassiveLockUi(true);
     showView('game');
     renderGame();
   });
   net.on('game:state', (data) => {
     state.game = data.state;
+    if (data && data.spectator) state.isSpectator = true;
     if (state.room) rememberActivePlay(state.room);
     else if (state._lastRoomId) {
       rememberActivePlay({ id: state._lastRoomId, status: 'playing' });
@@ -2940,6 +3658,16 @@
       seatId,
       phase: data && data.state ? data.state.phase : null,
     });
+    if (state.passiveMode && data && data.state && data.state.over) {
+      try {
+        net.leaveRoom();
+      } catch (_) {
+        /* ignore */
+      }
+      return;
+    }
+    if (state.passiveMode) applyPassiveLockUi(true);
+    syncPassiveExitButton();
     showView('game');
     renderGame();
   });
@@ -3116,20 +3844,115 @@
   updateCreateForm();
   showView('lobby');
 
-  const savedNick = loadSavedNick();
-  if (savedNick) {
-    state.playerName = savedNick;
-    if (el.playerName) el.playerName.value = savedNick;
+  const bootQuery = readBootQuery();
+  if (bootQuery.get('guest') === '1') markGuestClient(true);
+  const bootClient = bootQuery.get('client') || '';
+  const bootRole = bootQuery.get('role') || (bootQuery.get('guest') === '1' ? 'client' : '');
+  if (window.ClientPlatform && window.ClientPlatform.rememberGuestClient) {
+    window.ClientPlatform.rememberGuestClient(bootClient);
+  }
+  if (bootRole && window.ClientPlatform && window.ClientPlatform.rememberGuestRole) {
+    window.ClientPlatform.rememberGuestRole(bootRole);
+  }
+  syncGuestChrome();
+
+  const bootName = window.PlayerNick.stripBaseName(bootQuery.get('name') || '');
+  const bootJoin = String(bootQuery.get('join') || '')
+    .trim()
+    .toUpperCase();
+  const bootSpectate = bootQuery.get('spectate') === '1';
+  const bootCreatePassive = bootQuery.get('createPassive') === '1';
+  const bootTag = window.PlayerNick.normalizeTag(bootQuery.get('tag') || '');
+  if (bootTag) {
+    try {
+      localStorage.setItem(window.PlayerNick.TAG_KEY, bootTag);
+    } catch (_) {}
+  }
+
+  async function bootGuestDeepLink() {
+    const nick = bootName || loadSavedNick();
+    // 尽早盖住大厅门，避免「先看到进大厅页再进房」
+    if (el.lobbyGate) el.lobbyGate.hidden = true;
+    if (el.lobbyMain) el.lobbyMain.hidden = true;
+    if (el.lobbyPeopleAside) el.lobbyPeopleAside.hidden = true;
+    if (el.chatDock) el.chatDock.hidden = true;
+    const busyMsg = bootCreatePassive
+      ? '正在进入被动主机…'
+      : bootJoin
+        ? bootSpectate
+          ? '正在观战…'
+          : t('create.joining')
+        : t('lobby.enter') || '进入大厅…';
+    showRoomBusy(bootCreatePassive ? 'create' : 'join', busyMsg);
+
+    if (!nick) {
+      hideRoomBusy();
+      document.documentElement.classList.remove('boot-joining');
+      net.connect(net.getLocalOrigin()).catch(() => {});
+      showLobbyHome();
+      updateMeLabel();
+      return;
+    }
+    state.playerName = nick;
+    if (el.playerName) el.playerName.value = nick;
     refreshNickUi();
-    enterLobbyWithName(savedNick, { silent: true }).catch((err) => {
+    try {
+      await enterLobbyWithName(nick, { silent: true });
+      if (bootJoin) {
+        updateRoomBusyMessage(bootSpectate ? '正在观战…' : t('create.joining'));
+        await joinRoomWithBusy(async () => {
+          if (bootSpectate) net.spectateRoom(bootJoin, nick, lobbyJoinOpts());
+          else net.joinRoom(bootJoin, nick, lobbyJoinOpts());
+        });
+      } else if (bootCreatePassive) {
+        hideRoomBusy();
+        document.documentElement.classList.remove('boot-joining');
+        showLobbyHome();
+        state.createOnHostTarget = {
+          passive: true,
+          alreadyOnHost: true,
+          host: null,
+        };
+        setCreatePanelOpen(true, 'create-on-host');
+      } else {
+        hideRoomBusy();
+        document.documentElement.classList.remove('boot-joining');
+        showLobbyHome();
+      }
+    } catch (err) {
+      hideRoomBusy();
+      document.documentElement.classList.remove('boot-joining');
       showToast(err.message || t('toast.autoLobbyFail'));
       state.inLobby = false;
       showLobbyHome();
-    });
+    } finally {
+      clearBootQueryFromUrl();
+      syncGuestChrome();
+    }
+  }
+
+  if (
+    isGuestClient() &&
+    (bootName || bootJoin || bootCreatePassive || bootQuery.get('guest') === '1')
+  ) {
+    bootGuestDeepLink();
   } else {
-    net.connect(net.getLocalOrigin()).catch(() => {});
-    showLobbyHome();
-    updateMeLabel();
+    const savedNick = loadSavedNick();
+    if (savedNick) {
+      state.playerName = savedNick;
+      if (el.playerName) el.playerName.value = savedNick;
+      refreshNickUi();
+      enterLobbyWithName(savedNick, { silent: true }).catch((err) => {
+        showToast(err.message || t('toast.autoLobbyFail'));
+        state.inLobby = false;
+        showLobbyHome();
+      });
+    } else {
+      net.connect(net.getLocalOrigin()).catch(() => {});
+      showLobbyHome();
+      updateMeLabel();
+    }
+    clearBootQueryFromUrl();
   }
 
   setInterval(() => {

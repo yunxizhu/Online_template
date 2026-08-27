@@ -8,6 +8,39 @@ const {
 
 const ROOM_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
+/** 登录端：windows | mac | mobile */
+function normalizeClient(raw) {
+  const s = String(raw || '')
+    .toLowerCase()
+    .trim();
+  if (s === 'windows' || s === 'win' || s === 'win32') return 'windows';
+  if (s === 'mac' || s === 'macos' || s === 'darwin') return 'mac';
+  if (
+    s === 'mobile' ||
+    s === 'android' ||
+    s === 'ios' ||
+    s === 'phone' ||
+    s === '手机'
+  ) {
+    return 'mobile';
+  }
+  return '';
+}
+
+/** 程序角色：host=完整主机包；client=纯加入端 */
+function normalizeRole(raw) {
+  const s = String(raw || '')
+    .toLowerCase()
+    .trim();
+  if (s === 'host' || s === 'server' || s === '主机' || s === '服务端') {
+    return 'host';
+  }
+  if (s === 'client' || s === 'guest' || s === '客户端' || s === '加入端') {
+    return 'client';
+  }
+  return '';
+}
+
 function generateRoomId(existingIds) {
   for (let attempt = 0; attempt < 50; attempt++) {
     let id = '';
@@ -19,13 +52,75 @@ function generateRoomId(existingIds) {
   throw new Error('无法生成唯一房间码');
 }
 
+/**
+ * 解析创建/修改房间时的游戏·模式·人数·思考时间。
+ * @returns {{ ok:true, type, game, modeId, modeLabel, min, max, turnTimeSec }|{ ok:false, error:string }}
+ */
+function resolveRoomConfig({
+  gameType,
+  gameMode,
+  maxPlayers,
+  turnTimeSec,
+  occupied = 1,
+} = {}) {
+  const type = resolveGameType(gameType);
+  const game = getGame(type);
+  if (!game) return { ok: false, error: '不支持的游戏类型' };
+
+  let modeId = null;
+  let modeLabel = null;
+  let min = game.minPlayers;
+  let max = Math.min(
+    game.maxPlayers,
+    Math.max(game.minPlayers, Number(maxPlayers) || game.maxPlayers)
+  );
+
+  if (game.modes && game.modes.length) {
+    const mode = game.modes.find((m) => m.id === gameMode) || game.modes[0];
+    modeId = mode.id;
+    modeLabel = mode.label;
+    if (mode.seats && mode.seats.length) {
+      const seat = Number(maxPlayers);
+      max = mode.seats.includes(seat) ? seat : mode.seats[0];
+      min = max;
+    }
+  } else {
+    modeId = 'standard';
+    modeLabel = '标准模式';
+  }
+
+  const seatsTaken = Math.max(1, Number(occupied) || 1);
+  if (max < seatsTaken) {
+    return {
+      ok: false,
+      error: `人数上限不能小于当前人数（${seatsTaken}）`,
+    };
+  }
+
+  return {
+    ok: true,
+    type,
+    game,
+    modeId,
+    modeLabel,
+    min,
+    max,
+    turnTimeSec: normalizeTurnTimeSec(turnTimeSec),
+  };
+}
+
 function publicRoomView(room) {
+  const waiting = !room.status || room.status === 'waiting';
+  const playing = room.status === 'playing';
+  const playerCount = (room.players || []).filter((p) => !p.left).length;
+  const observerCount = (room.observers || []).length;
   return {
     id: room.id,
     name: room.name,
     hidden: room.hidden,
     hostId: room.hostId,
-    playerCount: room.players.length,
+    playerCount,
+    observerCount,
     maxPlayers: room.maxPlayers,
     minPlayers: room.minPlayers,
     status: room.status,
@@ -35,6 +130,15 @@ function publicRoomView(room) {
     gameModeLabel: room.gameModeLabel || null,
     turnTimeSec: Number(room.turnTimeSec) || 0,
     playingStartedAt: room.playingStartedAt || null,
+    passiveHosted: Boolean(room.passiveHosted),
+    canJoin: waiting && playerCount < room.maxPlayers,
+    canSpectate: waiting || playing,
+    playerNames: (room.players || [])
+      .filter((p) => !p.left)
+      .map((p) => p.name || '玩家'),
+    playerTags: (room.players || [])
+      .filter((p) => !p.left)
+      .map((p) => p.tag || null),
   };
 }
 
@@ -52,6 +156,12 @@ function fullRoomView(room) {
       offline: Boolean(p.offline),
       left: Boolean(p.left),
     })),
+    observers: (room.observers || []).map((p) => ({
+      id: p.id,
+      name: p.name,
+      tag: p.tag || null,
+      offline: Boolean(p.offline),
+    })),
     status: room.status,
     maxPlayers: room.maxPlayers,
     minPlayers: room.minPlayers,
@@ -61,6 +171,7 @@ function fullRoomView(room) {
     gameModeLabel: room.gameModeLabel || null,
     turnTimeSec: Number(room.turnTimeSec) || 0,
     playingStartedAt: room.playingStartedAt || null,
+    passiveHosted: Boolean(room.passiveHosted),
   };
 }
 
@@ -116,11 +227,15 @@ class RoomManager {
     const tag = String(tagRaw || '')
       .replace(/\D/g, '')
       .slice(-5);
+    const client = normalizeClient(opts.client);
+    const role = normalizeRole(opts.role);
     const existing = this.players.get(playerId);
     if (existing) {
       existing.name = trimmed;
       if (sessionId) existing.sessionId = sessionId;
       if (tag) existing.tag = tag.padStart(5, '0');
+      if (client) existing.client = client;
+      if (role) existing.role = role;
       this.syncNameToRoom(existing);
       this.syncSessionToRoom(existing);
       return existing;
@@ -131,6 +246,8 @@ class RoomManager {
       tag: tag ? tag.padStart(5, '0') : null,
       roomId: null,
       sessionId,
+      client: client || null,
+      role: role || null,
     };
     this.players.set(playerId, player);
     return player;
@@ -148,6 +265,13 @@ class RoomManager {
     if (seat) {
       seat.name = player.name;
       seat.tag = player.tag || null;
+    }
+    if (Array.isArray(room.observers)) {
+      const obs = room.observers.find((o) => o.id === player.id);
+      if (obs) {
+        obs.name = player.name;
+        obs.tag = player.tag || null;
+      }
     }
     if (room.game && Array.isArray(room.game.players)) {
       const gp = room.game.players.find((p) => p.id === player.id);
@@ -187,7 +311,8 @@ class RoomManager {
   listLobbyRooms() {
     const list = [];
     for (const room of this.rooms.values()) {
-      if (!room.hidden && !room.pendingLobby && room.status === 'waiting') {
+      if (room.hidden || room.pendingLobby) continue;
+      if (room.status === 'waiting' || room.status === 'playing') {
         list.push(publicRoomView(room));
       }
     }
@@ -204,7 +329,9 @@ class RoomManager {
         const room = this.getRoom(p.roomId);
         // pending 创建中：对外仍算在大厅空闲，避免列表提前显示「在房间」
         if (room && !room.pendingLobby) {
-          status = room.status === 'playing' ? 'playing' : 'room';
+          const isObs = (room.observers || []).some((o) => o.id === p.id);
+          if (isObs) status = 'spectating';
+          else status = room.status === 'playing' ? 'playing' : 'room';
           roomName = room.name;
           roomId = p.roomId;
         }
@@ -217,6 +344,9 @@ class RoomManager {
         roomId,
         roomName,
         sessionId: p.sessionId || null,
+        client: p.client || null,
+        role: p.role || null,
+        passive: Boolean(p.passive),
       });
     }
 
@@ -241,6 +371,35 @@ class RoomManager {
     return unique;
   }
 
+  setPlayerPassive(playerId, on) {
+    const player = this.players.get(playerId);
+    if (!player) return { ok: false, error: '请先进入大厅' };
+    if (player.roomId) {
+      const room = this.getRoom(player.roomId);
+      const isObs =
+        room &&
+        Array.isArray(room.observers) &&
+        room.observers.some((o) => o.id === playerId);
+      // 开启被动、或座位玩家：不可切换
+      if (!isObs || on) {
+        return { ok: false, error: '在房间中无法切换被动模式' };
+      }
+      // 对局已开始且未结束：不可退出被动
+      if (
+        room.status === 'playing' &&
+        room.game &&
+        !room.game.over
+      ) {
+        return {
+          ok: false,
+          error: '对局进行中，请等待本局结束后再退出被动模式',
+        };
+      }
+    }
+    player.passive = Boolean(on);
+    return { ok: true, player, passive: player.passive };
+  }
+
   /**
    * 清理同 sessionId 的大厅幽灵连接（例如换了 host 别名后旧 socket 又自动重连）。
    * 已在房间内的条目不在这里动，交给 tryReclaimSeat。
@@ -261,43 +420,33 @@ class RoomManager {
 
   createRoom(
     playerId,
-    { name, hidden, maxPlayers, gameType, gameMode, turnTimeSec } = {}
+    {
+      name,
+      hidden,
+      maxPlayers,
+      gameType,
+      gameMode,
+      turnTimeSec,
+      passiveHost = false,
+      operatorId = null,
+    } = {}
   ) {
     const player = this.players.get(playerId);
     if (!player) return { ok: false, error: '请先进入大厅' };
     if (player.roomId) return { ok: false, error: '你已在房间中，请先离开' };
 
-    const type = resolveGameType(gameType);
-    const game = getGame(type);
-    if (!game) return { ok: false, error: '不支持的游戏类型' };
-
-    let modeId = null;
-    let modeLabel = null;
-    let min = game.minPlayers;
-    let max = Math.min(
-      game.maxPlayers,
-      Math.max(game.minPlayers, Number(maxPlayers) || game.maxPlayers)
-    );
-
-    if (game.modes && game.modes.length) {
-      const mode =
-        game.modes.find((m) => m.id === gameMode) || game.modes[0];
-      modeId = mode.id;
-      modeLabel = mode.label;
-      if (mode.seats && mode.seats.length) {
-        const seat = Number(maxPlayers);
-        max = mode.seats.includes(seat) ? seat : mode.seats[0];
-        min = max; // 身份局凑齐人数再开
-      }
-    } else {
-      // 无多模式的游戏统一记为标准模式
-      modeId = 'standard';
-      modeLabel = '标准模式';
-    }
+    const cfg = resolveRoomConfig({
+      gameType,
+      gameMode,
+      maxPlayers,
+      turnTimeSec,
+      occupied: 1,
+    });
+    if (!cfg.ok) return cfg;
 
     const roomName =
       String(name || '').trim().slice(0, 24) ||
-      `${player.name}的${game.label}${modeLabel ? '·' + modeLabel : ''}`;
+      `${player.name}的${cfg.game.label}${cfg.modeLabel ? '·' + cfg.modeLabel : ''}`;
     const id = generateRoomId(this.rooms);
 
     const room = {
@@ -314,24 +463,92 @@ class RoomManager {
           sessionId: player.sessionId || null,
         },
       ],
+      observers: [],
       status: 'waiting',
-      maxPlayers: max,
-      minPlayers: min,
-      gameType: type,
-      gameLabel: game.label,
-      gameMode: modeId,
-      gameModeLabel: modeLabel,
-      turnTimeSec: normalizeTurnTimeSec(turnTimeSec),
+      maxPlayers: cfg.max,
+      minPlayers: cfg.min,
+      gameType: cfg.type,
+      gameLabel: cfg.game.label,
+      gameMode: cfg.modeId,
+      gameModeLabel: cfg.modeLabel,
+      turnTimeSec: cfg.turnTimeSec,
       turnTimer: null,
       game: null,
       createdAt: Date.now(),
       playingStartedAt: null,
       // 隧道就绪并房主进房前：不进大厅列表、人员仍显示空闲、不广播房间
       pendingLobby: true,
+      passiveHosted: Boolean(passiveHost),
     };
 
     this.rooms.set(id, room);
     player.roomId = id;
+    player.passive = false;
+
+    // 被动开房：本机主机进观战席（不占玩家位），且保持被动标记——无人值守锁屏
+    const opId = operatorId || null;
+    if (passiveHost && opId && opId !== playerId) {
+      const op = this.players.get(opId);
+      if (op && !op.roomId) {
+        room.observers.push({
+          id: opId,
+          name: op.name,
+          tag: op.tag || null,
+          sessionId: op.sessionId || null,
+          passiveHost: true,
+        });
+        op.roomId = id;
+        op.passive = true;
+      }
+    }
+
+    return { ok: true, room };
+  }
+
+  /**
+   * 房主在等待室内修改房间信息（立刻生效并应配合 emit + MQTT 重发）。
+   */
+  updateSettings(
+    playerId,
+    { name, hidden, maxPlayers, gameType, gameMode, turnTimeSec } = {}
+  ) {
+    const player = this.players.get(playerId);
+    if (!player || !player.roomId) {
+      return { ok: false, error: '你不在房间中' };
+    }
+    const room = this.getRoom(player.roomId);
+    if (!room) return { ok: false, error: '房间不存在' };
+    if (room.hostId !== playerId) {
+      return { ok: false, error: '只有房主可以修改房间信息' };
+    }
+    if (room.status !== 'waiting') {
+      return { ok: false, error: '对局已开始，无法修改房间信息' };
+    }
+
+    const cfg = resolveRoomConfig({
+      gameType: gameType != null ? gameType : room.gameType,
+      gameMode: gameMode != null ? gameMode : room.gameMode,
+      maxPlayers: maxPlayers != null ? maxPlayers : room.maxPlayers,
+      turnTimeSec: turnTimeSec != null ? turnTimeSec : room.turnTimeSec,
+      occupied: (room.players || []).filter((p) => !p.left).length,
+    });
+    if (!cfg.ok) return cfg;
+
+    const trimmed = String(name != null ? name : room.name || '')
+      .trim()
+      .slice(0, 24);
+    room.name =
+      trimmed ||
+      `${player.name}的${cfg.game.label}${cfg.modeLabel ? '·' + cfg.modeLabel : ''}`;
+    room.hidden = Boolean(hidden);
+    room.maxPlayers = cfg.max;
+    room.minPlayers = cfg.min;
+    room.gameType = cfg.type;
+    room.gameLabel = cfg.game.label;
+    room.gameMode = cfg.modeId;
+    room.gameModeLabel = cfg.modeLabel;
+    room.turnTimeSec = cfg.turnTimeSec;
+
     return { ok: true, room };
   }
 
@@ -360,8 +577,9 @@ class RoomManager {
 
     const room = this.getRoom(roomId);
     if (!room) return { ok: false, error: '房间不存在' };
-    if (room.status !== 'waiting') return { ok: false, error: '对局已开始，无法加入' };
-    if (room.players.length >= room.maxPlayers) return { ok: false, error: '房间已满' };
+    if (room.status !== 'waiting') return { ok: false, error: '对局已开始，无法加入（可观战）' };
+    const seated = (room.players || []).filter((p) => !p.left).length;
+    if (seated >= room.maxPlayers) return { ok: false, error: '房间已满' };
 
     room.players.push({
       id: playerId,
@@ -371,7 +589,79 @@ class RoomManager {
       sessionId: player.sessionId || null,
     });
     player.roomId = room.id;
+    player.passive = false;
     return { ok: true, room };
+  }
+
+  /** 观战：等待房/对局中均可，不占玩家席 */
+  spectateRoom(playerId, roomId) {
+    const player = this.players.get(playerId);
+    if (!player) return { ok: false, error: '请先进入大厅' };
+    const wantId = String(roomId || '').toUpperCase();
+    if (player.roomId) {
+      if (String(player.roomId).toUpperCase() === wantId) {
+        const room = this.getRoom(player.roomId);
+        return room
+          ? { ok: true, room, already: true, asSpectator: true }
+          : { ok: false, error: '房间不存在' };
+      }
+      return { ok: false, error: '你已在房间中，请先离开' };
+    }
+    const room = this.getRoom(roomId);
+    if (!room) return { ok: false, error: '房间不存在' };
+    if (room.status !== 'waiting' && room.status !== 'playing') {
+      return { ok: false, error: '房间不可观战' };
+    }
+    if (!Array.isArray(room.observers)) room.observers = [];
+    if (room.observers.some((o) => o.id === playerId)) {
+      player.roomId = room.id;
+      return { ok: true, room, already: true, asSpectator: true };
+    }
+    room.observers.push({
+      id: playerId,
+      name: player.name,
+      tag: player.tag || null,
+      sessionId: player.sessionId || null,
+    });
+    player.roomId = room.id;
+    player.passive = false;
+    return { ok: true, room, asSpectator: true };
+  }
+
+  /**
+   * 解散房间（用于被动主机退出被动模式等）。
+   * @returns {{ ok: boolean, dissolved: boolean, leftRoomId: string|null, affectedPlayerIds: string[] }}
+   */
+  dissolveRoom(roomId, initiatorId = null) {
+    const room = this.getRoom(roomId);
+    if (!room) {
+      return {
+        ok: true,
+        dissolved: false,
+        leftRoomId: null,
+        affectedPlayerIds: [],
+      };
+    }
+    const leftRoomId = room.id;
+    const affectedPlayerIds = [
+      ...room.players.map((p) => p.id),
+      ...(room.observers || []).map((o) => o.id),
+    ].filter((id) => id && id !== initiatorId);
+    for (const memberId of [
+      ...affectedPlayerIds,
+      ...(initiatorId ? [initiatorId] : []),
+    ]) {
+      const member = this.players.get(memberId);
+      if (member) member.roomId = null;
+    }
+    clearTurnTimer(room);
+    this.rooms.delete(room.id);
+    return {
+      ok: true,
+      dissolved: true,
+      leftRoomId,
+      affectedPlayerIds,
+    };
   }
 
   leaveRoom(playerId, { abortPlaying = true } = {}) {
@@ -400,11 +690,40 @@ class RoomManager {
       };
     }
 
-    // 房主主动离开：直接解散整个房间，其他人一起回大厅
+    // 观战席离开：不解散房间
+    if (!Array.isArray(room.observers)) room.observers = [];
+    const wasObserver = room.observers.some((o) => o.id === playerId);
+    if (wasObserver) {
+      room.observers = room.observers.filter((o) => o.id !== playerId);
+      if (
+        room.players.filter((p) => !p.left).length === 0 &&
+        room.observers.length === 0
+      ) {
+        clearTurnTimer(room);
+        this.rooms.delete(room.id);
+        return {
+          ok: true,
+          room: null,
+          dissolved: true,
+          leftRoomId,
+          affectedPlayerIds: [],
+        };
+      }
+      return {
+        ok: true,
+        room,
+        dissolved: false,
+        leftRoomId,
+        affectedPlayerIds: [],
+      };
+    }
+
+    // 逻辑房主主动离开：解散整个房间
     if (room.hostId === playerId) {
-      const affectedPlayerIds = room.players
-        .filter((p) => p.id !== playerId)
-        .map((p) => p.id);
+      const affectedPlayerIds = [
+        ...room.players.filter((p) => p.id !== playerId).map((p) => p.id),
+        ...room.observers.map((o) => o.id),
+      ];
       for (const memberId of affectedPlayerIds) {
         const member = this.players.get(memberId);
         if (member) member.roomId = null;
@@ -422,7 +741,10 @@ class RoomManager {
 
     room.players = room.players.filter((p) => p.id !== playerId);
 
-    if (room.players.length === 0) {
+    if (
+      room.players.filter((p) => !p.left).length === 0 &&
+      room.observers.length === 0
+    ) {
       clearTurnTimer(room);
       this.rooms.delete(room.id);
       return {
@@ -475,6 +797,14 @@ class RoomManager {
     const room = this.getRoom(player.roomId);
     if (!room || room.status !== 'playing' || !room.game) {
       return this.leaveRoom(playerId);
+    }
+
+    // 观战中途退出：不走「座位留下」逻辑
+    if (
+      Array.isArray(room.observers) &&
+      room.observers.some((o) => o.id === playerId)
+    ) {
+      return this.leaveRoom(playerId, { abortPlaying: false });
     }
 
     const seat = room.players.find((p) => p.id === playerId);
@@ -537,6 +867,16 @@ class RoomManager {
     }
 
     const room = this.getRoom(player.roomId);
+    // 观战席断线：直接离席（不占位、不触发房主解散）
+    if (
+      room &&
+      Array.isArray(room.observers) &&
+      room.observers.some((o) => o.id === playerId)
+    ) {
+      const leave = this.leaveRoom(playerId, { abortPlaying: false });
+      this.players.delete(playerId);
+      return { ...leave, offline: false };
+    }
     const keepSeat =
       room &&
       (room.status === 'waiting' ||
@@ -706,6 +1046,10 @@ class RoomManager {
     if (!room || !oldId || !newId || oldId === newId) return;
     const seat = room.players.find((p) => p.id === oldId);
     if (seat) seat.id = newId;
+    if (Array.isArray(room.observers)) {
+      const obs = room.observers.find((o) => o.id === oldId);
+      if (obs) obs.id = newId;
+    }
     if (room.hostId === oldId) room.hostId = newId;
     if (room.game) {
       deepReplacePlayerId(room.game, oldId, newId);
@@ -736,9 +1080,10 @@ class RoomManager {
     if (!room || room.status !== 'waiting') return false;
     const game = getGame(room.gameType);
     const min = game ? game.minPlayers : 2;
-    if (room.players.length < min) return false;
-    if (game && room.players.length > game.maxPlayers) return false;
-    // 进房即视为准备，人齐即可开局
+    const seated = (room.players || []).filter((p) => !p.left).length;
+    if (seated < min) return false;
+    if (game && seated > game.maxPlayers) return false;
+    // 进房即视为准备，人齐即可开局（观战不计入）
     return true;
   }
 
@@ -752,9 +1097,10 @@ class RoomManager {
     if (!this.canStart(room)) {
       const game = getGame(room.gameType);
       const min = game ? game.minPlayers : 2;
+      const seated = (room.players || []).filter((p) => !p.left).length;
       return {
         ok: false,
-        error: `至少需要 ${min} 人才能开始（当前 ${room.players.length} 人）`,
+        error: `至少需要 ${min} 人才能开始（当前 ${seated} 人，不含观战）`,
       };
     }
 

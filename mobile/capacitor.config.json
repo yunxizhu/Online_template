@@ -1,0 +1,13 @@
+{
+  "appId": "com.lianji.join",
+  "appName": "联机大厅",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": true
+  },
+  "server": {
+    "allowNavigation": [
+      "*"
+    ]
+  }
+}

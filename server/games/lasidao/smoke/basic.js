@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 拉斯岛核心规则冒烟
+ * 卡拉斯坦核心规则冒烟
  */
 const assert = require('assert');
 const {
@@ -180,27 +180,27 @@ function drainNonProduce(game) {
           );
           continue;
         }
-      }
-      if (p.pendingDiscardFunc && p.funcCards[0]) {
-        ok(
-          applyAction(game, pid, {
-            type: 'discardFunc',
-            payload: { cardId: p.funcCards[0].id },
-          })
-        );
-        continue;
-      }
-      if (p.pendingDiscardBuild) {
+    }
+    if (p.pendingDiscardFunc && p.funcCards[0]) {
+      ok(
+        applyAction(game, pid, {
+          type: 'discardFunc',
+          payload: { cardId: p.funcCards[0].id },
+        })
+      );
+      continue;
+    }
+    if (p.pendingDiscardBuild) {
         const pick =
           p.buildings.find((b) => !b.built) || p.buildings[0];
         if (pick) {
-          ok(
-            applyAction(game, pid, {
-              type: 'discardUnbuilt',
+        ok(
+          applyAction(game, pid, {
+            type: 'discardUnbuilt',
               payload: { buildingId: pick.id },
-            })
-          );
-          continue;
+          })
+        );
+        continue;
         }
       }
     }
@@ -569,8 +569,8 @@ ok(
     type: 'useFunc',
     payload: { cardId: 'test-bandit', area: 'resource', number: banditFace },
   })
-);
-assert.strictEqual(
+  );
+  assert.strictEqual(
   g8.board.resource.workers[banditFace][NEUTRAL_WORKER_ID],
   BANDIT_RAID_COUNT
 );

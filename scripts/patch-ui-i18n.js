@@ -18,7 +18,7 @@ const reps = [
   [/\: \[\{ id: 'standard', label: '标准模式' \}\];/g, ": [{ id: 'standard', label: t('create.modeStandard') }];"],
   [/el\.gameHint\.textContent = '五子棋：双人局，房主执黑先手。';/g, "el.gameHint.textContent = t('create.hintGomoku');"],
   [/el\.gameHint\.textContent =\s*'印加宝藏：3–8 人；同时抉择继续\/返回，全员锁定后才揭晓并结算。';/g, "el.gameHint.textContent = t('create.hintIncanFull');"],
-  [/el\.gameHint\.textContent =\s*'拉斯岛：2–5 人；生产派遣→拉斯维加斯式抵消结算→建造；先到 10 分获胜。';/g, "el.gameHint.textContent = t('create.hintLasidaoFull');"],
+  [/el\.gameHint\.textContent =\s*'卡拉斯坦：2–5 人；生产派遣→拉斯维加斯式抵消结算→建造；先到 10 分获胜。';/g, "el.gameHint.textContent = t('create.hintLasidaoFull');"],
   [/el\.gameHint\.textContent =\s*'三国杀·2V2：4 人交叉座位（1·4 vs 2·3）；队友手牌共享；先 Ban 将再选将。';/g, "el.gameHint.textContent = t('create.hintSgsH2h');"],
   [/el\.gameHint\.textContent =\s*'三国杀·1V2：3 人叫地主；主公有【跋扈】【飞扬】，体力\+1；反贼击杀主公即胜。';/g, "el.gameHint.textContent = t('create.hintSgs1v2');"],
   [/el\.gameHint\.textContent =\s*'三国杀·先主黄巾：5\/8 人；先主 5 选 1、其余 3 选 1；先主体力\+1（后主不加），可传位；黄巾可感染，人数达存活一半（向上取整）时起义（剩 2 人不起义）。';/g, "el.gameHint.textContent = t('create.hintSgsXianzhu');"],
