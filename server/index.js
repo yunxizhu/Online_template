@@ -885,15 +885,15 @@ io.on('connection', (socket) => {
     progress('正在创建房间…');
 
     try {
+      const onProgress = (phase) => {
+        if (phase === 'mqtt') progress('正在连接 MQTT…');
+        else if (phase === 'tunnel') progress('正在准备公网隧道…');
+        else if (phase === 'tunnel-warmup') progress('隧道就绪中，请稍候…');
+      };
+
       if (mqttBulletin && mqttBulletin.enabled) {
         progress('正在准备公网隧道…');
         await ensurePublicTunnelUrl();
-
-        const onProgress = (phase) => {
-          if (phase === 'mqtt') progress('正在连接 MQTT…');
-          else if (phase === 'tunnel') progress('正在准备公网隧道…');
-          else if (phase === 'tunnel-warmup') progress('隧道就绪中，请稍候…');
-        };
 
         // 先等隧道/MQTT 就绪，此时房间仍 pending，大厅不会出现、状态仍空闲
         const ready = await mqttBulletin.waitForInfrastructureReady({
