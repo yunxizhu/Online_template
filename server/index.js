@@ -884,8 +884,9 @@ io.on('connection', (socket) => {
       socket.emit('room:creating', { message, roomId: room.id });
     progress('正在创建房间…');
 
+    let onProgress = null;
     try {
-      const onProgress = (phase) => {
+      onProgress = (phase) => {
         if (phase === 'mqtt') progress('正在连接 MQTT…');
         else if (phase === 'tunnel') progress('正在准备公网隧道…');
         else if (phase === 'tunnel-warmup') progress('隧道就绪中，请稍候…');

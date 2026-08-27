@@ -151,7 +151,14 @@ function downloadFile(url, dest) {
         res.headers.location
       ) {
         res.resume();
-        downloadFile(res.headers.location, dest).then(resolve, reject);
+        let redirectUrl;
+        try {
+          redirectUrl = new URL(res.headers.location, url).href;
+        } catch (_) {
+          reject(new Error(`invalid redirect location: ${res.headers.location}`));
+          return;
+        }
+        downloadFile(redirectUrl, dest).then(resolve, reject);
         return;
       }
       if (res.statusCode !== 200) {
@@ -160,16 +167,42 @@ function downloadFile(url, dest) {
         return;
       }
       const out = createWriteStream(dest);
-      pipeline(res, out).then(resolve, reject);
+      pipeline(res, out).then(resolve, (err) => {
+        try { fs.unlinkSync(dest); } catch (_) {}
+        reject(err);
+      });
     });
-    req.on('error', reject);
+    req.on('error', (err) => {
+      try { fs.unlinkSync(dest); } catch (_) {}
+      reject(err);
+    });
   });
 }
 
 async function ensureCloudflared() {
   fs.mkdirSync(TOOLS_DIR, { recursive: true });
   const bin = path.join(TOOLS_DIR, cloudflaredBinaryName());
-  if (fs.existsSync(bin)) return bin;
+
+  function binUsable(p) {
+    if (!fs.existsSync(p)) return false;
+    try {
+      const st = fs.statSync(p);
+      if (!st.isFile() || st.size < 4096) return false;
+    } catch (_) {
+      return false;
+    }
+    try {
+      const { spawnSync } = require('child_process');
+      const r = spawnSync(p, ['--version'], { timeout: 10000, windowsHide: true });
+      if (r.error) return false;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  if (binUsable(bin)) return bin;
+  try { fs.unlinkSync(bin); } catch (_) {}
 
   const url = cloudflaredDownloadUrl();
   console.log('[tunnel] 正在下载 cloudflared…');
