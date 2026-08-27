@@ -1782,7 +1782,7 @@ window.LasidaoUi = (function () {
           }
           stack.appendChild(card);
         } else {
-          const empty = document.createElement('span');
+        const empty = document.createElement('span');
           empty.className = 'muted las-slot-empty';
           let locked = false;
           let unlockN = null;
@@ -1811,7 +1811,7 @@ window.LasidaoUi = (function () {
             empty.classList.add('las-slot-locked');
             empty.textContent = t('lasidao.unlockRound', { n: unlockN });
             if (capacity === 1) slot.classList.add('is-locked');
-          } else {
+      } else {
             empty.textContent = t('lasidao.emptySlot');
           }
           stack.appendChild(empty);
@@ -1952,7 +1952,7 @@ window.LasidaoUi = (function () {
       slot.onclick = () => {
         if (barrenSelectable) {
           barrenPickNumber = num;
-          renderBoard(lastGame, lastMeId);
+        renderBoard(lastGame, lastMeId);
           syncBarrenMarkerPickUi(lastGame, lastMeId);
           return;
         }
@@ -2568,7 +2568,7 @@ window.LasidaoUi = (function () {
     // ?????????????????
     if (!myTurn && active && active.awaitingRoll) {
       if (diceAnim.stage !== 'idle') resetDiceAnim();
-      wrap.hidden = false;
+    wrap.hidden = false;
       setDiceTitle(t('lasidao.otherAwaitingRoll', { name: actorName }));
       const diceEl = $('las-dice');
       const groupsEl = $('las-dice-groups');
@@ -2643,8 +2643,8 @@ window.LasidaoUi = (function () {
         return;
       }
 
-      if (diceAnim.key !== key) {
-        diceAnim.key = key;
+    if (diceAnim.key !== key) {
+      diceAnim.key = key;
         resetDiceSelection();
         diceAnim.finalDice = dice.slice();
 
@@ -2666,8 +2666,8 @@ window.LasidaoUi = (function () {
           diceAnim.finalBoosted = boostFlags.slice();
           renderSpectatorDice(dice, color, boostFlags);
         }
-        return;
-      }
+      return;
+    }
 
       if (diceAnim.stage === 'ready') {
         renderSpectatorDice(dice, color, boostFlags);
@@ -2869,12 +2869,12 @@ window.LasidaoUi = (function () {
     if (isMe) {
       const visible = (cards || []).filter((c) => !c.hidden);
       for (const c of visible) {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className =
-          'las-card func' + (selectedFuncId === c.id ? ' is-selected' : '');
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className =
+        'las-card func' + (selectedFuncId === c.id ? ' is-selected' : '');
         if (!decorateHandCardArt(btn, c, 'function')) {
-          btn.textContent = c.label;
+      btn.textContent = c.label;
         }
         if (interactive) {
           const playable = canPlayFuncCard(game, meId, c.funcType);
@@ -2882,9 +2882,9 @@ window.LasidaoUi = (function () {
             btn.disabled = true;
             btn.title = t('lasidao.funcWrongPhase');
           }
-          btn.onclick = () => {
+      btn.onclick = () => {
             if (!playable && !player.pendingDiscardFunc) return;
-            selectedFuncId = selectedFuncId === c.id ? null : c.id;
+        selectedFuncId = selectedFuncId === c.id ? null : c.id;
             renderPlayerBoards(game, meId);
             renderActRail(game, meId);
             renderFuncForm(game, player);
@@ -2900,12 +2900,12 @@ window.LasidaoUi = (function () {
           player.pendingDiscardFunc &&
           !player.pendingDiscardRes
         ) {
-          const disc = document.createElement('button');
-          disc.type = 'button';
-          disc.className = 'las-card';
+        const disc = document.createElement('button');
+        disc.type = 'button';
+        disc.className = 'las-card';
           disc.textContent = t('lasidao.discardFunc', { label: c.label });
-          disc.onclick = () =>
-            netRef && netRef.sendAction('discardFunc', { cardId: c.id });
+        disc.onclick = () =>
+          netRef && netRef.sendAction('discardFunc', { cardId: c.id });
           funcsEl.appendChild(disc);
         }
       }
@@ -3333,8 +3333,8 @@ window.LasidaoUi = (function () {
         for (const b of placedUnbuilt) {
           builds.appendChild(makeBoardBuildingCard(game, meId, me, b, true));
         }
-        if (me.pendingDiscardBuild) {
-          const tip = document.createElement('div');
+    if (me.pendingDiscardBuild) {
+      const tip = document.createElement('div');
           tip.className = 'muted las-pboard-tip';
           tip.textContent = t('lasidao.discardBuildTip', {
             n: me.maxBuildings || game.maxBuildings || 3,
@@ -3599,7 +3599,7 @@ window.LasidaoUi = (function () {
     selectedPermanent = selectedPermanent === kind ? null : kind;
     if (game && me) {
       renderBuildHand(game, me.id || lastMeId);
-      renderFuncForm(game, me);
+    renderFuncForm(game, me);
       syncPermanentSelection(game, me);
     }
   }
@@ -4301,21 +4301,21 @@ window.LasidaoUi = (function () {
     title.textContent = t('lasidao.funcFormTitle', { label: card.label });
     form.appendChild(title);
 
-    const tip = document.createElement('p');
-    tip.className = 'muted';
+      const tip = document.createElement('p');
+      tip.className = 'muted';
     tip.textContent = funcRuleText(card.funcType) || card.label;
-    form.appendChild(tip);
+      form.appendChild(tip);
 
     // 建造阶段：确认走上方 play-bar，侧栏只展示说明
     if (game.phase === 'build') {
       return;
     }
 
-    const go = document.createElement('button');
-    go.type = 'button';
+      const go = document.createElement('button');
+      go.type = 'button';
     go.textContent = t('lasidao.confirmUse');
     go.onclick = () => beginSelectedFuncUse(game, me);
-    form.appendChild(go);
+      form.appendChild(go);
   }
 
   function renderPlayers(game, meId) {
@@ -4376,7 +4376,7 @@ window.LasidaoUi = (function () {
     });
 
     listEl.innerHTML = '';
-    const Nick = window.PlayerNick;
+      const Nick = window.PlayerNick;
     players.forEach((p, idx) => {
       const isWinner = winners.has(p.id);
       const isMe = Boolean(meId && p.id === meId);
@@ -4735,18 +4735,18 @@ window.LasidaoUi = (function () {
     } else if (game.phase === 'produce') {
       if (isMyTurn(game, meId) && isAwaitingRoll(game)) {
         $('las-status').textContent = t('lasidao.statusAwaitRoll');
-      } else if (
+    } else if (
         isMyTurn(game, meId) &&
         isRemoteMode(game)
       ) {
         $('las-status').textContent = t('lasidao.diceRemoteHint');
       } else if (
-        isMyTurn(game, meId) &&
-        !diceReady() &&
-        (game.dice || []).length
-      ) {
-        $('las-status').textContent =
-          diceAnim.stage === 'rolling'
+      isMyTurn(game, meId) &&
+      !diceReady() &&
+      (game.dice || []).length
+    ) {
+      $('las-status').textContent =
+        diceAnim.stage === 'rolling'
             ? t('lasidao.diceRolling')
             : t('lasidao.diceGrouping');
       } else {
@@ -5122,7 +5122,7 @@ window.LasidaoUi = (function () {
     };
 
     const run = async () => {
-      if (fx && typeof fx.playSettle === 'function') {
+    if (fx && typeof fx.playSettle === 'function') {
         await fx.playSettle(game);
       }
       // 结算演绎结束：工人已在服务端清空，立刻刷新版面去掉骰子
@@ -5346,11 +5346,11 @@ window.LasidaoUi = (function () {
     } else {
       count = countByFace(diceAnim.finalDice)[face] || 1;
       payload = { face };
-      if (selectedTarget.type === 'area') {
-        payload.area = selectedTarget.area;
-      } else {
-        payload.buildingId = selectedTarget.buildingId;
-      }
+    if (selectedTarget.type === 'area') {
+      payload.area = selectedTarget.area;
+    } else {
+      payload.buildingId = selectedTarget.buildingId;
+    }
     }
 
     const color = playerDieColor(
@@ -5377,8 +5377,8 @@ window.LasidaoUi = (function () {
         });
       }
       if (fx && typeof fx.clearLayer === 'function') fx.clearLayer();
-      netRef.sendAction('placeDice', payload);
-      resetDiceAnim();
+    netRef.sendAction('placeDice', payload);
+    resetDiceAnim();
     } finally {
       dispatchBusy = false;
     }

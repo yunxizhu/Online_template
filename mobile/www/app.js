@@ -1,4 +1,4 @@
-/* 加入端大厅：MQTT 发现 + 聊天 + 加入（无创建房间；安卓 App / PC 纯客户端共用） */
+/* 加入端大厅：MQTT 发现 + 聊天 + 加入/在被动主机上开房（安卓 App / PC 纯客户端共用） */
 (function () {
   'use strict';
 
@@ -7,7 +7,7 @@
   /** 与电脑端默认频道一致，加入端不提供切换 */
   const DEFAULT_CHANNEL = 'xiyun_lianjidating_public';
   const LOGIN_HB_MS = 10000;
-  const ROOM_OFFLINE_MS = 25000;
+  const ROOM_OFFLINE_MS = 50000;
   const LOGIN_OFFLINE_MS = 25000;
   const STALE_CLEAR_MS = 120000;
   const STORAGE_NICK = 'lianji.nick';
@@ -39,9 +39,8 @@
     peopleAside: document.getElementById('lobby-people-aside'),
     playerName: document.getElementById('player-name'),
     btnEnter: document.getElementById('btn-enter-lobby'),
+    btnCreateRoom: document.getElementById('btn-create-room'),
     btnJoin: document.getElementById('btn-toggle-join'),
-    btnSpectate: document.getElementById('btn-toggle-spectate'),
-    btnRefresh: document.getElementById('btn-refresh-lobby'),
     peersLabel: document.getElementById('peers-label'),
     roomList: document.getElementById('room-list'),
     roomEmpty: document.getElementById('room-list-empty'),
@@ -52,6 +51,8 @@
     peopleCount: document.getElementById('lobby-people-count'),
     headerNick: document.getElementById('header-nick'),
     nickDisplay: document.getElementById('nick-display'),
+    playerNameEdit: document.getElementById('player-name-edit'),
+    btnEditName: document.getElementById('btn-edit-name'),
     meLabel: document.getElementById('me-label'),
     toast: document.getElementById('toast'),
     chatDock: document.getElementById('chat-dock'),
@@ -64,12 +65,15 @@
     btnRefreshPeople: document.getElementById('btn-refresh-doc'),
     joinModal: document.getElementById('join-code-modal'),
     joinCode: document.getElementById('join-code'),
+    joinPassword: document.getElementById('join-password'),
     joinCodeTitle: document.getElementById('join-code-title'),
     hostUrl: document.getElementById('host-url'),
     btnJoinConfirm: document.getElementById('btn-join-code'),
     btnCloseJoin: document.getElementById('btn-close-join'),
     joiningOverlay: document.getElementById('joining-overlay'),
     joiningMessage: document.getElementById('joining-message'),
+    bootSplash: document.getElementById('boot-splash'),
+    bootSplashText: document.getElementById('boot-splash-text'),
     roomCtx: document.getElementById('room-ctx'),
     peopleCtx: document.getElementById('people-ctx'),
   };
@@ -128,6 +132,62 @@
   let codeModalMode = 'join'; // 'join' | 'spectate'
   let roomCtxTarget = null;
   let peopleCtxTarget = null;
+  /** 启动加载：仅安卓/手机端，直到 MQTT 广播连上 */
+  let bootSplashPending = MY_CLIENT === 'mobile';
+  let bootSplashHiding = false;
+  let bootSplashTimer = null;
+
+  function wantsBootSplash() {
+    return MY_CLIENT === 'mobile';
+  }
+
+  function showBootSplash(message) {
+    if (!wantsBootSplash() || !el.bootSplash) return;
+    bootSplashPending = true;
+    bootSplashHiding = false;
+    document.body.classList.add('is-booting');
+    document.body.classList.remove('is-lobby-reveal');
+    if (el.bootSplashText) {
+      el.bootSplashText.textContent = message || '正在连接广播…';
+    }
+    el.bootSplash.classList.remove('is-hiding');
+    el.bootSplash.hidden = false;
+    el.bootSplash.setAttribute('aria-busy', 'true');
+    if (bootSplashTimer) clearTimeout(bootSplashTimer);
+    bootSplashTimer = setTimeout(() => {
+      if (!bootSplashPending) return;
+      if (el.peersLabel) el.peersLabel.textContent = '广播：连接较慢，可稍后刷新';
+      hideBootSplash();
+    }, 18000);
+  }
+
+  function hideBootSplash() {
+    if (bootSplashTimer) {
+      clearTimeout(bootSplashTimer);
+      bootSplashTimer = null;
+    }
+    if (!el.bootSplash) {
+      document.body.classList.remove('is-booting');
+      bootSplashPending = false;
+      return;
+    }
+    if (!bootSplashPending && el.bootSplash.hidden) return;
+    if (bootSplashHiding) return;
+    bootSplashPending = false;
+    bootSplashHiding = true;
+    document.body.classList.remove('is-booting');
+    document.body.classList.add('is-lobby-reveal');
+    el.bootSplash.classList.add('is-hiding');
+    el.bootSplash.setAttribute('aria-busy', 'false');
+    const finish = () => {
+      if (!el.bootSplash) return;
+      el.bootSplash.hidden = true;
+      el.bootSplash.classList.remove('is-hiding');
+      bootSplashHiding = false;
+    };
+    el.bootSplash.addEventListener('transitionend', finish, { once: true });
+    setTimeout(finish, 600);
+  }
 
   function showJoining(message) {
     joining = true;
@@ -136,6 +196,23 @@
     }
     if (el.joiningOverlay) el.joiningOverlay.hidden = false;
     setJoinOpen(false);
+  }
+
+  function askRoomPassword(room) {
+    if (!room || !room.hasPassword) return '';
+    const v = window.prompt('请输入房间密码（可为空）', '');
+    if (v == null) return null;
+    return String(v);
+  }
+
+  function openRoomWithPassword(room, mode) {
+    if (!room || !room.host) {
+      showToast('暂无可用地址');
+      return;
+    }
+    const password = askRoomPassword(room);
+    if (password == null) return;
+    openHost(room.host, room.id, { mode: mode || 'join', password });
   }
 
   function openHost(host, roomId, opts = {}) {
@@ -157,6 +234,12 @@
     u.searchParams.set('guest', '1');
     u.searchParams.set('client', MY_CLIENT);
     u.searchParams.set('role', MY_ROLE);
+    // 离开代开/加入房后回到纯客户端大厅（跨域，勿用 sessionStorage）
+    try {
+      u.searchParams.set('return', window.location.href);
+    } catch (_) {
+      /* ignore */
+    }
     if (playerName) u.searchParams.set('name', playerName);
     if (playerTag) u.searchParams.set('tag', playerTag);
     if (sessionId) u.searchParams.set('sid', sessionId);
@@ -165,6 +248,14 @@
     } else if (roomId) {
       u.searchParams.set('join', String(roomId).toUpperCase());
       if (mode === 'spectate') u.searchParams.set('spectate', '1');
+      // 密码不进 URL/MQTT，仅经 sessionStorage 交给房主页再向隧道验密
+      try {
+        if (opts.password != null) {
+          sessionStorage.setItem('lianji.joinPwd', String(opts.password));
+        } else {
+          sessionStorage.removeItem('lianji.joinPwd');
+        }
+      } catch (_) {}
     }
     const busy =
       mode === 'createPassive'
@@ -228,6 +319,83 @@
       : base;
   }
 
+  let nickEditing = false;
+  let nickEditOriginal = '';
+
+  function refreshNickUi() {
+    const name = String(playerName || '玩家').trim().slice(0, 16) || '玩家';
+    const tag = playerTag || '';
+    if (!nickEditing) {
+      if (el.nickDisplay) {
+        el.nickDisplay.hidden = false;
+        el.nickDisplay.innerHTML = nickHtml(name, tag);
+        el.nickDisplay.title = name + (tag ? '#' + String(tag).slice(-5) : '');
+      }
+      if (el.playerNameEdit) {
+        el.playerNameEdit.hidden = true;
+        el.playerNameEdit.value = name;
+      }
+      if (el.btnEditName) el.btnEditName.hidden = !entered;
+    }
+    if (el.headerNick) el.headerNick.hidden = !entered;
+  }
+
+  function setNickEditing(on) {
+    if (!el.headerNick || !el.playerNameEdit || !el.nickDisplay) return;
+    if (!entered && on) return;
+    nickEditing = Boolean(on);
+    el.headerNick.classList.toggle('is-editing', nickEditing);
+    el.nickDisplay.hidden = nickEditing;
+    el.playerNameEdit.hidden = !nickEditing;
+    if (el.btnEditName) el.btnEditName.hidden = nickEditing || !entered;
+    if (nickEditing) {
+      nickEditOriginal = String(playerName || '').trim().slice(0, 16);
+      el.playerNameEdit.value = nickEditOriginal;
+      try {
+        el.playerNameEdit.focus();
+        el.playerNameEdit.select();
+      } catch (_) {}
+    } else {
+      refreshNickUi();
+    }
+  }
+
+  function applyPlayerName(raw) {
+    const name = String(raw || '')
+      .trim()
+      .slice(0, 16);
+    if (!name) {
+      showToast('昵称不能为空');
+      refreshNickUi();
+      return;
+    }
+    if (name === playerName) {
+      refreshNickUi();
+      return;
+    }
+    playerName = name;
+    try {
+      localStorage.setItem(STORAGE_NICK, name);
+    } catch (_) {}
+    if (el.playerName) el.playerName.value = name;
+    refreshNickUi();
+    publishLogin();
+    showToast('昵称已更新');
+  }
+
+  function commitNickEdit() {
+    if (!nickEditing) return;
+    const next = el.playerNameEdit.value;
+    setNickEditing(false);
+    applyPlayerName(next);
+  }
+
+  function cancelNickEdit() {
+    if (!nickEditing) return;
+    el.playerNameEdit.value = nickEditOriginal;
+    setNickEditing(false);
+  }
+
   function remoteBadgeHtml(client, role) {
     const label = clientLabel(client, role);
     if (!label) return '';
@@ -243,6 +411,9 @@
   function statusText(st, roomName) {
     if (st === 'playing') return '对局中';
     if (st === 'offline') return '离线';
+    if (st === 'occupied') {
+      return roomName ? '占用中 · ' + roomName : '占用中';
+    }
     if (st === 'spectating') {
       return roomName ? '观战 · ' + roomName : '观战中';
     }
@@ -268,27 +439,34 @@
   }
 
   function applyMobileChatChrome() {
-    document.body.classList.toggle('is-mobile-chat', isMobileChatUi());
+    const mobile = isMobileChatUi();
+    document.body.classList.toggle('is-mobile-chat', mobile);
     if (!el.chatDock) return;
-    if (isMobileChatUi()) {
-      el.chatDock.classList.add('is-active');
+    if (mobile) {
       el.chatDock.classList.remove('is-custom-pos');
       el.chatDock.style.left = '';
       el.chatDock.style.top = '';
       el.chatDock.style.right = '';
       el.chatDock.style.bottom = '';
       el.chatDock.style.transform = '';
+      el.chatDock.style.opacity = '';
     }
   }
 
   function setChatDockActive(active) {
     if (!el.chatDock) return;
-    // 手机端常驻展开，不受失焦/点击折叠影响
-    if (isMobileChatUi()) {
-      el.chatDock.classList.add('is-active');
-      return;
-    }
-    el.chatDock.classList.toggle('is-active', Boolean(active));
+    const on = Boolean(active);
+    el.chatDock.classList.toggle('is-active', on);
+    document.body.classList.toggle('is-chat-expanded', on && isMobileChatUi());
+  }
+
+  function scheduleChatCollapse() {
+    setTimeout(() => {
+      if (!el.chatDock || el.chatDock.hidden) return;
+      const ae = document.activeElement;
+      if (ae && el.chatDock.contains(ae)) return;
+      setChatDockActive(false);
+    }, 0);
   }
 
   function updateChatPreview(msg) {
@@ -425,16 +603,24 @@
     peopleCtxTarget = person;
     const btnCreate = el.peopleCtx.querySelector('[data-action="create-on-host"]');
     const hint = document.getElementById('people-ctx-hint');
+    const busy =
+      person.occupied ||
+      person.status === 'occupied' ||
+      (person.passive &&
+        person.status !== 'idle' &&
+        person.status !== 'passive');
     const canCreate =
       !person.self &&
       person.passive &&
+      !busy &&
       person.status === 'idle' &&
       Boolean(person.host);
     let reason = '';
     if (person.self) reason = '不能在自己这里代开';
-    else if (!person.passive || person.status !== 'idle') {
-      reason = '对方未开被动模式或已在房间';
-    } else if (!person.host) reason = '缺少对方公网地址';
+    else if (!person.passive) reason = '对方未开被动模式';
+    else if (busy) reason = '对方主机已被占用，请等待房间结束';
+    else if (person.status !== 'idle') reason = '对方未开被动模式或已在房间';
+    else if (!person.host) reason = '缺少对方公网地址';
     if (btnCreate) {
       btnCreate.disabled = !canCreate;
       btnCreate.title = canCreate ? '' : reason;
@@ -485,6 +671,7 @@
         gameLabel + modeBit,
         playerBit,
         room.id ? '码 ' + room.id : null,
+        room.hasPassword ? '密码' : null,
         room.status === 'playing' ? '对局中' : null,
       ]
         .filter(Boolean)
@@ -500,6 +687,7 @@
         escapeHtml(room.name || room.id || '房间') +
         '  ' +
         escapeHtml(playerBit) +
+        (room.hasPassword ? ' <span class="badge">密码</span>' : '') +
         (room.status === 'playing'
           ? ' <span class="badge">对局中</span>'
           : '');
@@ -516,7 +704,7 @@
         btn.title = !room.host ? '暂无可用地址' : '不可观战';
       } else {
         btn.addEventListener('click', () =>
-          openHost(room.host, room.id, { mode: 'spectate' })
+          openRoomWithPassword(room, 'spectate')
         );
       }
     } else {
@@ -530,7 +718,7 @@
             : '房间已满';
         li.classList.add('is-full');
       } else {
-        btn.addEventListener('click', () => openHost(room.host, room.id));
+        btn.addEventListener('click', () => openRoomWithPassword(room, 'join'));
       }
     }
     li.appendChild(info);
@@ -567,7 +755,7 @@
     if (el.roomPlayingEmpty) el.roomPlayingEmpty.hidden = playing.length > 0;
   }
 
-  function renderPeople() {
+  function collectLobbyPeople() {
     const now = Date.now();
     const out = [];
     for (const [id, p] of logins) {
@@ -580,6 +768,8 @@
           if (!name) return;
           const passive = Boolean((pp && pp.passive) || p.passive);
           const status = (pp && pp.status) || 'idle';
+          const occupied =
+            Boolean(pp && pp.occupied) || status === 'occupied';
           out.push({
             key: id + ':' + i,
             name,
@@ -589,6 +779,7 @@
             client: (pp && pp.client) || null,
             role: (pp && pp.role) || null,
             passive,
+            occupied,
             host: passive ? loginHost || null : null,
             self: id === instanceId,
           });
@@ -603,6 +794,7 @@
           client: null,
           role: null,
           passive: Boolean(p.passive),
+          occupied: false,
           host: p.passive ? loginHost || null : null,
           self: id === instanceId,
         });
@@ -614,33 +806,99 @@
       if (a.self !== b.self) return a.self ? -1 : 1;
       return a.name.localeCompare(b.name, 'zh');
     });
+    return out;
+  }
+
+  /** 可代开的被动主机（按公网地址去重） */
+  function listAvailablePassiveHosts(peopleList) {
+    const list = peopleList || collectLobbyPeople();
+    const byHost = new Map();
+    for (const p of list) {
+      if (!p || p.self) continue;
+      if (!p.passive || !p.host) continue;
+      if (p.occupied || p.status === 'occupied') continue;
+      if (p.status !== 'idle') continue;
+      const host = normalizeHost(p.host);
+      if (!host || byHost.has(host)) continue;
+      byHost.set(host, p);
+    }
+    return [...byHost.values()];
+  }
+
+  function syncCreateRoomButton() {
+    if (!el.btnCreateRoom) return;
+    const n = listAvailablePassiveHosts().length;
+    const ok = n >= 1;
+    el.btnCreateRoom.setAttribute('aria-disabled', ok ? 'false' : 'true');
+    el.btnCreateRoom.title = ok
+      ? '可用被动服务端 ' + n + ' 台，将自动选择其一开房'
+      : '无可用被动服务端';
+  }
+
+  function createRoomOnAvailablePassiveHost() {
+    if (joining) return;
+    const hosts = listAvailablePassiveHosts();
+    if (!hosts.length) {
+      showToast('无可用被动服务端');
+      return;
+    }
+    const pick = hosts[Math.floor(Math.random() * hosts.length)];
+    if (!pick || !pick.host) {
+      showToast('无可用被动服务端');
+      return;
+    }
+    openHost(pick.host, null, { mode: 'createPassive' });
+  }
+
+  function renderPeople() {
+    const out = collectLobbyPeople();
 
     el.peopleList.replaceChildren();
     const available = out.filter(
-      (p) => p.status !== 'offline' && p.status !== 'playing'
+      (p) =>
+        p.status !== 'offline' &&
+        p.status !== 'playing' &&
+        p.status !== 'occupied' &&
+        !p.occupied
     ).length;
     for (const p of out) {
       const li = document.createElement('li');
+      li.className = 'people-item';
+
+      const row1 = document.createElement('div');
+      row1.className = 'people-row people-row-main';
       const name = document.createElement('span');
       name.className = 'people-name';
       name.innerHTML =
         nickHtml(p.name, p.tag) +
         (p.self ? ' <span class="you">(我)</span>' : '') +
-        (p.passive && p.status === 'idle'
-          ? ' <span class="badge">被动</span>'
-          : '') +
-        remoteBadgeHtml(p.client, p.role);
+        (p.occupied || p.status === 'occupied'
+          ? ' <span class="badge">占用</span>'
+          : p.passive && p.status === 'idle'
+            ? ' <span class="badge">被动</span>'
+            : '');
       name.title =
         p.name + (p.tag ? '#' + String(p.tag).slice(-5) : '');
-      const st = document.createElement('span');
-      st.className = 'people-status';
-      st.textContent =
-        p.passive && p.status === 'idle'
-          ? statusText('passive')
-          : statusText(p.status, p.roomName);
+      row1.appendChild(name);
+
+      const row2 = document.createElement('div');
+      row2.className = 'people-row people-row-meta';
+      const device = clientLabel(p.client, p.role);
+      const status =
+        p.occupied || p.status === 'occupied'
+          ? statusText('occupied', p.roomName)
+          : p.passive && p.status === 'idle'
+            ? statusText('passive')
+            : statusText(p.status, p.roomName);
+      const metaParts = [];
+      if (device) metaParts.push(device);
+      if (status) metaParts.push(status);
+      row2.textContent = metaParts.join(' · ') || '空闲';
+      row2.title = row2.textContent;
+
       if (p.status === 'offline') li.classList.add('is-offline');
-      li.appendChild(name);
-      li.appendChild(st);
+      li.appendChild(row1);
+      li.appendChild(row2);
       li.addEventListener('contextmenu', (ev) => {
         ev.preventDefault();
         showPeopleCtx(p, ev.clientX, ev.clientY);
@@ -654,6 +912,7 @@
         ? '（可组队 ' + available + ' / 共 ' + out.length + '）'
         : '';
     }
+    syncCreateRoomButton();
   }
 
   function appendChat(msg) {
@@ -799,6 +1058,8 @@
           playerCount: p.playerCount,
           maxPlayers: p.maxPlayers,
           status: p.status || 'waiting',
+          over: Boolean(p.over),
+          hasPassword: Boolean(p.hasPassword),
           creatorName: p.creatorName || '',
           playerNames: Array.isArray(p.playerNames) ? p.playerNames : [],
           playerTags: Array.isArray(p.playerTags) ? p.playerTags : [],
@@ -839,6 +1100,7 @@
     if (!mqttLib || !mqttLib.connect) {
       if (el.peersLabel) el.peersLabel.textContent = '广播：MQTT 库未加载';
       showToast('发现服务未就绪，仍可用「房间码 / 地址」加入');
+      hideBootSplash();
       return;
     }
     disconnectMqtt();
@@ -848,6 +1110,9 @@
     renderPeople();
 
     if (el.peersLabel) el.peersLabel.textContent = '广播：连接中…';
+    if (bootSplashPending && el.bootSplashText) {
+      el.bootSplashText.textContent = '正在连接广播…';
+    }
     client = mqttLib.connect(BROKER, {
       clientId: 'lianji-and-' + instanceId.slice(0, 8),
       protocolVersion: 4,
@@ -871,10 +1136,12 @@
         (err) => {
           if (err) {
             if (el.peersLabel) el.peersLabel.textContent = '广播：订阅失败';
+            hideBootSplash();
             return;
           }
           if (el.peersLabel) el.peersLabel.textContent = '广播：已连接';
           publishLogin();
+          hideBootSplash();
         }
       );
     });
@@ -929,15 +1196,17 @@
       if (el.chatDock) {
         el.chatDock.hidden = false;
         applyMobileChatChrome();
-        setChatDockActive(true);
+        // 进入大厅后默认收起，点开/聚焦输入再展开
+        setChatDockActive(false);
       }
       if (el.headerNick) el.headerNick.hidden = false;
-      if (el.nickDisplay) el.nickDisplay.textContent = playerName;
+      refreshNickUi();
       if (el.meLabel) {
         el.meLabel.textContent = CLIENT_LABEL + ' · 已进入大厅';
       }
 
       // 先切界面，再连 MQTT（避免库异常导致“点了没反应”）
+      if (wantsBootSplash()) showBootSplash('正在连接广播…');
       setTimeout(() => {
         try {
           connectMqtt();
@@ -948,15 +1217,17 @@
           showToast(
             (err && err.message) || '广播连接失败，仍可用地址加入房间'
           );
+          hideBootSplash();
         }
       }, 0);
     } catch (err) {
       showToast((err && err.message) || '进入大厅失败');
       console.error('[lianji] enterLobby', err);
+      hideBootSplash();
     }
   }
 
-  function resolveAndJoinByCode(code, mode) {
+  function resolveAndJoinByCode(code, mode, password) {
     const id = String(code || '').trim().toUpperCase();
     if (!id) {
       showToast('请输入房间码');
@@ -971,29 +1242,32 @@
         now - r.updateTime <= ROOM_OFFLINE_MS
       ) {
         if (mode === 'spectate') {
-          openHost(r.host, r.id, { mode: 'spectate' });
+          openHost(r.host, r.id, { mode: 'spectate', password });
         } else if (!roomCanJoin(r)) {
           showToast(
             r.status === 'playing' ? '对局已开始，请用观战' : '房间已满'
           );
         } else {
-          openHost(r.host, r.id);
+          openHost(r.host, r.id, { mode: 'join', password });
         }
         return;
       }
     }
-    showToast('未找到该房间码（对方需在线且房间未隐藏）');
+    showToast('未找到该房间码（对方需在线并广播房间）');
   }
 
   function joinFromModal() {
     const url = String(el.hostUrl.value || '').trim();
     const code = String(el.joinCode.value || '').trim();
+    const password = String(
+      (el.joinPassword && el.joinPassword.value) || ''
+    );
     const mode = codeModalMode === 'spectate' ? 'spectate' : 'join';
     if (url) {
-      openHost(url, code || undefined, { mode });
+      openHost(url, code || undefined, { mode, password });
       return;
     }
-    resolveAndJoinByCode(code, mode);
+    resolveAndJoinByCode(code, mode, password);
   }
 
   function sendChat(text) {
@@ -1033,6 +1307,15 @@
   }
 
   function bindUi() {
+    if (!wantsBootSplash()) {
+      bootSplashPending = false;
+      document.body.classList.remove('is-booting');
+      if (el.bootSplash) {
+        el.bootSplash.hidden = true;
+        el.bootSplash.setAttribute('aria-busy', 'false');
+      }
+    }
+
     if (el.btnEnter) {
       el.btnEnter.addEventListener('click', (ev) => {
         ev.preventDefault();
@@ -1049,13 +1332,47 @@
         }
       });
     }
+    if (el.btnEditName) {
+      el.btnEditName.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (!entered) return;
+        setNickEditing(true);
+      });
+    }
+    if (el.playerNameEdit) {
+      el.playerNameEdit.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          commitNickEdit();
+        } else if (ev.key === 'Escape') {
+          ev.preventDefault();
+          cancelNickEdit();
+        }
+      });
+      el.playerNameEdit.addEventListener('click', (ev) => ev.stopPropagation());
+      el.playerNameEdit.addEventListener('blur', () => {
+        if (!nickEditing) return;
+        commitNickEdit();
+      });
+    }
+    document.addEventListener('pointerdown', (ev) => {
+      if (!nickEditing) return;
+      if (el.headerNick && el.headerNick.contains(ev.target)) return;
+      commitNickEdit();
+    });
+
     if (el.btnJoin) {
       el.btnJoin.addEventListener('click', () => setJoinOpen(true, 'join'));
     }
-    if (el.btnSpectate) {
-      el.btnSpectate.addEventListener('click', () =>
-        setJoinOpen(true, 'spectate')
-      );
+    if (el.btnCreateRoom) {
+      el.btnCreateRoom.addEventListener('click', () => {
+        if (!entered) {
+          showToast('请先进入大厅');
+          return;
+        }
+        createRoomOnAvailablePassiveHost();
+      });
     }
     if (el.btnCloseJoin) {
       el.btnCloseJoin.addEventListener('click', () => setJoinOpen(false));
@@ -1077,9 +1394,9 @@
         const action = btn.getAttribute('data-action');
         const room = roomCtxTarget;
         hideRoomCtx();
-        if (action === 'room-join') openHost(room.host, room.id);
+        if (action === 'room-join') openRoomWithPassword(room, 'join');
         else if (action === 'room-spectate') {
-          openHost(room.host, room.id, { mode: 'spectate' });
+          openRoomWithPassword(room, 'spectate');
         }
       });
     }
@@ -1112,13 +1429,6 @@
         hideRoomCtx();
       }
     });
-    if (el.btnRefresh) {
-      el.btnRefresh.addEventListener('click', () => {
-        if (!entered) return;
-        connectMqtt();
-        showToast('已刷新广播连接');
-      });
-    }
     if (el.btnRefreshPeople) {
       el.btnRefreshPeople.addEventListener('click', () => {
         if (!entered) return;
@@ -1133,7 +1443,7 @@
         ev.preventDefault();
         sendChat(el.chatInput.value);
         el.chatInput.value = '';
-        // 手机端发送后保持输入焦点，避免键盘收起
+        // 发送后保持焦点，方便连续输入；点空白处失焦才会收起
         if (isMobileChatUi() && el.chatInput) {
           el.chatInput.focus();
         }
@@ -1142,42 +1452,87 @@
     if (el.chatInput) {
       el.chatInput.addEventListener('focus', () => setChatDockActive(true));
       el.chatInput.addEventListener('blur', (ev) => {
-        if (isMobileChatUi()) {
-          setChatDockActive(true);
-          return;
-        }
         const next = ev.relatedTarget;
         if (next && el.chatDock && el.chatDock.contains(next)) return;
-        setChatDockActive(false);
+        // Android 上 relatedTarget 常为空，延后判断实际焦点
+        scheduleChatCollapse();
       });
     }
-    if (el.chatPanel) {
-      el.chatPanel.addEventListener('pointerdown', (ev) => {
-        if (isMobileChatUi()) {
-          setChatDockActive(true);
-          return;
-        }
-        if (el.chatHead && el.chatHead.contains(ev.target)) return;
+    if (el.chatDock) {
+      el.chatDock.addEventListener('click', (ev) => {
+        if (el.chatDock.classList.contains('is-active')) return;
+        if (ev.target.closest('.chat-head')) return;
         setChatDockActive(true);
+        if (isMobileChatUi() && el.chatInput && !ev.target.closest('button')) {
+          try {
+            el.chatInput.focus();
+          } catch (_) {}
+        }
       });
     }
     if (el.chatHead) {
-      el.chatHead.addEventListener('click', () => {
-        if (!el.chatDock || isMobileChatUi()) return;
-        setChatDockActive(!el.chatDock.classList.contains('is-active'));
+      el.chatHead.addEventListener('click', (ev) => {
+        if (!el.chatDock) return;
+        ev.stopPropagation();
+        const on = el.chatDock.classList.contains('is-active');
+        if (on) {
+          if (el.chatInput) {
+            try {
+              el.chatInput.blur();
+            } catch (_) {}
+          }
+          setChatDockActive(false);
+        } else {
+          setChatDockActive(true);
+          if (isMobileChatUi() && el.chatInput) {
+            try {
+              el.chatInput.focus();
+            } catch (_) {}
+          }
+        }
       });
     }
+    // 启动即按端型套用；默认收起，失焦后缩起
     applyMobileChatChrome();
+    setChatDockActive(false);
     window.addEventListener('resize', () => {
       applyMobileChatChrome();
-      if (!entered || !el.chatDock || el.chatDock.hidden) return;
-      if (isMobileChatUi()) setChatDockActive(true);
     });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) scheduleChatCollapse();
+    });
+    // 点聊天室外区域：收起（手机端失焦补强）
+    document.addEventListener(
+      'pointerdown',
+      (ev) => {
+        if (!isMobileChatUi() || !el.chatDock || el.chatDock.hidden) return;
+        if (!el.chatDock.classList.contains('is-active')) return;
+        if (el.chatDock.contains(ev.target)) return;
+        if (el.chatInput) {
+          try {
+            el.chatInput.blur();
+          } catch (_) {}
+        }
+        setChatDockActive(false);
+      },
+      true
+    );
 
     try {
-      const nick = localStorage.getItem(STORAGE_NICK);
+      const nick = String(localStorage.getItem(STORAGE_NICK) || '')
+        .trim()
+        .slice(0, 16);
       if (nick && el.playerName) el.playerName.value = nick;
-    } catch (_) {}
+      // 与电脑端一致：已有昵称则自动进入大厅（加载动画持续到 MQTT 连上）
+      if (nick) {
+        enterLobby();
+      } else if (wantsBootSplash()) {
+        // 需先填昵称：结束启动遮罩，露出大厅门
+        hideBootSplash();
+      }
+    } catch (_) {
+      if (wantsBootSplash()) hideBootSplash();
+    }
 
     window.addEventListener('pagehide', clearLoginBeacon);
     window.addEventListener('beforeunload', clearLoginBeacon);

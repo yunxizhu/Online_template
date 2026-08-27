@@ -12,7 +12,20 @@
   <link rel="stylesheet" href="./css/style.css" />
   <link rel="stylesheet" href="./mobile.css" />
 </head>
-<body>
+<body class="is-booting">
+  <div
+    id="boot-splash"
+    class="boot-splash"
+    aria-busy="true"
+    aria-live="polite"
+    role="status"
+  >
+    <div class="boot-splash-inner">
+      <div class="boot-spinner" aria-hidden="true"></div>
+      <p id="boot-splash-text" class="boot-splash-text">正在连接广播…</p>
+    </div>
+  </div>
+
   <main class="app">
     <header class="app-top">
       <div class="app-top-mid">
@@ -20,6 +33,29 @@
           <h1>联机大厅</h1>
           <div class="header-nick" id="header-nick" hidden>
             <span id="nick-display" class="nick-display">玩家</span>
+            <input
+              id="player-name-edit"
+              class="nick-input"
+              type="text"
+              maxlength="16"
+              hidden
+              autocomplete="off"
+              aria-label="编辑昵称"
+            />
+            <button
+              type="button"
+              id="btn-edit-name"
+              class="icon-btn"
+              title="修改昵称"
+              aria-label="修改昵称"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zm2.92 2.83H5v-.92l9.06-9.06.92.92L5.92 20.08zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"
+                />
+              </svg>
+            </button>
           </div>
         </div>
         <p id="me-label" class="me-label">未进入大厅</p>
@@ -28,7 +64,9 @@
 
     <div class="app-body">
       <div class="app-content">
-        <p id="toast" class="toast" hidden></p>
+        <div class="toast-slot" aria-live="polite">
+          <p id="toast" class="toast" hidden></p>
+        </div>
 
         <section id="view-lobby" class="view">
           <div class="panel panel-narrow" id="lobby-gate">
@@ -37,15 +75,14 @@
               <input id="player-name" type="text" maxlength="16" placeholder="输入昵称" />
             </label>
             <button id="btn-enter-lobby" type="button">进入大厅</button>
-            <p class="muted gate-hint">仅加入房间；建房请用电脑主机端。</p>
+            <p class="muted gate-hint">可加入已有房间，或在可用的被动主机上创建房间。</p>
           </div>
 
           <div id="lobby-main" hidden>
             <div class="panel lobby-toolbar">
               <div class="row lobby-toolbar-actions">
+                <button id="btn-create-room" type="button" aria-disabled="true">创建房间</button>
                 <button id="btn-toggle-join" type="button" class="secondary">房间码加入</button>
-                <button id="btn-toggle-spectate" type="button" class="secondary">观战</button>
-                <button id="btn-refresh-lobby" type="button" class="secondary">刷新</button>
               </div>
               <p id="peers-label" class="muted">广播：连接中…</p>
               <p id="lobby-refresh-hint" class="muted lobby-refresh-hint">公开房间与人员来自 MQTT 广播</p>
@@ -125,6 +162,10 @@
       <label>
         <span>房间码</span>
         <input id="join-code" type="text" maxlength="8" placeholder="输入房间码" />
+      </label>
+      <label>
+        <span>房间密码</span>
+        <input id="join-password" type="text" maxlength="32" autocomplete="off" placeholder="无密码可留空" />
       </label>
       <label>
         <span>或房主地址</span>

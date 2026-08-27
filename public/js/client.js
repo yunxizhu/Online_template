@@ -194,6 +194,9 @@ window.GameNet = (function () {
   function bindServerEvents(s) {
     const events = [
       'lobby:update',
+      'lobby:error',
+      'lobby:passive',
+      'lobby:passiveProgress',
       'player:me',
       'session:reclaimed',
       'session:reclaim-failed',
@@ -204,6 +207,7 @@ window.GameNet = (function () {
       'room:left',
       'room:probe-result',
       'room:resolved',
+      'room:verifyPassword:result',
       'game:started',
       'game:state',
       'game:error',
@@ -485,12 +489,44 @@ window.GameNet = (function () {
     ensureSocket().emit('room:updateSettings', opts);
   }
 
+  function verifyRoomPassword(roomId, password) {
+    return new Promise((resolve) => {
+      const s = ensureSocket();
+      const timer = setTimeout(() => {
+        s.off('room:verifyPassword:result', onResult);
+        resolve({ ok: false, message: '密码验证超时' });
+      }, 8000);
+
+      function onResult(data) {
+        clearTimeout(timer);
+        s.off('room:verifyPassword:result', onResult);
+        resolve(data || { ok: false, message: '密码验证失败' });
+      }
+
+      s.on('room:verifyPassword:result', onResult);
+      s.emit('room:verifyPassword', {
+        roomId,
+        // 明文只发到房主隧道，不走 MQTT
+        password: password == null ? '' : String(password),
+      });
+    });
+  }
+
+  async function assertRoomPassword(roomId, password) {
+    const result = await verifyRoomPassword(roomId, password);
+    if (!result || !result.ok) {
+      throw new Error((result && result.message) || '房间密码错误');
+    }
+    return result;
+  }
+
   function joinRoom(roomId, playerName, opts = {}) {
     ensureSocket().emit('room:join', {
       roomId,
       playerName,
       playerTag: opts.playerTag || window.PlayerNick.ensureTag(),
       sessionId: opts.sessionId || null,
+      password: opts.password != null ? String(opts.password) : '',
       client: clientOf(opts),
       role: roleOf(opts),
     });
@@ -502,6 +538,7 @@ window.GameNet = (function () {
       playerName,
       playerTag: opts.playerTag || window.PlayerNick.ensureTag(),
       sessionId: opts.sessionId || null,
+      password: opts.password != null ? String(opts.password) : '',
       client: clientOf(opts),
       role: roleOf(opts),
     });
@@ -560,6 +597,8 @@ window.GameNet = (function () {
         playerTag: opts.playerTag || null,
       });
       if (!opts.rejoin) {
+        // 先向房主本机校验密码，通过后才加入
+        await assertRoomPassword(roomId, opts.password);
         joinRoom(roomId, playerName, opts);
       }
     }
@@ -674,6 +713,8 @@ window.GameNet = (function () {
         playerTag: opts.playerTag || null,
       });
       if (!opts.rejoin) {
+        // 必须先连到房主隧道，在本机服务端验密，通过后才进房
+        await assertRoomPassword(roomId, opts.password);
         if (mode === 'spectate') spectateRoom(roomId, playerName, opts);
         else joinRoom(roomId, playerName, opts);
       }
@@ -790,6 +831,10 @@ window.GameNet = (function () {
     return normalizeUrl(getCurrentUrl()) !== normalizeUrl(localOrigin);
   }
 
+  function isConnected() {
+    return Boolean(socket && socket.connected);
+  }
+
   return {
     connect,
     connectAny,
@@ -806,6 +851,7 @@ window.GameNet = (function () {
     updateRoomSettings,
     joinRoom,
     spectateRoom,
+    verifyRoomPassword,
     joinRoomOnHost,
     enterRoomOnHost,
     resolveRoom,
@@ -820,5 +866,6 @@ window.GameNet = (function () {
     getLocalOrigin,
     getCurrentUrl,
     isOnRemoteHost,
+    isConnected,
   };
 })();

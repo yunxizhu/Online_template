@@ -111,7 +111,7 @@ function beaconRooms() {
     .map((room) => ({
       id: room.id,
       name: room.name,
-      hidden: room.hidden,
+      hasPassword: Boolean(room.hasPassword),
       playerCount: (room.players || []).filter((p) => !p.left).length,
       maxPlayers: room.maxPlayers,
       minPlayers: room.minPlayers,
@@ -276,6 +276,8 @@ function hostedBeaconRooms() {
           : [],
         observerCount: full && full.observers ? full.observers.length : 0,
         passiveHosted: Boolean(full && full.passiveHosted),
+        over: Boolean(full && full.game && full.game.over),
+        hasPassword: Boolean(full && full.hasPassword),
       };
     });
 }
@@ -286,6 +288,25 @@ function mqttOnLogin() {
 
 function mqttAfterRoomChange() {
   if (mqttBulletin && mqttBulletin.enabled) mqttBulletin.pulseRoom();
+}
+
+/** 对局开始/结束或房间状态变化：立刻刷新大厅 + MQTT 房间心跳 */
+function mqttNotifyRoomStatusNow() {
+  emitLobbyUpdate();
+  mqttOnLogin();
+  mqttAfterRoomChange();
+}
+
+/**
+ * 对局过程中状态边界：开局已在 room:start 处理；此处捕获「刚结束」等。
+ */
+function afterPlayingMutation(room, { wasOver = false, wasStatus = null } = {}) {
+  if (!room) return;
+  const nowOver = Boolean(room.game && room.game.over);
+  const nowStatus = room.status || null;
+  if ((nowOver && !wasOver) || (wasStatus && nowStatus && wasStatus !== nowStatus)) {
+    mqttNotifyRoomStatusNow();
+  }
 }
 
 /** 房间主动解散时立刻清掉 MQTT retained，不等心跳超时 */
@@ -475,9 +496,12 @@ function scheduleLasidaoSettleAnim(room) {
   room._lasSettleTimer = setTimeout(() => {
     room._lasSettleTimer = null;
     if (!room.game || room.game.phase !== 'settle') return;
+    const wasOver = Boolean(room.game.over);
+    const wasStatus = room.status;
     mod.finishSettleAnimForce(room.game);
     syncTurnTimer(room, { onTimeout: handleTurnTimeout });
     emitGameState(room);
+    afterPlayingMutation(room, { wasOver, wasStatus });
   }, delay);
 }
 
@@ -551,10 +575,13 @@ function handleTurnTimeout(room) {
     return;
   }
 
+  const wasOver = Boolean(room.game.over);
+  const wasStatus = room.status;
   const mod = getGame(room.gameType);
   if (!mod || typeof mod.forceTimeout !== 'function') {
     clearTurnTimer(room);
     emitGameState(room);
+    afterPlayingMutation(room, { wasOver, wasStatus });
     return;
   }
 
@@ -578,6 +605,7 @@ function handleTurnTimeout(room) {
   handleAbandonedPlayers(room);
   syncTurnTimer(room, { onTimeout: handleTurnTimeout });
   emitGameState(room);
+  afterPlayingMutation(room, { wasOver, wasStatus });
 }
 
 io.on('connection', (socket) => {
@@ -791,14 +819,22 @@ io.on('connection', (socket) => {
     const wantPassive = Boolean(data.passiveHost);
     let operatorId = null;
     if (wantPassive) {
-      // 被动开房：找本机已开启被动模式、且空闲的操作者
+      // 被动开房：找本机已开启被动模式、且空闲（未被占用）的主机
       const op = [...rooms.players.values()].find(
         (p) => p.passive && !p.roomId && p.id !== socket.id
       );
       if (!op) {
-        // 也允许操作者自己指定（本机创建到观战）——若创建者自己就是被动者则无效
+        const busy = [...rooms.players.values()].find(
+          (p) => p.passive && p.roomId && p.id !== socket.id
+        );
         const self = rooms.getPlayer(socket.id);
-        if (!(self && self.passive)) {
+        if (busy) {
+          socket.emit('room:error', {
+            message: '该被动主机已被占用，请等待对方房间结束后再试',
+          });
+          return;
+        }
+        if (!(self && self.passive && !self.roomId)) {
           socket.emit('room:error', {
             message: '目标未处于被动模式，或已在房间中',
           });
@@ -811,7 +847,8 @@ io.on('connection', (socket) => {
 
     const result = rooms.createRoom(socket.id, {
       name: data.name,
-      hidden: data.hidden,
+      hasPassword: data.hasPassword,
+      password: data.password,
       maxPlayers: data.maxPlayers,
       gameType: data.gameType,
       gameMode: data.gameMode,
@@ -874,16 +911,38 @@ io.on('connection', (socket) => {
         }
       }
 
-      // 隧道就绪后：公开房间 → 房主进房 → 再刷新大厅/广播（此前大厅不出现该房、状态仍空闲）
+      // 隧道就绪后：公开房间并先完成 MQTT 广播，再让房主进房（避免其他人看不见）
       const fresh = rooms.clearPendingLobby(room.id);
       if (!fresh) {
         socket.emit('room:error', { message: '房间创建失败' });
         return;
       }
+      mqttOnLogin();
+
+      if (mqttBulletin && mqttBulletin.enabled) {
+        progress('正在广播房间到大厅…');
+        const beacon = await mqttBulletin.waitForRoomBeacon(
+          fresh.id,
+          () => {
+            const list = hostedBeaconRooms();
+            return (
+              list.find(
+                (r) =>
+                  String(r.id).toUpperCase() === String(fresh.id).toUpperCase()
+              ) || null
+            );
+          },
+          { timeoutMs: 90000, onProgress }
+        );
+        if (!beacon.ok) {
+          throw new Error(beacon.message || '房间广播失败');
+        }
+      } else {
+        mqttAfterRoomChange();
+      }
+
       emitRoomUpdate(fresh);
       emitLobbyUpdate();
-      mqttOnLogin();
-      mqttAfterRoomChange();
     } catch (err) {
       const leave = rooms.leaveRoom(socket.id);
       if (leave.leftRoomId) socket.leave(leave.leftRoomId);
@@ -910,7 +969,9 @@ io.on('connection', (socket) => {
       rooms.registerPlayer(socket.id, data.playerName || '玩家', playerRegisterOpts(data));
     }
 
-    const result = rooms.spectateRoom(socket.id, data.roomId);
+    const result = rooms.spectateRoom(socket.id, data.roomId, {
+      password: data.password,
+    });
     if (!result.ok) {
       socket.emit('room:error', { message: result.error });
       return;
@@ -929,6 +990,17 @@ io.on('connection', (socket) => {
     mqttAfterRoomChange();
   });
 
+  socket.on('room:verifyPassword', (data = {}) => {
+    // 必须在房主本机服务端校验；密码从不经 MQTT 广播
+    const result = rooms.checkRoomPassword(data.roomId, data.password);
+    socket.emit('room:verifyPassword:result', {
+      ok: Boolean(result.ok),
+      roomId: data.roomId ? String(data.roomId).toUpperCase() : null,
+      needsPassword: Boolean(result.needsPassword),
+      message: result.ok ? null : result.error || '房间密码错误',
+    });
+  });
+
   socket.on('room:join', (data = {}) => {
     if (!rooms.getPlayer(socket.id)) {
       rooms.registerPlayer(socket.id, data.playerName || '玩家', playerRegisterOpts(data));
@@ -936,7 +1008,9 @@ io.on('connection', (socket) => {
       rooms.registerPlayer(socket.id, data.playerName || '玩家', playerRegisterOpts(data));
     }
 
-    const result = rooms.joinRoom(socket.id, data.roomId);
+    const result = rooms.joinRoom(socket.id, data.roomId, {
+      password: data.password,
+    });
     if (!result.ok) {
       socket.emit('room:error', { message: result.error });
       return;
@@ -1166,9 +1240,8 @@ io.on('connection', (socket) => {
       return;
     }
     emitRoomUpdate(result.room);
-    emitLobbyUpdate();
-    mqttOnLogin();
-    mqttAfterRoomChange();
+    // 开局：立刻更新大厅状态并发送房间心跳（随后对局中改为 20s 周期）
+    mqttNotifyRoomStatusNow();
     syncTurnTimer(result.room, { onTimeout: handleTurnTimeout });
     emitGameStarted(result.room);
     scheduleLasidaoInitAnnounce(result.room);
@@ -1177,7 +1250,8 @@ io.on('connection', (socket) => {
   socket.on('room:updateSettings', (data = {}) => {
     const result = rooms.updateSettings(socket.id, {
       name: data.name,
-      hidden: data.hidden,
+      hasPassword: data.hasPassword,
+      password: data.password,
       maxPlayers: data.maxPlayers,
       gameType: data.gameType,
       gameMode: data.gameMode,
@@ -1218,6 +1292,8 @@ io.on('connection', (socket) => {
       return;
     }
 
+    const wasOver = Boolean(room.game && room.game.over);
+    const wasStatus = room.status;
     const result = mod.applyAction(room.game, socket.id, {
       type: data.type,
       payload: data.payload,
@@ -1232,6 +1308,8 @@ io.on('connection', (socket) => {
     // 服务端接受的操作视为有效操作，刷新思考时间
     syncTurnTimer(room, { onTimeout: handleTurnTimeout });
     emitGameState(room);
+    // 对局刚结束：立刻刷新房间状态并广播
+    afterPlayingMutation(room, { wasOver, wasStatus });
   });
 
   socket.on('chat:send', (data = {}) => {
@@ -1346,7 +1424,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`联机服务已启动: ${localUrl}`);
   if (mqttBulletin && mqttBulletin.enabled) {
     console.log(
-      `跨网广播: MQTT 已启用（固定地址 broker.emqx.io，频道 ${mqttBulletin.channel}；登录心跳 10s，房间心跳 5s）`
+      `跨网广播: MQTT 已启用（固定地址 broker.emqx.io，频道 ${mqttBulletin.channel}；登录心跳 10s，等待房心跳 5s，对局中心跳 20s）`
     );
   }
   if (!(mqttBulletin && mqttBulletin.enabled)) {

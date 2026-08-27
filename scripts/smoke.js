@@ -23,21 +23,31 @@ function once(socket, event, timeout = 4000) {
   await once(b, 'player:me');
 
   const roomP = once(a, 'room:update');
-  a.emit('room:create', { name: 'HiddenTest', hidden: true, maxPlayers: 2 });
+  a.emit('room:create', {
+    name: 'PwdTest',
+    hasPassword: true,
+    password: 'secret',
+    maxPlayers: 2,
+  });
   const created = await roomP;
   const roomId = created.room.id;
-  console.log('created hidden room', roomId);
+  console.log('created password room', roomId);
 
   const lobby = await new Promise((resolve) => {
     a.once('lobby:update', resolve);
     a.emit('lobby:join', { playerName: 'Alice' });
   });
-  const inLobby = (lobby.rooms || []).some((r) => r.id === roomId);
-  console.log('hidden room in lobby?', inLobby);
-  if (inLobby) throw new Error('hidden room should not appear in lobby');
+  const listed = (lobby.rooms || []).find((r) => r.id === roomId);
+  console.log('password room in lobby?', Boolean(listed), 'hasPassword?', listed && listed.hasPassword);
+  if (!listed || !listed.hasPassword) throw new Error('password room should appear with hasPassword');
+  if (listed.password) throw new Error('password must not be exposed in lobby');
+
+  b.emit('room:join', { roomId, password: 'wrong' });
+  const bad = await once(b, 'room:error');
+  console.log('wrong password rejected:', bad.message);
 
   const joinP = once(b, 'room:update');
-  b.emit('room:join', { roomId });
+  b.emit('room:join', { roomId, password: 'secret' });
   const joined = await joinP;
   console.log('bob joined, players', joined.room.players.length);
 

@@ -477,7 +477,8 @@ body.phase-room .lobby-people {
 .people-list li {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  align-items: stretch;
+  gap: 0.2rem;
   padding: 0.55rem 0;
   border-bottom: 1px solid var(--border);
 }
@@ -486,17 +487,30 @@ body.phase-room .lobby-people {
   border-bottom: none;
 }
 
+.people-list .people-row-main {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
 .people-list .people-name {
   font-size: 0.92rem;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
+.people-list .people-row-meta,
 .people-list .people-status {
   font-size: 0.75rem;
+  line-height: 1.35;
   color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .panel {
@@ -957,7 +971,8 @@ body.phase-room .room-panel button:not(.secondary):hover {
 .people-list li.is-offline .people-name {
   color: var(--muted);
 }
-.people-list li.is-offline .people-status {
+.people-list li.is-offline .people-status,
+.people-list li.is-offline .people-row-meta {
   color: #9e9e9e;
 }
 
@@ -1372,13 +1387,32 @@ body.phase-room .chat-tabs button.is-on {
   line-height: 1.45;
 }
 
+.toast-slot {
+  position: relative;
+  height: 3rem;
+  margin-bottom: 0.65rem;
+  flex-shrink: 0;
+}
+
 .toast {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  margin: 0;
   background: #3a2a2a;
   border: 1px solid var(--danger);
   color: #f0c8c8;
-  padding: 0.6rem 0.8rem;
+  padding: 0.45rem 0.8rem;
   border-radius: 6px;
-  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.toast[hidden] {
+  display: none !important;
 }
 
 .room-busy-overlay {
@@ -1509,6 +1543,7 @@ body.phase-room .chat-tabs button.is-on {
 }
 
 .passive-toggle {
+  display: flex;
   align-items: center;
   gap: 0.5rem;
   margin: 0.65rem 0 0;
@@ -1516,6 +1551,12 @@ body.phase-room .chat-tabs button.is-on {
   color: var(--muted);
   cursor: pointer;
   user-select: none;
+}
+
+/* display:flex 会盖掉原生 [hidden]，加入端必须彻底藏起被动开关 */
+#passive-toggle-wrap[hidden],
+body.is-guest-client #passive-toggle-wrap {
+  display: none !important;
 }
 
 .passive-toggle input {

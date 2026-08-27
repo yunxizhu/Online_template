@@ -137,7 +137,9 @@
 
     <div class="app-body">
       <div class="app-content">
-        <p id="toast" class="toast" hidden></p>
+        <div class="toast-slot" aria-live="polite">
+          <p id="toast" class="toast" hidden></p>
+        </div>
 
         <!-- 大厅 -->
         <section id="view-lobby" class="view">
@@ -154,12 +156,10 @@
               <div class="row lobby-toolbar-actions">
                 <button id="btn-toggle-create" type="button" data-i18n="lobby.createRoom">创建房间</button>
                 <button id="btn-toggle-join" type="button" class="secondary" data-i18n="lobby.joinByCode">房间码加入</button>
-                <button id="btn-toggle-spectate" type="button" class="secondary">观战</button>
-                <button id="btn-refresh-lobby" type="button" class="secondary" data-i18n="lobby.refresh">刷新</button>
               </div>
-              <label class="passive-toggle row" id="passive-toggle-wrap">
+              <label class="passive-toggle" id="passive-toggle-wrap">
                 <input id="chk-passive-mode" type="checkbox" />
-                <span>被动模式（他人可在你机器上开房，你纯观战）</span>
+                <span>被动模式（他人可在你机器上开房，本机无人值守）</span>
               </label>
               <p id="peers-label" class="muted" data-i18n="lobby.peersSearching">广播：搜索中…</p>
               <p id="lobby-refresh-hint" class="muted lobby-refresh-hint" data-i18n="lobby.refreshHint">大厅列表每 3 秒自动刷新</p>
@@ -196,7 +196,7 @@
               </div>
               <p class="room-meta">
                 <span id="room-game-label">—</span>
-                <span id="room-hidden-badge" class="badge" hidden data-i18n="room.hidden">隐藏</span>
+                <span id="room-password-badge" class="badge" hidden data-i18n="room.password">密码</span>
               </p>
               <h3 class="room-members-title" data-i18n="room.members">房间成员</h3>
               <ul id="member-list" class="member-list"></ul>
@@ -322,8 +322,19 @@
         </select>
       </label>
       <label class="checkbox">
-        <input id="room-hidden" type="checkbox" />
-        <span data-i18n="create.hidden">隐藏房间（仅房间码加入）</span>
+        <input id="room-has-password" type="checkbox" />
+        <span data-i18n="create.hasPassword">密码房间</span>
+      </label>
+      <label id="room-password-wrap" hidden>
+        <span data-i18n="create.password">房间密码</span>
+        <input
+          id="room-password"
+          type="text"
+          maxlength="32"
+          autocomplete="off"
+          data-i18n-attr="placeholder:create.passwordPlaceholder"
+          placeholder="可为空"
+        />
       </label>
       <p id="game-hint" class="muted" data-i18n="create.hintDefault">选择游戏后查看人数要求。</p>
       <button id="btn-create-room" type="button" data-i18n="create.confirm">确认创建</button>
@@ -340,6 +351,17 @@
       <label>
         <span data-i18n="join.code">房间码</span>
         <input id="join-code" type="text" maxlength="8" data-i18n-attr="placeholder:join.codePlaceholder" placeholder="输入房间码" />
+      </label>
+      <label>
+        <span data-i18n="join.password">房间密码</span>
+        <input
+          id="join-password"
+          type="text"
+          maxlength="32"
+          autocomplete="off"
+          data-i18n-attr="placeholder:join.passwordPlaceholder"
+          placeholder="无密码可留空"
+        />
       </label>
       <button id="btn-join-code" type="button" data-i18n="join.confirm">加入</button>
     </div>

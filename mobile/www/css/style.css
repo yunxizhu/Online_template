@@ -1355,13 +1355,32 @@ body.phase-room .chat-tabs button.is-on {
   line-height: 1.45;
 }
 
+.toast-slot {
+  position: relative;
+  height: 3rem;
+  margin-bottom: 0.65rem;
+  flex-shrink: 0;
+}
+
 .toast {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  margin: 0;
   background: #3a2a2a;
   border: 1px solid var(--danger);
   color: #f0c8c8;
-  padding: 0.6rem 0.8rem;
+  padding: 0.45rem 0.8rem;
   border-radius: 6px;
-  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.toast[hidden] {
+  display: none !important;
 }
 
 .room-busy-overlay {

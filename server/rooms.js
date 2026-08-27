@@ -117,7 +117,6 @@ function publicRoomView(room) {
   return {
     id: room.id,
     name: room.name,
-    hidden: room.hidden,
     hostId: room.hostId,
     playerCount,
     observerCount,
@@ -130,6 +129,7 @@ function publicRoomView(room) {
     gameModeLabel: room.gameModeLabel || null,
     turnTimeSec: Number(room.turnTimeSec) || 0,
     playingStartedAt: room.playingStartedAt || null,
+    hasPassword: Boolean(room.hasPassword),
     passiveHosted: Boolean(room.passiveHosted),
     canJoin: waiting && playerCount < room.maxPlayers,
     canSpectate: waiting || playing,
@@ -146,7 +146,6 @@ function fullRoomView(room) {
   return {
     id: room.id,
     name: room.name,
-    hidden: room.hidden,
     hostId: room.hostId,
     players: room.players.map((p) => ({
       id: p.id,
@@ -161,6 +160,7 @@ function fullRoomView(room) {
       name: p.name,
       tag: p.tag || null,
       offline: Boolean(p.offline),
+      passiveHost: Boolean(p.passiveHost),
     })),
     status: room.status,
     maxPlayers: room.maxPlayers,
@@ -171,6 +171,7 @@ function fullRoomView(room) {
     gameModeLabel: room.gameModeLabel || null,
     turnTimeSec: Number(room.turnTimeSec) || 0,
     playingStartedAt: room.playingStartedAt || null,
+    hasPassword: Boolean(room.hasPassword),
     passiveHosted: Boolean(room.passiveHosted),
   };
 }
@@ -311,7 +312,7 @@ class RoomManager {
   listLobbyRooms() {
     const list = [];
     for (const room of this.rooms.values()) {
-      if (room.hidden || room.pendingLobby) continue;
+      if (room.pendingLobby) continue;
       if (room.status === 'waiting' || room.status === 'playing') {
         list.push(publicRoomView(room));
       }
@@ -325,15 +326,24 @@ class RoomManager {
       let status = 'idle';
       let roomName = null;
       let roomId = null;
+      let occupied = false;
       if (p.roomId) {
         const room = this.getRoom(p.roomId);
-        // pending 创建中：对外仍算在大厅空闲，避免列表提前显示「在房间」
-        if (room && !room.pendingLobby) {
+        if (room) {
           const isObs = (room.observers || []).some((o) => o.id === p.id);
-          if (isObs) status = 'spectating';
-          else status = room.status === 'playing' ? 'playing' : 'room';
-          roomName = room.name;
-          roomId = p.roomId;
+          // 被动主机一旦被代开进房（含 pending）：对外占用，禁止他人再代开
+          if (p.passive || (room.passiveHosted && isObs)) {
+            occupied = true;
+            status = 'occupied';
+            roomName = room.name;
+            roomId = p.roomId;
+          } else if (!room.pendingLobby) {
+            // 普通玩家：pending 创建中仍显示空闲；公开后显示房间/对局
+            if (isObs) status = 'spectating';
+            else status = room.status === 'playing' ? 'playing' : 'room';
+            roomName = room.name;
+            roomId = p.roomId;
+          }
         }
       }
       list.push({
@@ -347,6 +357,7 @@ class RoomManager {
         client: p.client || null,
         role: p.role || null,
         passive: Boolean(p.passive),
+        occupied,
       });
     }
 
@@ -422,7 +433,8 @@ class RoomManager {
     playerId,
     {
       name,
-      hidden,
+      hasPassword = false,
+      password = '',
       maxPlayers,
       gameType,
       gameMode,
@@ -448,11 +460,14 @@ class RoomManager {
       String(name || '').trim().slice(0, 24) ||
       `${player.name}的${cfg.game.label}${cfg.modeLabel ? '·' + cfg.modeLabel : ''}`;
     const id = generateRoomId(this.rooms);
+    const usePassword = Boolean(hasPassword);
 
     const room = {
       id,
       name: roomName,
-      hidden: Boolean(hidden),
+      hasPassword: usePassword,
+      // 仅服务端保存；对外只暴露 hasPassword
+      password: usePassword ? String(password == null ? '' : password).slice(0, 32) : '',
       hostId: playerId,
       players: [
         {
@@ -510,7 +525,7 @@ class RoomManager {
    */
   updateSettings(
     playerId,
-    { name, hidden, maxPlayers, gameType, gameMode, turnTimeSec } = {}
+    { name, hasPassword, password, maxPlayers, gameType, gameMode, turnTimeSec } = {}
   ) {
     const player = this.players.get(playerId);
     if (!player || !player.roomId) {
@@ -540,7 +555,19 @@ class RoomManager {
     room.name =
       trimmed ||
       `${player.name}的${cfg.game.label}${cfg.modeLabel ? '·' + cfg.modeLabel : ''}`;
-    room.hidden = Boolean(hidden);
+    if (hasPassword != null) {
+      const usePassword = Boolean(hasPassword);
+      room.hasPassword = usePassword;
+      if (usePassword) {
+        if (password != null) {
+          room.password = String(password).slice(0, 32);
+        }
+      } else {
+        room.password = '';
+      }
+    } else if (password != null && room.hasPassword) {
+      room.password = String(password).slice(0, 32);
+    }
     room.maxPlayers = cfg.max;
     room.minPlayers = cfg.min;
     room.gameType = cfg.type;
@@ -560,7 +587,22 @@ class RoomManager {
     return room;
   }
 
-  joinRoom(playerId, roomId) {
+  /** 密码仅存本机；对外校验。无密码房直接通过。 */
+  checkRoomPassword(roomId, password) {
+    const room = this.getRoom(roomId);
+    if (!room) return { ok: false, error: '房间不存在' };
+    if (!room.hasPassword) {
+      return { ok: true, room, needsPassword: false };
+    }
+    const got = String(password == null ? '' : password);
+    const want = String(room.password == null ? '' : room.password);
+    if (got !== want) {
+      return { ok: false, error: '房间密码错误', needsPassword: true };
+    }
+    return { ok: true, room, needsPassword: true };
+  }
+
+  joinRoom(playerId, roomId, { password } = {}) {
     const player = this.players.get(playerId);
     if (!player) return { ok: false, error: '请先进入大厅' };
     const wantId = String(roomId || '').toUpperCase();
@@ -575,8 +617,9 @@ class RoomManager {
       return { ok: false, error: '你已在房间中，请先离开' };
     }
 
-    const room = this.getRoom(roomId);
-    if (!room) return { ok: false, error: '房间不存在' };
+    const auth = this.checkRoomPassword(roomId, password);
+    if (!auth.ok) return auth;
+    const room = auth.room;
     if (room.status !== 'waiting') return { ok: false, error: '对局已开始，无法加入（可观战）' };
     const seated = (room.players || []).filter((p) => !p.left).length;
     if (seated >= room.maxPlayers) return { ok: false, error: '房间已满' };
@@ -594,7 +637,7 @@ class RoomManager {
   }
 
   /** 观战：等待房/对局中均可，不占玩家席 */
-  spectateRoom(playerId, roomId) {
+  spectateRoom(playerId, roomId, { password } = {}) {
     const player = this.players.get(playerId);
     if (!player) return { ok: false, error: '请先进入大厅' };
     const wantId = String(roomId || '').toUpperCase();
@@ -607,8 +650,9 @@ class RoomManager {
       }
       return { ok: false, error: '你已在房间中，请先离开' };
     }
-    const room = this.getRoom(roomId);
-    if (!room) return { ok: false, error: '房间不存在' };
+    const auth = this.checkRoomPassword(roomId, password);
+    if (!auth.ok) return auth;
+    const room = auth.room;
     if (room.status !== 'waiting' && room.status !== 'playing') {
       return { ok: false, error: '房间不可观战' };
     }

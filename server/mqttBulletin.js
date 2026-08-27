@@ -11,17 +11,26 @@ const DEFAULT_BROKERS = [
 const DEFAULT_CHANNEL = 'xiyun_lianjidating_public';
 const APP_SIGNATURE = 'lianji';
 const LOGIN_HB_MS = 10000;
-const ROOM_HB_MS = 10000;
+/** 等待房房间心跳 */
+const ROOM_HB_MS = 5000;
+/** 对局中房间心跳（降低频率） */
+const ROOM_HB_PLAYING_MS = 20000;
 /** 隧道 URL 刚出现时可额外等待再广播；给 Cloudflare DNS 一点传播时间 */
 const TUNNEL_READY_DELAY_MS = Number(process.env.TUNNEL_READY_DELAY_MS) || 2500;
-// 心跳间隔 10s，超时阈值给到 2~3 个周期，避免单次延迟发布导致列表闪跳
+// 登录 10s / 等待房 5s / 对局中 20s；超时约 2+ 个最长周期，避免列表闪跳
 const LOGIN_OFFLINE_MS = 25000;
-const ROOM_OFFLINE_MS = 25000;
+const ROOM_OFFLINE_MS = 50000;
 /** 接收端清除超时残留的时长：实例被强杀后 retained 心跳会永久残留，
  * 超过该阈值直接丢弃，避免「离线幽灵」永远挂在别人大厅里 */
 const STALE_CLEAR_MS =
   Number(process.env.MQTT_STALE_CLEAR_MS) || 120000;
-const VALID_STATUS = new Set(['idle', 'room', 'playing', 'spectating']);
+const VALID_STATUS = new Set([
+  'idle',
+  'room',
+  'playing',
+  'spectating',
+  'occupied',
+]);
 
 function sanitizePeople(list) {
   const out = [];
@@ -42,6 +51,7 @@ function sanitizePeople(list) {
       client: client || null,
       role: role || null,
       passive: Boolean(p.passive),
+      occupied: Boolean(p.occupied) || status === 'occupied',
     });
     if (out.length >= 12) break;
   }
@@ -315,13 +325,22 @@ class MqttBulletin {
     }, LOGIN_HB_MS);
   }
 
+  /** 当前应使用的房间心跳间隔：对局中 20s，否则 5s */
+  #roomHbMs() {
+    const room = (this.getHostedRooms() || [])[0];
+    if (room && String(room.status || '') === 'playing') {
+      return ROOM_HB_PLAYING_MS;
+    }
+    return ROOM_HB_MS;
+  }
+
   #scheduleRoom() {
     if (this._roomTimer) clearTimeout(this._roomTimer);
     this._roomTimer = setTimeout(() => {
       this.touchRoom().catch((e) => this.#warn(e)).finally(() => {
         if (this._started) this.#scheduleRoom();
       });
-    }, ROOM_HB_MS);
+    }, this.#roomHbMs());
   }
 
   /** 立刻发一次玩家心跳，并重置 10s 周期 */
@@ -352,10 +371,18 @@ class MqttBulletin {
   #roomSig(room, tunnelUrl) {
     if (!room || !tunnelUrl) return '';
     const host = String(tunnelUrl).replace(/\/$/, '');
-    const playerCount =
-      Number(room.playerCount) ||
-      (Array.isArray(room.players) ? room.players.length : 0);
-    return `${room.id}|${host}|${playerCount}|${room.status || 'waiting'}`;
+    const playerCount = Math.max(
+      0,
+      Number(
+        room.playerCount != null
+          ? room.playerCount
+          : Array.isArray(room.players)
+            ? room.players.filter((p) => p && !p.left).length
+            : 0
+      ) || 0
+    );
+    const over = room.over ? 1 : 0;
+    return `${String(room.id || '').toUpperCase()}|${host}|${playerCount}|${room.status || 'waiting'}|${over}`;
   }
 
   #isRoomBeaconPublished(room, tunnelUrl) {
@@ -413,12 +440,6 @@ class MqttBulletin {
       const room = getRoom && getRoom();
       if (!room || String(room.id).toUpperCase() !== wantId) {
         return { ok: false, message: '房间已不存在' };
-      }
-      if (room.hidden) {
-        return this.waitForInfrastructureReady({
-          timeoutMs: Math.max(0, deadline - Date.now()),
-          onProgress,
-        });
       }
       if (!this.#mqttUp()) {
         if (onProgress) onProgress('mqtt');
@@ -531,7 +552,6 @@ class MqttBulletin {
     if (!this.enabled || !this._started) return;
     const wantPublish = (room) =>
       room &&
-      !room.hidden &&
       (!room.status ||
         room.status === 'waiting' ||
         room.status === 'playing');
@@ -592,6 +612,16 @@ class MqttBulletin {
       return;
     }
     const now = Date.now();
+    const playerCount = Math.max(
+      0,
+      Number(
+        room.playerCount != null
+          ? room.playerCount
+          : Array.isArray(room.players)
+            ? room.players.filter((p) => p && !p.left).length
+            : 0
+      ) || 0
+    );
     const payload = {
       app: APP_SIGNATURE,
       id: room.id,
@@ -606,14 +636,17 @@ class MqttBulletin {
       gameModeLabel: room.gameModeLabel || '',
       playerNames: (room.players || []).map((p) => p.name || '玩家'),
       playerTags: (room.players || []).map((p) => p.tag || null),
-      playerCount: room.playerCount,
+      playerCount,
       maxPlayers: room.maxPlayers,
       status: room.status || 'waiting',
+      over: Boolean(room.over),
+      hasPassword: Boolean(room.hasPassword),
+      // 密码明文绝不进 MQTT / 大厅列表
       observerCount: Number(room.observerCount || 0),
       passiveHosted: Boolean(room.passiveHosted),
       canJoin:
         (!room.status || room.status === 'waiting') &&
-        Number(room.playerCount || 0) < Number(room.maxPlayers || 0),
+        playerCount < Number(room.maxPlayers || 0),
       canSpectate: true,
       createTime: room._createdAt || now,
       updateTime: now,
@@ -622,11 +655,11 @@ class MqttBulletin {
       this.#scheduleRoomRetry();
       return;
     }
-    const sig = `${payload.id}|${payload.host}|${payload.playerCount}|${payload.status}`;
+    const sig = this.#roomSig(payload, tunnelUrl);
     if (this._lastRoomSig !== sig) {
-      this._lastRoomSig = sig;
       console.log(`[mqtt] 已广播房间 ${payload.id} → ${payload.host}`);
     }
+    this._lastRoomSig = sig;
   }
 
   #onMessage(topic, buf) {
@@ -732,6 +765,8 @@ class MqttBulletin {
           playerCount: Number(p.playerCount || (p.playerNames && p.playerNames.length) || 0),
           maxPlayers: Number(p.maxPlayers || 0) || undefined,
           status: String(p.status || 'waiting'),
+          over: Boolean(p.over),
+          hasPassword: Boolean(p.hasPassword),
           observerCount: Number(p.observerCount || 0),
           passiveHosted: Boolean(p.passiveHosted),
           canJoin:
@@ -745,7 +780,6 @@ class MqttBulletin {
           instanceId: id,
           local: false,
           via: 'mqtt',
-          hidden: false,
         });
         this.onChange();
       } catch (_) {}
@@ -800,6 +834,9 @@ class MqttBulletin {
           client: normalizeClient(pp && pp.client) || null,
           role: normalizeRole(pp && pp.role) || null,
           passive: Boolean((pp && pp.passive) || p.passive),
+          occupied:
+            Boolean(pp && pp.occupied) ||
+            String(pp && pp.status) === 'occupied',
           instanceId: p.instanceId,
           host:
             (pp && pp.passive) || p.passive
@@ -844,6 +881,7 @@ module.exports = {
   DEFAULT_CHANNEL,
   LOGIN_HB_MS,
   ROOM_HB_MS,
+  ROOM_HB_PLAYING_MS,
   LOGIN_OFFLINE_MS,
   ROOM_OFFLINE_MS,
   normalizeClient,
