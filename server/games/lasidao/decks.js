@@ -256,7 +256,7 @@ const ENVIRONMENT_CATALOG = [
     label: '囚徒困境',
     trigger: 'settle',
     setup: 'neutral2',
-    desc: '上场在本格放置 2 枚中立骰。结算抵消后：骰子最少的玩家（可并列，可为 0）各弃 n 张牌，n=第一名骰子数；该弃牌在个人产出（含许愿井）后、建造前进行',
+    desc: '上场在本格放置 2 枚中立骰。结算抵消后：骰子最少的玩家（可并列，可为 0）各弃 n 张资源卡，n=第一名骰子数；该弃牌在个人产出（含许愿井）后、建造前进行',
   },
   {
     envType: 'barrenHarvest',
@@ -383,11 +383,11 @@ const BUILD_HOUSE_COST = { wood: 3, stone: 3, iron: 1 };
 /** 常驻「购买功能卡」造价 */
 const BUY_FUNC_COST = { food: 3, iron: 2 };
 
-/** 常驻「繁殖村民」：小麦消耗 = 房子数量 × 该系数 */
-const BREED_FOOD_PER_HOUSE = 1;
+/** 常驻「繁殖村民」：小麦消耗 = 当前村民数量 × 该系数 */
+const BREED_FOOD_PER_VILLAGER = 1;
 
-function breedFoodCost(houses) {
-  return Math.max(0, Math.floor(Number(houses) || 0)) * BREED_FOOD_PER_HOUSE;
+function breedFoodCost(villagers) {
+  return Math.max(0, Math.floor(Number(villagers) || 0)) * BREED_FOOD_PER_VILLAGER;
 }
 
 module.exports = {
@@ -406,7 +406,7 @@ module.exports = {
   PRODUCE_BUILD_COSTS,
   BUILD_HOUSE_COST,
   BUY_FUNC_COST,
-  BREED_FOOD_PER_HOUSE,
+  BREED_FOOD_PER_VILLAGER,
   breedFoodCost,
   buildResourceDeck,
   buildFunctionDeck,

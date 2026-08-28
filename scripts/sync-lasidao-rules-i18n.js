@@ -30,7 +30,7 @@ function envCardHtml(def, lang) {
   if (lang === 'en') {
     const enMap = {
       prisonersDilemma:
-        'Setup: place 2 neutral dice on this slot. Settle: after cancel, fewest dice on this slot (ties / 0 allowed) each discard n cards (n = 1st place dice). After personal production (including wish well), before build.',
+        'Setup: place 2 neutral dice on this slot. Settle: after cancel, fewest dice on this slot (ties / 0 allowed) each discard n resource cards (n = 1st place dice). After personal production (including wish well), before build.',
       barrenHarvest:
         'On event slot. Dispatch: when you become the slot leader, place the marker (first time counts; stacking more as leader does not retrigger). Move marker to any resource or function/building slot—marked slots yield nothing on settle.',
       resistBarbarians:
@@ -97,7 +97,7 @@ const zhPermanent =
   '<p>建造阶段，每回合不限次数。开局每人 <strong>3 村民、2 间房子</strong>（每房容纳 2 村民），无初始资源。</p>' +
   '<dl class="las-rules-dl">' +
   '<dt>建造房子</dt><dd>支付 3 木 3 石 1 铁，房子 +1、+1 分。</dd>' +
-  '<dt>繁殖村民</dt><dd>消耗 <strong>等于当前房子数</strong> 的小麦，村民 +1（上限 15）。需至少 1 个空位（空位 = 住房容量 − 村民数）。</dd>' +
+  '<dt>繁殖村民</dt><dd>消耗 <strong>等于当前村民数</strong> 的小麦，村民 +1（上限 15）。需至少 1 个空位（空位 = 住房容量 − 村民数）。</dd>' +
   '<dt>购买功能卡</dt><dd>支付 3 小麦 2 铁：从功能/建筑合堆顶抽 3 张，选 1 保留；合堆不足 3 张时洗混弃牌堆合并后再抽。超出手牌/建筑上限须先弃置。</dd>' +
   '<dt>扩建</dt><dd>消耗 <strong>各 1 木 1 石 1 麦 1 铁</strong>（固定，不随次数增加）。三选一：建筑格 / 功能卡格 / 资源卡位（资源手牌上限 +4）。功能卡「免费扩建」效果相同但无资源消耗。</dd>' +
   '<dt>集市兑换</dt><dd>随时可用：默认银行 4:1；已建集市提升比例（1 座→3:1，2 座→2:1，≥3 座→1:1，最多按 3 座计）。</dd>' +
@@ -107,7 +107,7 @@ const enPermanent =
   '<p>Build phase, unlimited uses per round. Start with <strong>3 villagers, 2 houses</strong> (2 villagers per house), no resources.</p>' +
   '<dl class="las-rules-dl">' +
   '<dt>Build House</dt><dd>Pay 3W 3S 1I; +1 house and +1 VP.</dd>' +
-  '<dt>Breed Villagers</dt><dd>Pay wheat = <strong>current house count</strong>; +1 villager (max 15). Needs 1 free housing slot.</dd>' +
+  '<dt>Breed Villagers</dt><dd>Pay wheat = <strong>current villager count</strong>; +1 villager (max 15). Needs 1 free housing slot.</dd>' +
   '<dt>Buy Function Card</dt><dd>Pay 3 wheat 2 iron: draw 3 from merged deck top, keep 1; reshuffle discard into deck if fewer than 3. Discard if over hand/building cap.</dd>' +
   '<dt>Capacity</dt><dd>Cost <strong>1 each</strong> wood, stone, food &amp; iron (fixed). Pick one: building slot, function hand, or resource slot (+4 cap). Free Expand function card does the same for free.</dd>' +
   '<dt>Market trade</dt><dd>Anytime: default bank 4:1; Markets improve rate (1→3:1, 2→2:1, ≥3→1:1, counts at most 3).</dd>' +

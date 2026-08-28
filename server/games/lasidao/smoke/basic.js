@@ -240,15 +240,8 @@ function drainNonProduce(game) {
             payload: { kind: 'resource', resource: res },
           })
         );
-      } else if (p.funcCards && p.funcCards[0]) {
-        ok(
-          applyAction(game, pid, {
-            type: 'eventDiscard',
-            payload: { kind: 'func', cardId: p.funcCards[0].id },
-          })
-        );
       } else {
-        // 无法弃牌则清掉以免卡死
+        // 无资源可弃则清掉以免卡死
         delete game.pendingPrisonerDiscards[pid];
         game.pendingPrisonerDiscards = game.pendingPrisonerDiscards || {};
       }
@@ -1005,6 +998,22 @@ ok(ax(g9, p9.id, { type: 'exchange', payload: { from: 'wood', to: 'iron' } }));
 assert.strictEqual(p9.resources.wood, 5);
 assert.strictEqual(p9.resources.iron, 1);
 
+// 多资源同时兑换测试
+p9.resources = { wood: 4, stone: 4, food: 0, iron: 0 };
+ok(
+  ax(g9, p9.id, {
+    type: 'exchange',
+    payload: {
+      from: { wood: 2, stone: 1, food: 0, iron: 0 },
+      to: { wood: 0, stone: 0, food: 2, iron: 1 },
+    },
+  })
+);
+assert.strictEqual(p9.resources.wood, 0);
+assert.strictEqual(p9.resources.stone, 2);
+assert.strictEqual(p9.resources.food, 2);
+assert.strictEqual(p9.resources.iron, 1);
+
 console.log('— face-down board slots + hidden func hands —');
 const g10 = createGameState(room(2));
 finishInit(g10);
@@ -1543,13 +1552,6 @@ function drainPrisonerDiscard(g) {
         applyAction(g, pid, {
           type: 'eventDiscard',
           payload: { kind: 'resource', resource: res },
-        })
-      );
-    } else if (p.funcCards && p.funcCards[0]) {
-      ok(
-        applyAction(g, pid, {
-          type: 'eventDiscard',
-          payload: { kind: 'func', cardId: p.funcCards[0].id },
         })
       );
     } else {
@@ -2208,7 +2210,7 @@ console.log('— houses gate breed —');
   const before = p.villagers;
   ok(applyAction(g, p.id, { type: 'breedPermanent' }));
   assert.strictEqual(p.villagers, before + 1);
-  assert.strictEqual(p.resources.food, 18, '繁殖消耗应等于房子数 2');
+  assert.strictEqual(p.resources.food, 17, '繁殖消耗应等于当前村民数 3');
   assert.strictEqual(freeHousesFor(p), 0);
   const fail = applyAction(g, p.id, { type: 'breedPermanent' });
   assert.ok(!fail.ok, '无空位时不可繁殖');
@@ -2218,7 +2220,7 @@ console.log('— houses gate breed —');
   assert.strictEqual(freeHousesFor(p), 2);
   ok(applyAction(g, p.id, { type: 'breedPermanent' }));
   assert.strictEqual(p.villagers, before + 2);
-  assert.strictEqual(p.resources.food, 15, '3 房繁殖消耗 3 小麦');
+  assert.strictEqual(p.resources.food, 13, '4 村民繁殖消耗 4 小麦');
   const pub = publicGameState(g, p.id);
   const me = pub.players.find((x) => x.id === p.id);
   assert.strictEqual(me.houses, p.houses);
@@ -2560,6 +2562,7 @@ console.log('— event welfare minimum lowest score —');
   );
   assert.strictEqual(g.pendingWelfareMinimumQueue.length, 1);
   assert.strictEqual(g.pendingWelfareMinimumQueue[0].playerId, p0.id);
+  assert.strictEqual(g.pendingWelfareMinimumQueue[0].count, 2, '第1轮低保户应为2张');
 
   p1.houseScore = 0;
   g.pendingWelfareMinimumQueue = [];
@@ -2581,9 +2584,58 @@ console.log('— event welfare minimum lowest score —');
   const tiedIds = new Set(g.pendingWelfareMinimumQueue.map((x) => x.playerId));
   assert.ok(tiedIds.has(p0.id) && tiedIds.has(p1.id));
 
-  g.phase = 'init_announce';
-  g.produceOrderStartId = p0.id;
-  g.environmentDeck = [
+  // 轮数 count 检查（确保唯一最低分）
+  p1.houseScore = 5;
+  g.pendingWelfareMinimumQueue = [];
+  g.round = 5;
+  setupEnvironmentOnBoard(
+    g,
+    {
+      envType: 'welfareMinimum',
+      label: '低保户',
+      setup: 'lowestScoreTwo',
+    },
+    5,
+    {
+      pushLog: () => {},
+      alivePlayers: () => g.players.filter((p) => !p.left),
+      playerScore,
+    }
+  );
+  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 1);
+  assert.strictEqual(g.pendingWelfareMinimumQueue[0].count, 3, '第5轮低保户应为3张');
+
+  g.pendingWelfareMinimumQueue = [];
+  g.round = 9;
+  setupEnvironmentOnBoard(
+    g,
+    {
+      envType: 'welfareMinimum',
+      label: '低保户',
+      setup: 'lowestScoreTwo',
+    },
+    5,
+    {
+      pushLog: () => {},
+      alivePlayers: () => g.players.filter((p) => !p.left),
+      playerScore,
+    }
+  );
+  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 1);
+  assert.strictEqual(g.pendingWelfareMinimumQueue[0].count, 4, '第9轮低保户应为4张');
+
+  // 完整流程：第5轮选择3个资源（使用全新实例避免状态污染）
+  const g5 = createGameState(room(3));
+  const q0 = g5.players[0];
+  const q1 = g5.players[1];
+  const q2 = g5.players[2];
+  q0.houseScore = 0;
+  q1.houseScore = 5;
+  q2.houseScore = 6;
+  g5.round = 5;
+  g5.phase = 'init_announce';
+  g5.produceOrderStartId = q0.id;
+  g5.environmentDeck = [
     {
       id: 'env_wm',
       kind: 'environment',
@@ -2593,23 +2645,27 @@ console.log('— event welfare minimum lowest score —');
       setup: 'lowestScoreTwo',
     },
   ];
-  g.environmentDiscard = [];
-  p0.houseScore = 0;
-  p1.houseScore = 5;
-  p2.houseScore = 6;
-  ok(finishInitAnnounce(g));
-  assert.ok(g.pendingEventChoice, '最低分玩家应待选资源');
-  assert.strictEqual(g.pendingEventChoice.playerId, p0.id);
-  assert.ok(!g.roundProduceBegun, '选完资源前不应正式开始生产');
+  g5.environmentDiscard = [];
+  ok(finishInitAnnounce(g5));
+  assert.ok(g5.pendingEventChoice, '最低分玩家应待选资源');
+  assert.strictEqual(g5.pendingEventChoice.playerId, q0.id);
+  assert.strictEqual(g5.pendingEventChoice.count, 3, '第5轮应为3个资源');
+  assert.ok(!g5.roundProduceBegun, '选完资源前不应正式开始生产');
+  // 只选2个应被拒绝
+  const reject = applyAction(g5, q0.id, {
+    type: 'eventPickTwoResources',
+    payload: { amounts: { wood: 2 } },
+  });
+  assert.strictEqual(reject.ok, false, '第5轮选2个应被拒绝');
   ok(
-    applyAction(g, p0.id, {
+    applyAction(g5, q0.id, {
       type: 'eventPickTwoResources',
-      payload: { amounts: { wood: 1, iron: 1 } },
+      payload: { amounts: { wood: 2, stone: 1 } },
     })
   );
-  assert.strictEqual(p0.resources.wood, 1);
-  assert.strictEqual(p0.resources.iron, 1);
-  assert.strictEqual(g.phase, 'produce', '选完后应进入生产');
+  assert.strictEqual(q0.resources.wood, 2);
+  assert.strictEqual(q0.resources.stone, 1);
+  assert.strictEqual(g5.phase, 'produce', '选完后应进入生产');
   console.log('✓ event welfare minimum lowest score');
 }
 

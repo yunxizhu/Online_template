@@ -19,7 +19,7 @@ const {
   getEnvironmentDef,
   BUILD_HOUSE_COST,
   BUY_FUNC_COST,
-  BREED_FOOD_PER_HOUSE,
+  BREED_FOOD_PER_VILLAGER,
   breedFoodCost,
 } = require('./decks');
 
@@ -892,14 +892,15 @@ function tryStartNextWelfareMinimumChoice(game) {
   const q = game.pendingWelfareMinimumQueue;
   if (!q || !q.length) return false;
   const next = q.shift();
-  game.pendingEventChoice = { ...next };
+  const count = next.count || 2;
+  game.pendingEventChoice = { ...next, count };
   game.currentPlayerId = next.playerId;
   game.phase = 'produce';
   game.awaitingProduceRoll = false;
   const p = playerById(game, next.playerId);
   pushLog(
     game,
-    `${p ? p.name : '?'} 请选择「${next.label}」的 2 个资源`
+    `${p ? p.name : '?'} 请选择「${next.label}」的 ${count} 个资源`
   );
   return true;
 }
@@ -1663,6 +1664,10 @@ function completeSettleAfterAnim(game) {
   game.personalProduceApplied = false;
   // 结算动画结束后再回收场上未取走的板块（客户端会先播回收动画）
   recycleBoard(game);
+  // 生产结算结束后清空歉收标记
+  game.barrenMarkerNumber = null;
+  game.barrenMarkerArea = null;
+  game.barrenMarkerOwnerId = null;
   advancePostSettlePipeline(game);
   return { ok: true };
 }
@@ -2128,8 +2133,9 @@ function actEventPickTwoResources(game, player, payload) {
       detail.push({ resource: r, amount: n });
     }
   }
-  if (total !== 2) {
-    return { ok: false, error: '请恰好选择 2 个资源' };
+  const count = pending.count || 2;
+  if (total !== count) {
+    return { ok: false, error: `请恰好选择 ${count} 个资源` };
   }
   for (const d of detail) {
     player.resources[d.resource] = (player.resources[d.resource] || 0) + d.amount;
@@ -2659,24 +2665,8 @@ function actEventDiscard(game, player, payload) {
       game,
       `${player.name} 囚徒困境弃置 1 ${RESOURCE_LABELS[resource]}`
     );
-  } else if (kind === 'func') {
-    const cardId = payload.cardId;
-    const idx = (player.funcCards || []).findIndex((c) => c.id === cardId);
-    if (idx < 0) return { ok: false, error: '功能卡无效' };
-    const [card] = player.funcCards.splice(idx, 1);
-    pushToDiscard(game, 'special', card);
-    pushLog(game, `${player.name} 囚徒困境弃置功能卡「${card.label}」`);
-  } else if (kind === 'building') {
-    const buildingId = payload.buildingId;
-    const idx = (player.buildings || []).findIndex(
-      (b) => b.id === buildingId && !b.built
-    );
-    if (idx < 0) return { ok: false, error: '只能弃未建造建筑' };
-    const [b] = player.buildings.splice(idx, 1);
-    pushToDiscard(game, 'special', b);
-    pushLog(game, `${player.name} 囚徒困境弃置建筑「${b.label}」`);
   } else {
-    return { ok: false, error: '请选择弃置资源/功能卡/未建造建筑' };
+    return { ok: false, error: '请选择弃置资源' };
   }
 
   game.pendingPrisonerDiscards[player.id] = left - 1;
@@ -3729,28 +3719,91 @@ function actExchange(game, player, payload) {
   const need = effectiveExchangeCost(player, game);
   const from = payload.from;
   const to = payload.to;
-  const count = Math.max(1, Math.floor(Number(payload.count) || 1));
-  if (!RESOURCES.includes(from) || !RESOURCES.includes(to)) {
+
+  // 兼容旧格式：单一资源字符串
+  if (typeof from === 'string' && typeof to === 'string') {
+    const count = Math.max(1, Math.floor(Number(payload.count) || 1));
+    if (!RESOURCES.includes(from) || !RESOURCES.includes(to)) {
+      return { ok: false, error: '资源类型无效' };
+    }
+    if (from === to) {
+      return { ok: false, error: '换出与换入资源不能相同' };
+    }
+    const totalNeed = need * count;
+    if ((player.resources[from] || 0) < totalNeed) {
+      return {
+        ok: false,
+        error: `需要 ${totalNeed} 个${RESOURCE_LABELS[from]}${
+          caravan
+            ? '（商队来临 ' + need + '换1）'
+            : exCount > 0
+              ? '（集市生效 ' + exCount + ' 座）'
+              : ''
+        }`,
+      };
+    }
+    player.resources[from] -= totalNeed;
+    player.resources[to] = (player.resources[to] || 0) + count;
+    const sourceLabel = caravan
+      ? `商队来临（${need}换1${built > 0 ? '，已建集市' : ''}）`
+      : exCount > 0
+        ? built > exCount
+          ? `用集市（建成 ${built} 座，生效 ${exCount} 座，${need}换1）`
+          : `用集市（${exCount}座，${need}换1）`
+        : `银行兑换（${need}换1）`;
+    pushLog(
+      game,
+      `${player.name} ${sourceLabel}：${totalNeed}${RESOURCE_LABELS[from]} → ${count}${RESOURCE_LABELS[to]}`
+    );
+    return { ok: true };
+  }
+
+  // 新格式：多资源对象
+  if (typeof from !== 'object' || typeof to !== 'object' || from === null || to === null) {
     return { ok: false, error: '资源类型无效' };
   }
-  if (from === to) {
-    return { ok: false, error: '换出与换入资源不能相同' };
+
+  let totalFromCount = 0;
+  let totalToCount = 0;
+  for (const r of RESOURCES) {
+    const fc = Math.max(0, Math.floor(Number(from[r]) || 0));
+    const tc = Math.max(0, Math.floor(Number(to[r]) || 0));
+    if (fc > 0 && tc > 0) {
+      return { ok: false, error: `${RESOURCE_LABELS[r]} 不能同时换出和换入` };
+    }
+    totalFromCount += fc;
+    totalToCount += tc;
   }
-  const totalNeed = need * count;
-  if ((player.resources[from] || 0) < totalNeed) {
-    return {
-      ok: false,
-      error: `需要 ${totalNeed} 个相同的${RESOURCE_LABELS[from]}${
-        caravan
-          ? '（商队来临 ' + need + '换1）'
-          : exCount > 0
-            ? '（集市生效 ' + exCount + ' 座）'
-            : ''
-      }`,
-    };
+  if (totalFromCount === 0 || totalToCount === 0) {
+    return { ok: false, error: '请至少选择一种换出和一种换入资源' };
   }
-  player.resources[from] -= totalNeed;
-  player.resources[to] = (player.resources[to] || 0) + count;
+  if (totalFromCount !== totalToCount) {
+    return { ok: false, error: `换出总批次(${totalFromCount})与换入总批次(${totalToCount})不相等` };
+  }
+
+  for (const r of RESOURCES) {
+    const fc = Math.max(0, Math.floor(Number(from[r]) || 0));
+    const totalNeed = need * fc;
+    if ((player.resources[r] || 0) < totalNeed) {
+      return { ok: false, error: `${RESOURCE_LABELS[r]} 不足，需要 ${totalNeed}` };
+    }
+  }
+
+  const fromParts = [];
+  const toParts = [];
+  for (const r of RESOURCES) {
+    const fc = Math.max(0, Math.floor(Number(from[r]) || 0));
+    const tc = Math.max(0, Math.floor(Number(to[r]) || 0));
+    if (fc > 0) {
+      player.resources[r] = (player.resources[r] || 0) - need * fc;
+      fromParts.push(`${need * fc}${RESOURCE_LABELS[r]}`);
+    }
+    if (tc > 0) {
+      player.resources[r] = (player.resources[r] || 0) + tc;
+      toParts.push(`${tc}${RESOURCE_LABELS[r]}`);
+    }
+  }
+
   const sourceLabel = caravan
     ? `商队来临（${need}换1${built > 0 ? '，已建集市' : ''}）`
     : exCount > 0
@@ -3760,7 +3813,7 @@ function actExchange(game, player, payload) {
       : `银行兑换（${need}换1）`;
   pushLog(
     game,
-    `${player.name} ${sourceLabel}：${totalNeed}${RESOURCE_LABELS[from]} → ${count}${RESOURCE_LABELS[to]}`
+    `${player.name} ${sourceLabel}：${fromParts.join('+')} → ${toParts.join('+')}`
   );
   return { ok: true };
 }
@@ -4023,7 +4076,7 @@ function useBanditRaid(game, player, payload) {
   return { ok: true };
 }
 
-/** 抢劫：从目标玩家手牌中随机夺取 1 张（资源/功能/未建建筑） */
+/** 抢劫：从目标玩家手牌中随机夺取 1 张资源卡 */
 function stealableItems(player) {
   const items = [];
   if (!player) return items;
@@ -4032,12 +4085,6 @@ function stealableItems(player) {
     for (let i = 0; i < n; i++) {
       items.push({ kind: 'resource', resource: r });
     }
-  }
-  for (const c of player.funcCards || []) {
-    items.push({ kind: 'func', cardId: c.id });
-  }
-  for (const b of player.buildings || []) {
-    if (!b.built) items.push({ kind: 'building', buildingId: b.id });
   }
   return items;
 }
@@ -4058,32 +4105,7 @@ function applyRandomSteal(game, robber, target) {
     syncResourceHandPending(robber, game);
     return { kind: 'resource', label: RESOURCE_LABELS[resource] };
   }
-  if (pick.kind === 'func') {
-    const idx = (target.funcCards || []).findIndex((c) => c.id === pick.cardId);
-    if (idx < 0) return null;
-    const [card] = target.funcCards.splice(idx, 1);
-    syncFuncHandPending(target);
-    receiveFunctionCard(game, robber, { ...card, faceDown: false });
-    return { kind: 'func', label: card.label || card.funcType };
-  }
-  const bIdx = (target.buildings || []).findIndex(
-    (b) => b.id === pick.buildingId && !b.built
-  );
-  if (bIdx < 0) return null;
-  const [b] = target.buildings.splice(bIdx, 1);
-  const neu = {
-    ...b,
-    faceDown: false,
-    slot: null,
-    built: false,
-    workers: 0,
-  };
-  if (!assignBuildingSlot(robber, neu)) {
-    queuePendingBuildCard(robber, neu);
-  } else {
-    robber.buildings.push(neu);
-  }
-  return { kind: 'building', label: b.label || b.buildType };
+  return null;
 }
 
 function normalizeRobberyTargets(payload) {
@@ -4174,7 +4196,7 @@ function actBreedPermanent(game, player) {
       error: `村民已达住房上限（容量 ${villagerCapacityFor(player)} / 村民 ${player.villagers}），请先建造房子`,
     };
   }
-  const cost = breedFoodCost(player.houses);
+  const cost = breedFoodCost(player.villagers);
   if ((player.resources.food || 0) < cost) {
     return { ok: false, error: `需要 ${cost} 小麦` };
   }
@@ -4585,7 +4607,7 @@ function publicEnvironment(env) {
     faceDown: false,
     placeholder: false,
     mercenaryDice: Number(env.mercenaryDice) || 0,
-    stash: env.stash ? { ...env.stash } : null,
+    stash: env.stash && !env.stashClaimed ? { ...env.stash } : null,
     stashClaimed: Boolean(env.stashClaimed),
     firstComeTier:
       env.firstComeTier != null ? Number(env.firstComeTier) : null,
@@ -4673,7 +4695,8 @@ function publicGameState(game, viewerId) {
     villagersPerHouse: VILLAGERS_PER_HOUSE,
     buildHouseCost: { ...BUILD_HOUSE_COST },
     buyFuncCost: { ...BUY_FUNC_COST },
-    breedFoodPerHouse: BREED_FOOD_PER_HOUSE,
+    breedFoodPerVillager: BREED_FOOD_PER_VILLAGER,
+    breedFoodPerHouse: BREED_FOOD_PER_VILLAGER, // 兼容性字段
     board: {
       resource: publicArea(game.board.resource),
       special: publicArea(game.board.special),
@@ -5111,15 +5134,10 @@ function forceTimeout(game, playerId) {
       });
     }
     if (need === 'pickTwoResources') {
+      const count = game.pendingEventChoice.count || 2;
       return applyAction(game, playerId, {
         type: 'eventPickTwoResources',
-        payload: { amounts: { wood: 2 } },
-      });
-    }
-    if (need === 'pickTwoResources') {
-      return applyAction(game, playerId, {
-        type: 'eventPickTwoResources',
-        payload: { amounts: { wood: 2 } },
+        payload: { amounts: { wood: count } },
       });
     }
     if (need === 'moveBarrenMarker') {
@@ -5231,23 +5249,7 @@ function forceTimeout(game, playerId) {
         payload: { kind: 'resource', resource: pick },
       });
     }
-    if ((p.funcCards || []).length) {
-      return applyAction(game, playerId, {
-        type: 'eventDiscard',
-        payload: {
-          kind: 'func',
-          cardId: p.funcCards[p.funcCards.length - 1].id,
-        },
-      });
-    }
-    const unbuilt = (p.buildings || []).find((b) => !b.built);
-    if (unbuilt) {
-      return applyAction(game, playerId, {
-        type: 'eventDiscard',
-        payload: { kind: 'building', buildingId: unbuilt.id },
-      });
-    }
-    // 无牌可弃：清零并推进
+    // 无资源可弃：清零并推进
     delete game.pendingPrisonerDiscards[playerId];
     ensurePrisonerDiscardPlayer(game);
     return { ok: true };

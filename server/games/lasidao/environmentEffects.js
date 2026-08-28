@@ -256,6 +256,9 @@ function setupEnvironmentOnBoard(game, env, number, helpers) {
       if (!Number.isFinite(min)) break;
       const lows = alive.filter((p) => scoreFn(p) === min);
       if (!game.pendingWelfareMinimumQueue) game.pendingWelfareMinimumQueue = [];
+      let count = 2;
+      if (game.round >= 9) count = 4;
+      else if (game.round >= 5) count = 3;
       for (const p of lows) {
         game.pendingWelfareMinimumQueue.push({
           playerId: p.id,
@@ -264,12 +267,13 @@ function setupEnvironmentOnBoard(game, env, number, helpers) {
           envNumber: number,
           needChoice: 'pickTwoResources',
           resume: 'welfareSetup',
+          count,
         });
       }
       if (helpers.pushLog && lows.length) {
         helpers.pushLog(
           game,
-          `「${env.label}」：${lows.map((p) => p.name).join('、')}（${min} 分）各任选 2 个资源`
+          `「${env.label}」：${lows.map((p) => p.name).join('、')}（${min} 分）各任选 ${count} 个资源`
         );
       }
       break;
@@ -465,6 +469,7 @@ function applyEnvironmentOnDispatch(game, ctx) {
       const grant = { wood: tier, stone: tier, food: tier, iron: tier };
       const got = grantMap(player, grant);
       env.firstComeClaims[player.id] = true;
+      env.stashClaimed = true;
       if (ctx.pushLog) {
         ctx.pushLog(
           game,

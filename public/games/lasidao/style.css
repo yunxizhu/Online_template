@@ -423,6 +423,33 @@
   filter: grayscale(0.35);
 }
 
+/* 可建造的未建造建筑：呼吸闪烁提示 */
+.las-build-card.build.is-unbuilt.is-affordable {
+  animation: las-build-affordable 1s ease-in-out infinite;
+}
+
+.las-build-card.build.is-unbuilt.is-affordable.is-selected {
+  animation: las-build-affordable-selected 1s ease-in-out infinite;
+}
+
+@keyframes las-build-affordable {
+  0%, 100% {
+    opacity: 0.65;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+
+@keyframes las-build-affordable-selected {
+  0%, 100% {
+    opacity: 0.92;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 .las-build-card.is-disabled {
   opacity: 0.35;
   cursor: not-allowed;
@@ -1056,6 +1083,12 @@
 }
 
 .las-slot.is-dimmed {
+  opacity: 0.35;
+  filter: grayscale(1);
+  cursor: not-allowed;
+}
+
+.las-tile.is-dimmed {
   opacity: 0.35;
   filter: grayscale(1);
   cursor: not-allowed;
@@ -1944,7 +1977,8 @@
 }
 
 .las-wishwell-modal .modal-dialog {
-  max-width: calc(28 * var(--las-rem));
+  max-width: calc(36 * var(--las-rem));
+  max-height: min(92vh, 800px);
 }
 
 .las-wishwell-head {
@@ -1972,7 +2006,8 @@
 }
 
 .las-event-modal .modal-dialog {
-  max-width: calc(28 * var(--las-rem));
+  max-width: calc(36 * var(--las-rem));
+  max-height: min(92vh, 800px);
 }
 
 .las-event-head {
@@ -2196,6 +2231,7 @@
 .las-exchange-dialog {
   width: min(96vw, 1200px);
   max-width: 1200px;
+  max-height: 96vh;
 }
 
 .las-exchange-head {
@@ -2313,6 +2349,17 @@
   font-size: calc(0.82 * var(--las-rem));
   font-weight: 700;
   text-align: center;
+  z-index: 2;
+}
+
+.las-ex-item.is-card-disabled .las-ex-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(100, 110, 120, 0.55);
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 1;
 }
 
 .las-ex-label {
@@ -2350,9 +2397,11 @@
 }
 
 
-.las-robbery-dialog,
-.las-redraw-dialog {
+.las-robbery-dialog {
   max-width: 520px;
+}
+.las-redraw-dialog {
+  max-width: min(98vw, 960px);
 }
 .las-robbery-head,
 .las-redraw-head {
@@ -2468,11 +2517,26 @@
   font-size: calc(0.85 * var(--las-rem));
   color: #d4e0ea;
 }
+.las-redraw-decks .las-card {
+  width: var(--las-hand-card-w);
+  height: var(--las-hand-card-h);
+  min-width: var(--las-hand-card-w);
+  min-height: var(--las-hand-card-h);
+  cursor: pointer;
+  transition: transform 0.15s, border-color 0.15s;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+  box-sizing: border-box;
+}
+.las-redraw-decks .las-card:hover {
+  transform: translateY(-6px);
+  border-color: #e0c56a;
+}
 
 /* Harvest modal */
 .las-harvest-dialog {
-  max-width: 1040px;
-  width: min(96vw, 1040px);
+  max-width: 1200px;
+  width: min(96vw, 1200px);
+  max-height: min(92vh, 860px);
   padding: calc(1.5 * var(--las-rem)) calc(2 * var(--las-rem)) calc(1.75 * var(--las-rem));
 }
 .las-harvest-head {
@@ -2513,9 +2577,9 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-template-rows: repeat(2, minmax(0, 1fr));
-  gap: calc(2 * var(--las-rem)) calc(2.5 * var(--las-rem));
+  gap: calc(2.2 * var(--las-rem)) calc(3 * var(--las-rem));
   width: 100%;
-  max-width: 720px;
+  max-width: 900px;
   margin: 0 auto;
 }
 .las-harvest-item {
@@ -2536,8 +2600,8 @@
 }
 .las-harvest-minus,
 .las-harvest-plus {
-  width: 56px;
-  height: 56px;
+  width: 64px;
+  height: 64px;
   border-radius: 50%;
   border: 1px solid #3a5a72;
   background: #1a2a36;
@@ -2562,8 +2626,8 @@
   cursor: not-allowed;
 }
 .las-harvest-card {
-  width: 150px;
-  height: 200px;
+  width: 170px;
+  height: 227px;
   border-radius: 10px;
   border: 2px solid transparent;
   background-size: cover;
@@ -2590,6 +2654,12 @@
   font-size: calc(1.6 * var(--las-rem));
   color: #b0c4d0;
   text-align: center;
+}
+.las-harvest-hand {
+  font-size: calc(0.95 * var(--las-rem));
+  color: #8aa4b8;
+  text-align: center;
+  min-height: calc(1.2 * var(--las-rem));
 }
 
 /* Expand modal */
@@ -2625,7 +2695,7 @@
 .las-expand-option {
   flex: 1;
   max-width: 160px;
-  padding: calc(1 * var(--las-rem)) calc(0.5 * var(--las-rem));
+  padding: calc(0.5 * var(--las-rem));
   border-radius: 8px;
   border: 2px solid #3a5a72;
   background: #1a2a36;
@@ -2634,14 +2704,32 @@
   text-align: center;
   transition: transform 0.15s, border-color 0.15s, background 0.15s;
   font-size: calc(0.95 * var(--las-rem));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(0.4 * var(--las-rem));
 }
 .las-expand-option:hover {
-  transform: translateY(-2px);
   border-color: #e0c56a;
 }
 .las-expand-option.is-selected {
   border-color: #e0c56a;
   background: #2a4a62;
+}
+.las-expand-back {
+  width: 90px;
+  height: 120px;
+  border-radius: 8px;
+  background-size: cover;
+  background-position: center;
+  border: 2px solid transparent;
+  transition: transform 0.15s, border-color 0.15s;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+}
+.las-expand-option:hover .las-expand-back,
+.las-expand-option.is-selected .las-expand-back {
+  transform: translateY(-4px);
+  border-color: #e0c56a;
 }
 
 /* Exile modal */
@@ -3393,8 +3481,9 @@
 
 /* Void skip modal */
 .las-void-skip-dialog {
-  max-width: 640px;
-  width: min(92vw, 640px);
+  max-width: 800px;
+  width: min(92vw, 800px);
+  max-height: min(92vh, 760px);
   padding: calc(1.25 * var(--las-rem)) calc(1.5 * var(--las-rem)) calc(1.5 * var(--las-rem));
 }
 .las-void-skip-head {
@@ -3467,9 +3556,9 @@
 .las-void-skip-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: calc(1 * var(--las-rem)) calc(1.25 * var(--las-rem));
+  gap: calc(1.25 * var(--las-rem)) calc(1.5 * var(--las-rem));
   width: 100%;
-  max-width: 420px;
+  max-width: 540px;
   margin: 0 auto;
 }
 .las-void-skip-item {
@@ -3526,8 +3615,8 @@
 }
 .las-void-skip-card {
   position: relative;
-  width: 100px;
-  height: 133px;
+  width: 120px;
+  height: 160px;
   border-radius: 8px;
   background: #1a2228 center / cover no-repeat;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
@@ -3542,6 +3631,12 @@
   color: #fff;
   font-size: calc(0.85 * var(--las-rem));
   font-weight: 700;
+}
+.las-void-skip-qty-top {
+  font-size: calc(0.9 * var(--las-rem));
+  color: #b0c4d0;
+  font-weight: 700;
+  margin-bottom: calc(0.15 * var(--las-rem));
 }
 .las-void-skip-label {
   font-size: calc(1 * var(--las-rem));
