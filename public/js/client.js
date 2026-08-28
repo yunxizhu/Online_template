@@ -197,6 +197,7 @@ window.GameNet = (function () {
       'lobby:error',
       'lobby:passive',
       'lobby:passiveProgress',
+      'lobby:mqtt-reconnect-result',
       'player:me',
       'session:reclaimed',
       'session:reclaim-failed',
@@ -236,14 +237,24 @@ window.GameNet = (function () {
     return new Promise((resolve, reject) => {
       if (socket) {
         // 换源前禁止旧连接自动重连，否则会出现「大厅幽灵 + 房间本人」双人影
+        const old = socket;
+        socket = null;
         try {
-          if (socket.io) socket.io.reconnection(false);
+          if (old.io) old.io.reconnection(false);
         } catch (_) {
           /* ignore */
         }
-        socket.removeAllListeners();
-        socket.disconnect();
-        socket = null;
+        old.removeAllListeners();
+        try {
+          old.disconnect();
+        } catch (_) {
+          /* ignore */
+        }
+        try {
+          if (typeof old.close === 'function') old.close();
+        } catch (_) {
+          /* ignore */
+        }
       }
 
       currentUrl = target;
@@ -461,6 +472,23 @@ window.GameNet = (function () {
 
   function refreshLobby() {
     ensureSocket().emit('lobby:refresh');
+  }
+
+  function reconnectMqtt() {
+    return new Promise((resolve) => {
+      const s = ensureSocket();
+      const timer = setTimeout(() => {
+        s.off('lobby:mqtt-reconnect-result', onResult);
+        resolve({ ok: false, message: '重连广播超时' });
+      }, 8000);
+      function onResult(data) {
+        clearTimeout(timer);
+        s.off('lobby:mqtt-reconnect-result', onResult);
+        resolve(data || { ok: false });
+      }
+      s.on('lobby:mqtt-reconnect-result', onResult);
+      s.emit('lobby:mqtt-reconnect');
+    });
   }
 
   function renamePlayer(playerName, opts = {}) {
@@ -844,6 +872,7 @@ window.GameNet = (function () {
     joinLobby,
     joinLobbyAndWait,
     refreshLobby,
+    reconnectMqtt,
     renamePlayer,
     createRoom,
     createRoomOnHost,

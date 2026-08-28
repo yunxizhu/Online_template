@@ -13,8 +13,8 @@ const APP_SIGNATURE = 'lianji';
 const LOGIN_HB_MS = 10000;
 /** 等待房房间心跳 */
 const ROOM_HB_MS = 5000;
-/** 对局中房间心跳（降低频率） */
-const ROOM_HB_PLAYING_MS = 20000;
+/** 对局中房间心跳（与等待房一致，便于断线后及时发现可重连房间） */
+const ROOM_HB_PLAYING_MS = 5000;
 /** 隧道 URL 刚出现时可额外等待再广播；给 Cloudflare DNS 一点传播时间 */
 const TUNNEL_READY_DELAY_MS = Number(process.env.TUNNEL_READY_DELAY_MS) || 2500;
 // 登录 10s / 等待房 5s / 对局中 20s；超时约 2+ 个最长周期，避免列表闪跳
@@ -160,6 +160,51 @@ class MqttBulletin {
     this._chatQueue = [];
     this._lastTunnelUrl = '';
     this._tunnelPublishAfter = 0;
+    this._brokers = [];
+    this._brokerIndex = 0;
+    this._currentBroker = '';
+    this._reconnectTimer = null;
+    this._reconnectAttempts = 0;
+    this._disconnectedSince = 0;
+    this._watchdogTimer = null;
+    this._lastConnectedAt = 0;
+  }
+
+  isConnected() {
+    return this.#mqttUp();
+  }
+
+  getStatus() {
+    return {
+      enabled: this.enabled,
+      connected: this.#mqttUp(),
+      broker: this._currentBroker || null,
+      disconnectedMs:
+        this._disconnectedSince && !this.#mqttUp()
+          ? Date.now() - this._disconnectedSince
+          : 0,
+      lastConnectedAt: this._lastConnectedAt || 0,
+    };
+  }
+
+  /** 手动或看门狗触发：彻底断开并换源重连 */
+  reconnect() {
+    if (!this.enabled) return { ok: false, message: 'MQTT 未启用' };
+    if (!this._started) {
+      this.start().catch((e) => this.#warn(e));
+      return { ok: true, message: '正在启动广播' };
+    }
+    this._reconnectAttempts = 0;
+    this._disconnectedSince = 0;
+    this.#clearReconnectTimer();
+    const brokers = this._brokers.length
+      ? this._brokers.slice()
+      : this.brokerOverride
+        ? [this.brokerOverride]
+        : DEFAULT_BROKERS.slice();
+    const next = brokers.length ? (this._brokerIndex + 1) % brokers.length : 0;
+    this.#connect(brokers, next, { force: true });
+    return { ok: true, message: '正在重连广播' };
   }
 
   #mqttUp() {
@@ -218,11 +263,73 @@ class MqttBulletin {
     const brokers = this.brokerOverride
       ? [this.brokerOverride]
       : DEFAULT_BROKERS.slice();
+    this._brokers = brokers.slice();
+    this.#startWatchdog();
     this.#connect(brokers, 0);
+  }
+
+  #clearReconnectTimer() {
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+  }
+
+  #startWatchdog() {
+    if (this._watchdogTimer) return;
+    this._watchdogTimer = setInterval(() => {
+      if (!this._started) return;
+      this.#pruneStale();
+      if (this.#mqttUp()) {
+        this._disconnectedSince = 0;
+        return;
+      }
+      if (!this._disconnectedSince) this._disconnectedSince = Date.now();
+      const gap = Date.now() - this._disconnectedSince;
+      if (gap >= 45000) {
+        this.#warn(new Error('MQTT 断线过久，自动强制重连'));
+        this.reconnect();
+      }
+    }, 15000);
+  }
+
+  #stopWatchdog() {
+    if (this._watchdogTimer) {
+      clearInterval(this._watchdogTimer);
+      this._watchdogTimer = null;
+    }
+  }
+
+  #scheduleReconnect(brokers, index) {
+    if (!this._started || this._reconnectTimer) return;
+    const delay = Math.min(30000, 2500 + (this._reconnectAttempts || 0) * 2000);
+    this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = null;
+      if (!this._started || this.#mqttUp()) return;
+      this._reconnectAttempts = (this._reconnectAttempts || 0) + 1;
+      const next = brokers.length ? (index + 1) % brokers.length : 0;
+      this.#connect(brokers, next, { force: true });
+    }, delay);
+  }
+
+  #detachClient(client) {
+    if (!client) return;
+    try {
+      client.removeAllListeners();
+    } catch (_) {
+      /* ignore */
+    }
+    try {
+      client.end(true);
+    } catch (_) {
+      /* ignore */
+    }
   }
 
   stop() {
     this._started = false;
+    this.#clearReconnectTimer();
+    this.#stopWatchdog();
     if (this._loginTimer) { clearTimeout(this._loginTimer); this._loginTimer = null; }
     if (this._roomTimer) { clearTimeout(this._roomTimer); this._roomTimer = null; }
     if (this._roomRetryTimer) { clearTimeout(this._roomRetryTimer); this._roomRetryTimer = null; }
@@ -233,7 +340,7 @@ class MqttBulletin {
       c.publish(this.#loginTopic(), '', { qos: 0, retain: true });
       c.publish(this.#roomTopic(), '', { qos: 0, retain: true });
     } catch (_) {}
-    try { c.end(true); } catch (_) {}
+    this.#detachClient(c);
   }
 
   /** 清除超时残留的远端心跳/房间（实例死掉后 retained 消息不会自己消失） */
@@ -255,23 +362,28 @@ class MqttBulletin {
     if (changed) this.onChange();
   }
 
-  #connect(brokers, index) {
+  #connect(brokers, index, opts = {}) {
     if (!this._started) return;
-    const url = brokers[index];
+    const list = brokers && brokers.length ? brokers : this._brokers;
+    const url = list && list[index];
     if (!url) {
       this.#warn(new Error('无法连接公共 MQTT，稍后重试'));
-      setTimeout(() => this.#connect(brokers, 0), 20000);
+      this.#scheduleReconnect(list || DEFAULT_BROKERS.slice(), 0);
       return;
     }
-    if (this.client) {
-      try { this.client.end(true); } catch (_) {}
-      this.client = null;
-    }
+    this.#clearReconnectTimer();
+    this._brokers = list.slice();
+    this._brokerIndex = index;
+    this._currentBroker = url;
+    const prev = this.client;
+    this.client = null;
+    if (prev) this.#detachClient(prev);
     const client = mqtt.connect(url, {
       clientId: `lianji-${this.instanceId.slice(0, 8)}-${Math.random().toString(36).slice(2, 8)}`,
       clean: true,
       keepalive: 60,
-      reconnectPeriod: 8000,
+      // 自行调度重连，避免库内 reconnecting 卡死
+      reconnectPeriod: 0,
       connectTimeout: 12000,
       protocolVersion: 4,
       will: {
@@ -283,13 +395,15 @@ class MqttBulletin {
     });
     this.client = client;
     client.on('connect', () => {
+      this._lastConnectedAt = Date.now();
+      this._disconnectedSince = 0;
+      this._reconnectAttempts = 0;
       console.log(`[mqtt] 广播已连接 ${url} 频道=${this.channel}`);
       client.subscribe(
         [`${this.#prefix()}/login/+`, `${this.#prefix()}/room/+`],
         { qos: 0 },
         (err) => {
           if (err) this.#warn(err);
-          // 订阅完成即视为 MQTT 就绪：若隧道地址已在，立刻发心跳
           if (!this.flushIfReady()) {
             this.touchLogin().catch((e) => this.#warn(e));
             this.touchRoom().catch((e) => this.#warn(e));
@@ -302,17 +416,25 @@ class MqttBulletin {
         if (err) this.#warn(err);
         this.#flushChatQueue();
       });
+      this.onChange();
     });
     client.on('message', (topic, buf) => this.#onMessage(topic, buf));
-    client.on('error', (err) => this.#warn(err));
-    client.on('close', () => {
-      if (!this._started) return;
-      if (this.client === client && !client.reconnecting) {
-        const next = (index + 1) % brokers.length;
-        setTimeout(() => {
-          if (this.client === client) this.#connect(brokers, next);
-        }, 5000);
+    client.on('error', (err) => {
+      this.#warn(err);
+      if (this.client === client && !client.connected) {
+        this._disconnectedSince = this._disconnectedSince || Date.now();
+        this.#scheduleReconnect(list, index);
       }
+    });
+    client.on('offline', () => {
+      if (this.client !== client) return;
+      this._disconnectedSince = this._disconnectedSince || Date.now();
+    });
+    client.on('close', () => {
+      if (!this._started || this.client !== client) return;
+      this._disconnectedSince = this._disconnectedSince || Date.now();
+      this.onChange();
+      this.#scheduleReconnect(list, index);
     });
   }
 
@@ -325,12 +447,8 @@ class MqttBulletin {
     }, LOGIN_HB_MS);
   }
 
-  /** 当前应使用的房间心跳间隔：对局中 20s，否则 5s */
+  /** 当前应使用的房间心跳间隔（等待房/对局中均为 5s） */
   #roomHbMs() {
-    const room = (this.getHostedRooms() || [])[0];
-    if (room && String(room.status || '') === 'playing') {
-      return ROOM_HB_PLAYING_MS;
-    }
     return ROOM_HB_MS;
   }
 
@@ -554,7 +672,8 @@ class MqttBulletin {
       room &&
       (!room.status ||
         room.status === 'waiting' ||
-        room.status === 'playing');
+        room.status === 'playing') &&
+      !room.over;
 
     // 没有可广播房间时立刻清空 retained，避免别人大厅继续显示旧人数/旧房间
     if (!wantPublish((this.getHostedRooms() || [])[0])) {
@@ -647,7 +766,7 @@ class MqttBulletin {
       canJoin:
         (!room.status || room.status === 'waiting') &&
         playerCount < Number(room.maxPlayers || 0),
-      canSpectate: true,
+      canSpectate: !room.over,
       createTime: room._createdAt || now,
       updateTime: now,
     };
@@ -833,13 +952,13 @@ class MqttBulletin {
           roomName: (pp && pp.roomName) || null,
           client: normalizeClient(pp && pp.client) || null,
           role: normalizeRole(pp && pp.role) || null,
-          passive: Boolean((pp && pp.passive) || p.passive),
+          passive: Boolean(pp && pp.passive),
           occupied:
             Boolean(pp && pp.occupied) ||
             String(pp && pp.status) === 'occupied',
           instanceId: p.instanceId,
           host:
-            (pp && pp.passive) || p.passive
+            pp && pp.passive
               ? p.host || (knownRoom && knownRoom.host) || null
               : (knownRoom && knownRoom.host) || p.host || null,
           local: false,
@@ -860,6 +979,7 @@ class MqttBulletin {
       (r) =>
         r.updateTime &&
         now - r.updateTime <= ROOM_OFFLINE_MS &&
+        !r.over &&
         (!r.status || r.status === 'waiting' || r.status === 'playing')
     );
   }

@@ -126,17 +126,67 @@
   border-radius: 8px;
   padding: calc(0.55 * var(--las-rem)) calc(0.65 * var(--las-rem));
   text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: calc(0.35 * var(--las-rem));
 }
 
 .las-act-wrap[hidden] {
   display: none !important;
 }
 
+.las-act-wrap > .game-sub {
+  margin: 0;
+}
+
+/* 建造回合：标题下方固定确认栏，按钮显隐不挤动下方内容 */
+.las-act-confirm-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: calc(0.35 * var(--las-rem));
+  min-height: calc(2.5 * var(--las-rem));
+  align-items: stretch;
+  box-sizing: border-box;
+}
+
+.las-act-confirm-bar[aria-hidden='true'] .las-act-confirm-primary,
+.las-act-confirm-bar[aria-hidden='true'] .las-act-confirm-secondary {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.las-act-confirm-bar .las-act-confirm-primary,
+.las-act-confirm-bar .las-act-confirm-secondary {
+  width: 100%;
+  min-height: calc(2.35 * var(--las-rem));
+  font-weight: 600;
+  margin: 0;
+}
+
+.las-act-confirm-bar button[hidden] {
+  display: block !important;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.las-act-confirm-bar button:not([hidden]) {
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.las-act-wrap > .las-hint {
+  margin: 0;
+}
+
 .las-act-hand {
   display: flex;
   flex-direction: column;
   gap: calc(0.25 * var(--las-rem));
-  margin-bottom: calc(0.45 * var(--las-rem));
+  margin: 0;
+}
+
+.las-act-hand:empty {
+  display: none;
 }
 
 .las-act-cards {
@@ -149,9 +199,70 @@
 .las-act-wrap .las-func-panel,
 .las-act-wrap .las-wishwell,
 .las-act-wrap .las-exchange {
-  margin-top: calc(0.55 * var(--las-rem));
-  padding-top: calc(0.45 * var(--las-rem));
-  border-top: 1px solid #2e3a42;
+  margin: 0;
+  margin-bottom: 0;
+  padding: calc(0.45 * var(--las-rem)) calc(0.5 * var(--las-rem));
+  border: 1px solid #2e3a42;
+  border-radius: 6px;
+  min-height: calc(3.2 * var(--las-rem));
+  box-sizing: border-box;
+}
+
+.las-act-wrap .las-func-panel[hidden] {
+  display: none !important;
+}
+
+.las-act-wrap .las-func-panel #las-func-form {
+  display: flex;
+  flex-direction: column;
+  gap: calc(0.25 * var(--las-rem));
+}
+
+.las-act-wrap .las-func-panel #las-func-form > p {
+  margin: 0;
+}
+
+.las-permanent-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(0.35 * var(--las-rem));
+  width: 100%;
+}
+
+.las-permanent-grid[hidden] {
+  display: none !important;
+}
+
+.las-permanent-grid .las-perm-btn-wrap {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
+.las-permanent-grid .las-perm-btn-wrap > button {
+  width: 100%;
+  min-height: calc(2.1 * var(--las-rem));
+  margin: 0;
+  box-sizing: border-box;
+}
+
+.las-permanent-grid .las-perm-btn-wrap > button:disabled {
+  pointer-events: none;
+}
+
+.las-permanent-grid .las-perm-btn-wrap.las-perm-reset {
+  grid-column: 1 / -1;
+}
+
+.las-permanent-grid button {
+  width: 100%;
+  min-height: calc(2.1 * var(--las-rem));
+  margin: 0;
+  box-sizing: border-box;
+}
+
+.las-permanent-grid .las-perm-reset {
+  grid-column: 1 / -1;
 }
 
 .las-act-wrap .las-ex-row {
@@ -165,6 +276,11 @@
   margin-top: calc(0.65 * var(--las-rem)) !important;
   padding-top: calc(0.55 * var(--las-rem));
   border-top: 1px solid #2e3a42;
+}
+
+/* legacy: pass 已并入标题下确认栏 */
+.las-pass-row[hidden] {
+  display: none !important;
 }
 
 .las-pass-row #btn-las-pass {
@@ -189,6 +305,9 @@
   position: relative;
   z-index: 2;
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(0.35 * var(--las-rem));
 }
 
 .las-build-hand-wrap[hidden] {
@@ -198,13 +317,13 @@
 .las-build-hand-label {
   font-size: calc(0.92 * var(--las-rem));
   font-weight: 600;
-  margin-bottom: calc(0.35 * var(--las-rem));
+  margin: 0 0 calc(0.35 * var(--las-rem));
   color: #e8d48b;
 }
 
 .las-build-hand-sub {
   color: #9fb5c4;
-  margin-top: calc(0.45 * var(--las-rem));
+  margin: calc(0.45 * var(--las-rem)) 0 calc(0.35 * var(--las-rem));
   font-size: calc(0.88 * var(--las-rem));
 }
 
@@ -309,21 +428,6 @@
   justify-content: stretch;
   text-indent: -9999px;
   color: transparent;
-}
-
-.las-build-play-bar {
-  margin: 0 0 calc(0.45 * var(--las-rem));
-  display: flex;
-  justify-content: center;
-}
-
-.las-build-play-bar[hidden] {
-  display: none !important;
-}
-
-.las-build-play-bar button {
-  min-width: calc(6.5 * var(--las-rem));
-  font-weight: 600;
 }
 
 #las-permanent-actions button.is-selected {
@@ -991,6 +1095,16 @@
   perspective: 720px;
   pointer-events: none;
   transform: translate(-50%, -50%);
+}
+
+.las-fx-deal.is-settle-fly .las-fx-deal-face {
+  transform: none;
+  position: absolute;
+  inset: 0;
+}
+
+.las-fx-deal.is-settle-fly .las-fx-deal-front {
+  transform: none;
 }
 
 .las-fx-deal-inner {
@@ -1866,6 +1980,9 @@
   top: calc(0.35 * var(--las-rem));
   right: calc(0.35 * var(--las-rem));
   z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(0.22 * var(--las-rem));
   font-size: calc(0.7 * var(--las-rem));
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -1875,6 +1992,36 @@
   color: #fff8ef;
   cursor: help;
   pointer-events: auto;
+}
+
+.las-barren-marker .las-die-swatch {
+  width: calc(0.72 * var(--las-rem));
+  height: calc(0.72 * var(--las-rem));
+  min-width: calc(0.72 * var(--las-rem));
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.las-barren-marker.color-red {
+  border-color: #f5a29a;
+  background: linear-gradient(145deg, rgba(232, 90, 79, 0.88), rgba(183, 28, 28, 0.82));
+}
+.las-barren-marker.color-yellow {
+  border-color: #f5e29a;
+  background: linear-gradient(145deg, rgba(240, 210, 74, 0.9), rgba(201, 162, 39, 0.82));
+  color: #2a2208;
+}
+.las-barren-marker.color-blue {
+  border-color: #9ec5f5;
+  background: linear-gradient(145deg, rgba(79, 143, 232, 0.88), rgba(28, 79, 183, 0.82));
+}
+.las-barren-marker.color-green {
+  border-color: #9ef5b8;
+  background: linear-gradient(145deg, rgba(78, 207, 120, 0.88), rgba(28, 138, 62, 0.82));
+}
+.las-barren-marker.color-pink {
+  border-color: #f5b0d4;
+  background: linear-gradient(145deg, rgba(239, 106, 173, 0.88), rgba(194, 24, 91, 0.82));
 }
 
 .las-slot.has-barren-marker {
@@ -1985,7 +2132,8 @@
 }
 
 .las-exchange-dialog {
-  max-width: 480px;
+  width: min(96vw, 1200px);
+  max-width: 1200px;
 }
 
 .las-exchange-head {
@@ -2036,7 +2184,8 @@
 .las-ex-item {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
+  width: 100%;
   gap: calc(0.25 * var(--las-rem));
 }
 
@@ -2045,19 +2194,24 @@
 }
 
 .las-ex-item-row {
+  display: flex;
   align-items: center;
-  gap: calc(0.35 * var(--las-rem));
+  justify-content: space-between;
+  width: 100%;
+  gap: calc(0.5 * var(--las-rem));
+  margin: 0;
+  flex-wrap: nowrap;
 }
 
 .las-ex-minus,
 .las-ex-plus {
-  width: calc(1.75 * var(--las-rem));
-  height: calc(1.75 * var(--las-rem));
+  width: calc(2.2 * var(--las-rem));
+  height: calc(2.2 * var(--las-rem));
   border: 1px solid var(--border);
   border-radius: 6px;
   background: #243038;
   color: var(--fg);
-  font-size: calc(1 * var(--las-rem));
+  font-size: calc(1.15 * var(--las-rem));
   line-height: 1;
   cursor: pointer;
   flex: 0 0 auto;
@@ -2076,12 +2230,13 @@
 
 .las-ex-card {
   position: relative;
-  width: calc(3.2 * var(--las-rem));
-  height: calc(4.2 * var(--las-rem));
+  width: calc(4 * var(--las-rem));
+  height: calc(5.25 * var(--las-rem));
   border-radius: 6px;
   border: 1px solid var(--border);
   background: #1a2228 center / cover no-repeat;
   flex: 0 0 auto;
+  margin: 0 auto;
 }
 
 .las-ex-count {
@@ -2170,6 +2325,11 @@
 }
 .las-robbery-players button {
   min-width: 100px;
+}
+.las-robbery-players button.is-disabled,
+.las-robbery-players button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .las-robbery-res-grid {
   display: grid;
@@ -2484,8 +2644,79 @@
   justify-content: center;
   width: 100%;
 }
-.las-exile-players button {
+.las-exile-players button.las-exile-player {
   min-width: 90px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(0.35 * var(--las-rem));
+  padding: calc(0.45 * var(--las-rem)) calc(0.65 * var(--las-rem));
+  border-radius: 6px;
+  border: 2px solid transparent;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.12s, filter 0.12s;
+}
+.las-exile-players button.las-exile-player:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+}
+.las-exile-players button.las-exile-player.color-red {
+  border-color: #f5a29a;
+  background: linear-gradient(145deg, rgba(232, 90, 79, 0.42), rgba(183, 28, 28, 0.28));
+  color: #fff8f6;
+  box-shadow: 0 2px 8px rgba(183, 28, 28, 0.28);
+}
+.las-exile-players button.las-exile-player.color-yellow {
+  border-color: #f5e29a;
+  background: linear-gradient(145deg, rgba(240, 210, 74, 0.42), rgba(201, 162, 39, 0.28));
+  color: #2a2208;
+  box-shadow: 0 2px 8px rgba(201, 162, 39, 0.28);
+}
+.las-exile-players button.las-exile-player.color-blue {
+  border-color: #9ec5f5;
+  background: linear-gradient(145deg, rgba(79, 143, 232, 0.42), rgba(28, 79, 183, 0.28));
+  color: #f6f9ff;
+  box-shadow: 0 2px 8px rgba(28, 79, 183, 0.28);
+}
+.las-exile-players button.las-exile-player.color-green {
+  border-color: #9ef5b8;
+  background: linear-gradient(145deg, rgba(78, 207, 120, 0.42), rgba(28, 138, 62, 0.28));
+  color: #f4fff8;
+  box-shadow: 0 2px 8px rgba(28, 138, 62, 0.28);
+}
+.las-exile-players button.las-exile-player.color-pink {
+  border-color: #f5b0d4;
+  background: linear-gradient(145deg, rgba(239, 106, 173, 0.42), rgba(194, 24, 91, 0.28));
+  color: #fff6fb;
+  box-shadow: 0 2px 8px rgba(194, 24, 91, 0.28);
+}
+.las-exile-players button.las-exile-player.color-neutral {
+  border-color: #9a9a9a;
+  background: linear-gradient(145deg, rgba(106, 106, 106, 0.42), rgba(46, 46, 46, 0.28));
+  color: #f0f0f0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+}
+.las-exile-slot .slot-workers .las-exile-worker-name.color-red {
+  color: #f5a29a;
+}
+.las-exile-slot .slot-workers .las-exile-worker-name.color-yellow {
+  color: #f0d24a;
+}
+.las-exile-slot .slot-workers .las-exile-worker-name.color-blue {
+  color: #9ec5f5;
+}
+.las-exile-slot .slot-workers .las-exile-worker-name.color-green {
+  color: #9ef5b8;
+}
+.las-exile-slot .slot-workers .las-exile-worker-name.color-pink {
+  color: #f5b0d4;
+}
+.las-exile-slot .slot-workers .las-exile-worker-name.color-neutral {
+  color: #c8c8c8;
+}
+.las-exile-slot .slot-workers .las-exile-worker-name {
+  font-weight: 600;
 }
 .las-exile-empty {
   color: #a0b8c8;
@@ -3080,6 +3311,16 @@
   margin-bottom: calc(0.55 * var(--las-rem));
 }
 
+/* 弃牌/行动条中的建筑卡（非格内叠放）需固定尺寸，否则 has-art 会塌成细线 */
+.las-act-cards .las-pboard-card,
+.las-discard-build-group .las-pboard-card {
+  flex: 0 0 auto;
+  width: var(--las-hand-card-w);
+  min-width: var(--las-hand-card-w);
+  height: var(--las-hand-card-h);
+  min-height: var(--las-hand-card-h);
+}
+
 .las-discard-build-tip {
   margin-bottom: calc(0.45 * var(--las-rem));
 }
@@ -3109,8 +3350,52 @@
 .las-void-skip-body {
   min-height: 120px;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: calc(0.75 * var(--las-rem));
+}
+.las-void-skip-modes {
+  display: flex;
+  gap: calc(0.5 * var(--las-rem));
   justify-content: center;
+  flex-wrap: wrap;
+}
+.las-void-skip-mode {
+  flex: 1 1 0;
+  min-width: 140px;
+  max-width: 220px;
+  padding: calc(0.55 * var(--las-rem)) calc(0.75 * var(--las-rem));
+  border-radius: 8px;
+  border: 2px solid #3a5a72;
+  background: #1a2a36;
+  color: #d4e0ea;
+  cursor: pointer;
+  text-align: center;
+  font-size: calc(0.9 * var(--las-rem));
+  transition: border-color 0.15s, background 0.15s;
+}
+.las-void-skip-mode:hover:not(:disabled) {
+  border-color: #e0c56a;
+}
+.las-void-skip-mode.is-selected {
+  border-color: #e0c56a;
+  background: #2a4a62;
+}
+.las-void-skip-mode.is-disabled,
+.las-void-skip-mode:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.las-void-skip-pay-tip {
+  text-align: center;
+  margin: 0;
+  font-size: calc(0.95 * var(--las-rem));
+}
+.las-void-skip-pay-foot {
+  display: flex;
+  justify-content: center;
+  margin-top: calc(0.25 * var(--las-rem));
 }
 .las-void-skip-empty {
   text-align: center;

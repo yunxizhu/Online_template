@@ -412,7 +412,7 @@
     if (st === 'playing') return '对局中';
     if (st === 'offline') return '离线';
     if (st === 'occupied') {
-      return roomName ? '占用中 · ' + roomName : '占用中';
+      return roomName ? '代开中 · ' + roomName : '代开中';
     }
     if (st === 'spectating') {
       return roomName ? '观战 · ' + roomName : '观战中';
@@ -458,6 +458,27 @@
     const on = Boolean(active);
     el.chatDock.classList.toggle('is-active', on);
     document.body.classList.toggle('is-chat-expanded', on && isMobileChatUi());
+    if (!on) setChatInputFocused(false);
+  }
+
+  function setChatInputFocused(focused) {
+    if (!isMobileChatUi()) return;
+    document.body.classList.toggle('is-chat-focused', Boolean(focused));
+  }
+
+  let chatStickBottom = true;
+
+  function isChatNearBottom(threshold) {
+    if (!el.chatLog) return true;
+    const pad = threshold != null ? threshold : 36;
+    const maxScroll = Math.max(0, el.chatLog.scrollHeight - el.chatLog.clientHeight);
+    return maxScroll - el.chatLog.scrollTop <= pad;
+  }
+
+  function scrollChatToBottom() {
+    if (!el.chatLog) return;
+    el.chatLog.scrollTop = el.chatLog.scrollHeight;
+    chatStickBottom = true;
   }
 
   function scheduleChatCollapse() {
@@ -742,8 +763,10 @@
       )
       .sort((a, b) => (b.updateTime || 0) - (a.updateTime || 0));
 
-    const waiting = items.filter((r) => r.status !== 'playing');
-    const playing = items.filter((r) => r.status === 'playing');
+    const waiting = items.filter(
+      (r) => r.status !== 'playing' && !r.over
+    );
+    const playing = items.filter((r) => r.status === 'playing' && !r.over);
 
     if (el.roomList) el.roomList.replaceChildren();
     if (el.roomListPlaying) el.roomListPlaying.replaceChildren();
@@ -753,6 +776,40 @@
     }
     if (el.roomEmpty) el.roomEmpty.hidden = waiting.length > 0;
     if (el.roomPlayingEmpty) el.roomPlayingEmpty.hidden = playing.length > 0;
+  }
+
+  function personLabelKey(person) {
+    const name = String((person && person.name) || '').trim();
+    const tag = String((person && person.tag) || '').trim();
+    return `${name}#${tag}`;
+  }
+
+  function personStatusRank(person) {
+    if (!person) return 0;
+    if (person.occupied || person.status === 'occupied') return 6;
+    if (person.status === 'playing') return 5;
+    if (person.status === 'room' || person.status === 'spectating') return 4;
+    if (person.passive && person.host && person.status === 'idle') return 3;
+    if (person.passive) return 2;
+    if (person.status === 'idle') return 1;
+    return 0;
+  }
+
+  function mergeLobbyPerson(prev, person) {
+    if (!prev) return { ...person };
+    const pick = personStatusRank(person) >= personStatusRank(prev) ? person : prev;
+    const other = pick === person ? prev : person;
+    return {
+      ...pick,
+      key: pick.key || other.key,
+      self: Boolean(prev.self || person.self),
+      passive: Boolean(prev.passive || person.passive),
+      occupied: Boolean(prev.occupied || person.occupied),
+      host: pick.host || other.host || null,
+      roomName: pick.roomName || other.roomName || null,
+      client: pick.client || other.client || null,
+      role: pick.role || other.role || null,
+    };
   }
 
   function collectLobbyPeople() {
@@ -766,7 +823,7 @@
         people.forEach((pp, i) => {
           const name = String((pp && pp.name) || '').trim();
           if (!name) return;
-          const passive = Boolean((pp && pp.passive) || p.passive);
+          const passive = Boolean(pp && pp.passive);
           const status = (pp && pp.status) || 'idle';
           const occupied =
             Boolean(pp && pp.occupied) || status === 'occupied';
@@ -800,13 +857,26 @@
         });
       }
     }
-    out.sort((a, b) => {
+
+    // 同一昵称+尾缀只留一条（本机空闲 + 远端被动 合并为一人）
+    const byLabel = new Map();
+    const unlabeled = [];
+    for (const person of out) {
+      const label = personLabelKey(person);
+      if (!label || label === '#') {
+        unlabeled.push(person);
+        continue;
+      }
+      byLabel.set(label, mergeLobbyPerson(byLabel.get(label), person));
+    }
+    const merged = [...byLabel.values(), ...unlabeled];
+    merged.sort((a, b) => {
       if (a.status === 'offline' && b.status !== 'offline') return 1;
       if (a.status !== 'offline' && b.status === 'offline') return -1;
       if (a.self !== b.self) return a.self ? -1 : 1;
       return a.name.localeCompare(b.name, 'zh');
     });
-    return out;
+    return merged;
   }
 
   /** 可代开的被动主机（按公网地址去重） */
@@ -873,27 +943,22 @@
         nickHtml(p.name, p.tag) +
         (p.self ? ' <span class="you">(我)</span>' : '') +
         (p.occupied || p.status === 'occupied'
-          ? ' <span class="badge">占用</span>'
-          : p.passive && p.status === 'idle'
-            ? ' <span class="badge">被动</span>'
-            : '');
+          ? ' <span class="badge">代开中</span>'
+          : '') +
+        remoteBadgeHtml(p.client, p.role);
       name.title =
         p.name + (p.tag ? '#' + String(p.tag).slice(-5) : '');
       row1.appendChild(name);
 
       const row2 = document.createElement('div');
       row2.className = 'people-row people-row-meta';
-      const device = clientLabel(p.client, p.role);
       const status =
         p.occupied || p.status === 'occupied'
           ? statusText('occupied', p.roomName)
           : p.passive && p.status === 'idle'
             ? statusText('passive')
             : statusText(p.status, p.roomName);
-      const metaParts = [];
-      if (device) metaParts.push(device);
-      if (status) metaParts.push(status);
-      row2.textContent = metaParts.join(' · ') || '空闲';
+      row2.textContent = status || '空闲';
       row2.title = row2.textContent;
 
       if (p.status === 'offline') li.classList.add('is-offline');
@@ -917,6 +982,7 @@
 
   function appendChat(msg) {
     if (!el.chatLog || !msg || !msg.text) return;
+    const stick = chatStickBottom || isChatNearBottom();
     const li = document.createElement('li');
     const from = document.createElement('span');
     from.className = 'chat-from';
@@ -932,7 +998,7 @@
     while (el.chatLog.children.length > 80) {
       el.chatLog.removeChild(el.chatLog.firstChild);
     }
-    el.chatLog.scrollTop = el.chatLog.scrollHeight;
+    if (stick) scrollChatToBottom();
     updateChatPreview(msg);
   }
 
@@ -1450,13 +1516,41 @@
       });
     }
     if (el.chatInput) {
-      el.chatInput.addEventListener('focus', () => setChatDockActive(true));
+      el.chatInput.addEventListener('focus', () => {
+        setChatDockActive(true);
+        setChatInputFocused(true);
+      });
       el.chatInput.addEventListener('blur', (ev) => {
+        setChatInputFocused(false);
         const next = ev.relatedTarget;
         if (next && el.chatDock && el.chatDock.contains(next)) return;
         // Android 上 relatedTarget 常为空，延后判断实际焦点
         scheduleChatCollapse();
       });
+    }
+    if (el.chatLog) {
+      el.chatLog.addEventListener(
+        'scroll',
+        () => {
+          chatStickBottom = isChatNearBottom();
+        },
+        { passive: true }
+      );
+      // 手指在消息区滑动时不把手势交给外层页面
+      el.chatLog.addEventListener(
+        'touchstart',
+        (ev) => {
+          ev.stopPropagation();
+        },
+        { passive: true }
+      );
+      el.chatLog.addEventListener(
+        'touchmove',
+        (ev) => {
+          ev.stopPropagation();
+        },
+        { passive: true }
+      );
     }
     if (el.chatDock) {
       el.chatDock.addEventListener('click', (ev) => {
@@ -1484,6 +1578,8 @@
           setChatDockActive(false);
         } else {
           setChatDockActive(true);
+          chatStickBottom = true;
+          scrollChatToBottom();
           if (isMobileChatUi() && el.chatInput) {
             try {
               el.chatInput.focus();

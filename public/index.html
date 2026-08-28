@@ -161,7 +161,10 @@
                 <input id="chk-passive-mode" type="checkbox" />
                 <span>被动模式（他人可在你机器上开房，本机无人值守）</span>
               </label>
-              <p id="peers-label" class="muted" data-i18n="lobby.peersSearching">广播：搜索中…</p>
+              <div class="lobby-mqtt-row">
+                <p id="peers-label" class="muted" data-i18n="lobby.peersSearching">广播：搜索中…</p>
+                <button id="btn-mqtt-reconnect" type="button" class="secondary" hidden data-i18n="lobby.mqttReconnect">重连广播</button>
+              </div>
               <p id="lobby-refresh-hint" class="muted lobby-refresh-hint" data-i18n="lobby.refreshHint">大厅列表每 3 秒自动刷新</p>
             </div>
 
@@ -396,6 +399,7 @@
 
   <div id="room-busy-overlay" class="room-busy-overlay" hidden aria-live="polite" aria-busy="true">
     <div class="room-busy-panel panel">
+      <div class="room-busy-spinner" aria-hidden="true"></div>
       <p id="room-busy-message" class="room-busy-message" data-i18n="create.creating">创建中…</p>
     </div>
   </div>

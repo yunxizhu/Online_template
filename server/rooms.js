@@ -112,6 +112,7 @@ function resolveRoomConfig({
 function publicRoomView(room) {
   const waiting = !room.status || room.status === 'waiting';
   const playing = room.status === 'playing';
+  const over = Boolean(room.game && room.game.over);
   const playerCount = (room.players || []).filter((p) => !p.left).length;
   const observerCount = (room.observers || []).length;
   return {
@@ -123,6 +124,7 @@ function publicRoomView(room) {
     maxPlayers: room.maxPlayers,
     minPlayers: room.minPlayers,
     status: room.status,
+    over,
     gameType: room.gameType,
     gameLabel: room.gameLabel,
     gameMode: room.gameMode || null,
@@ -132,7 +134,7 @@ function publicRoomView(room) {
     hasPassword: Boolean(room.hasPassword),
     passiveHosted: Boolean(room.passiveHosted),
     canJoin: waiting && playerCount < room.maxPlayers,
-    canSpectate: waiting || playing,
+    canSpectate: (waiting || playing) && !over,
     playerNames: (room.players || [])
       .filter((p) => !p.left)
       .map((p) => p.name || '玩家'),
@@ -313,7 +315,11 @@ class RoomManager {
     const list = [];
     for (const room of this.rooms.values()) {
       if (room.pendingLobby) continue;
-      if (room.status === 'waiting' || room.status === 'playing') {
+      if (room.status === 'waiting') {
+        list.push(publicRoomView(room));
+        continue;
+      }
+      if (room.status === 'playing' && !(room.game && room.game.over)) {
         list.push(publicRoomView(room));
       }
     }

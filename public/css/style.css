@@ -538,6 +538,26 @@ body.phase-room .lobby-people {
   margin-top: 0;
 }
 
+.lobby-mqtt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  margin: 0.35rem 0 0;
+}
+
+.lobby-mqtt-row #peers-label {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.lobby-mqtt-row #btn-mqtt-reconnect {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .lobby-refresh-hint {
   margin: 0.35rem 0 0;
   font-size: 0.8rem;
@@ -1434,6 +1454,22 @@ body.phase-room .chat-tabs button.is-on {
   min-width: 12rem;
   text-align: center;
   padding: 1.25rem 1.5rem;
+}
+
+.room-busy-spinner {
+  width: 2.5rem;
+  height: 2.5rem;
+  margin: 0 auto 0.85rem;
+  border: 3px solid rgba(255, 255, 255, 0.14);
+  border-top-color: var(--accent, #6ec4b8);
+  border-radius: 50%;
+  animation: room-busy-spin 0.85s linear infinite;
+}
+
+@keyframes room-busy-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .room-busy-message {

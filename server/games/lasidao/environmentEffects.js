@@ -41,6 +41,64 @@ function grantMap(player, map) {
   return { total, detail };
 }
 
+function addNeutralEachSlot(game) {
+  for (const area of ['resource', 'special']) {
+    for (let n = 1; n <= 6; n++) {
+      addNeutral(game, area, n, 1);
+    }
+  }
+}
+
+/** 围魏救赵：事件格为奇数则偶数格各 1 中立骰，事件格为偶数则奇数格各 1 中立骰 */
+function paritySlotsForEvent(eventNumber) {
+  const eventOdd = Number(eventNumber) % 2 === 1;
+  const slots = [];
+  for (let n = 1; n <= 6; n++) {
+    const slotOdd = n % 2 === 1;
+    if (eventOdd && !slotOdd) slots.push(n);
+    if (!eventOdd && slotOdd) slots.push(n);
+  }
+  return slots;
+}
+
+function addNeutralParitySlots(game, eventNumber) {
+  for (const n of paritySlotsForEvent(eventNumber)) {
+    for (const area of ['resource', 'special']) {
+      addNeutral(game, area, n, 1);
+    }
+  }
+}
+
+function countNeutralGatherSources(game, toArea, toNumber) {
+  if (!game) return 0;
+  let total = 0;
+  const ta = toArea || 'resource';
+  const tn = Number(toNumber);
+  for (const area of ['resource', 'special']) {
+    for (let n = 1; n <= 6; n++) {
+      if (area === ta && n === tn) continue;
+      if (neutralCountOn(game, area, n) > 0) total += 1;
+    }
+  }
+  return total;
+}
+
+function moveAllNeutralsBetweenSlots(game, fromArea, fromNumber, toArea, toNumber) {
+  const fromW =
+    game.board[fromArea].workers[fromNumber] ||
+    (game.board[fromArea].workers[fromNumber] = {});
+  const n = Number(fromW[NEUTRAL_WORKER_ID]) || 0;
+  if (n <= 0) {
+    return { ok: false, error: '该板块没有中立骰' };
+  }
+  delete fromW[NEUTRAL_WORKER_ID];
+  const toW =
+    game.board[toArea].workers[toNumber] ||
+    (game.board[toArea].workers[toNumber] = {});
+  toW[NEUTRAL_WORKER_ID] = (toW[NEUTRAL_WORKER_ID] || 0) + n;
+  return { ok: true, count: n };
+}
+
 function addNeutral(game, area, number, count) {
   const areaBoard = game.board[area];
   if (!areaBoard) return;
@@ -57,6 +115,47 @@ function neutralCountOn(game, area, number) {
   return Number(w[NEUTRAL_WORKER_ID]) || 0;
 }
 
+/** 先到先得：第 1–4 轮各 1，第 5–8 轮各 2，第 9 轮起各 3 */
+function firstComeGrantTier(round) {
+  const r = Number(round) || 1;
+  if (r >= 9) return 3;
+  if (r >= 5) return 2;
+  return 1;
+}
+
+/** 先到先得：第 1–4 轮需 2 村民，第 5–8 轮需 4，第 9 轮起需 6 */
+function firstComeRequiredWorkers(round) {
+  const r = Number(round) || 1;
+  if (r >= 9) return 6;
+  if (r >= 5) return 4;
+  return 2;
+}
+
+/** 派遣后是否成为本格严格最大者（首次成为或失去领先后重新成为；继续加码不重复触发） */
+function becameStrictSlotLeader(workers, playerId, placed) {
+  const myCount = Number((workers || {})[playerId]) || 0;
+  const myPrev = Math.max(0, myCount - (Number(placed) || 0));
+  let otherMax = 0;
+  for (const [pid, c] of Object.entries(workers || {})) {
+    if (pid === playerId || pid === NEUTRAL_WORKER_ID) continue;
+    otherMax = Math.max(otherMax, Number(c) || 0);
+  }
+  return myCount > otherMax && myPrev <= otherMax;
+}
+
+/** @deprecated 与 becameStrictSlotLeader 相同；保留供测试兼容 */
+function becameLeaderAgain(workers, playerId, placed, pastLeaders) {
+  void pastLeaders;
+  return becameStrictSlotLeader(workers, playerId, placed);
+}
+
+function hasDispatchEffect(env) {
+  if (!env) return false;
+  if (env.trigger === 'dispatch') return true;
+  const def = getEnvironmentDef(env.envType) || {};
+  return Boolean(def.dispatchAlso || env.dispatchAlso);
+}
+
 /**
  * 上场初始化（抽到 4/5/6 后立刻执行）
  */
@@ -65,15 +164,44 @@ function setupEnvironmentOnBoard(game, env, number, helpers) {
   const setup = env.setup || (getEnvironmentDef(env.envType) || {}).setup;
   switch (setup) {
     case 'marker':
-      game.barrenMarkerNumber = number;
       if (helpers && helpers.pushLog) {
-        helpers.pushLog(game, `「${env.label}」：标记物放在资源格 ${number}`);
+        helpers.pushLog(
+          game,
+          `「${env.label}」：上场于资源格 ${number}（成为本格唯一领先者可放置标记）`
+        );
       }
       break;
-    case 'neutral6':
-      addNeutral(game, 'resource', number, 6);
+    case 'neutral3':
+      addNeutral(game, 'resource', number, 3);
       if (helpers && helpers.pushLog) {
-        helpers.pushLog(game, `「${env.label}」：资源格 ${number} 放置 6 枚中立骰`);
+        helpers.pushLog(game, `「${env.label}」：资源格 ${number} 放置 3 枚中立骰`);
+      }
+      break;
+    case 'neutral2':
+      addNeutral(game, 'resource', number, 2);
+      if (helpers && helpers.pushLog) {
+        helpers.pushLog(game, `「${env.label}」：资源格 ${number} 放置 2 枚中立骰`);
+      }
+      break;
+    case 'neutralEachSlot':
+      addNeutralEachSlot(game);
+      if (helpers && helpers.pushLog) {
+        helpers.pushLog(
+          game,
+          `「${env.label}」：资源区与功能/建筑区各数字格各放置 1 枚中立骰`
+        );
+      }
+      break;
+    case 'neutralParitySlots':
+      addNeutralParitySlots(game, number);
+      if (helpers && helpers.pushLog) {
+        const slots = paritySlotsForEvent(number);
+        const parityLabel =
+          Number(number) % 2 === 1 ? '偶数' : '奇数';
+        helpers.pushLog(
+          game,
+          `「${env.label}」：资源区与功能/建筑区各 ${parityLabel} 格（${slots.join('、')}）各放置 1 枚中立骰`
+        );
       }
       break;
     case 'mercenary2':
@@ -98,19 +226,88 @@ function setupEnvironmentOnBoard(game, env, number, helpers) {
       }
       break;
     }
-    case 'stashResources':
-      env.stash = { wood: 2, stone: 2, food: 2, iron: 2 };
-      env.stashClaimed = false;
+    case 'stashResources': {
+      const tier = firstComeGrantTier(game.round);
+      const required = firstComeRequiredWorkers(game.round);
+      env.firstComeTier = tier;
+      env.firstComeRequired = required;
+      env.stash = { wood: tier, stone: tier, food: tier, iron: tier };
+      env.firstComeClaims = {};
       if (helpers && helpers.pushLog) {
         helpers.pushLog(
           game,
-          `「${env.label}」：资源格 ${number} 放置每种资源各 2 个`
+          `「${env.label}」：资源格 ${number}，每种资源 ${tier} 张（本格放置满 ${required} 个村民可获得）`
         );
       }
       break;
+    }
+    case 'lowestScoreTwo': {
+      const alive =
+        (helpers && typeof helpers.alivePlayers === 'function' &&
+          helpers.alivePlayers(game)) ||
+        [];
+      const scoreFn = helpers && helpers.playerScore;
+      if (!scoreFn || !alive.length) break;
+      let min = Infinity;
+      for (const p of alive) {
+        const s = scoreFn(p);
+        if (s < min) min = s;
+      }
+      if (!Number.isFinite(min)) break;
+      const lows = alive.filter((p) => scoreFn(p) === min);
+      if (!game.pendingWelfareMinimumQueue) game.pendingWelfareMinimumQueue = [];
+      for (const p of lows) {
+        game.pendingWelfareMinimumQueue.push({
+          playerId: p.id,
+          envType: env.envType,
+          label: env.label,
+          envNumber: number,
+          needChoice: 'pickTwoResources',
+          resume: 'welfareSetup',
+        });
+      }
+      if (helpers.pushLog && lows.length) {
+        helpers.pushLog(
+          game,
+          `「${env.label}」：${lows.map((p) => p.name).join('、')}（${min} 分）各任选 2 个资源`
+        );
+      }
+      break;
+    }
     default:
       break;
   }
+}
+
+function countOwnDiceOnBoard(game, playerId, excludeArea, excludeNumber) {
+  if (!game || !playerId) return 0;
+  let total = 0;
+  const exArea = excludeArea || null;
+  const exNum = Number(excludeNumber);
+  for (const area of ['resource', 'special']) {
+    const workers = (game.board[area] && game.board[area].workers) || {};
+    for (let num = 1; num <= 6; num++) {
+      if (area === exArea && num === exNum) continue;
+      const w = workers[num] || {};
+      total += Number(w[playerId]) || 0;
+    }
+  }
+  return total;
+}
+
+function countAllDiceOnBoard(game) {
+  if (!game) return 0;
+  let total = 0;
+  for (const area of ['resource', 'special']) {
+    const workers = (game.board[area] && game.board[area].workers) || {};
+    for (let num = 1; num <= 6; num++) {
+      const w = workers[num] || {};
+      for (const c of Object.values(w)) {
+        total += Number(c) || 0;
+      }
+    }
+  }
+  return total;
 }
 
 /**
@@ -122,12 +319,29 @@ function applyEnvironmentOnDispatch(game, ctx) {
   const num = Number(ctx.number);
   if (num < 4 || num > 6) return null;
   const env = envOnResourceSlot(game, num);
-  if (!env || env.trigger !== 'dispatch') return null;
+  if (!env || !hasDispatchEffect(env)) return null;
   const player = ctx.player;
   if (!player) return null;
 
   switch (env.envType) {
-    case 'barrenHarvest':
+    case 'fishermanProfit': {
+      const workers = game.board.resource.workers[num] || {};
+      if (!becameStrictSlotLeader(workers, player.id, ctx.count)) {
+        return null;
+      }
+      return {
+        needChoice: 'pickTwoResources',
+        envType: env.envType,
+        label: env.label,
+        number: num,
+        playerId: player.id,
+      };
+    }
+    case 'barrenHarvest': {
+      const workers = game.board.resource.workers[num] || {};
+      if (!becameStrictSlotLeader(workers, player.id, ctx.count)) {
+        return null;
+      }
       return {
         needChoice: 'moveBarrenMarker',
         envType: env.envType,
@@ -135,6 +349,7 @@ function applyEnvironmentOnDispatch(game, ctx) {
         number: num,
         playerId: player.id,
       };
+    }
 
     case 'clearSky':
       return {
@@ -167,26 +382,105 @@ function applyEnvironmentOnDispatch(game, ctx) {
       };
     }
 
+    case 'recall': {
+      const ownOnBoard = countOwnDiceOnBoard(game, player.id);
+      if (ownOnBoard <= 0) {
+        if (ctx.pushLog) {
+          ctx.pushLog(
+            game,
+            `${player.name} 触发「${env.label}」：场上无自己的骰子可召回`
+          );
+        }
+        return { envType: env.envType, label: env.label, skipped: true };
+      }
+      return {
+        needChoice: 'recallDie',
+        envType: env.envType,
+        label: env.label,
+        number: num,
+        playerId: player.id,
+      };
+    }
+
+    case 'teleport': {
+      if (countAllDiceOnBoard(game) <= 0) {
+        if (ctx.pushLog) {
+          ctx.pushLog(
+            game,
+            `${player.name} 触发「${env.label}」：场上无骰子可传送`
+          );
+        }
+        return { envType: env.envType, label: env.label, skipped: true };
+      }
+      return {
+        needChoice: 'teleportDie',
+        teleportStep: 'from',
+        envType: env.envType,
+        label: env.label,
+        number: num,
+        playerId: player.id,
+      };
+    }
+
+    case 'weiQiRescueZhao': {
+      const toArea = 'resource';
+      const toNumber = num;
+      if (countNeutralGatherSources(game, toArea, toNumber) <= 0) {
+        if (ctx.pushLog) {
+          ctx.pushLog(
+            game,
+            `${player.name} 触发「${env.label}」：无其他板块的中立骰可集中`
+          );
+        }
+        return { envType: env.envType, label: env.label, skipped: true };
+      }
+      return {
+        needChoice: 'gatherNeutrals',
+        envType: env.envType,
+        label: env.label,
+        number: num,
+        playerId: player.id,
+        toArea,
+        toNumber,
+      };
+    }
+
     case 'firstCome': {
-      if (env.stashClaimed) return null;
-      const physical =
-        ((game.board.resource.workers[num] || {})[player.id]) || 0;
-      if (physical < 5) return null;
-      const stash = env.stash || { wood: 2, stone: 2, food: 2, iron: 2 };
-      const got = grantMap(player, stash);
-      env.stashClaimed = true;
-      env.stash = { wood: 0, stone: 0, food: 0, iron: 0 };
+      const workers = game.board.resource.workers[num] || {};
+      const physical = Number(workers[player.id]) || 0;
+      const placed = Number(ctx.count) || 0;
+      const prevCount = Math.max(0, physical - placed);
+      const tier =
+        env.firstComeTier != null
+          ? Number(env.firstComeTier)
+          : firstComeGrantTier(game.round);
+      const required =
+        env.firstComeRequired != null
+          ? Number(env.firstComeRequired)
+          : firstComeRequiredWorkers(game.round);
+      if (!env.firstComeClaims) env.firstComeClaims = {};
+      if (env.firstComeClaims[player.id]) return null;
+      if (!(prevCount < required && physical >= required)) return null;
+
+      const grant = { wood: tier, stone: tier, food: tier, iron: tier };
+      const got = grantMap(player, grant);
+      env.firstComeClaims[player.id] = true;
       if (ctx.pushLog) {
         ctx.pushLog(
           game,
-          `${player.name} 触发「${env.label}」：本格农民达 ${physical}，立即获得 ` +
-            got.detail
-              .map((d) => `${d.amount} ${RESOURCE_LABELS[d.resource]}`)
-              .join('、')
+          `${player.name} 触发「${env.label}」：本格放置满 ${required} 个村民，获得${got.detail
+            .map((d) => `${d.amount} ${RESOURCE_LABELS[d.resource]}`)
+            .join('、')}`
         );
       }
       if (ctx.syncResourceHandPending) ctx.syncResourceHandPending(player, game);
-      return { envType: env.envType, label: env.label, claimed: true };
+      return {
+        envType: env.envType,
+        label: env.label,
+        claimed: true,
+        required,
+        total: got.total,
+      };
     }
 
     default:
@@ -216,13 +510,20 @@ function applyEnvironmentOnSettleSlot(game, ctx) {
     case 'oneMountain': {
       if (ctx.skipSecondShare) ctx.skipSecondShare.add(num);
       if (ctx.pushLog) {
-        ctx.pushLog(game, `「${env.label}」：第二名不获得本格小份资源`);
+        ctx.pushLog(
+          game,
+          `「${env.label}」：第二名不获得本格小份资源，第一名额外获得小份`
+        );
       }
       break;
     }
 
     case 'resistBarbarians':
       // 改在全部分发资源后、弃牌前由 applyResistBarbariansAfterSettle 处理
+      break;
+
+    case 'keepOverflow':
+      // 改在全部分发资源后、弃牌前由 applyKeepOverflowAfterSettle 处理
       break;
 
     case 'prisonersDilemma': {
@@ -247,7 +548,7 @@ function applyEnvironmentOnSettleSlot(game, ctx) {
           game,
           n <= 0
             ? `「${env.label}」：第一名骰数为 0，无需弃牌`
-            : `「${env.label}」：${victims.map((p) => p.name).join('、')}（最少 ${min}）各需弃 ${n} 张（弃牌阶段后）`
+            : `「${env.label}」：${victims.map((p) => p.name).join('、')}（最少 ${min}）各需弃 ${n} 张（个人产出后）`
         );
       }
       break;
@@ -378,9 +679,75 @@ function applyResistBarbariansAfterSettle(game, report, helpers) {
   }
 }
 
-/** 有标记的格不发资源 */
+/** 本格第一名玩家 id（并列第一均计入，排除中立） */
+function firstPlacePlayerIds(ranked) {
+  const players = (ranked || []).filter(
+    (r) => r && r.pid && r.pid !== NEUTRAL_WORKER_ID
+  );
+  if (!players.length) return [];
+  const top = Number(players[0].count) || 0;
+  if (top <= 0) return [];
+  return players
+    .filter((r) => (Number(r.count) || 0) === top)
+    .map((r) => r.pid);
+}
+
+/**
+ * 生产结算（抵消并发资源）全部完成后、弃牌前：
+ * 吃不了兜着走：本格第一名跳过本轮资源弃牌阶段。
+ */
+function applyKeepOverflowAfterSettle(game, report, helpers) {
+  if (!game || game.over || !report) return;
+  const playerById = helpers && helpers.playerById;
+  const pushLog = helpers && helpers.pushLog;
+  const syncPending = helpers && helpers.syncResourceHandPending;
+  if (!playerById) return;
+
+  for (const slot of report.slots || []) {
+    if (!slot || slot.area !== 'resource') continue;
+    const env = envOnResourceSlot(game, slot.number);
+    if (!env || env.envType !== 'keepOverflow') continue;
+
+    const ids = firstPlacePlayerIds(slot.ranked || []);
+    if (!ids.length) {
+      if (pushLog) {
+        pushLog(game, `「${env.label}」：本格无有效第一名，未生效`);
+      }
+      continue;
+    }
+    const names = [];
+    for (const pid of ids) {
+      const p = playerById(game, pid);
+      if (!p || p.left) continue;
+      p.skipSettleResourceDiscard = true;
+      if (typeof syncPending === 'function') {
+        syncPending(p, game);
+      } else {
+        p.pendingDiscardRes = false;
+      }
+      names.push(p.name);
+    }
+    if (pushLog && names.length) {
+      pushLog(
+        game,
+        `「${env.label}」：${names.join('、')}（本格第一名）跳过资源弃牌阶段`
+      );
+    }
+  }
+}
+
+/** 有标记的格：资源区不发放资源，功能/建筑区不取得卡牌 */
+function isBarrenMarkerOn(game, area, number) {
+  if (!game || game.barrenMarkerNumber == null) return false;
+  const markerArea = game.barrenMarkerArea || 'resource';
+  return (
+    markerArea === area && Number(game.barrenMarkerNumber) === Number(number)
+  );
+}
+
+/** @deprecated 使用 isBarrenMarkerOn(game, 'resource', number) */
 function isBarrenSlot(game, number) {
-  return Number(game && game.barrenMarkerNumber) === Number(number);
+  return isBarrenMarkerOn(game, 'resource', number);
 }
 
 module.exports = {
@@ -389,10 +756,25 @@ module.exports = {
   applyEnvironmentOnSettleSlot,
   applyEnvironmentAfterShare,
   applyResistBarbariansAfterSettle,
+  applyKeepOverflowAfterSettle,
+  firstPlacePlayerIds,
   envOnResourceSlot,
+  isBarrenMarkerOn,
   isBarrenSlot,
   grantOne,
   grantMap,
   addNeutral,
+  addNeutralEachSlot,
+  addNeutralParitySlots,
+  paritySlotsForEvent,
   neutralCountOn,
+  countNeutralGatherSources,
+  moveAllNeutralsBetweenSlots,
+  firstComeGrantTier,
+  firstComeRequiredWorkers,
+  becameStrictSlotLeader,
+  becameLeaderAgain,
+  hasDispatchEffect,
+  countOwnDiceOnBoard,
+  countAllDiceOnBoard,
 };

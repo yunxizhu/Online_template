@@ -18,6 +18,9 @@ const FUNC_TYPES = {
   redraw: '重抽',
   banditRaid: '强盗来袭',
   expand: '扩建',
+  freeExpand: '免费扩建',
+  welfareHouse: '福利房',
+  caravan: '商队来临',
   robbery: '抢劫',
   enhance: '强化',
   recruit: '征召',
@@ -68,7 +71,7 @@ function buildResourceDeck() {
         label: `${RESOURCE_LABELS[res]}·丰`,
       });
     }
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 8; i++) {
       cards.push({
         id: nextId('res'),
         kind: 'resource',
@@ -82,7 +85,7 @@ function buildResourceDeck() {
   }
 
 
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 6; i++) {
     cards.push({
       id: nextId('res'),
       kind: 'resource',
@@ -109,15 +112,17 @@ function makeFunc(type, extra = {}) {
 /** 功能板块卡堆（未洗，供合堆组装） */
 function buildFunctionDeckRaw() {
   const cards = [];
-  for (let i = 0; i < 6; i++) cards.push(makeFunc('harvest'));
-  for (let i = 0; i < 4; i++) cards.push(makeFunc('remoteDice'));
-  for (let i = 0; i < 4; i++) cards.push(makeFunc('exile'));
-  for (let i = 0; i < 2; i++) cards.push(makeFunc('redraw'));
-  for (let i = 0; i < 4; i++) cards.push(makeFunc('banditRaid'));
-  //for (let i = 0; i < 3; i++) cards.push(makeFunc('expand'));
-  for (let i = 0; i < 6; i++) cards.push(makeFunc('robbery'));
-  for (let i = 0; i < 2; i++) cards.push(makeFunc('enhance'));
-  for (let i = 0; i < 4; i++) cards.push(makeFunc('recruit'));
+  for (let i = 0; i < 5; i++) cards.push(makeFunc('harvest')); // 丰收
+  for (let i = 0; i < 2; i++) cards.push(makeFunc('remoteDice')); // 遥控骰子
+  for (let i = 0; i < 5; i++) cards.push(makeFunc('exile')); // 驱逐
+  for (let i = 0; i < 3; i++) cards.push(makeFunc('redraw')); // 重抽
+  for (let i = 0; i < 5; i++) cards.push(makeFunc('banditRaid')); // 强盗来袭
+  for (let i = 0; i < 5; i++) cards.push(makeFunc('robbery')); // 抢劫
+  for (let i = 0; i < 3; i++) cards.push(makeFunc('freeExpand')); // 免费扩建
+  for (let i = 0; i < 3; i++) cards.push(makeFunc('welfareHouse')); // 福利房
+  for (let i = 0; i < 2; i++) cards.push(makeFunc('caravan')); // 商队来临
+  for (let i = 0; i < 2; i++) cards.push(makeFunc('enhance')); // 强化
+  for (let i = 0; i < 5; i++) cards.push(makeFunc('recruit')); // 征召
   return cards;
 }
 
@@ -173,10 +178,10 @@ function makeScore2() {
     id: nextId('bld'),
     kind: 'building',
     buildType: 'score2',
-    label: '宫殿(+3)',
+    label: '宫殿(+2)',
     cost: { wood: 3, stone: 3 , food: 3, iron: 2 },
     produce: 0,
-    score: 3,
+    score: 2,
     needsWorker: false,
     functionalOnly: true,
   };
@@ -188,7 +193,7 @@ function makeExchange() {
     kind: 'building',
     buildType: 'exchange',
     label: '集市',
-    cost: { wood: 2, stone: 2 },
+    cost: { wood: 1, stone: 1 , food: 1},
     produce: 0,
     score: 0,
     needsWorker: false,
@@ -241,7 +246,7 @@ function buildSpecialDeck() {
 }
 
 /**
- * 事件牌目录（共 10 张）
+ * 事件牌目录（共 15 张）
  * trigger: dispatch=派遣时 / settle=结算抵消后
  * setup: 上场初始化
  */
@@ -250,14 +255,15 @@ const ENVIRONMENT_CATALOG = [
     envType: 'prisonersDilemma',
     label: '囚徒困境',
     trigger: 'settle',
-    desc: '结算抵消后：骰子最少的玩家（可并列，可为 0）各弃 n 张牌，n=第一名骰子数；该弃牌在弃牌阶段之后进行',
+    setup: 'neutral2',
+    desc: '上场在本格放置 2 枚中立骰。结算抵消后：骰子最少的玩家（可并列，可为 0）各弃 n 张牌，n=第一名骰子数；该弃牌在个人产出（含许愿井）后、建造前进行',
   },
   {
     envType: 'barrenHarvest',
     label: '颗粒无收',
     trigger: 'dispatch',
     setup: 'marker',
-    desc: '上场时在本格放置标记。派遣时可将标记移到任一数字格；有标记的数字格结算时不获得资源',
+    desc: '成为本格最大者时可放置标记（首次亦触发；继续加码不重复）。标记格结算无收获',
   },
   {
     envType: 'resistBarbarians',
@@ -275,8 +281,8 @@ const ENVIRONMENT_CATALOG = [
     envType: 'enterFray',
     label: '以身入局',
     trigger: 'dispatch',
-    setup: 'neutral6',
-    desc: '上场时在本格放置 6 枚中立骰。派遣时可将本格 1 枚中立骰移到任意板块数字格（无中立骰则不可发动）',
+    setup: 'neutral3',
+    desc: '上场时在本格放置 3 枚中立骰。派遣时可将本格 1 枚中立骰移到任意板块数字格（无中立骰则不可发动）',
   },
   {
     envType: 'mercenaries',
@@ -289,7 +295,7 @@ const ENVIRONMENT_CATALOG = [
     envType: 'oneMountain',
     label: '一山不容二虎',
     trigger: 'settle',
-    desc: '结算抵消后：第二名不获得本格小份资源',
+    desc: '结算抵消后：第二名不获得本格小份资源，第一名额外获得小份',
   },
   {
     envType: 'luckyDraw',
@@ -302,14 +308,47 @@ const ENVIRONMENT_CATALOG = [
     envType: 'fishermanProfit',
     label: '渔翁得利',
     trigger: 'settle',
-    desc: '结算抵消后：第三名额外获得第一名与第二名在本格所得资源之和（双人时中立骰仍可占名次）',
+    dispatchAlso: true,
+    desc: '派遣：成为本格最大者时（首次亦触发；继续加码不重复），任选获得 2 个资源（可重复）。结算：第三名额外获得前两名在本格所得资源之和',
   },
   {
     envType: 'firstCome',
     label: '先到先得',
     trigger: 'dispatch',
     setup: 'stashResources',
-    desc: '上场时放置每种资源各 2 个。某玩家在本格农民达 5 时立即获得这些资源（仅一次）',
+    desc: '第 1–4/5–8/9+ 轮奖励档为每种资源各 1/2/3 张；玩家在本格放置满 2/4/6 个村民时获得一档（每玩家每事件仅一次）',
+  },
+  {
+    envType: 'welfareMinimum',
+    label: '低保户',
+    trigger: 'setup',
+    setup: 'lowestScoreTwo',
+    desc: '出现时：当前分数最低的玩家各任选 2 个资源（可并列、可重复）',
+  },
+  {
+    envType: 'recall',
+    label: '召回',
+    trigger: 'dispatch',
+    desc: '派遣时：可将场上（含本格）你自己的 1 枚骰子收回到手中',
+  },
+  {
+    envType: 'teleport',
+    label: '传送',
+    trigger: 'dispatch',
+    desc: '派遣时：将场上任意板块任意玩家（含中立）的 1 枚骰子传送到任意有板块的格子（不触发目标格派遣事件）',
+  },
+  {
+    envType: 'keepOverflow',
+    label: '吃不了兜着走',
+    trigger: 'settle',
+    desc: '生产结算后：本格第一名（可并列）跳过本轮生产结算后的资源弃牌阶段',
+  },
+  {
+    envType: 'weiQiRescueZhao',
+    label: '围魏救赵',
+    trigger: 'dispatch',
+    setup: 'neutralParitySlots',
+    desc: '上场时：本格为奇数则在资源区与功能/建筑区各偶数格各放置 1 枚中立骰；本格为偶数则各奇数格各放置 1 枚中立骰。派遣时：选择任意有其他中立骰的板块，将其上全部中立骰集中到本事件格',
   },
 ];
 
@@ -329,7 +368,7 @@ function makeEnvironmentFromDef(def) {
   };
 }
 
-/** 事件牌堆（10 张；每轮摆板前整堆洗混） */
+/** 事件牌堆（15 张；每轮摆板前整堆洗混） */
 function buildEnvironmentDeck() {
   return shuffle(ENVIRONMENT_CATALOG.map((def) => makeEnvironmentFromDef(def)));
 }
@@ -339,13 +378,16 @@ function getEnvironmentDef(envType) {
 }
 
 /** 常驻「建造房子」造价 */
-const BUILD_HOUSE_COST = { wood: 3, stone: 3, iron: 2 };
+const BUILD_HOUSE_COST = { wood: 3, stone: 3, iron: 1 };
 
-/** 常驻「繁殖村民」：小麦消耗 = 当前村民数 × 该系数 */
-const BREED_FOOD_PER_VILLAGER = 1;
+/** 常驻「购买功能卡」造价 */
+const BUY_FUNC_COST = { food: 3, iron: 2 };
 
-function breedFoodCost(villagers) {
-  return Math.max(0, Math.floor(Number(villagers) || 0)) * BREED_FOOD_PER_VILLAGER;
+/** 常驻「繁殖村民」：小麦消耗 = 房子数量 × 该系数 */
+const BREED_FOOD_PER_HOUSE = 1;
+
+function breedFoodCost(houses) {
+  return Math.max(0, Math.floor(Number(houses) || 0)) * BREED_FOOD_PER_HOUSE;
 }
 
 module.exports = {
@@ -363,7 +405,8 @@ module.exports = {
   makeProduceBuild,
   PRODUCE_BUILD_COSTS,
   BUILD_HOUSE_COST,
-  BREED_FOOD_PER_VILLAGER,
+  BUY_FUNC_COST,
+  BREED_FOOD_PER_HOUSE,
   breedFoodCost,
   buildResourceDeck,
   buildFunctionDeck,

@@ -134,9 +134,14 @@ body.is-lobby-reveal .chat-dock {
 /* ========== 手机壳 ========== */
 body.is-mobile-chat {
   --page-pad: 0.85rem;
-  --mobile-chat-h: min(30vh, 260px);
+  --mobile-chat-h: min(42dvh, 380px);
+  --mobile-chat-h-focused: min(62dvh, 540px);
   --mobile-chat-collapsed-h: 3.4rem;
   --people-width: 0px;
+}
+
+body.is-mobile-chat.is-chat-focused {
+  --mobile-chat-h: var(--mobile-chat-h-focused);
 }
 
 body.is-mobile-chat .app {
@@ -192,7 +197,7 @@ body.is-mobile-chat .app-body {
 }
 
 body.is-mobile-chat.is-chat-expanded .app-body {
-  padding-bottom: calc(var(--mobile-chat-h) + 0.35rem);
+  padding-bottom: calc(var(--mobile-chat-h) + 0.35rem + env(safe-area-inset-bottom, 0px));
 }
 
 body.is-mobile-chat .app-content,
@@ -421,6 +426,9 @@ body.is-mobile-chat .chat-dock.is-active .chat-panel {
   backdrop-filter: none;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  touch-action: manipulation;
 }
 
 body.is-mobile-chat .chat-dock:not(.is-active) .chat-panel {
@@ -448,7 +456,11 @@ body.is-mobile-chat .chat-dock.is-active .chat-log {
   min-height: 0 !important;
   flex: 1 1 auto !important;
   opacity: 1 !important;
-  overflow: auto !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
   pointer-events: auto !important;
   transform: none !important;
   font-size: 0.9rem;
@@ -539,7 +551,12 @@ body.is-mobile-chat .modal-dialog button {
 @media (max-width: 719px) {
   body:not(.is-mobile-chat) {
     --page-pad: 0.85rem;
-    --mobile-chat-h: min(30vh, 260px);
+    --mobile-chat-h: min(42dvh, 380px);
+    --mobile-chat-h-focused: min(62dvh, 540px);
+  }
+
+  body:not(.is-mobile-chat).is-chat-focused {
+    --mobile-chat-h: var(--mobile-chat-h-focused);
   }
 
   body:not(.is-mobile-chat) .app-body {

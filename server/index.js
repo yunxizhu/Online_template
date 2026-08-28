@@ -69,7 +69,7 @@ function getSgsResourseDir() {
   return path.join(__dirname, 'games', 'sgs', 'resourse');
 }
 const sgsResourseDir = getSgsResourseDir();
-app.use('/games/sgs/res', express.static(sgsResourseDir));
+app.use('/games/sgs/res', express.static(sgsResourseDir, { maxAge: '7d', etag: true }));
 
 // 卡拉斯坦资源：server/games/lasidao/resourse → /games/lasidao/res/
 function getLasidaoResourseDir() {
@@ -83,7 +83,7 @@ function getLasidaoResourseDir() {
   }
   return path.join(__dirname, 'games', 'lasidao', 'resourse');
 }
-app.use('/games/lasidao/res', express.static(getLasidaoResourseDir()));
+app.use('/games/lasidao/res', express.static(getLasidaoResourseDir(), { maxAge: '7d', etag: true }));
 // 浏览器默认还会请求 /favicon.ico
 app.get('/favicon.ico', (_req, res) => {
   res.redirect(301, '/favicon.svg');
@@ -96,6 +96,7 @@ app.get('/api/info', (_req, res) => {
     primaryIP: pickPrimaryLanIP(),
     instanceId: INSTANCE_ID,
     mqttBulletin: Boolean(mqttBulletin && mqttBulletin.enabled),
+    mqttConnected: mqttBulletin ? mqttBulletin.isConnected() : false,
     publicUrl: tunnel ? tunnel.getPublicUrl() : null,
     games: listGames(),
   });
@@ -160,6 +161,7 @@ function buildLobbyPayload() {
     people,
     localHost,
     mqttBulletin: Boolean(mqttBulletin && mqttBulletin.enabled),
+    mqttConnected: mqttBulletin ? mqttBulletin.isConnected() : false,
     publicUrl,
     games: listGames(),
     passiveMode: Boolean(
@@ -358,6 +360,24 @@ async function ensurePublicTunnelUrl() {
   if (!tunnel) tunnel = attachTunnelHooks(new QuickTunnel());
   await tunnel.ensure(PORT);
   return tunnel.getPublicUrl() || '';
+}
+
+/** 服务启动后在后台预热隧道，不阻塞 HTTP/MQTT 监听 */
+function warmupTunnelInBackground() {
+  if (!mqttBulletin || !mqttBulletin.enabled || !tunnel) return;
+  setImmediate(() => {
+    console.log('[tunnel] 后台预热中…');
+    ensurePublicTunnelUrl()
+      .then((url) => {
+        if (url) console.log('[tunnel] 后台预热完成');
+      })
+      .catch((err) => {
+        console.warn(
+          '[tunnel] 后台预热失败:',
+          err && err.message ? err.message : err
+        );
+      });
+  });
 }
 
 function emitLobbyUpdate() {
@@ -754,6 +774,23 @@ io.on('connection', (socket) => {
 
   socket.on('lobby:refresh', () => {
     socket.emit('lobby:update', buildLobbyPayload());
+  });
+
+  socket.on('lobby:mqtt-reconnect', () => {
+    if (!mqttBulletin || !mqttBulletin.enabled) {
+      socket.emit('lobby:mqtt-reconnect-result', {
+        ok: false,
+        message: 'MQTT 广播未启用',
+      });
+      return;
+    }
+    const result = mqttBulletin.reconnect();
+    socket.emit('lobby:mqtt-reconnect-result', {
+      ok: Boolean(result && result.ok),
+      message: (result && result.message) || null,
+      mqttConnected: mqttBulletin.isConnected(),
+    });
+    emitLobbyUpdate();
   });
 
   socket.on('player:rename', (data = {}) => {
@@ -1241,7 +1278,7 @@ io.on('connection', (socket) => {
       return;
     }
     emitRoomUpdate(result.room);
-    // 开局：立刻更新大厅状态并发送房间心跳（随后对局中改为 20s 周期）
+    // 开局：立刻更新大厅状态并发送房间心跳
     mqttNotifyRoomStatusNow();
     syncTurnTimer(result.room, { onTimeout: handleTurnTimeout });
     emitGameStarted(result.room);
@@ -1425,7 +1462,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`联机服务已启动: ${localUrl}`);
   if (mqttBulletin && mqttBulletin.enabled) {
     console.log(
-      `跨网广播: MQTT 已启用（固定地址 broker.emqx.io，频道 ${mqttBulletin.channel}；登录心跳 10s，等待房心跳 5s，对局中心跳 20s）`
+      `跨网广播: MQTT 已启用（固定地址 broker.emqx.io，频道 ${mqttBulletin.channel}；登录心跳 10s，房间心跳 5s）`
     );
   }
   if (!(mqttBulletin && mqttBulletin.enabled)) {
@@ -1437,6 +1474,7 @@ server.listen(PORT, '0.0.0.0', () => {
     mqttBulletin.start().catch((err) => {
       console.warn('[mqtt] 启动失败:', err && err.message ? err.message : err);
     });
+    warmupTunnelInBackground();
   }
 
   const openFlag = String(process.env.OPEN_BROWSER || '').toLowerCase();

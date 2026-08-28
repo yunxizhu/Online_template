@@ -11,6 +11,7 @@ const {
   cancelEqualCounts,
   getActingPlayerIds,
   finishInitAnnounce,
+  startSettle,
 } = require('../engine');
 
 function room(n) {
@@ -25,9 +26,31 @@ function ok(r, msg) {
   assert.ok(r && r.ok, msg || (r && r.error) || 'action failed');
 }
 
+function drainWelfareSetup(game) {
+  let guard = 0;
+  while (
+    (game.pendingEventChoice &&
+      game.pendingEventChoice.needChoice === 'pickTwoResources' &&
+      game.pendingEventChoice.resume === 'welfareSetup') ||
+    ((game.pendingWelfareMinimumQueue || []).length > 0 &&
+      !game.pendingEventChoice)
+  ) {
+    if (guard++ > 50) break;
+    if (!game.pendingEventChoice) break;
+    const ch = game.pendingEventChoice;
+    ok(
+      applyAction(game, ch.playerId, {
+        type: 'eventPickTwoResources',
+        payload: { amounts: { wood: 2 } },
+      })
+    );
+  }
+}
+
 function finishInit(game) {
   if (game.phase === 'init_announce') {
     ok(finishInitAnnounce(game), 'finishInitAnnounce');
+    drainWelfareSetup(game);
     assert.strictEqual(game.phase, 'produce', '应进入生产阶段');
     return;
   }
@@ -43,6 +66,7 @@ function finishInit(game) {
       break;
     }
   }
+  drainWelfareSetup(game);
   assert.strictEqual(game.phase, 'produce', '应进入生产阶段');
 }
 
@@ -74,6 +98,13 @@ function drainNonProduce(game) {
             payload: { resource: 'wood' },
           })
         );
+      } else if (ch.needChoice === 'pickTwoResources') {
+        ok(
+          applyAction(game, pid, {
+            type: 'eventPickTwoResources',
+            payload: { amounts: { wood: 2 } },
+          })
+        );
       } else if (ch.needChoice === 'moveBarrenMarker') {
         ok(
           applyAction(game, pid, {
@@ -88,6 +119,99 @@ function drainNonProduce(game) {
             payload: { area: 'resource', number: 1 },
           })
         );
+      } else if (ch.needChoice === 'recallDie') {
+        let picked = null;
+        for (const area of ['resource', 'special']) {
+          const workers = (game.board[area] && game.board[area].workers) || {};
+          for (let num = 1; num <= 6; num++) {
+            const w = workers[num] || {};
+            if ((w[pid] || 0) > 0) {
+              picked = { area, number: num };
+              break;
+            }
+          }
+          if (picked) break;
+        }
+        if (!picked) break;
+        ok(
+          applyAction(game, pid, {
+            type: 'eventRecallDie',
+            payload: picked,
+          })
+        );
+      } else if (ch.needChoice === 'gatherNeutrals') {
+        const toArea = ch.toArea || 'resource';
+        const toNumber = Number(ch.toNumber != null ? ch.toNumber : ch.number);
+        let picked = null;
+        for (const area of ['resource', 'special']) {
+          const workers = (game.board[area] && game.board[area].workers) || {};
+          for (let num = 1; num <= 6; num++) {
+            if (area === toArea && num === toNumber) continue;
+            const w = workers[num] || {};
+            if ((w.__neutral__ || 0) > 0) {
+              picked = { area, number: num };
+              break;
+            }
+          }
+          if (picked) break;
+        }
+        if (!picked) break;
+        ok(
+          applyAction(game, pid, {
+            type: 'eventGatherNeutrals',
+            payload: picked,
+          })
+        );
+      } else if (ch.needChoice === 'teleportDie') {
+        if (ch.teleportStep === 'to') {
+          const fa = ch.fromArea;
+          const fn = Number(ch.fromNumber);
+          let dest = null;
+          for (const area of ['resource', 'special']) {
+            for (let num = 1; num <= 6; num++) {
+              if (area === fa && num === fn) continue;
+              const tiles = (game.board[area].tiles || []).filter(
+                (t) => t.number === num
+              );
+              if (!tiles.length) continue;
+              dest = { area, number: num };
+              break;
+            }
+            if (dest) break;
+          }
+          if (dest) {
+            ok(
+              applyAction(game, pid, {
+                type: 'eventTeleportTo',
+                payload: dest,
+              })
+            );
+          }
+        } else {
+          let from = null;
+          for (const area of ['resource', 'special']) {
+            const workers = (game.board[area] && game.board[area].workers) || {};
+            for (let num = 1; num <= 6; num++) {
+              const w = workers[num] || {};
+              for (const [targetId, count] of Object.entries(w)) {
+                if ((Number(count) || 0) > 0) {
+                  from = { area, number: num, targetId };
+                  break;
+                }
+              }
+              if (from) break;
+            }
+            if (from) break;
+          }
+          if (from) {
+            ok(
+              applyAction(game, pid, {
+                type: 'eventTeleportFrom',
+                payload: from,
+              })
+            );
+          }
+        }
       } else {
         break;
       }
@@ -191,8 +315,7 @@ function drainNonProduce(game) {
       continue;
     }
     if (p.pendingDiscardBuild) {
-        const pick =
-          p.buildings.find((b) => !b.built) || p.buildings[0];
+        const pick = p.buildings.find((b) => !b.built);
         if (pick) {
         ok(
           applyAction(game, pid, {
@@ -202,6 +325,8 @@ function drainNonProduce(game) {
         );
         continue;
         }
+        ok(applyAction(game, pid, { type: 'discardPendingBuild' }));
+        continue;
       }
     }
     ok(applyAction(game, pid, { type: 'pass' }));
@@ -228,7 +353,8 @@ assert.strictEqual(game.board.special.tiles.length, 0);
 assert.ok(!game.board.function);
 assert.ok(!game.board.building);
 assert.ok(game.players.every((p) => p.villagers === 3));
-assert.ok(game.players.every((p) => p.houses === 3));
+assert.ok(game.players.every((p) => p.houses === 2));
+assert.ok(game.players.every((p) => (p.houseScore || 0) === 0));
 assert.ok(game.players.every((p) => p.resources.food === 0));
 assert.ok(
   game.players.every(
@@ -296,6 +422,42 @@ console.log('— voidSkip burns die and gains resource —');
   assert.ok(g.currentPlayerId !== pid || g.phase !== 'produce' || (g.dice[pid] || []).length === 0);
 }
 
+console.log('— voidSkip pays 2 resources without burning die —');
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  ensureRolled(g);
+  const pid = g.currentPlayerId;
+  const p = g.players.find((x) => x.id === pid);
+  p.resources.wood = 2;
+  p.resources.stone = 0;
+  p.resources.food = 0;
+  p.resources.iron = 0;
+  const beforeDisp = p.dispatched || 0;
+  ok(
+    applyAction(g, pid, {
+      type: 'voidSkip',
+      payload: { mode: 'pay', amounts: { wood: 2, stone: 0, food: 0, iron: 0 } },
+    })
+  );
+  assert.strictEqual(p.resources.wood, 0, '应弃置 2 木');
+  assert.strictEqual(p.dispatched, beforeDisp, '弃资源跳过不应增加派遣');
+  assert.ok((g.dice[pid] || []).length === 0, '骰子应清空');
+  const g2 = createGameState(room(2));
+  finishInit(g2);
+  ensureRolled(g2);
+  const p2 = g2.players.find((x) => x.id === g2.currentPlayerId);
+  p2.resources.wood = 1;
+  p2.resources.stone = 0;
+  p2.resources.food = 0;
+  p2.resources.iron = 0;
+  const fail = applyAction(g2, g2.currentPlayerId, {
+    type: 'voidSkip',
+    payload: { mode: 'pay', amounts: { wood: 2 } },
+  });
+  assert.ok(!fail.ok, '资源不足时不应允许弃资源跳过');
+}
+
 
 console.log('— special merged deck top kind —');
 {
@@ -316,6 +478,25 @@ console.log('— redraw from special deck top —');
   const g = createGameState(room(2));
   finishInit(g);
   const p = g.players[0];
+  const keepCard = {
+    id: 'rd_keep',
+    kind: 'function',
+    funcType: 'harvest',
+    label: '丰收·留',
+  };
+  const dropCard = {
+    id: 'rd_drop',
+    kind: 'function',
+    funcType: 'recruit',
+    label: '征召·弃',
+  };
+  const dropCard2 = {
+    id: 'rd_drop2',
+    kind: 'function',
+    funcType: 'enhance',
+    label: '强化·弃2',
+  };
+  g.specialDeck.unshift(dropCard2, dropCard, keepCard);
   p.funcCards.push({
     id: 'fn_redraw_test',
     kind: 'function',
@@ -326,32 +507,208 @@ console.log('— redraw from special deck top —');
   g.currentPlayerId = p.id;
   g.buildPassed = {};
   const beforeSp = g.specialDeck.length;
-  const topKind =
-    g.specialDeck[0].kind === 'building' || g.specialDeck[0].buildType
-      ? 'building'
-      : 'function';
-  const beforeBld = p.buildings.length;
   const beforeFn = p.funcCards.filter((c) => c.id !== 'fn_redraw_test').length;
+  const beforeDisc = g.specialDiscard.length;
   ok(
     applyAction(g, p.id, {
       type: 'useFunc',
       payload: { cardId: 'fn_redraw_test' },
     })
   );
-  assert.strictEqual(g.specialDeck.length, beforeSp - 1, '应从合堆顶抽走 1 张');
+  assert.strictEqual(g.specialDeck.length, beforeSp - 3, '应抽走 3 张');
+  assert.ok(g.pendingRedrawChoice, '应等待选择保留牌');
+  assert.ok(
+    p.funcCards.some((c) => c.id === 'fn_redraw_test'),
+    '选择前应仍持有重抽卡'
+  );
+  ok(
+    applyAction(g, p.id, {
+      type: 'redrawPick',
+      payload: { keepId: 'rd_keep' },
+    })
+  );
+  assert.ok(!g.pendingRedrawChoice);
   assert.ok(!p.funcCards.some((c) => c.id === 'fn_redraw_test'), '重抽卡应已消耗');
-  if (topKind === 'building') {
-    assert.ok(
-      p.buildings.length === beforeBld + 1 || p.pendingDiscardBuild,
-      '应得建筑'
-    );
-  } else {
-    assert.strictEqual(
-      p.funcCards.length,
-      beforeFn + 1,
-      '应得 1 张功能卡'
-    );
+  assert.strictEqual(
+    p.funcCards.filter((c) => c.id === 'rd_keep').length,
+    1,
+    '应保留所选功能卡'
+  );
+  assert.ok(
+    g.specialDiscard.some((c) => c.id === 'rd_drop'),
+    '未选牌应进入弃牌堆'
+  );
+  assert.strictEqual(
+    p.funcCards.length,
+    beforeFn + 1,
+    '手牌应净增 1 张功能卡'
+  );
+  assert.strictEqual(g.specialDiscard.length, beforeDisc + 3, '弃牌堆应增加重抽卡与2张未选牌');
+  console.log('✓ redraw pick one of three');
+}
+
+console.log('— redraw reshuffle discard when deck low —');
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p = g.players[0];
+  const keepCard = {
+    id: 'rd_rs_keep',
+    kind: 'function',
+    funcType: 'harvest',
+    label: '丰收·洗',
+  };
+  const dropCard = {
+    id: 'rd_rs_drop',
+    kind: 'function',
+    funcType: 'recruit',
+    label: '征召·洗弃',
+  };
+  const dropCard2 = {
+    id: 'rd_rs_drop2',
+    kind: 'function',
+    funcType: 'enhance',
+    label: '强化·洗弃2',
+  };
+  g.specialDeck = [keepCard];
+  g.specialDiscard = [dropCard2, dropCard];
+  p.funcCards.push({
+    id: 'fn_redraw_rs',
+    kind: 'function',
+    funcType: 'redraw',
+    label: '重抽',
+  });
+  g.phase = 'build';
+  g.currentPlayerId = p.id;
+  g.buildPassed = {};
+  ok(
+    applyAction(g, p.id, {
+      type: 'useFunc',
+      payload: { cardId: 'fn_redraw_rs' },
+    })
+  );
+  assert.strictEqual(g.specialDiscard.length, 0, '弃牌堆应已洗入抽牌堆');
+  assert.ok(g.pendingRedrawChoice, '应等待选择保留牌');
+  assert.strictEqual(g.pendingRedrawChoice.options.length, 3);
+  ok(
+    applyAction(g, p.id, {
+      type: 'redrawPick',
+      payload: { keepId: 'rd_rs_keep' },
+    })
+  );
+  assert.ok(p.funcCards.some((c) => c.id === 'rd_rs_keep'));
+  console.log('✓ redraw reshuffle discard when deck low');
+}
+
+console.log('— buy func card permanent —');
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p = g.players[0];
+  const keepCard = {
+    id: 'buy_keep',
+    kind: 'function',
+    funcType: 'harvest',
+    label: '丰收·购',
+  };
+  const dropCard = {
+    id: 'buy_drop',
+    kind: 'function',
+    funcType: 'recruit',
+    label: '征召·购弃',
+  };
+  const dropCard2 = {
+    id: 'buy_drop2',
+    kind: 'function',
+    funcType: 'enhance',
+    label: '强化·购弃2',
+  };
+  g.specialDeck.unshift(dropCard2, dropCard, keepCard);
+  p.resources.food = 3;
+  p.resources.iron = 2;
+  g.phase = 'build';
+  g.currentPlayerId = p.id;
+  g.buildPassed = {};
+  ok(applyAction(g, p.id, { type: 'buyFuncCardPermanent' }));
+  assert.ok(g.pendingRedrawChoice && g.pendingRedrawChoice.source === 'buyFunc');
+  assert.strictEqual(p.resources.food, 0);
+  assert.strictEqual(p.resources.iron, 0);
+  ok(
+    applyAction(g, p.id, {
+      type: 'redrawPick',
+      payload: { keepId: 'buy_keep' },
+    })
+  );
+  assert.ok(!g.pendingRedrawChoice);
+  assert.ok(p.funcCards.some((c) => c.id === 'buy_keep'));
+  console.log('✓ buy func card permanent');
+}
+
+console.log('— redraw overflow func hand —');
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p = g.players[0];
+  const max = 3;
+  for (let i = 0; i < max; i++) {
+    p.funcCards.push({
+      id: 'fn_fill_' + i,
+      kind: 'function',
+      funcType: 'harvest',
+      label: '填充' + i,
+    });
   }
+  const keepCard = {
+    id: 'rd_of_keep',
+    kind: 'function',
+    funcType: 'harvest',
+    label: '丰收·溢',
+  };
+  const dropCard = {
+    id: 'rd_of_drop',
+    kind: 'function',
+    funcType: 'recruit',
+    label: '征召·溢弃',
+  };
+  const dropCard2 = {
+    id: 'rd_of_drop2',
+    kind: 'function',
+    funcType: 'enhance',
+    label: '强化·溢弃2',
+  };
+  g.specialDeck.unshift(dropCard2, dropCard, keepCard);
+  p.funcCards.push({
+    id: 'fn_redraw_of',
+    kind: 'function',
+    funcType: 'redraw',
+    label: '重抽',
+  });
+  g.phase = 'build';
+  g.currentPlayerId = p.id;
+  g.buildPassed = {};
+  ok(
+    applyAction(g, p.id, {
+      type: 'useFunc',
+      payload: { cardId: 'fn_redraw_of' },
+    })
+  );
+  ok(
+    applyAction(g, p.id, {
+      type: 'redrawPick',
+      payload: { keepId: 'rd_of_keep' },
+    })
+  );
+  assert.ok(p.pendingDiscardFunc, '满手牌重抽后应待弃功能卡');
+  assert.strictEqual(p.funcCards.length, max + 1);
+  ok(
+    applyAction(g, p.id, {
+      type: 'discardFunc',
+      payload: { cardId: 'fn_fill_0' },
+    })
+  );
+  assert.ok(!p.pendingDiscardFunc);
+  assert.strictEqual(p.funcCards.length, max);
+  console.log('✓ redraw overflow func hand');
 }
 
 console.log('— public state areas —');
@@ -564,6 +921,8 @@ for (let n = 1; n <= 6; n++) {
   }
 }
 assert.ok(banditFace != null);
+const beforeBanditNeutral =
+  (g8.board.resource.workers[banditFace] || {})[NEUTRAL_WORKER_ID] || 0;
 ok(
   applyAction(g8, r8, {
     type: 'useFunc',
@@ -572,10 +931,11 @@ ok(
   );
   assert.strictEqual(
   g8.board.resource.workers[banditFace][NEUTRAL_WORKER_ID],
-  BANDIT_RAID_COUNT
+  beforeBanditNeutral + BANDIT_RAID_COUNT
 );
-// 玩家放同样 2 人 → 应与强盗抵消
-g8.board.resource.workers[banditFace][r8] = 2;
+// 玩家放同样数量 → 应与强盗抵消
+const neutralN = g8.board.resource.workers[banditFace][NEUTRAL_WORKER_ID];
+g8.board.resource.workers[banditFace][r8] = neutralN;
 const remain = cancelEqualCounts(g8.board.resource.workers[banditFace]);
 assert.deepStrictEqual(remain, {}, '强盗与玩家同数应抵消');
 // 强盗 2、玩家 3 → 玩家占第一，强盗占第二名次但不拿收益
@@ -654,7 +1014,7 @@ for (const t of g10.board.special.tiles) {
 }
 assert.ok(
   g10.board.resource.tiles.every((t) => !t.faceDown),
-  '资源区不暗置'
+  '首轮各格仅一张资源卡，均明示'
 );
 g10.players[0].funcCards.push({
   id: 'f_secret',
@@ -833,7 +1193,7 @@ p11.expandSlots = 1;
 p11.buildings.push({
   id: 'rep_b',
   label: '替换',
-  buildType: 'score',
+  buildType: 'exchange',
   cost: {},
   score: 0,
   slot: null,
@@ -844,7 +1204,7 @@ const failStackNonEx = applyAction(g11, p11.id, {
   type: 'placeBuildingSlot',
   payload: { buildingId: 'rep_b', slot: 'none' },
 });
-assert.strictEqual(failStackNonEx.ok, false, '非集市不可叠放');
+assert.strictEqual(failStackNonEx.ok, false, '不同建筑不可叠放');
 ok(
   applyAction(g11, p11.id, {
     type: 'placeBuildingSlot',
@@ -862,8 +1222,13 @@ assert.strictEqual(p11.buildings.find((b) => b.id === 'rep_b').slot, 'none:1');
   assert.strictEqual(p.expandSlots || 0, 0);
   assert.strictEqual(p.expandFuncSlots || 0, 0);
   assert.strictEqual(expandCountFor(p), 0);
-  assert.deepStrictEqual(expandPermanentCost(p), { wood: 2, stone: 2 });
-  // 扩建卡：无需选栏，一次扩三栏
+  assert.deepStrictEqual(expandPermanentCost(p), {
+    wood: 1,
+    stone: 1,
+    food: 1,
+    iron: 1,
+  });
+  // 扩建卡：三选一
   p.funcCards.push({
     id: 'fn_expand_1',
     funcType: 'expand',
@@ -880,13 +1245,13 @@ assert.strictEqual(p11.buildings.find((b) => b.id === 'rep_b').slot, 'none:1');
   ok(
     applyAction(g, p.id, {
       type: 'useFunc',
-      payload: { cardId: 'fn_expand_1' },
+      payload: { cardId: 'fn_expand_1', direction: 'building' },
     }),
-    '扩建成功'
+    '扩建建筑格成功'
   );
   assert.strictEqual(p.expandSlots, 1, '建筑格 +1');
-  assert.strictEqual(p.expandFuncSlots, 1, '功能卡格 +1');
-  assert.strictEqual(p.expandResSlots, 1, '资源卡位 +1');
+  assert.strictEqual(p.expandFuncSlots, 0, '功能卡格不变');
+  assert.strictEqual(p.expandResSlots, 0, '资源卡位不变');
   assert.ok(
     p.funcCards.some((c) => c.funcType === 'expand'),
     '还剩一张扩建卡未打出'
@@ -898,40 +1263,47 @@ assert.strictEqual(p11.buildings.find((b) => b.id === 'rep_b').slot, 'none:1');
   ok(
     applyAction(g, p.id, {
       type: 'useFunc',
-      payload: { cardId: 'fn_expand_2' },
+      payload: { cardId: 'fn_expand_2', direction: 'function' },
     }),
-    '第二次扩建成功'
+    '扩建功能卡格成功'
   );
-  assert.strictEqual(p.expandSlots, 2);
-  assert.strictEqual(p.expandFuncSlots, 2);
-  assert.strictEqual(p.expandResSlots, 2);
+  assert.strictEqual(p.expandSlots, 1);
+  assert.strictEqual(p.expandFuncSlots, 1);
+  assert.strictEqual(p.expandResSlots, 0);
   assert.strictEqual(expandCountFor(p), 2);
-  assert.deepStrictEqual(expandPermanentCost(p), { wood: 6, stone: 6 });
-  p.resources.wood = 10;
-  p.resources.stone = 10;
-  const woodBefore = p.resources.wood;
-  const stoneBefore = p.resources.stone;
+  assert.deepStrictEqual(expandPermanentCost(p), {
+    wood: 1,
+    stone: 1,
+    food: 1,
+    iron: 1,
+  });
+  p.resources.wood = 1;
+  p.resources.stone = 1;
+  p.resources.food = 1;
+  p.resources.iron = 1;
   ok(
     applyAction(g, p.id, {
       type: 'expandPermanent',
-      payload: {},
+      payload: { direction: 'resource' },
     }),
     '常驻扩建成功'
   );
-  assert.strictEqual(p.resources.wood, woodBefore - 6);
-  assert.strictEqual(p.resources.stone, stoneBefore - 6);
-  assert.strictEqual(p.expandSlots, 3);
-  assert.strictEqual(p.expandFuncSlots, 3);
-  assert.strictEqual(p.expandResSlots, 3);
-  assert.strictEqual(maxResourceHandFor(p), 10 + 3 * 4, '手牌资源上限 +12');
+  assert.strictEqual(p.resources.wood, 0);
+  assert.strictEqual(p.resources.stone, 0);
+  assert.strictEqual(p.resources.food, 0);
+  assert.strictEqual(p.resources.iron, 0);
+  assert.strictEqual(p.expandSlots, 1);
+  assert.strictEqual(p.expandFuncSlots, 1);
+  assert.strictEqual(p.expandResSlots, 1);
+  assert.strictEqual(maxResourceHandFor(p), 12 + 4, '手牌资源上限 +4');
   const pub = publicGameState(g, p.id);
   const me = pub.players.find((x) => x.id === p.id);
-  assert.strictEqual(me.expandSlots, 3);
-  assert.strictEqual(me.expandFuncSlots, 3);
-  assert.strictEqual(me.expandResSlots, 3);
-  assert.strictEqual(me.maxResourceHand, 22);
-  assert.strictEqual(me.maxBuildings, 6);
-  assert.strictEqual(me.maxFuncHand, 6);
+  assert.strictEqual(me.expandSlots, 1);
+  assert.strictEqual(me.expandFuncSlots, 1);
+  assert.strictEqual(me.expandResSlots, 1);
+  assert.strictEqual(me.maxResourceHand, 16);
+  assert.strictEqual(me.maxBuildings, 4);
+  assert.strictEqual(me.maxFuncHand, 4);
   p.buildings.push({
     id: 'ex_b1',
     label: '集市A',
@@ -959,15 +1331,238 @@ assert.strictEqual(p11.buildings.find((b) => b.id === 'rep_b').slot, 'none:1');
   console.log('✓ expand auto + none slots');
 }
 
+console.log('— free expand card —');
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p = g.players[0];
+  p.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+  p.funcCards.push({
+    id: 'fn_free_expand',
+    kind: 'function',
+    funcType: 'freeExpand',
+    label: '免费扩建',
+  });
+  g.phase = 'build';
+  g.currentPlayerId = 'p0';
+  g.buildPassed = {};
+  ok(
+    applyAction(g, 'p0', {
+      type: 'useFunc',
+      payload: { cardId: 'fn_free_expand', direction: 'resource' },
+    })
+  );
+  assert.strictEqual(p.expandResSlots, 1, '应扩建资源卡位');
+  assert.ok(!p.funcCards.some((c) => c.id === 'fn_free_expand'), '功能卡应已打出');
+  assert.strictEqual(p.resources.wood, 0, '不应扣资源');
+  console.log('✓ free expand card');
+}
+
+console.log('— welfare house card —');
+{
+  const { playerScore, freeHousesFor } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p = g.players[0];
+  const scoreBefore = playerScore(p);
+  p.funcCards.push({
+    id: 'fn_welfare_house',
+    kind: 'function',
+    funcType: 'welfareHouse',
+    label: '福利房',
+  });
+  g.phase = 'build';
+  g.currentPlayerId = 'p0';
+  g.buildPassed = {};
+  ok(
+    applyAction(g, 'p0', {
+      type: 'useFunc',
+      payload: { cardId: 'fn_welfare_house' },
+    })
+  );
+  assert.strictEqual(p.houses, 3, '应增加 1 间房子');
+  assert.strictEqual(p.welfareHouses, 1);
+  assert.strictEqual(playerScore(p), scoreBefore, '福利房不应加分');
+  assert.strictEqual(freeHousesFor(p), 3, '应增加 2 村民容量');
+  console.log('✓ welfare house card');
+}
+
+console.log('— caravan card —');
+{
+  const { effectiveExchangeCost } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p = g.players[0];
+  p.resources = { wood: 4, stone: 0, food: 0, iron: 0 };
+  p.funcCards.push({
+    id: 'fn_caravan',
+    kind: 'function',
+    funcType: 'caravan',
+    label: '商队来临',
+  });
+  g.phase = 'build';
+  g.currentPlayerId = 'p0';
+  g.buildPassed = {};
+  ok(
+    applyAction(g, 'p0', {
+      type: 'useFunc',
+      payload: { cardId: 'fn_caravan' },
+    })
+  );
+  assert.strictEqual(p.caravanPending, true);
+  assert.strictEqual(effectiveExchangeCost(p, g), 2, '无集市应为 2:1');
+  ok(
+    applyAction(g, 'p0', {
+      type: 'exchange',
+      payload: { from: 'wood', to: 'food' },
+    })
+  );
+  assert.strictEqual(p.resources.wood, 2);
+  assert.strictEqual(p.resources.food, 1);
+
+  p.buildings.push({
+    id: 'ex_test',
+    buildType: 'exchange',
+    label: '集市',
+    slot: 'none',
+    built: true,
+    workers: 0,
+    cost: {},
+  });
+  assert.strictEqual(effectiveExchangeCost(p, g), 1, '有集市应为 1:1');
+  p.resources.wood = 1;
+  ok(
+    applyAction(g, 'p0', {
+      type: 'exchange',
+      payload: { from: 'wood', to: 'iron' },
+    })
+  );
+  assert.strictEqual(p.resources.wood, 0);
+  assert.strictEqual(p.resources.iron, 1);
+
+  ok(applyAction(g, 'p0', { type: 'pass' }));
+  assert.strictEqual(p.caravanPending, false, '回合结束应清除商队效果');
+  console.log('✓ caravan card');
+}
+
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const robber = g.players[0];
+  const victim = g.players[1];
+  victim.resources.wood = 2;
+  victim.funcCards.push({
+    id: 'v_func',
+    funcType: 'harvest',
+    label: '丰收',
+  });
+  robber.funcCards.push({
+    id: 'rob_card',
+    funcType: 'robbery',
+    label: '抢劫',
+  });
+  g.phase = 'build';
+  g.currentPlayerId = robber.id;
+  const woodBefore = victim.resources.wood;
+  const funcBefore = victim.funcCards.length;
+  ok(
+    applyAction(g, robber.id, {
+      type: 'useFunc',
+      payload: {
+        cardId: 'rob_card',
+        targets: [victim.id, victim.id],
+      },
+    }),
+    '抢劫成功'
+  );
+  assert.ok(
+    !robber.funcCards.some((c) => c.id === 'rob_card'),
+    '抢劫卡应已打出'
+  );
+  assert.ok(
+    woodBefore - victim.resources.wood + (funcBefore - victim.funcCards.length) >=
+      1,
+    '受害者应至少失去一张手牌'
+  );
+  const robberGain =
+    robber.resources.wood +
+    robber.resources.stone +
+    robber.resources.food +
+    robber.resources.iron +
+    robber.funcCards.length +
+    (robber.buildings || []).filter((b) => !b.built).length;
+  assert.ok(robberGain >= 1, '抢劫者应获得至少一张牌');
+  console.log('✓ robbery random steal twice');
+}
+
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const robber = g.players[0];
+  const victim = g.players[1];
+  victim.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+  victim.funcCards = [];
+  victim.buildings = [];
+  robber.funcCards.push({
+    id: 'rob_empty',
+    funcType: 'robbery',
+    label: '抢劫',
+  });
+  g.phase = 'build';
+  g.currentPlayerId = robber.id;
+  const fail = applyAction(g, robber.id, {
+    type: 'useFunc',
+    payload: {
+      cardId: 'rob_empty',
+      targets: [victim.id, victim.id],
+    },
+  });
+  assert.ok(!fail.ok, '无手牌目标不可抢劫');
+  assert.ok(/手牌/.test(fail.error || ''), fail.error);
+  console.log('✓ robbery rejects empty hand');
+}
+
 function drainSettleAnim(g) {
   if (g.phase !== 'settle') return;
   const { finishSettleAnimForce } = require('../engine');
   ok(finishSettleAnimForce(g), 'finishSettleAnimForce');
 }
 
+function drainPrisonerDiscard(g) {
+  let guard = 0;
+  while (g.phase === 'event_discard' && guard++ < 200) {
+    const pid = g.currentPlayerId;
+    const p = g.players.find((x) => x.id === pid);
+    const left = Number((g.pendingPrisonerDiscards || {})[pid]) || 0;
+    if (!pid || !p || left <= 0) break;
+    const res = ['wood', 'stone', 'food', 'iron'].find(
+      (r) => (p.resources[r] || 0) > 0
+    );
+    if (res) {
+      ok(
+        applyAction(g, pid, {
+          type: 'eventDiscard',
+          payload: { kind: 'resource', resource: res },
+        })
+      );
+    } else if (p.funcCards && p.funcCards[0]) {
+      ok(
+        applyAction(g, pid, {
+          type: 'eventDiscard',
+          payload: { kind: 'func', cardId: p.funcCards[0].id },
+        })
+      );
+    } else {
+      delete g.pendingPrisonerDiscards[pid];
+    }
+  }
+}
+
 function drainSettleAndWishWell(g) {
   drainSettleAnim(g);
   drainSettleAct(g);
+  drainPrisonerDiscard(g);
+  drainWelfareSetup(g);
   let guard = 0;
   while (g.phase === 'wish_well' && guard++ < 20) {
     let acted = false;
@@ -1021,9 +1616,8 @@ function drainSettleAct(g) {
       }
       if (p.pendingDiscardBuild) {
         g.currentPlayerId = p.id;
-        if (p.buildings.length) {
-          const pick =
-            p.buildings.find((b) => !b.built) || p.buildings[0];
+        const pick = p.buildings.find((b) => !b.built);
+        if (pick) {
           ok(
             applyAction(g, p.id, {
               type: 'discardUnbuilt',
@@ -1186,6 +1780,7 @@ console.log('— settle act when building over cap —');
 {
   const { finishSettleAnimForce } = require('../engine');
   const g = createGameState(room(2));
+  finishInit(g);
   const p0 = g.players[0];
   for (let i = 0; i < 3; i++) {
     p0.buildings.push({
@@ -1220,20 +1815,113 @@ console.log('— settle act when building over cap —');
   g.phase = 'settle';
   g.lastSettle = { at: Date.now(), round: g.round, slots: [], buildings: [] };
   ok(finishSettleAnimForce(g));
-  assert.strictEqual(g.phase, 'settle_act', '结算后应进入弃牌阶段');
+  assert.strictEqual(g.phase, 'settle_act', '卡牌超上限应进入弃牌阶段');
+  assert.strictEqual(g.settleActScope, 'card');
+  g.currentPlayerId = 'p0';
+  g.settleActPassed = {};
   const pub = publicGameState(g, p0.id);
   assert.ok(pub.me.pendingDiscardBuild, '公开状态应含待取舍新建筑');
   ok(applyAction(g, p0.id, { type: 'discardPendingBuild' }));
   assert.strictEqual(p0.pendingDiscardBuild, null);
   assert.strictEqual(p0.buildings.length, 3);
+  assert.strictEqual(g.phase, 'build', '卡牌弃完后应进入建造');
   console.log('✓ settle act when building over cap');
+}
+
+console.log('— building over cap discard rules —');
+{
+  const {
+    takeBuildingCard,
+    maxBuildingsFor,
+  } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p0 = g.players[0];
+  for (let i = 0; i < maxBuildingsFor(p0); i++) {
+    p0.buildings.push({
+      id: 'b_full_' + i,
+      kind: 'building',
+      buildType: 'produce',
+      resource: 'wood',
+      label: '已满' + i,
+      cost: { stone: 1, iron: 1 },
+      built: true,
+      slot: i === 0 ? 'none' : `none:${i}`,
+      workers: 0,
+    });
+  }
+  const beforeN = p0.buildings.length;
+  takeBuildingCard(g, p0, {
+    id: 'b_auto_discard',
+    kind: 'building',
+    buildType: 'exchange',
+    label: '自动弃',
+    cost: { wood: 1 },
+  });
+  assert.strictEqual(p0.pendingDiscardBuild, null, '均已建造时不应进入待取舍');
+  assert.strictEqual(p0.buildings.length, beforeN, '已有建筑应保留');
+  assert.ok(
+    g.specialDiscard.some((c) => c.id === 'b_auto_discard'),
+    '新建筑应入弃牌堆'
+  );
+
+  p0.buildings.push({
+    id: 'b_unbuilt_keep',
+    kind: 'building',
+    buildType: 'exchange',
+    label: '未建',
+    cost: { wood: 1 },
+    built: false,
+    slot: null,
+    workers: 0,
+  });
+  takeBuildingCard(g, p0, {
+    id: 'b_pending_new',
+    kind: 'building',
+    buildType: 'exchange',
+    label: '待收',
+    cost: { wood: 1 },
+  });
+  assert.ok(p0.pendingDiscardBuild, '有未建建筑时应进入待取舍');
+  assert.strictEqual(p0.pendingDiscardBuild.newCard.id, 'b_pending_new');
+
+  const builtOne = p0.buildings.find((b) => b.built);
+  g.phase = 'build';
+  g.currentPlayerId = p0.id;
+  let r = applyAction(g, p0.id, {
+    type: 'discardUnbuilt',
+    payload: { buildingId: builtOne.id },
+  });
+  assert.ok(!r.ok && /未建造/.test(r.error || ''), '超上限时不可弃已建建筑');
+  ok(applyAction(g, p0.id, { type: 'discardPendingBuild' }));
+  assert.strictEqual(p0.pendingDiscardBuild, null);
+  assert.ok(!p0.buildings.some((b) => b.id === 'b_pending_new'));
+
+  takeBuildingCard(g, p0, {
+    id: 'b_pending_new2',
+    kind: 'building',
+    buildType: 'exchange',
+    label: '待收2',
+    cost: { wood: 1 },
+  });
+  assert.ok(p0.pendingDiscardBuild);
+  ok(
+    applyAction(g, p0.id, {
+      type: 'discardUnbuilt',
+      payload: { buildingId: 'b_unbuilt_keep' },
+    })
+  );
+  assert.strictEqual(p0.pendingDiscardBuild, null);
+  assert.ok(p0.buildings.some((b) => b.id === 'b_pending_new2'));
+  console.log('✓ building over cap discard rules');
 }
 
 console.log('— settle act discard order + pending build queue —');
 {
   const g = createGameState(room(2));
+  finishInit(g);
   const p0 = g.players[0];
-  p0.resources = { wood: 11, stone: 0, food: 0, iron: 0 };
+  p0.resources = { wood: 13, stone: 0, food: 0, iron: 0 };
   p0.pendingDiscardRes = true;
   p0.funcCards = [
     { id: 'fn_over', kind: 'function', funcType: 'harvest', label: '丰收' },
@@ -1266,6 +1954,7 @@ console.log('— settle act discard order + pending build queue —');
     workers: 0,
   });
   g.phase = 'settle_act';
+  g.settleActScope = 'resource';
   g.currentPlayerId = p0.id;
   g.settleActPassed = {};
 
@@ -1284,6 +1973,10 @@ console.log('— settle act discard order + pending build queue —');
     })
   );
   assert.strictEqual(p0.pendingDiscardRes, false);
+  assert.strictEqual(g.phase, 'settle_act', '资源弃完后应继续处理卡牌');
+  assert.strictEqual(g.settleActScope, 'card');
+  g.currentPlayerId = p0.id;
+  g.settleActPassed = {};
 
   ok(applyAction(g, p0.id, { type: 'discardPendingBuild' }));
   assert.ok(p0.pendingDiscardBuild && p0.pendingDiscardBuild.newCard, '应还有待取舍建筑');
@@ -1298,6 +1991,7 @@ console.log('— settle act discard order + pending build queue —');
     })
   );
   assert.strictEqual(p0.pendingDiscardFunc, false);
+  assert.strictEqual(g.phase, 'build', '卡牌弃完后应进入建造');
   console.log('✓ settle act discard order + pending build queue');
 }
 
@@ -1344,13 +2038,13 @@ console.log('— wish well after produce —');
   console.log('✓ wish well after produce');
 }
 
-console.log('— resource hand limit 10 —');
+console.log('— resource hand limit 12 —');
 {
   const { finishSettleAnimForce, maxResourceHandFor } = require('../engine');
   const g = createGameState(room(2));
   finishInit(g);
   const p = g.players[0];
-  p.resources = { wood: 6, stone: 5, food: 0, iron: 0 };
+  p.resources = { wood: 7, stone: 6, food: 0, iron: 0 };
   g.phase = 'settle';
   g.lastSettle = { at: Date.now(), round: g.round, slots: [], buildings: [] };
   ok(finishSettleAnimForce(g));
@@ -1370,16 +2064,16 @@ console.log('— resource hand limit 10 —');
     '弃置后应降至上限以内'
   );
   assert.strictEqual(g.phase, 'build', '弃牌完成后应进入建造阶段');
-  console.log('✓ resource hand limit 10');
+  console.log('✓ resource hand limit 12');
 }
 
-console.log('— building produce before discard —');
+console.log('— building produce ignores resource overcap —');
 {
-  const { finishSettleAnimForce, maxResourceHandFor } = require('../engine');
+  const { finishSettleAnimForce } = require('../engine');
   const g = createGameState(room(2));
   finishInit(g);
   const p = g.players[0];
-  p.resources = { wood: 9, stone: 0, food: 0, iron: 0 };
+  p.resources = { wood: 11, stone: 0, food: 0, iron: 0 };
   g.phase = 'settle';
   g.lastSettle = {
     at: Date.now(),
@@ -1396,22 +2090,10 @@ console.log('— building produce before discard —');
     ],
   };
   ok(finishSettleAnimForce(g));
-  assert.strictEqual(p.resources.wood, 11, '个人产出应先于弃牌');
-  assert.strictEqual(g.phase, 'settle_act', '产出后超上限应进入弃牌');
-  assert.ok(p.pendingDiscardRes, '应标记待弃资源');
-  while (p.pendingDiscardRes && g.phase === 'settle_act') {
-    ok(
-      applyAction(g, p.id, {
-        type: 'discardResource',
-        payload: { resource: 'wood' },
-      })
-    );
-  }
-  assert.strictEqual(
-    Object.values(p.resources).reduce((a, b) => a + b, 0),
-    maxResourceHandFor(p)
-  );
-  console.log('✓ building produce before discard');
+  assert.strictEqual(p.resources.wood, 13, '应先完成弃牌阶段再个人产出');
+  assert.strictEqual(g.phase, 'build', '个人产出后超上限不应再进入弃牌');
+  assert.ok(!p.pendingDiscardRes, '个人产出后不应标记待弃资源');
+  console.log('✓ building produce ignores resource overcap');
 }
 
 console.log('— build phase ignores resource overcap —');
@@ -1419,7 +2101,7 @@ console.log('— build phase ignores resource overcap —');
   const g = createGameState(room(2));
   finishInit(g);
   const p = g.players[0];
-  p.resources = { wood: 10, stone: 0, food: 0, iron: 0 };
+  p.resources = { wood: 11, stone: 0, food: 0, iron: 0 };
   p.funcCards.push({
     id: 'fn_harvest_oc',
     kind: 'function',
@@ -1439,7 +2121,7 @@ console.log('— build phase ignores resource overcap —');
       },
     })
   );
-  assert.strictEqual(p.resources.wood, 12, '建造阶段可超过资源上限');
+  assert.strictEqual(p.resources.wood, 13, '建造阶段可超过资源上限');
   assert.strictEqual(g.phase, 'build', '不应进入弃牌阶段');
   assert.ok(!p.pendingDiscardRes, '建造阶段不标记待弃资源');
   console.log('✓ build phase ignores resource overcap');
@@ -1512,30 +2194,35 @@ console.log('— enhance die counts as 2 in settle —');
 
 console.log('— houses gate breed —');
 {
-  const { freeHousesFor, START_HOUSES } = require('../engine');
+  const { freeHousesFor, START_HOUSES, villagerCapacityFor } = require('../engine');
   const g = createGameState(room(2));
   finishInit(g);
   const p = g.players[0];
   assert.strictEqual(p.houses, START_HOUSES);
-  assert.strictEqual(freeHousesFor(p), 0, '开局 3 房 3 村民应无空闲');
+  assert.strictEqual(villagerCapacityFor(p), 4, '2 房 × 2 人/房');
+  assert.strictEqual(freeHousesFor(p), 1, '开局 4 容量 3 村民应有 1 空位');
   p.resources = { wood: 20, stone: 20, food: 20, iron: 20 };
   g.phase = 'build';
   g.buildPassed = {};
   g.currentPlayerId = p.id;
-  const fail = applyAction(g, p.id, { type: 'breedPermanent' });
-  assert.ok(!fail.ok, '无空闲房子时不可繁殖');
-  assert.ok(/空闲房子|房子/.test(fail.error || ''), fail.error);
-  ok(applyAction(g, p.id, { type: 'buildHousePermanent' }));
-  assert.strictEqual(p.houses, START_HOUSES + 1);
-  assert.strictEqual(freeHousesFor(p), 1);
   const before = p.villagers;
   ok(applyAction(g, p.id, { type: 'breedPermanent' }));
   assert.strictEqual(p.villagers, before + 1);
+  assert.strictEqual(p.resources.food, 18, '繁殖消耗应等于房子数 2');
   assert.strictEqual(freeHousesFor(p), 0);
+  const fail = applyAction(g, p.id, { type: 'breedPermanent' });
+  assert.ok(!fail.ok, '无空位时不可繁殖');
+  ok(applyAction(g, p.id, { type: 'buildHousePermanent' }));
+  assert.strictEqual(p.houses, START_HOUSES + 1);
+  assert.strictEqual(p.houseScore, 1);
+  assert.strictEqual(freeHousesFor(p), 2);
+  ok(applyAction(g, p.id, { type: 'breedPermanent' }));
+  assert.strictEqual(p.villagers, before + 2);
+  assert.strictEqual(p.resources.food, 15, '3 房繁殖消耗 3 小麦');
   const pub = publicGameState(g, p.id);
   const me = pub.players.find((x) => x.id === p.id);
   assert.strictEqual(me.houses, p.houses);
-  assert.strictEqual(me.freeHouses, 0);
+  assert.strictEqual(me.freeHouses, 1);
   console.log('✓ houses gate breed');
 }
 
@@ -1593,6 +2280,7 @@ console.log('— next round production starts with first finisher —');
   ok(applyAction(g, 'p1', { type: 'pass' }));
   ok(applyAction(g, 'p0', { type: 'pass' }));
   assert.strictEqual(g.round, round1 + 1, '应进入下一轮');
+  drainWelfareSetup(g);
   assert.strictEqual(g.phase, 'produce', '应进入生产阶段');
   assert.strictEqual(
     g.produceOrderStartId,
@@ -1610,13 +2298,14 @@ console.log('— environment deck —');
     ENVIRONMENT_DRAW_PER_ROUND,
   } = require('../engine');
   const { ENVIRONMENT_CATALOG } = require('../decks');
-  assert.strictEqual(ENVIRONMENT_CATALOG.length, 10);
+  assert.strictEqual(ENVIRONMENT_CATALOG.length, 15);
   assert.ok(
     ENVIRONMENT_CATALOG.every(
       (d) =>
         d.trigger === 'dispatch' ||
         d.trigger === 'settle' ||
-        d.trigger === 'preSettle'
+        d.trigger === 'preSettle' ||
+        d.trigger === 'setup'
     )
   );
   const g = createGameState(room(2));
@@ -1662,7 +2351,7 @@ console.log('— event luckyDraw side card kind —');
   console.log('✓ event luckyDraw side card kind');
 }
 
-console.log('— event enterFray places 6 neutrals —');
+console.log('— event enterFray places 3 neutrals —');
 {
   const { beginProduce } = require('../engine');
   const { NEUTRAL_WORKER_ID } = require('../decks');
@@ -1675,23 +2364,253 @@ console.log('— event enterFray places 6 neutrals —');
     envType: 'enterFray',
     label: '以身入局',
     trigger: 'dispatch',
-    setup: 'neutral6',
+    setup: 'neutral3',
     number: 4,
   };
+  for (const n of [5, 6]) {
+    delete g.board.resource.environments[n];
+  }
   // 模拟 setupBoard 已放过、beginProduce 清空工人后再补回
   beginProduce(g);
   assert.strictEqual(
     neutralCountOn(g, 'resource', 4),
-    6,
-    'beginProduce 清空后须按事件牌补回 6 枚中立骰'
+    3,
+    'beginProduce 清空后须按事件牌补回 3 枚中立骰'
   );
   const pub = publicGameState(g, 'p0');
   assert.strictEqual(
     (pub.board.resource.workers[4] || {})[NEUTRAL_WORKER_ID],
-    6,
-    '公开状态应可见 6 枚中立骰'
+    3,
+    '公开状态应可见 3 枚中立骰'
   );
-  console.log('✓ event enterFray places 6 neutrals');
+  console.log('✓ event enterFray places 3 neutrals');
+}
+
+console.log('— event prisoners dilemma neutrals —');
+{
+  const { beginProduce } = require('../engine');
+  const { setupEnvironmentOnBoard, neutralCountOn } = require('../environmentEffects');
+  const { NEUTRAL_WORKER_ID } = require('../decks');
+  const g = createGameState(room(2));
+  g.board.resource.environments[6] = {
+    id: 'env_prisoner',
+    kind: 'environment',
+    envType: 'prisonersDilemma',
+    label: '囚徒困境',
+    trigger: 'settle',
+    setup: 'neutral2',
+    number: 6,
+  };
+  setupEnvironmentOnBoard(g, g.board.resource.environments[6], 6, {
+    pushLog: () => {},
+  });
+  assert.strictEqual(
+    neutralCountOn(g, 'resource', 6),
+    2,
+    '上场应放置 2 枚中立骰'
+  );
+  g.phase = 'produce';
+  g.produceOrderStartId = g.players[0].id;
+  beginProduce(g);
+  assert.strictEqual(
+    neutralCountOn(g, 'resource', 6),
+    2,
+    'beginProduce 清空后须补回 2 枚中立骰'
+  );
+  const pub = publicGameState(g, 'p0');
+  assert.strictEqual(
+    (pub.board.resource.workers[6] || {})[NEUTRAL_WORKER_ID],
+    2,
+    '公开状态应可见 2 枚中立骰'
+  );
+  console.log('✓ event prisoners dilemma neutrals');
+}
+
+console.log('— event wei qi rescue zhao —');
+{
+  const { beginProduce } = require('../engine');
+  const {
+    setupEnvironmentOnBoard,
+    neutralCountOn,
+  } = require('../environmentEffects');
+  const { NEUTRAL_WORKER_ID } = require('../decks');
+  const g = createGameState(room(2));
+  g.board.resource.environments[4] = {
+    id: 'env_weiQiRescueZhao',
+    kind: 'environment',
+    envType: 'weiQiRescueZhao',
+    label: '围魏救赵',
+    trigger: 'dispatch',
+    setup: 'neutralParitySlots',
+    number: 4,
+  };
+  setupEnvironmentOnBoard(g, g.board.resource.environments[4], 4, {
+    pushLog: () => {},
+  });
+  assert.strictEqual(neutralCountOn(g, 'resource', 1), 1);
+  assert.strictEqual(neutralCountOn(g, 'special', 1), 1);
+  assert.strictEqual(neutralCountOn(g, 'resource', 2), 0, '偶数事件格不应在偶数格放中立骰');
+  assert.strictEqual(neutralCountOn(g, 'special', 3), 1);
+  g.phase = 'produce';
+  g.produceOrderStartId = g.players[0].id;
+  beginProduce(g);
+  assert.strictEqual(neutralCountOn(g, 'resource', 3), 1, 'beginProduce 后应恢复奇数格中立骰');
+  assert.strictEqual(neutralCountOn(g, 'resource', 2), 0);
+
+  const p0 = g.players[0];
+  if (!g.board.resource.tiles.some((t) => t.number === 4)) {
+    g.board.resource.tiles.push({
+      id: 'res_r4_arrows',
+      kind: 'resource',
+      resource: 'wood',
+      large: 2,
+      small: 1,
+      number: 4,
+      label: '木头·贫',
+    });
+  }
+  p0.dispatched = 1;
+  g.currentPlayerId = 'p0';
+  g.awaitingProduceRoll = false;
+  g.dice = { p0: [4], p1: [] };
+  g.diceBoosted = { p0: [false], p1: [] };
+  const w3 = g.board.resource.workers[3] || (g.board.resource.workers[3] = {});
+  w3[NEUTRAL_WORKER_ID] = 3;
+  ok(applyAction(g, 'p0', { type: 'placeDice', payload: { face: 4, area: 'resource' } }));
+  assert.ok(g.pendingEventChoice && g.pendingEventChoice.needChoice === 'gatherNeutrals');
+  ok(
+    applyAction(g, 'p0', {
+      type: 'eventGatherNeutrals',
+      payload: { area: 'resource', number: 3 },
+    })
+  );
+  assert.ok(!g.pendingEventChoice);
+  assert.strictEqual(neutralCountOn(g, 'resource', 3), 0);
+  assert.strictEqual(neutralCountOn(g, 'resource', 4), 3, '玩家1枚+集中3枚');
+  console.log('✓ event wei qi rescue zhao');
+}
+
+console.log('— prisoner discard after personal produce —');
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p0 = g.players[0];
+  const p1 = g.players[1];
+  g.phase = 'settle_act';
+  g.settleActScope = 'resource';
+  g.personalProduceApplied = true;
+  g.produceFinishOrder = [p0.id, p1.id];
+  g.currentPlayerId = p0.id;
+  g.settleActPassed = {};
+  p0.pendingDiscardRes = false;
+  p1.pendingDiscardRes = false;
+  p0.pendingWishWellBonus = 2;
+  g.pendingPrisonerDiscards = { [p0.id]: 1 };
+  while (g.phase === 'settle_act') {
+    ok(applyAction(g, g.currentPlayerId, { type: 'pass' }));
+  }
+  assert.strictEqual(
+    g.phase,
+    'wish_well',
+    '许愿井应在囚徒弃牌之前（同属个人产出）'
+  );
+  assert.strictEqual(p0.pendingWishWellBonus, 2, '许愿井应尚未结算');
+  ok(
+    applyAction(g, p0.id, {
+      type: 'allocateWishWell',
+      payload: { alloc: { wood: 2, stone: 0, food: 0, iron: 0 } },
+    })
+  );
+  assert.strictEqual(
+    g.phase,
+    'event_discard',
+    '囚徒弃牌应在许愿井之后'
+  );
+  console.log('✓ prisoner discard after personal produce');
+}
+
+console.log('— event welfare minimum lowest score —');
+{
+  const { playerScore } = require('../engine');
+  const { setupEnvironmentOnBoard } = require('../environmentEffects');
+  const g = createGameState(room(3));
+  const p0 = g.players[0];
+  const p1 = g.players[1];
+  const p2 = g.players[2];
+  p0.houseScore = 0;
+  p0.bonusScore = 0;
+  p1.houseScore = 2;
+  p1.bonusScore = 0;
+  p2.houseScore = 3;
+  p2.bonusScore = 0;
+  g.pendingWelfareMinimumQueue = [];
+  setupEnvironmentOnBoard(
+    g,
+    {
+      envType: 'welfareMinimum',
+      label: '低保户',
+      setup: 'lowestScoreTwo',
+    },
+    5,
+    {
+      pushLog: () => {},
+      alivePlayers: () => g.players.filter((p) => !p.left),
+      playerScore,
+    }
+  );
+  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 1);
+  assert.strictEqual(g.pendingWelfareMinimumQueue[0].playerId, p0.id);
+
+  p1.houseScore = 0;
+  g.pendingWelfareMinimumQueue = [];
+  setupEnvironmentOnBoard(
+    g,
+    {
+      envType: 'welfareMinimum',
+      label: '低保户',
+      setup: 'lowestScoreTwo',
+    },
+    6,
+    {
+      pushLog: () => {},
+      alivePlayers: () => g.players.filter((p) => !p.left),
+      playerScore,
+    }
+  );
+  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 2);
+  const tiedIds = new Set(g.pendingWelfareMinimumQueue.map((x) => x.playerId));
+  assert.ok(tiedIds.has(p0.id) && tiedIds.has(p1.id));
+
+  g.phase = 'init_announce';
+  g.produceOrderStartId = p0.id;
+  g.environmentDeck = [
+    {
+      id: 'env_wm',
+      kind: 'environment',
+      envType: 'welfareMinimum',
+      label: '低保户',
+      trigger: 'setup',
+      setup: 'lowestScoreTwo',
+    },
+  ];
+  g.environmentDiscard = [];
+  p0.houseScore = 0;
+  p1.houseScore = 5;
+  p2.houseScore = 6;
+  ok(finishInitAnnounce(g));
+  assert.ok(g.pendingEventChoice, '最低分玩家应待选资源');
+  assert.strictEqual(g.pendingEventChoice.playerId, p0.id);
+  assert.ok(!g.roundProduceBegun, '选完资源前不应正式开始生产');
+  ok(
+    applyAction(g, p0.id, {
+      type: 'eventPickTwoResources',
+      payload: { amounts: { wood: 1, iron: 1 } },
+    })
+  );
+  assert.strictEqual(p0.resources.wood, 1);
+  assert.strictEqual(p0.resources.iron, 1);
+  assert.strictEqual(g.phase, 'produce', '选完后应进入生产');
+  console.log('✓ event welfare minimum lowest score');
 }
 
 console.log('— event mercenaries preSettle —');
@@ -1916,12 +2835,286 @@ console.log('— event clearSky pick resource —');
   console.log('✓ event clearSky pick resource');
 }
 
-console.log('— event oneMountain skip second —');
+console.log('— event recall die —');
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p0 = g.players[0];
+  g.board.resource.environments[4] = {
+    id: 'env_recall',
+    kind: 'environment',
+    label: '召回',
+    envType: 'recall',
+    trigger: 'dispatch',
+    number: 4,
+  };
+  if (!g.board.resource.tiles.some((t) => t.number === 4)) {
+    g.board.resource.tiles.push({
+      id: 'res_r4',
+      kind: 'resource',
+      resource: 'wood',
+      large: 2,
+      small: 1,
+      number: 4,
+      label: '木头·贫',
+    });
+  }
+  g.phase = 'produce';
+  g.currentPlayerId = 'p0';
+  g.awaitingProduceRoll = false;
+  g.dice = { p0: [4], p1: [] };
+  g.diceBoosted = { p0: [false], p1: [] };
+  p0.dispatched = 0;
+
+  ok(applyAction(g, 'p0', { type: 'placeDice', payload: { face: 4, area: 'resource' } }));
+  assert.ok(g.pendingEventChoice && g.pendingEventChoice.needChoice === 'recallDie');
+  ok(
+    applyAction(g, 'p0', {
+      type: 'eventRecallDie',
+      payload: { area: 'resource', number: 4 },
+    })
+  );
+  assert.ok(!g.pendingEventChoice);
+  assert.strictEqual((g.board.resource.workers[4] || {}).p0 || 0, 0);
+  assert.ok(g.dice.p0.includes(4), '应从本格召回骰子');
+  assert.strictEqual(p0.dispatched, 0, '召回本格后已派遣数应减 1');
+
+  g.board.resource.workers[1] = { p0: 1 };
+  p0.dispatched = 1;
+  g.dice = { p0: [4], p1: [] };
+  g.diceBoosted = { p0: [false], p1: [] };
+  g.phase = 'produce';
+  g.currentPlayerId = 'p0';
+  g.awaitingProduceRoll = false;
+  ok(applyAction(g, 'p0', { type: 'placeDice', payload: { face: 4, area: 'resource' } }));
+  assert.ok(g.pendingEventChoice && g.pendingEventChoice.needChoice === 'recallDie');
+  ok(
+    applyAction(g, 'p0', {
+      type: 'eventRecallDie',
+      payload: { area: 'resource', number: 1 },
+    })
+  );
+  assert.ok(!g.pendingEventChoice);
+  assert.strictEqual((g.board.resource.workers[1] || {}).p0 || 0, 0);
+  assert.strictEqual((g.board.resource.workers[4] || {}).p0 || 0, 1);
+  assert.ok(g.dice.p0.includes(1), '召回的骰子应回到手中');
+  assert.strictEqual(p0.dispatched, 1, '召回后已派遣数应减 1');
+
+  const g2 = createGameState(room(2));
+  finishInit(g2);
+  const p0b = g2.players[0];
+  g2.board.resource.environments[5] = {
+    id: 'env_recall2',
+    kind: 'environment',
+    label: '召回',
+    envType: 'recall',
+    trigger: 'dispatch',
+    number: 5,
+  };
+  if (!g2.board.resource.tiles.some((t) => t.number === 5)) {
+    g2.board.resource.tiles.push({
+      id: 'res_r5',
+      kind: 'resource',
+      resource: 'stone',
+      large: 2,
+      small: 1,
+      number: 5,
+      label: '石头·贫',
+    });
+  }
+  g2.phase = 'produce';
+  g2.currentPlayerId = 'p0';
+  g2.awaitingProduceRoll = false;
+  g2.dice = { p0: [5], p1: [] };
+  g2.diceBoosted = { p0: [false], p1: [] };
+  p0b.dispatched = 0;
+  ok(applyAction(g2, 'p0', { type: 'placeDice', payload: { face: 5, area: 'resource' } }));
+  assert.ok(g2.pendingEventChoice && g2.pendingEventChoice.needChoice === 'recallDie');
+  ok(
+    applyAction(g2, 'p0', {
+      type: 'eventRecallDie',
+      payload: { area: 'resource', number: 5 },
+    })
+  );
+  assert.strictEqual((g2.board.resource.workers[5] || {}).p0 || 0, 0);
+  assert.ok(g2.dice.p0.includes(5), '仅本格有骰时也应能召回');
+  console.log('✓ event recall die');
+}
+
+console.log('— event teleport die —');
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p0 = g.players[0];
+  const p1 = g.players[1];
+  g.board.resource.environments[4] = {
+    id: 'env_tp',
+    kind: 'environment',
+    label: '传送',
+    envType: 'teleport',
+    trigger: 'dispatch',
+    number: 4,
+  };
+  g.board.resource.environments[3] = {
+    id: 'env_sky3',
+    kind: 'environment',
+    label: '晴空万里',
+    envType: 'clearSky',
+    trigger: 'dispatch',
+    number: 3,
+  };
+  for (const num of [3, 4]) {
+    if (!g.board.resource.tiles.some((t) => t.number === num)) {
+      g.board.resource.tiles.push({
+        id: 'res_tp' + num,
+        kind: 'resource',
+        resource: 'wood',
+        large: 2,
+        small: 1,
+        number: num,
+        label: '木头·贫',
+      });
+    }
+  }
+  g.board.resource.workers[1] = { p1: 1 };
+  p1.dispatched = 1;
+  p1.resources.iron = 0;
+  g.phase = 'produce';
+  g.currentPlayerId = 'p0';
+  g.awaitingProduceRoll = false;
+  g.dice = { p0: [4], p1: [] };
+  g.diceBoosted = { p0: [false], p1: [] };
+  p0.dispatched = 0;
+
+  ok(applyAction(g, 'p0', { type: 'placeDice', payload: { face: 4, area: 'resource' } }));
+  assert.ok(g.pendingEventChoice && g.pendingEventChoice.needChoice === 'teleportDie');
+  assert.strictEqual(g.pendingEventChoice.teleportStep, 'from');
+  ok(
+    applyAction(g, 'p0', {
+      type: 'eventTeleportFrom',
+      payload: { area: 'resource', number: 1, targetId: 'p1' },
+    })
+  );
+  assert.strictEqual(g.pendingEventChoice.teleportStep, 'to');
+  ok(
+    applyAction(g, 'p0', {
+      type: 'eventTeleportTo',
+      payload: { area: 'resource', number: 3 },
+    })
+  );
+  assert.ok(!g.pendingEventChoice);
+  assert.strictEqual((g.board.resource.workers[1] || {}).p1 || 0, 0);
+  assert.strictEqual((g.board.resource.workers[3] || {}).p1 || 0, 1);
+  assert.strictEqual(p1.resources.iron || 0, 0, '落点晴空万里不应触发派遣效果');
+
+  const g2 = createGameState(room(2));
+  finishInit(g2);
+  g2.board.resource.environments[5] = {
+    id: 'env_tp2',
+    kind: 'environment',
+    label: '传送',
+    envType: 'teleport',
+    trigger: 'dispatch',
+    number: 5,
+  };
+  if (!g2.board.resource.tiles.some((t) => t.number === 5)) {
+    g2.board.resource.tiles.push({
+      id: 'res_tp5',
+      kind: 'resource',
+      resource: 'stone',
+      large: 2,
+      small: 1,
+      number: 5,
+      label: '石头·贫',
+    });
+  }
+  g2.phase = 'produce';
+  g2.currentPlayerId = 'p0';
+  g2.awaitingProduceRoll = false;
+  g2.dice = { p0: [5], p1: [] };
+  g2.diceBoosted = { p0: [false], p1: [] };
+  ok(applyAction(g2, 'p0', { type: 'placeDice', payload: { face: 5, area: 'resource' } }));
+  assert.ok(
+    g2.pendingEventChoice && g2.pendingEventChoice.needChoice === 'teleportDie',
+    '派遣后场上应有骰子可传送'
+  );
+  console.log('✓ event teleport die');
+}
+
+console.log('— event fisherman leader again pick two —');
+{
+  const { becameStrictSlotLeader, becameLeaderAgain } = require('../environmentEffects');
+  assert.strictEqual(
+    becameStrictSlotLeader({ p0: 1 }, 'p0', 1),
+    true,
+    '首次成为最大者应触发'
+  );
+  assert.strictEqual(
+    becameStrictSlotLeader({ p0: 2 }, 'p0', 1),
+    false,
+    '继续加码不重复触发'
+  );
+  assert.strictEqual(
+    becameLeaderAgain({ p0: 3, p1: 2 }, 'p0', 2, {}),
+    true,
+    '重新成为最大者应触发'
+  );
+
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.board.resource.environments[4] = {
+    id: 'env_fish',
+    kind: 'environment',
+    label: '渔翁得利',
+    envType: 'fishermanProfit',
+    trigger: 'settle',
+    dispatchAlso: true,
+    number: 4,
+  };
+  if (!g.board.resource.tiles.some((t) => t.number === 4)) {
+    g.board.resource.tiles.push({
+      id: 'res_f4',
+      kind: 'resource',
+      resource: 'wood',
+      large: 2,
+      small: 1,
+      number: 4,
+      label: '木头·贫',
+    });
+  }
+  g.phase = 'produce';
+  g.currentPlayerId = 'p0';
+  g.awaitingProduceRoll = false;
+  g.dice = { p0: [4, 4], p1: [] };
+  g.diceBoosted = { p0: [false, false], p1: [] };
+  const p0 = g.players[0];
+  p0.dispatched = 0;
+  p0.resources.wood = 0;
+
+  ok(applyAction(g, 'p0', { type: 'placeDice', payload: { face: 4, area: 'resource' } }));
+  assert.ok(
+    g.pendingEventChoice && g.pendingEventChoice.needChoice === 'pickTwoResources',
+    '首次成为最大者应弹出选资源'
+  );
+  ok(
+    applyAction(g, 'p0', {
+      type: 'eventPickTwoResources',
+      payload: { amounts: { wood: 1, stone: 1 } },
+    })
+  );
+  assert.strictEqual(p0.resources.wood, 1);
+  assert.strictEqual(p0.resources.stone, 1);
+  assert.ok(!g.pendingEventChoice);
+  console.log('✓ event fisherman leader again pick two');
+}
+
+console.log('— event oneMountain absorb second share —');
 {
   const { startSettle } = require('../engine');
   const g = createGameState(room(2));
   finishInit(g);
   g.barrenMarkerNumber = null;
+  g.barrenMarkerArea = null;
   g.board.resource.environments = {};
   g.board.resource.environments[5] = {
     id: 'env_mt',
@@ -1953,9 +3146,9 @@ console.log('— event oneMountain skip second —');
   p0.resources.wood = 0;
   p1.resources.wood = 0;
   startSettle(g);
-  assert.ok(p0.resources.wood >= 3, '第一名应拿大份');
+  assert.strictEqual(p0.resources.wood, 5, '第一名应拿大份+小份');
   assert.strictEqual(p1.resources.wood, 0, '第二名不应拿小份');
-  console.log('✓ event oneMountain skip second');
+  console.log('✓ event oneMountain absorb second share');
 }
 
 console.log('— event resistBarbarians VP —');
@@ -1964,6 +3157,7 @@ console.log('— event resistBarbarians VP —');
   const g = createGameState(room(2));
   finishInit(g);
   g.barrenMarkerNumber = null;
+  g.barrenMarkerArea = null;
   g.board.resource.environments = {};
   g.board.resource.environments[5] = {
     id: 'env_rb',
@@ -1992,25 +3186,86 @@ console.log('— event resistBarbarians VP —');
   g.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
   const p0 = g.players[0];
   const p1 = g.players[1];
-  // 模拟接近胜利：p0 先得分为 14，抵抗南蛮后应立刻获胜，p1 不再得分
-  p0.bonusScore = 14;
-  p1.bonusScore = 14;
-  // 扣掉房子分干扰：houses 开局各 3 分，再设 bonus 使总分可控
-  // playerScore = houses + buildings + bonusScore；开局 houses=3 → 总分 17 已超
-  // 改为直接测发分顺序：p0 为第一名先 +1
-  p0.houses = 0;
-  p1.houses = 0;
-  p0.bonusScore = 14;
-  p1.bonusScore = 14;
+  // 模拟接近胜利：p0 先得分为 9，抵抗南蛮后应立刻获胜，p1 不再得分
+  p0.bonusScore = 9;
+  p1.bonusScore = 9;
   startSettle(g);
-  assert.strictEqual(p0.bonusScore, 15, '第一名先获得抵抗南蛮分数');
-  assert.ok(g.over, '第一名达 15 应立刻结束');
-  assert.strictEqual(p1.bonusScore, 14, '游戏结束后第二名不再得分');
+  assert.strictEqual(p0.bonusScore, 10, '第一名先获得抵抗南蛮分数');
+  assert.ok(g.over, '第一名达 10 应立刻结束');
+  assert.strictEqual(p1.bonusScore, 9, '游戏结束后第二名不再得分');
   console.log('✓ event resistBarbarians VP');
+}
+
+console.log('— event keepOverflow skip discard —');
+{
+  const { startSettle, finishSettleAnimForce } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.board.resource.environments = {};
+  g.board.resource.environments[4] = {
+    id: 'env_ko',
+    kind: 'environment',
+    label: '吃不了兜着走',
+    envType: 'keepOverflow',
+    trigger: 'settle',
+    number: 4,
+  };
+  g.board.resource.tiles = [
+    {
+      id: 'res_ko',
+      kind: 'resource',
+      resource: 'wood',
+      large: 4,
+      small: 2,
+      number: 4,
+      label: '木头·丰',
+    },
+  ];
+  g.board.resource.workers = {
+    1: {},
+    2: {},
+    3: {},
+    4: { p0: 3, p1: 1 },
+    5: {},
+    6: {},
+  };
+  g.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  const p0 = g.players[0];
+  const p1 = g.players[1];
+  p0.resources = { wood: 10, stone: 0, food: 0, iron: 0 };
+  p1.resources = { wood: 11, stone: 0, food: 0, iron: 0 };
+
+  startSettle(g);
+  assert.ok(p0.skipSettleResourceDiscard, '第一名应豁免资源弃牌');
+  assert.strictEqual(p0.resources.wood, 14, '第一名应保留结算所得');
+  assert.strictEqual(p1.resources.wood, 13, '第二名应获得小份');
+  ok(finishSettleAnimForce(g));
+  assert.strictEqual(g.phase, 'settle_act', '仍有玩家需弃牌时应进入弃牌阶段');
+  assert.strictEqual(p0.pendingDiscardRes, false, '第一名仍无需弃资源');
+  assert.ok(p1.pendingDiscardRes, '第二名仍需弃牌');
+  while (p1.pendingDiscardRes && g.phase === 'settle_act') {
+    ok(
+      applyAction(g, p1.id, {
+        type: 'discardResource',
+        payload: { resource: 'wood' },
+      })
+    );
+  }
+  assert.strictEqual(p0.resources.wood, 14, '第一名超上限资源应保留');
+  console.log('✓ event keepOverflow skip discard');
 }
 
 console.log('— event firstCome stash —');
 {
+  const { firstComeGrantTier, firstComeRequiredWorkers } = require('../environmentEffects');
+  assert.strictEqual(firstComeGrantTier(1), 1);
+  assert.strictEqual(firstComeGrantTier(4), 1);
+  assert.strictEqual(firstComeGrantTier(5), 2);
+  assert.strictEqual(firstComeGrantTier(9), 3);
+  assert.strictEqual(firstComeRequiredWorkers(1), 2);
+  assert.strictEqual(firstComeRequiredWorkers(4), 2);
+  assert.strictEqual(firstComeRequiredWorkers(5), 4);
+  assert.strictEqual(firstComeRequiredWorkers(9), 6);
   const g = createGameState(room(2));
   finishInit(g);
   g.board.resource.environments[4] = {
@@ -2020,8 +3275,10 @@ console.log('— event firstCome stash —');
     envType: 'firstCome',
     trigger: 'dispatch',
     setup: 'stashResources',
-    stash: { wood: 2, stone: 2, food: 2, iron: 2 },
-    stashClaimed: false,
+    firstComeTier: 1,
+    firstComeRequired: 2,
+    stash: { wood: 1, stone: 1, food: 1, iron: 1 },
+    firstComeClaims: {},
     number: 4,
   };
   if (!g.board.resource.tiles.some((t) => t.number === 4)) {
@@ -2035,21 +3292,100 @@ console.log('— event firstCome stash —');
       label: '木头·贫',
     });
   }
-  g.board.resource.workers[4] = { p0: 3 };
+  g.board.resource.workers[4] = { p0: 1 };
   g.phase = 'produce';
+  g.currentPlayerId = 'p0';
+  g.awaitingProduceRoll = false;
+  g.dice = { p0: [4], p1: [] };
+  g.diceBoosted = { p0: [false], p1: [] };
+  const p0 = g.players[0];
+  p0.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+  p0.dispatched = 1;
+  ok(applyAction(g, 'p0', { type: 'placeDice', payload: { face: 4, area: 'resource' } }));
+  assert.strictEqual(g.board.resource.workers[4].p0, 2);
+  assert.strictEqual(p0.resources.wood, 1);
+  assert.strictEqual(p0.resources.stone, 1);
+  assert.strictEqual(p0.resources.food, 1);
+  assert.strictEqual(p0.resources.iron, 1);
+  assert.strictEqual(g.board.resource.environments[4].firstComeClaims.p0, true);
   g.currentPlayerId = 'p0';
   g.awaitingProduceRoll = false;
   g.dice = { p0: [4, 4], p1: [] };
   g.diceBoosted = { p0: [false, false], p1: [] };
-  const p0 = g.players[0];
-  p0.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
-  p0.dispatched = 3;
+  p0.dispatched = 2;
   ok(applyAction(g, 'p0', { type: 'placeDice', payload: { face: 4, area: 'resource' } }));
-  assert.strictEqual(g.board.resource.workers[4].p0, 5);
-  assert.strictEqual(p0.resources.wood, 2);
-  assert.strictEqual(p0.resources.iron, 2);
-  assert.ok(g.board.resource.environments[4].stashClaimed);
+  assert.strictEqual(g.board.resource.workers[4].p0, 4);
+  assert.strictEqual(p0.resources.wood, 1, '达到 4 村民不应再次领奖');
+  assert.strictEqual(g.board.resource.environments[4].firstComeClaims.p0, true);
   console.log('✓ event firstCome stash');
+}
+
+console.log('— event barren leader trigger —');
+{
+  const { becameStrictSlotLeader } = require('../environmentEffects');
+  assert.strictEqual(becameStrictSlotLeader({ p0: 1 }, 'p0', 1), true);
+  assert.strictEqual(becameStrictSlotLeader({ p0: 2 }, 'p0', 1), false);
+  assert.strictEqual(becameStrictSlotLeader({ p0: 2, p1: 1 }, 'p1', 1), false);
+  assert.strictEqual(becameStrictSlotLeader({ p0: 2, p1: 3 }, 'p1', 1), true);
+
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.board.resource.environments[5] = {
+    id: 'env_bh',
+    kind: 'environment',
+    label: '颗粒无收',
+    envType: 'barrenHarvest',
+    trigger: 'dispatch',
+    setup: 'marker',
+    number: 5,
+  };
+  if (!g.board.resource.tiles.some((t) => t.number === 5)) {
+    g.board.resource.tiles.push({
+      id: 'res_bh',
+      kind: 'resource',
+      resource: 'wood',
+      large: 2,
+      small: 1,
+      number: 5,
+      label: '木头·贫',
+    });
+  }
+  g.phase = 'produce';
+  g.currentPlayerId = 'p0';
+  g.awaitingProduceRoll = false;
+  g.dice = { p0: [5], p1: [] };
+  g.diceBoosted = { p0: [false], p1: [] };
+  const p0 = g.players[0];
+  p0.dispatched = 0;
+  ok(
+    applyAction(g, 'p0', { type: 'placeDice', payload: { face: 5, area: 'resource' } }),
+    'first barren dispatch triggers'
+  );
+  assert.ok(g.pendingEventChoice);
+  assert.strictEqual(g.pendingEventChoice.needChoice, 'moveBarrenMarker');
+  ok(
+    applyAction(g, 'p0', {
+      type: 'eventMoveBarrenMarker',
+      payload: { area: 'resource', number: 1 },
+    })
+  );
+  assert.strictEqual(g.barrenMarkerOwnerId, 'p0');
+  assert.strictEqual(g.barrenMarkerNumber, 1);
+  g.pendingEventChoice = null;
+  g.currentPlayerId = 'p0';
+  g.awaitingProduceRoll = false;
+  g.dice = { p0: [5], p1: [] };
+  g.diceBoosted = { p0: [false], p1: [] };
+  p0.dispatched = 1;
+  ok(
+    applyAction(g, 'p0', {
+      type: 'placeDice',
+      payload: { face: 5, area: 'resource' },
+    }),
+    'second dispatch same player'
+  );
+  assert.strictEqual(g.pendingEventChoice, null);
+  console.log('✓ event barren leader trigger');
 }
 
 console.log('— event deck reshuffles every round —');
@@ -2068,10 +3404,92 @@ console.log('— event deck reshuffles every round —');
       const ch = g.pendingEventChoice;
       if (ch.needChoice === 'pickResource') {
         ok(applyAction(g, ch.playerId, { type: 'eventPickResource', payload: { resource: 'wood' } }));
+      } else if (ch.needChoice === 'pickTwoResources') {
+        ok(
+          applyAction(g, ch.playerId, {
+            type: 'eventPickTwoResources',
+            payload: { amounts: { wood: 2 } },
+          })
+        );
       } else if (ch.needChoice === 'moveBarrenMarker') {
         ok(applyAction(g, ch.playerId, { type: 'eventMoveBarrenMarker', payload: { number: 4 } }));
       } else if (ch.needChoice === 'moveNeutral') {
         ok(applyAction(g, ch.playerId, { type: 'eventMoveNeutral', payload: { area: 'resource', number: 1 } }));
+      } else if (ch.needChoice === 'recallDie') {
+        const pid = ch.playerId;
+        let picked = null;
+        for (const area of ['resource', 'special']) {
+          const workers = (g.board[area] && g.board[area].workers) || {};
+          for (let num = 1; num <= 6; num++) {
+            if (((workers[num] || {})[pid] || 0) > 0) {
+              picked = { area, number: num };
+              break;
+            }
+          }
+          if (picked) break;
+        }
+        if (picked) {
+          ok(applyAction(g, pid, { type: 'eventRecallDie', payload: picked }));
+        }
+      } else if (ch.needChoice === 'gatherNeutrals') {
+        const toArea = ch.toArea || 'resource';
+        const toNumber = Number(ch.toNumber != null ? ch.toNumber : ch.number);
+        let picked = null;
+        for (const area of ['resource', 'special']) {
+          const workers = (g.board[area] && g.board[area].workers) || {};
+          for (let num = 1; num <= 6; num++) {
+            if (area === toArea && num === toNumber) continue;
+            if (((workers[num] || {}).__neutral__ || 0) > 0) {
+              picked = { area, number: num };
+              break;
+            }
+          }
+          if (picked) break;
+        }
+        if (picked) {
+          ok(applyAction(g, pid, { type: 'eventGatherNeutrals', payload: picked }));
+        }
+      } else if (ch.needChoice === 'teleportDie') {
+        const pid = ch.playerId;
+        if (ch.teleportStep === 'to') {
+          const fa = ch.fromArea;
+          const fn = Number(ch.fromNumber);
+          let dest = null;
+          for (const area of ['resource', 'special']) {
+            for (let num = 1; num <= 6; num++) {
+              if (area === fa && num === fn) continue;
+              const tiles = (g.board[area].tiles || []).filter(
+                (t) => t.number === num
+              );
+              if (!tiles.length) continue;
+              dest = { area, number: num };
+              break;
+            }
+            if (dest) break;
+          }
+          if (dest) {
+            ok(applyAction(g, pid, { type: 'eventTeleportTo', payload: dest }));
+          }
+        } else {
+          let from = null;
+          for (const area of ['resource', 'special']) {
+            const workers = (g.board[area] && g.board[area].workers) || {};
+            for (let num = 1; num <= 6; num++) {
+              const w = workers[num] || {};
+              for (const [targetId, count] of Object.entries(w)) {
+                if ((Number(count) || 0) > 0) {
+                  from = { area, number: num, targetId };
+                  break;
+                }
+              }
+              if (from) break;
+            }
+            if (from) break;
+          }
+          if (from) {
+            ok(applyAction(g, pid, { type: 'eventTeleportFrom', payload: from }));
+          }
+        }
       }
       continue;
     }
@@ -2086,7 +3504,7 @@ console.log('— event deck reshuffles every round —');
   drainNonProduce(g);
   assert.ok(g.round > r0, '应进入下一轮');
   assert.strictEqual((g.environmentDiscard || []).length, 0);
-  assert.strictEqual((g.environmentDeck || []).length, 7);
+  assert.strictEqual((g.environmentDeck || []).length, 12);
   console.log('✓ event deck reshuffles every round');
 }
 
@@ -2101,6 +3519,8 @@ console.log('— exchange stack same slot —');
     {
       id: 'prod1',
       buildType: 'produce',
+      resource: 'wood',
+      rich: false,
       label: 'P1',
       slot: null,
       built: false,
@@ -2110,6 +3530,8 @@ console.log('— exchange stack same slot —');
     {
       id: 'prod2',
       buildType: 'produce',
+      resource: 'stone',
+      rich: false,
       label: 'P2',
       slot: null,
       built: false,
@@ -2145,7 +3567,7 @@ console.log('— exchange stack same slot —');
     type: 'placeBuildingSlot',
     payload: { buildingId: 'prod2', slot: 'none' },
   });
-  assert.strictEqual(failMix.ok, false, '非集市不可叠放到已占格');
+  assert.strictEqual(failMix.ok, false, '不同生产建筑不可叠放到已占格');
   ok(
     applyAction(g, p.id, {
       type: 'placeBuildingSlot',
@@ -2183,6 +3605,140 @@ console.log('— exchange stack same slot —');
   assert.ok(assignBuildingSlot(p, neu), '入手集市应自动叠到已有集市格');
   assert.strictEqual(neu.slot, 'none:2');
   console.log('✓ exchange stack same slot');
+}
+
+console.log('— palace stack same slot —');
+{
+  const { assignBuildingSlot } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p = g.players[0];
+  p.expandSlots = 1;
+  p.buildings = [
+    {
+      id: 'pal1',
+      buildType: 'score2',
+      label: '宫殿1',
+      score: 2,
+      slot: null,
+      built: false,
+      workers: 0,
+      cost: {},
+    },
+    {
+      id: 'pal2',
+      buildType: 'score2',
+      label: '宫殿2',
+      score: 2,
+      slot: null,
+      built: false,
+      workers: 0,
+      cost: {},
+    },
+  ];
+  ok(
+    applyAction(g, p.id, {
+      type: 'placeBuildingSlot',
+      payload: { buildingId: 'pal1', slot: 'none' },
+    })
+  );
+  ok(
+    applyAction(g, p.id, {
+      type: 'placeBuildingSlot',
+      payload: { buildingId: 'pal2', slot: 'none' },
+    }),
+    '第二座宫殿应可叠同一格'
+  );
+  assert.strictEqual(
+    p.buildings.filter((b) => String(b.slot) === 'none').length,
+    2
+  );
+  const neu = {
+    id: 'pal3',
+    buildType: 'score2',
+    label: '宫殿3',
+    score: 2,
+    slot: null,
+    built: false,
+    workers: 0,
+    cost: {},
+  };
+  assert.ok(assignBuildingSlot(p, neu), '入手宫殿应自动叠到已有宫殿格');
+  assert.strictEqual(neu.slot, 'none');
+  console.log('✓ palace stack same slot');
+}
+
+console.log('— resource face-down slots —');
+{
+  function isResourceFaceDownOnSlot(number, cardIndexOnSlot) {
+    if (number >= 1 && number <= 3) return cardIndexOnSlot === 3;
+    if (number >= 4 && number <= 6) return cardIndexOnSlot === 2;
+    return false;
+  }
+  function dealtResourceFaceDownPlan(count) {
+    const slotCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+    const plan = [];
+    for (let i = 0; i < count; i++) {
+      const number = (i % 6) + 1;
+      slotCounts[number] += 1;
+      const cardIndexOnSlot = slotCounts[number];
+      plan.push({
+        number,
+        cardIndexOnSlot,
+        faceDown: isResourceFaceDownOnSlot(number, cardIndexOnSlot),
+      });
+    }
+    return plan;
+  }
+  assert.ok(
+    dealtResourceFaceDownPlan(13).some(
+      (x) => x.number === 1 && x.cardIndexOnSlot === 3 && x.faceDown
+    ),
+    '1 号格第 3 张应暗置'
+  );
+  assert.ok(
+    dealtResourceFaceDownPlan(10).some(
+      (x) => x.number === 4 && x.cardIndexOnSlot === 2 && x.faceDown
+    ),
+    '4 号格第 2 张应暗置'
+  );
+  assert.ok(
+    !dealtResourceFaceDownPlan(6).some((x) => x.faceDown),
+    '首轮 6 张资源均明示'
+  );
+
+  const g = createGameState(room(2));
+  finishInit(g);
+  const hidden = {
+    id: 'res_hidden',
+    kind: 'resource',
+    label: '暗木',
+    resource: 'wood',
+    large: 4,
+    small: 1,
+    number: 1,
+    faceDown: true,
+  };
+  g.board.resource.tiles = [hidden];
+  g.board.resource.workers[1] = { p0: 2 };
+  for (const p of g.players) {
+    p.dispatched = p.villagers;
+    p.roundGained = 0;
+    p.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+  }
+  startSettle(g);
+  assert.ok(hidden.faceDown === false, '结算时应翻开暗置资源卡');
+  const pub = publicGameState(g, 'p1');
+  const shown = (pub.board.resource.tiles || []).find((t) => t.id === 'res_hidden');
+  assert.ok(!shown || !shown.faceDown, '公开状态结算后资源卡应明示');
+  const row = (g.lastSettle && g.lastSettle.slots || []).find(
+    (x) => x.area === 'resource' && x.number === 1
+  );
+  assert.ok(row, '应有资源格 1 结算记录');
+  const reportTile = (row.tiles || []).find((t) => t.id === 'res_hidden');
+  assert.ok(reportTile && !reportTile.faceDown, '结算报告资源卡应翻开');
+  assert.strictEqual(g.players[0].resources.wood, 4, '暗置资源应按大份结算');
+  console.log('✓ resource face-down slots');
 }
 
 console.log('全部通过');

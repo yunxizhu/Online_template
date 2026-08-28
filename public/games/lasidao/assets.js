@@ -50,6 +50,11 @@ window.LasidaoAssets = (function () {
     luckyDraw: 'shijianka_manghe.png',
     fishermanProfit: 'shijianka_yuwengdeli.png',
     firstCome: 'shijianka_xiandaoxiande.png',
+    welfareMinimum: 'shijianka_dibaohu.png',
+    recall: 'shijianka_zhaohui.png',
+    teleport: 'shijianka_chuansong.png',
+    keepOverflow: 'shijianka_chibuliaodouzhezou.png',
+    weiQiRescueZhao: 'shijianka_weiweijiuzhao.png',
   };
 
   /** 功能卡面（funcType → 文件名） */
@@ -60,6 +65,9 @@ window.LasidaoAssets = (function () {
     redraw: 'gongnengka_chongchou.png',
     banditRaid: 'gongnengka_qiangdaolaixi.png',
     expand: 'gongnengka_kuorong.png',
+    freeExpand: 'gongnengka_mianfeikuojian.png',
+    welfareHouse: 'gongnengka_fulifang.png',
+    caravan: 'gongnengka_shangduilailin.png',
     robbery: 'gongnengka_qiangjie.png',
     enhance: 'gongnengka_qianghua.png',
     recruit: 'gongnengka_zhengzhao.png',
@@ -83,6 +91,77 @@ window.LasidaoAssets = (function () {
   function picUrl(file) {
     if (!file) return '';
     return PIC + '/' + encodeURIComponent(file);
+  }
+
+  /** 内存预热：避免每次 render 重建 DOM 后重复走网络/解码 */
+  const _imgWarm = new Map();
+
+  function warmImage(url) {
+    if (!url) return Promise.resolve(false);
+    const hit = _imgWarm.get(url);
+    if (hit && hit.complete && hit.naturalWidth > 0) return Promise.resolve(true);
+    if (hit && hit._p) return hit._p;
+    const img = hit || new Image();
+    _imgWarm.set(url, img);
+    img._p = new Promise((resolve) => {
+      const finish = (ok) => {
+        img._p = null;
+        resolve(ok);
+      };
+      img.onload = () => finish(true);
+      img.onerror = () => finish(false);
+      if (img.src !== url) img.src = url;
+      else if (img.complete) finish(img.naturalWidth > 0);
+    });
+    return img._p;
+  }
+
+  function collectAllPictureFiles() {
+    const files = new Set();
+    const maps = [
+      RESOURCE_IMAGE,
+      RESOURCE_HAND_IMAGE,
+      CARD_BACK_IMAGE,
+      ENVIRONMENT_IMAGE,
+      FUNCTION_IMAGE,
+      BUILDING_IMAGE,
+    ];
+    for (const m of maps) {
+      for (const f of Object.values(m)) {
+        if (f) files.add(f);
+      }
+    }
+    return files;
+  }
+
+  let _preloadPromise = null;
+  let _preloadDone = false;
+
+  /** 开局预热全部卡面（浏览器 HTTP 缓存 + 内存 decode 缓存） */
+  function preloadPictures() {
+    if (_preloadDone) return Promise.resolve(true);
+    if (_preloadPromise) return _preloadPromise;
+    const urls = [...collectAllPictureFiles()].map((f) => picUrl(f));
+    _preloadPromise = Promise.all(urls.map((u) => warmImage(u)))
+      .then(() => {
+        _preloadDone = true;
+        return true;
+      })
+      .catch(() => {
+        _preloadPromise = null;
+        return false;
+      });
+    return _preloadPromise;
+  }
+
+  function isPreloadDone() {
+    return _preloadDone;
+  }
+
+  function applyBgImage(artEl, url) {
+    if (!artEl || !url) return;
+    warmImage(url);
+    artEl.style.backgroundImage = 'url("' + url + '")';
   }
 
   function resourceImageFile(tile) {
@@ -147,7 +226,7 @@ window.LasidaoAssets = (function () {
       return false;
     }
     artEl.classList.add('has-image');
-    artEl.style.backgroundImage = 'url("' + url + '")';
+    applyBgImage(artEl, url);
     return true;
   }
 
@@ -160,7 +239,7 @@ window.LasidaoAssets = (function () {
       return false;
     }
     artEl.classList.add('has-image');
-    artEl.style.backgroundImage = 'url("' + url + '")';
+    applyBgImage(artEl, url);
     return true;
   }
 
@@ -173,7 +252,7 @@ window.LasidaoAssets = (function () {
       return false;
     }
     artEl.classList.add('has-image');
-    artEl.style.backgroundImage = 'url("' + url + '")';
+    applyBgImage(artEl, url);
     return true;
   }
 
@@ -186,7 +265,7 @@ window.LasidaoAssets = (function () {
       return false;
     }
     artEl.classList.add('has-image');
-    artEl.style.backgroundImage = 'url("' + url + '")';
+    applyBgImage(artEl, url);
     return true;
   }
 
@@ -199,7 +278,7 @@ window.LasidaoAssets = (function () {
       return false;
     }
     artEl.classList.add('has-image');
-    artEl.style.backgroundImage = 'url("' + url + '")';
+    applyBgImage(artEl, url);
     artEl.style.backgroundSize = 'cover';
     artEl.style.backgroundPosition = 'center';
     artEl.style.backgroundRepeat = 'no-repeat';
@@ -378,6 +457,9 @@ window.LasidaoAssets = (function () {
     environmentImageUrl,
     applyCardBackArt,
     ruleCardImageUrl,
+    warmImage,
+    preloadPictures,
+    isPreloadDone,
     playBgm,
     stopBgm,
   };

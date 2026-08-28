@@ -198,8 +198,98 @@ window.LasidaoFx = (function () {
   }
 
   const DEAL_FLIP_MS = 200;
-  /** ???????????????????? */
   const DEAL_STAGGER_MS = 300;
+
+  function tileSettleCardKind(tile, areaKey) {
+    if (areaKey === 'resource' || tile.kind === 'resource') return 'resource';
+    if (tile.kind === 'building' || tile.buildType) return 'building';
+    return 'function';
+  }
+
+  /** 结算收获：资源卡明置，功能/建筑卡显示卡背 */
+  function makeSettleFlyCard(tile, areaKey, opts) {
+    const faceUp = Boolean(opts && opts.faceUp);
+    const srcEl = (opts && opts.srcEl) || null;
+    const cardKind = tileSettleCardKind(tile, areaKey);
+    const kind =
+      cardKind === 'building' ? 'bld' : cardKind === 'function' ? 'fn' : 'res';
+    const backKind =
+      cardKind === 'building'
+        ? 'building'
+        : cardKind === 'function'
+          ? 'function'
+          : 'resource';
+    const Assets = window.LasidaoAssets;
+    const wrap = document.createElement('div');
+    wrap.className = 'las-fx-deal is-' + kind + ' is-settle-fly';
+    const face = document.createElement('div');
+
+    if (faceUp) {
+      face.className = 'las-fx-deal-face las-fx-deal-front';
+      let hasArt = false;
+      if (srcEl) {
+        const art = srcEl.querySelector('.las-tile-art, .las-hand-card-art');
+        if (art && art.style && art.style.backgroundImage) {
+          face.classList.add('has-image');
+          face.style.backgroundImage = art.style.backgroundImage;
+          face.style.backgroundSize = 'cover';
+          face.style.backgroundPosition = 'center';
+          hasArt = true;
+        }
+      }
+      if (
+        !hasArt &&
+        Assets &&
+        cardKind === 'resource' &&
+        typeof Assets.applyResourceArt === 'function'
+      ) {
+        hasArt = Boolean(Assets.applyResourceArt(face, tile));
+      }
+      if (hasArt) face.classList.add('has-image');
+      else {
+        face.textContent =
+          tile.label || resLabel(tile.resource) || areaLabel(areaKey);
+      }
+    } else {
+      face.className = 'las-fx-deal-face las-fx-deal-back';
+      let hasBack = false;
+      if (Assets && typeof Assets.applyCardBackArt === 'function') {
+        hasBack = Boolean(Assets.applyCardBackArt(face, backKind));
+      } else if (Assets && Assets.cardBackImageUrl) {
+        const backUrl = Assets.cardBackImageUrl(backKind);
+        if (backUrl) {
+          face.classList.add('has-image');
+          face.style.backgroundImage = 'url("' + backUrl + '")';
+          hasBack = true;
+        }
+      }
+      if (!hasBack) face.textContent = t('lasidao.faceDown');
+    }
+
+    wrap.appendChild(face);
+    return wrap;
+  }
+
+  async function flySettleCard(layer, tile, areaKey, fromEl, toEl, opts) {
+    if (!layer || !tile || !toEl) return;
+    const srcEl = tileEl(tile.id) || fromEl;
+    const from = rectCenter(srcEl) || rectCenter(fromEl);
+    if (!from) return;
+    const fly = makeSettleFlyCard(tile, areaKey, {
+      faceUp: opts && opts.faceUp,
+      srcEl: srcEl && srcEl.classList && srcEl.classList.contains('las-tile')
+        ? srcEl
+        : null,
+    });
+    fly.style.left = from.x + 'px';
+    fly.style.top = from.y + 'px';
+    layer.appendChild(fly);
+    if (srcEl && srcEl.classList && srcEl.classList.contains('las-tile')) {
+      srcEl.style.opacity = '0.15';
+    }
+    await flyTo(fly, toEl, opts && opts.ms != null ? opts.ms : 1000);
+    if (fly.parentNode) fly.remove();
+  }
 
   function makeDealCard(item) {
     const tile = item.tile || item;
@@ -508,8 +598,12 @@ window.LasidaoFx = (function () {
 
     // 歉收标记：抵消后额外展示一次「颗粒无收」
     if (slot.barren || slot.barrenMarker) {
+      const barrenKey =
+        slot.area === 'special'
+          ? 'lasidao.fx.barrenSpecial'
+          : 'lasidao.fx.barrenHarvest';
       setBanner(
-        t('lasidao.fx.barrenHarvest', {
+        t(barrenKey, {
           area: areaLab,
           number: slot.number,
         })
@@ -566,9 +660,25 @@ window.LasidaoFx = (function () {
 
     if (slot.area === 'resource' && (slot.gains || []).length) {
       const gains = slot.gains;
+      for (const tile of slot.tiles || []) {
+        const el = tileEl(tile.id);
+        if (el && el.classList.contains('is-facedown') && !tile.faceDown) {
+          el.classList.remove('is-facedown');
+          const art = el.querySelector('.las-tile-art');
+          if (art && window.LasidaoAssets) {
+            const Assets = window.LasidaoAssets;
+            if (typeof Assets.applyResourceArt === 'function') {
+              Assets.applyResourceArt(art, tile);
+            }
+          }
+          const nameEl = el.querySelector('.las-tile-name');
+          if (nameEl) nameEl.textContent = tile.label || resLabel(tile.resource) || '';
+        }
+      }
       for (let gi = 0; gi < gains.length; gi++) {
         const g = gains[gi];
         const target = playerEl(g.pid);
+        const shareKey = g.rank === 2 ? 'small' : 'large';
         const resStr = (g.detail || [])
           .map((d) => (resLabel(d.resource) || d.resource) + '*' + d.amount)
           .join('、');
@@ -578,17 +688,20 @@ window.LasidaoFx = (function () {
             res: resStr,
           })
         );
-        for (const d of g.detail || []) {
-          const fly = document.createElement('div');
-          fly.className = 'las-fx-loot is-res';
-          fly.textContent =
-            (resLabel(d.resource) || d.resource) + '+' + d.amount;
-          const from = rectCenter(boardSlot);
-          if (from) {
-            fly.style.left = from.x + 'px';
-            fly.style.top = from.y + 'px';
-            layer.appendChild(fly);
-            await flyTo(fly, target, 1000);
+        const tilesForGain = (slot.tiles || []).filter(
+          (tile) => Number(tile[shareKey]) > 0 && tile.resource
+        );
+        for (let ti = 0; ti < tilesForGain.length; ti++) {
+          await flySettleCard(
+            layer,
+            tilesForGain[ti],
+            'resource',
+            boardSlot,
+            target,
+            { faceUp: true }
+          );
+          if (ti < tilesForGain.length - 1) {
+            await sleep(280);
           }
         }
         if (gi < gains.length - 1) {
@@ -610,27 +723,9 @@ window.LasidaoFx = (function () {
       const tiles = slot.tiles || [];
       for (let ti = 0; ti < tiles.length; ti++) {
         const tile = tiles[ti];
-        const isBld =
-          tile.kind === 'building' ||
-          tile.buildType ||
-          slot.area === 'building';
-        const fly = document.createElement('div');
-        fly.className = 'las-fx-loot ' + (isBld ? 'is-bld' : 'is-fn');
-        fly.textContent =
-          tile.faceDown && !tile.label
-            ? t('lasidao.faceDown')
-            : tile.label || '?';
-        const src = tileEl(tile.id) || boardSlot;
-        const from = rectCenter(src);
-        if (from) {
-          fly.style.left = from.x + 'px';
-          fly.style.top = from.y + 'px';
-          layer.appendChild(fly);
-          if (src && src.classList && src.classList.contains('las-tile')) {
-            src.style.opacity = '0.15';
-          }
-          await flyTo(fly, target, 1000);
-        }
+        await flySettleCard(layer, tile, 'special', boardSlot, target, {
+          faceUp: false,
+        });
         if (ti < tiles.length - 1) {
           await sleep(500);
         }

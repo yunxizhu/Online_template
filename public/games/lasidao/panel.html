@@ -28,6 +28,8 @@
         <div class="las-rules-section" data-i18n-html="lasidao.rules.backgroundHtml"></div>
         <h4 data-i18n="lasidao.rules.flowTitle">游戏流程</h4>
         <div class="las-rules-section" data-i18n-html="lasidao.rules.flowHtml"></div>
+        <h4 data-i18n="lasidao.rules.permanentTitle">常驻功能</h4>
+        <div class="las-rules-section" data-i18n-html="lasidao.rules.permanentHtml"></div>
         <h4 data-i18n="lasidao.rules.funcTitle">功能卡效果</h4>
         <div class="las-rules-section" data-i18n-html="lasidao.rules.funcHtml"></div>
         <h4 data-i18n="lasidao.rules.buildTitle">建筑卡效果</h4>
@@ -233,32 +235,30 @@
 
         <div id="las-act-wrap" class="las-act-wrap" hidden>
           <h3 class="game-sub" data-i18n="lasidao.actRailTitle">?????</h3>
+          <div id="las-act-confirm-bar" class="las-act-confirm-bar" aria-hidden="true">
+            <button id="btn-las-build-play" type="button" class="las-act-confirm-primary" hidden data-i18n="lasidao.playCard">打出</button>
+            <button id="btn-las-pass" type="button" class="las-act-confirm-secondary secondary" hidden data-i18n="lasidao.passBuild">??????</button>
+          </div>
           <p id="las-act-hint" class="muted las-hint"></p>
           <div id="las-act-hand" class="las-act-hand"></div>
 
-          <div id="las-func-panel" class="las-func-panel" hidden>
-            <h3 class="game-sub" data-i18n="lasidao.useFunc">????</h3>
-            <div id="las-func-form"></div>
-          </div>
-
-          <div id="las-permanent-actions" class="row las-actions las-side-actions" hidden>
+          <div id="las-permanent-actions" class="las-permanent-grid" hidden>
             <button id="btn-las-build-house" type="button" data-i18n="lasidao.buildHousePermanent">建造房子</button>
             <button id="btn-las-exchange" type="button" data-i18n="lasidao.exchangeBtn">兑换</button>
             <button id="btn-las-breed" type="button" data-i18n="lasidao.breedPermanent">繁殖村民</button>
+            <button id="btn-las-buy-func" type="button" data-i18n="lasidao.buyFuncPermanent">购买功能卡</button>
             <button id="btn-las-expand-perm" type="button" data-i18n="lasidao.expandPermanent">扩建</button>
-            <button id="btn-las-reset-build" type="button" class="secondary" data-i18n="lasidao.resetBuildTurn">重置回合</button>
+            <button id="btn-las-reset-build" type="button" class="secondary las-perm-reset" data-i18n="lasidao.resetBuildTurn">重置回合</button>
           </div>
-          <div id="las-phase-actions" class="row las-actions las-side-actions las-pass-row" hidden>
-            <button id="btn-las-pass" type="button" class="secondary" data-i18n="lasidao.passBuild">??????</button>
+
+          <div id="las-func-panel" class="las-func-panel" hidden>
+            <div id="las-func-form"></div>
           </div>
         </div>
       </aside>
 
       <div id="las-build-hand-wrap" class="las-build-hand-wrap" hidden>
         <div class="las-build-hand-label" data-i18n="lasidao.buildHandTitle">你的功能牌</div>
-        <div id="las-build-play-bar" class="las-build-play-bar" hidden>
-          <button id="btn-las-build-play" type="button" data-i18n="lasidao.playCard">打出</button>
-        </div>
         <div id="las-build-hand" class="las-build-hand"></div>
         <div id="las-build-hand-bld-label" class="las-build-hand-label las-build-hand-sub" data-i18n="lasidao.unbuiltBuildings" hidden>未建造建筑</div>
         <div id="las-build-hand-bld" class="las-build-hand"></div>
