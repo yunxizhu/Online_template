@@ -477,7 +477,8 @@ body.phase-room .lobby-people {
 .people-list li {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  align-items: stretch;
+  gap: 0.2rem;
   padding: 0.55rem 0;
   border-bottom: 1px solid var(--border);
 }
@@ -486,17 +487,30 @@ body.phase-room .lobby-people {
   border-bottom: none;
 }
 
+.people-list .people-row-main {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
 .people-list .people-name {
   font-size: 0.92rem;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
+.people-list .people-row-meta,
 .people-list .people-status {
   font-size: 0.75rem;
+  line-height: 1.35;
   color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .panel {
@@ -522,6 +536,26 @@ body.phase-room .lobby-people {
 
 .lobby-toolbar .lobby-toolbar-actions {
   margin-top: 0;
+}
+
+.lobby-mqtt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  margin: 0.35rem 0 0;
+}
+
+.lobby-mqtt-row #peers-label {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.lobby-mqtt-row #btn-mqtt-reconnect {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .lobby-refresh-hint {
@@ -667,6 +701,31 @@ button.secondary:hover {
   border-bottom: 1px solid var(--border);
 }
 
+.room-list-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.22rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.room-list-head {
+  line-height: 1.35;
+}
+
+.room-list-players {
+  font-size: 0.88rem;
+  color: var(--muted);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.room-list-where {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
 .room-list li:last-child,
 .member-list li:last-child {
   border-bottom: none;
@@ -674,6 +733,20 @@ button.secondary:hover {
 
 .room-list li.is-full button:disabled {
   background: #3a4a55;
+}
+
+.room-list-code {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.08rem 0.42rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  color: #ffe2a8;
+  background: rgba(20, 14, 10, 0.55);
+  border: 1px dashed rgba(240, 199, 138, 0.35);
+  border-radius: 4px;
+  vertical-align: middle;
 }
 
 .member-list li.is-left {
@@ -801,6 +874,23 @@ button.secondary:hover {
   font-size: 0.92rem;
   color: #e8d2b0;
   font-weight: 650;
+}
+
+.room-observer-section {
+  margin-top: 0.75rem;
+}
+
+.room-observers-title {
+  color: #9eb6c2;
+}
+
+.room-panel .observer-list {
+  border-color: rgba(90, 120, 140, 0.45);
+  background: rgba(12, 18, 24, 0.35);
+}
+
+.room-panel .observer-list li {
+  border-bottom-color: rgba(90, 120, 140, 0.35);
 }
 
 .room-panel .member-list {
@@ -940,7 +1030,8 @@ body.phase-room .room-panel button:not(.secondary):hover {
 .people-list li.is-offline .people-name {
   color: var(--muted);
 }
-.people-list li.is-offline .people-status {
+.people-list li.is-offline .people-status,
+.people-list li.is-offline .people-row-meta {
   color: #9e9e9e;
 }
 
@@ -1404,6 +1495,22 @@ body.phase-room .chat-tabs button.is-on {
   padding: 1.25rem 1.5rem;
 }
 
+.room-busy-spinner {
+  width: 2.5rem;
+  height: 2.5rem;
+  margin: 0 auto 0.85rem;
+  border: 3px solid rgba(255, 255, 255, 0.14);
+  border-top-color: var(--accent, #6ec4b8);
+  border-radius: 50%;
+  animation: room-busy-spin 0.85s linear infinite;
+}
+
+@keyframes room-busy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .room-busy-message {
   margin: 0;
   font-size: 1.05rem;
@@ -1510,6 +1617,28 @@ body.phase-room .chat-tabs button.is-on {
   margin-top: 1.1rem;
 }
 
+.passive-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.65rem 0 0;
+  font-size: 0.88rem;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* display:flex 会盖掉原生 [hidden]，加入端必须彻底藏起被动开关 */
+#passive-toggle-wrap[hidden],
+body.is-guest-client #passive-toggle-wrap {
+  display: none !important;
+}
+
+.passive-toggle input {
+  width: auto;
+  margin: 0;
+}
+
 .ctx-menu {
   position: fixed;
   z-index: 2500;
@@ -1543,4 +1672,67 @@ body.phase-room .chat-tabs button.is-on {
 .ctx-menu .ctx-hint {
   margin: 0.25rem 0.4rem 0.35rem;
   font-size: 0.8rem;
+}
+
+body.is-passive-locked .app,
+body.is-passive-locked .chat-dock,
+body.is-passive-locked .ctx-menu,
+body.is-passive-locked .modal {
+  pointer-events: none !important;
+  filter: grayscale(0.55) brightness(0.55);
+  transition: filter 0.2s ease;
+}
+
+body.is-passive-locked .game-menu,
+body.is-passive-locked .game-menu-panel {
+  pointer-events: none !important;
+  filter: grayscale(0.55) brightness(0.55);
+}
+
+.passive-lock-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgba(6, 10, 14, 0.55);
+  pointer-events: auto;
+}
+
+.passive-lock-overlay[hidden] {
+  display: none !important;
+}
+
+.passive-lock-panel {
+  width: min(26rem, 100%);
+  text-align: center;
+  padding: 1.75rem 1.5rem 1.5rem;
+  border: 1px solid var(--border);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+
+.passive-lock-title {
+  margin: 0 0 0.65rem;
+  font-size: 1.55rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.passive-lock-desc {
+  margin: 0 0 1.35rem;
+  line-height: 1.55;
+  font-size: 0.95rem;
+}
+
+.passive-lock-panel #btn-exit-passive {
+  min-width: 10rem;
+  font-size: 1rem;
+  padding: 0.7rem 1.2rem;
+}
+
+.passive-lock-panel #btn-exit-passive:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }

@@ -17,9 +17,9 @@ const ROOM_HB_MS = 5000;
 const ROOM_HB_PLAYING_MS = 5000;
 /** 隧道 URL 刚出现时可额外等待再广播；给 Cloudflare DNS 一点传播时间 */
 const TUNNEL_READY_DELAY_MS = Number(process.env.TUNNEL_READY_DELAY_MS) || 2500;
-// 登录 10s / 等待房 5s / 对局中 20s；超时约 2+ 个最长周期，避免列表闪跳
+// 登录 10s / 等待房 5s；房间超过 15s 无心跳即视为失效
 const LOGIN_OFFLINE_MS = 25000;
-const ROOM_OFFLINE_MS = 50000;
+const ROOM_OFFLINE_MS = 15000;
 /** 接收端清除超时残留的时长：实例被强杀后 retained 心跳会永久残留，
  * 超过该阈值直接丢弃，避免「离线幽灵」永远挂在别人大厅里 */
 const STALE_CLEAR_MS =
@@ -350,6 +350,7 @@ class MqttBulletin {
     for (const [id, p] of this.logins) {
       if (!p || !p.updateTime || now - p.updateTime > STALE_CLEAR_MS) {
         this.logins.delete(id);
+        this.rooms.delete(id);
         changed = true;
       }
     }
@@ -596,6 +597,22 @@ class MqttBulletin {
     }, 400);
   }
 
+  #clearPeerRoomBeacon(instanceId) {
+    const id = String(instanceId || '').trim();
+    if (!id || id === this.instanceId) return;
+    this.#pub(this.#roomTopic(id), '');
+  }
+
+  /** 远端实例登录遗言/清空：本地立刻剔除其房间，并代清 broker retained */
+  #onPeerLoginCleared(instanceId) {
+    const id = String(instanceId || '').trim();
+    if (!id || id === this.instanceId) return;
+    this.logins.delete(id);
+    this.rooms.delete(id);
+    this.#clearPeerRoomBeacon(id);
+    this.onChange();
+  }
+
   #pub(topic, obj) {
     const c = this.client;
     if (!c || !c.connected) return false;
@@ -818,8 +835,7 @@ class MqttBulletin {
       const id = topic.slice(loginPrefix.length);
       if (!id || id === this.instanceId) return;
       if (!raw.trim()) {
-        this.logins.delete(id);
-        this.onChange();
+        this.#onPeerLoginCleared(id);
         return;
       }
       try {

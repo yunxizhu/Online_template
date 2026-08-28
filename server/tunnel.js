@@ -26,6 +26,18 @@ const VENDORED_CLOUDFLARED_FILES = [
   'cloudflared-darwin-amd64',
   'cloudflared-darwin-arm64',
 ];
+
+/** 打包时分平台拷贝（git 仓库仍保留全平台） */
+const VENDORED_CLOUDFLARED_BY_PLATFORM = {
+  win32: ['cloudflared.exe'],
+  darwin: ['cloudflared-darwin-amd64', 'cloudflared-darwin-arm64'],
+};
+
+function vendoredCloudflaredFilesFor(platform) {
+  if (platform === 'win32') return VENDORED_CLOUDFLARED_BY_PLATFORM.win32;
+  if (platform === 'darwin') return VENDORED_CLOUDFLARED_BY_PLATFORM.darwin;
+  return VENDORED_CLOUDFLARED_FILES;
+}
 const URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i;
 
 /** 公网地址探活间隔（进程仍在但 trycloudflare 域名已死时靠此换新） */
@@ -174,8 +186,11 @@ function binUsable(p) {
 
 function copyVendoredCloudflaredTo(destToolsDir, opts = {}) {
   fs.mkdirSync(destToolsDir, { recursive: true });
+  const names = opts.platform
+    ? vendoredCloudflaredFilesFor(opts.platform)
+    : VENDORED_CLOUDFLARED_FILES;
   const copied = [];
-  for (const name of VENDORED_CLOUDFLARED_FILES) {
+  for (const name of names) {
     const src = path.join(TOOLS_DIR, name);
     if (!fs.existsSync(src)) continue;
     const dst = path.join(destToolsDir, name);
@@ -632,6 +647,8 @@ module.exports = {
   downloadFile,
   TOOLS_DIR,
   VENDORED_CLOUDFLARED_FILES,
+  VENDORED_CLOUDFLARED_BY_PLATFORM,
+  vendoredCloudflaredFilesFor,
   copyVendoredCloudflaredTo,
   vendoredCloudflaredPath,
 };

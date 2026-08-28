@@ -631,6 +631,18 @@ function mergeResourceGainDetail(target, absorbed) {
   }
 }
 
+function formatSettleResourceGainLog(num, gain) {
+  const rank = Number(gain.rank) || 1;
+  const resParts = (gain.detail || []).map(
+    (d) =>
+      `${d.amount}个${RESOURCE_LABELS[d.resource] || d.resource || '?'}`
+  );
+  const resStr = resParts.length
+    ? resParts.join('、')
+    : `${gain.amount || 0}个资源`;
+  return `资源格 ${num}，${gain.name} 第${rank}名，获得${resStr}`;
+}
+
 function pushLog(game, text) {
   game.log.push({ at: Date.now(), text });
   if (game.log.length > 60) game.log.shift();
@@ -717,22 +729,22 @@ function checkWin(game) {
   if (cur && !cur.left && playerScore(cur) >= WIN_SCORE) {
     winner = cur;
   } else {
-    for (const p of alivePlayers(game)) {
+  for (const p of alivePlayers(game)) {
       if (playerScore(p) >= WIN_SCORE) {
         winner = p;
         break;
-      }
+  }
     }
   }
   if (!winner) return false;
-  game.over = true;
-  game.phase = 'over';
+    game.over = true;
+    game.phase = 'over';
   game.winners = [winner.id];
   pushLog(
     game,
     `有玩家达到 ${WIN_SCORE} 分，游戏结束！胜者：${winner.name}`
   );
-  return true;
+    return true;
 }
 
 // ─── 板块摆放 ───────────────────────────────────────────
@@ -1846,8 +1858,7 @@ function startSettle(game) {
     if (gains.length) {
       pushLog(
         game,
-        `资源格 ${num}（${tiles.map((t) => t.label).join('、')}）：` +
-          gains.map((g) => `${g.name}+${g.amount}`).join('，')
+        gains.map((g) => formatSettleResourceGainLog(num, g)).join('；')
       );
     } else if (Object.keys(before).length && !barren) {
       pushLog(game, `资源格 ${num}：全部抵消，无人采集`);
@@ -2089,8 +2100,8 @@ function actEventPickResource(game, player, payload) {
   player.resources[resource] = (player.resources[resource] || 0) + 1;
   player.roundGained = (player.roundGained || 0) + 1;
   syncResourceHandPending(player, game);
-  pushLog(
-    game,
+        pushLog(
+          game,
     `${player.name}「${pending.label}」：获得 1 ${RESOURCE_LABELS[resource]}`
   );
   finishPendingEventChoice(game);
@@ -2301,9 +2312,9 @@ function actEventRecallDie(game, player, payload) {
     number,
     face: recalled.face,
     enhanced: recalled.wasEnhanced,
-  });
-  pushLog(
-    game,
+        });
+        pushLog(
+          game,
     `${player.name}「${pending.label}」：从${AREA_LABELS[area]}区 ${number} 号格召回 1 枚骰子` +
       (recalled.wasEnhanced ? '（强化）' : '')
   );
@@ -2405,8 +2416,8 @@ function actEventTeleportTo(game, player, payload) {
     targetId: fromTargetId,
     enhanced: removed.wasEnhanced,
   });
-  pushLog(
-    game,
+    pushLog(
+      game,
     `${player.name}「${pending.label}」：将 ${teleportWorkerLabel(game, fromTargetId)} 的骰子从${AREA_LABELS[fromArea]}区 ${fromNumber} 号格传送到${AREA_LABELS[toArea]}区 ${toNumber} 号格` +
       (removed.wasEnhanced ? '（强化）' : '')
   );
@@ -2448,8 +2459,8 @@ function actEventMoveNeutral(game, player, payload) {
     game.board[toArea].workers[toNumber] ||
     (game.board[toArea].workers[toNumber] = {});
   toW[NEUTRAL_WORKER_ID] = (toW[NEUTRAL_WORKER_ID] || 0) + 1;
-  pushLog(
-    game,
+    pushLog(
+      game,
     `${player.name}「${pending.label}」：中立骰 ${fromArea}${fromNumber} → ${toArea}${toNumber}`
   );
   finishPendingEventChoice(game);
@@ -2556,7 +2567,7 @@ function actMercenaryPlace(game, player, payload) {
         game,
         `${player.name} 雇佣军放置 ${face}：获得大份 +${got.total}`
       );
-    } else {
+  } else {
       pushLog(
         game,
         `${player.name} 雇佣军放置 ${face}：${AREA_LABELS[area]}区`
@@ -2701,10 +2712,10 @@ function ensureSettleActPlayer(game) {
         game.currentPlayerId = p.id;
         return;
       }
-      game.settleActPassed[p.id] = true;
-      const next = nextAlive(game, id);
-      id = next ? next.id : id;
-      continue;
+        game.settleActPassed[p.id] = true;
+        const next = nextAlive(game, id);
+        id = next ? next.id : id;
+        continue;
     }
     const next = nextAlive(game, id);
     if (!next) break;
@@ -2880,8 +2891,8 @@ function advanceBuildTurn(game) {
     const p = playerById(game, pid);
     if (p && !p.left) {
       game.currentPlayerId = pid;
-      return;
-    }
+        return;
+      }
   }
 
   // 后备：按座位顺序找未 pass 的存活玩家
@@ -3186,10 +3197,10 @@ function actPlaceDice(game, player, payload) {
       return { ok: false, error: `最多派遣 ${wild} 枚` };
     }
   } else {
-    const matching = dice.filter((d) => d === face);
-    if (!matching.length) {
-      return { ok: false, error: '没有该点数的骰子' };
-    }
+  const matching = dice.filter((d) => d === face);
+  if (!matching.length) {
+    return { ok: false, error: '没有该点数的骰子' };
+  }
     count = matching.length;
   }
 
@@ -3483,12 +3494,12 @@ function actDiscardUnbuilt(game, player, payload) {
           (buildingsOnSlot(player, slotKeep).length === 0 ||
             canStackBuildingOnSlot(player, slotKeep, neu))
         ) {
-          neu.slot = slotKeep;
+    neu.slot = slotKeep;
         } else {
           neu.slot = slotKeep != null ? slotKeep : nextFreeBuildSlot(player) || 'none';
         }
       }
-      player.buildings.push(neu);
+    player.buildings.push(neu);
       let msg = `${player.name} 弃置${wasBuilt ? '已建' : '未建'}「${b.label}」（入弃牌堆），新建筑「${neu.label}」放到原格子`;
       if (wasBuilt && b.buildType === 'score2' && b.score) {
         msg += `，宫殿被弃置，失去 +${b.score} 分`;
@@ -3542,8 +3553,8 @@ function actDiscardPendingBuild(game, player) {
   }
   popPendingBuildCard(player);
   pushToDiscard(game, 'building', neu);
-  pushLog(
-    game,
+    pushLog(
+      game,
     `${player.name} 弃置刚获得的建筑「${neu.label || '?'}」（入弃牌堆），保留现有建筑`
   );
   if (
@@ -3944,7 +3955,7 @@ function useExile(game, player, payload) {
   const normal = physical - boosted;
   // 优先驱逐普通骰；无普通则驱逐强化骰
   if (normal > 0) {
-    slotW[targetId] -= 1;
+  slotW[targetId] -= 1;
   } else {
     slotW[targetId] -= 1;
     if (game.board[area].boosts && game.board[area].boosts[number]) {
@@ -4121,8 +4132,8 @@ function useRobbery(game, player, payload) {
     }
   }
   pushLog(game, `${player.name} 抢劫：${parts.join('；')}`);
-  return { ok: true };
-}
+    return { ok: true };
+  }
 
 function actBuildHousePermanent(game, player) {
   const block = rejectIfBuildPhaseCardDiscardPending(player);
@@ -4238,7 +4249,7 @@ function useExpand(game, player, payload) {
     if (player.funcCards.length > maxFuncHandFor(player)) {
       syncFuncHandPending(player);
     }
-  } else {
+    } else {
     player.expandResSlots = (Number(player.expandResSlots) || 0) + 1;
     pushLog(
       game,
@@ -4314,11 +4325,11 @@ function useCaravan(game, player, _payload) {
 function giveSpecialDrawToPlayer(game, player, card) {
   if (deckKindOfTile(card) === 'building') {
     const neu = {
-      ...card,
+        ...card,
       faceDown: false,
-      slot: null,
-      built: false,
-      workers: 0,
+        slot: null,
+        built: false,
+        workers: 0,
     };
     if (!assignBuildingSlot(player, neu)) {
       queuePendingBuildCard(player, neu);
@@ -4512,8 +4523,8 @@ function actRedrawPick(game, player, payload) {
   if (game.phase === 'build' && game.currentPlayerId === player.id) {
     if (playerNeedsBuildPhaseCardDiscard(player)) {
       game.lastBuilderId = player.id;
-      return { ok: true };
-    }
+    return { ok: true };
+  }
     afterBuildAction(game, player.id, true);
   }
   return { ok: true };
@@ -4701,7 +4712,7 @@ function publicGameState(game, viewerId) {
           best: game.pendingInitReveal.best,
           announceUntil: game.pendingInitReveal.announceUntil || game.initAnnounceUntil || 0,
         }
-      : null,
+        : null,
     dice: me ? (game.dice[me.id] || []).slice() : [],
     diceBoosted: me
       ? ((game.diceBoosted && game.diceBoosted[me.id]) || []).slice()
@@ -4951,17 +4962,17 @@ function getActingPlayerIds(game) {
   }
   if (game.phase === 'settle_act') {
     const discardPending = alivePlayers(game)
-      .filter(
-        (p) =>
-          p.pendingDiscardFunc ||
-          p.pendingDiscardBuild ||
+    .filter(
+      (p) =>
+        p.pendingDiscardFunc ||
+        p.pendingDiscardBuild ||
           p.pendingDiscardRes
-      )
-      .map((p) => p.id);
+    )
+    .map((p) => p.id);
     if (discardPending.length) {
       if (game.currentPlayerId && discardPending.includes(game.currentPlayerId)) {
-        return [game.currentPlayerId];
-      }
+      return [game.currentPlayerId];
+    }
       return [discardPending[0]];
     }
   }

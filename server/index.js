@@ -37,6 +37,16 @@ const INSTANCE_ID = crypto.randomUUID();
 const HALL_CHAT_ROOM = 'hall';
 const app = express();
 const server = http.createServer(app);
+
+// Capacitor / 纯加入端从 https://localhost 跨域拉取 /api/info、游戏面板等
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
   // 本机多开/后台标签页定时器被节流时，适当放宽避免误断线
@@ -407,9 +417,14 @@ function emitPlayerMe(socket, player, fallbackName) {
   });
 }
 
-function emitRoomUpdate(room) {
+function emitRoomUpdate(room, joinSocket = null) {
   if (!room) return;
   const payload = { room: fullRoomView(room) };
+  if (joinSocket) {
+    joinSocket.emit('room:update', payload);
+    joinSocket.to(room.id).emit('room:update', payload);
+    return;
+  }
   io.to(room.id).emit('room:update', payload);
 }
 
@@ -671,7 +686,7 @@ io.on('connection', (socket) => {
           reclaimed.room.status === 'playing' && reclaimed.room.game
         ),
       });
-      emitRoomUpdate(reclaimed.room);
+      emitRoomUpdate(reclaimed.room, socket);
       if (reclaimed.room.status === 'playing' && reclaimed.room.game) {
         emitGameState(reclaimed.room);
         scheduleLasidaoInitAnnounce(reclaimed.room);
@@ -1019,7 +1034,8 @@ io.on('connection', (socket) => {
     joinHallChat(socket);
     const me = rooms.getPlayer(socket.id);
     dropIdleSessionGhosts(me && me.sessionId, socket.id);
-    emitRoomUpdate(result.room);
+    emitRoomUpdate(result.room, socket);
+    emitPlayerMe(socket, me, data.playerName);
     if (result.room.status === 'playing' && result.room.game) {
       emitGameState(result.room);
     }
@@ -1058,7 +1074,8 @@ io.on('connection', (socket) => {
     joinHallChat(socket);
     const me = rooms.getPlayer(socket.id);
     dropIdleSessionGhosts(me && me.sessionId, socket.id);
-    emitRoomUpdate(result.room);
+    emitRoomUpdate(result.room, socket);
+    emitPlayerMe(socket, me, data.playerName);
     emitLobbyUpdate();
     mqttOnLogin();
     mqttAfterRoomChange();
@@ -1462,7 +1479,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`联机服务已启动: ${localUrl}`);
   if (mqttBulletin && mqttBulletin.enabled) {
     console.log(
-      `跨网广播: MQTT 已启用（固定地址 broker.emqx.io，频道 ${mqttBulletin.channel}；登录心跳 10s，房间心跳 5s）`
+      `跨网广播: MQTT 已启用（固定地址 broker.emqx.io，频道 ${mqttBulletin.channel}；登录心跳 10s，房间心跳 5s，房间失效判定 15s）`
     );
   }
   if (!(mqttBulletin && mqttBulletin.enabled)) {

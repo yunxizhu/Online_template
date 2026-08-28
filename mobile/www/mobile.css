@@ -319,6 +319,15 @@ body.is-mobile-chat .room-list .mobile-room-meta {
   font-size: 0.84rem;
 }
 
+body.is-mobile-chat .room-list .mobile-room-players {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
 body.is-mobile-chat .room-list li > button {
   width: 100%;
   min-height: 2.55rem;
@@ -666,4 +675,189 @@ body.is-mobile-chat .modal-dialog button {
 .ctx-menu .ctx-hint {
   margin: 0.25rem 0.45rem 0.4rem;
   font-size: 0.8rem;
+}
+
+body.in-session .app-body {
+  grid-template-columns: 1fr;
+}
+
+.session-panel {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.session-players {
+  margin: 0.75rem 0 1rem;
+}
+
+.session-game .game-panels-mount {
+  min-height: 12rem;
+  margin: 0.75rem 0 1rem;
+  overflow: auto;
+}
+
+/* 对局：play 页游戏面板占满内容区（底栏聊天之上） */
+body.is-mobile-chat.phase-game .app-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding-bottom: 0.5rem;
+}
+
+body.is-mobile-chat.phase-game #view-game {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+body.is-mobile-chat.phase-game #view-game:not([hidden]) {
+  display: flex;
+}
+
+body.is-mobile-chat.phase-game #game-panels {
+  flex: 1;
+  min-height: 12rem;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+body.is-mobile-chat.phase-game .lasidao-panel:not([hidden]) {
+  min-height: 8rem;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  box-sizing: border-box;
+}
+
+/* 卡拉斯坦：安卓竖屏布局（牌堆与板块不并排，避免重叠） */
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-playfield {
+  grid-template-columns: 1fr;
+  row-gap: 0.55rem;
+  margin-bottom: 0.65rem;
+}
+
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-table,
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-me-rail {
+  grid-column: 1;
+  max-width: 100%;
+  min-width: 0;
+}
+
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-board-zone {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.55rem;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-decks {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0 !important;
+  gap: 0.35rem;
+  padding: 0.4rem 0.35rem 0.45rem;
+  box-sizing: border-box;
+}
+
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-deck-pile {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 33%;
+  padding: 0;
+}
+
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-deck-stack {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 600 / 800;
+  margin-bottom: 0.2rem;
+}
+
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-deck-info {
+  font-size: calc(0.68 * var(--las-rem));
+}
+
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-deck-hint {
+  display: none;
+}
+
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-table-boards {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-table-top,
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-table-bottom {
+  width: 100%;
+  max-width: 100%;
+  justify-content: stretch;
+}
+
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-board-section {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0.35rem 0.3rem 0.45rem;
+}
+
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-board-section .game-sub {
+  font-size: calc(0.82 * var(--las-rem));
+  margin-bottom: 0.25rem;
+}
+
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-board {
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-board-section-resource,
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-board-section-special {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-side-rail {
+  min-height: 0;
+  overflow-x: hidden;
+}
+
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-me-rail {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface > h2 {
+  font-size: calc(0.95 * var(--las-rem));
+  padding: 0 3.2rem;
+}
+
+body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-rules-btn {
+  top: 0.35rem;
+  left: 0.35rem;
+  font-size: calc(0.72 * var(--las-rem));
+  padding: 0.25rem 0.45rem;
+}
+
+#btn-leave-room,
+#btn-leave-game {
+  width: 100%;
 }

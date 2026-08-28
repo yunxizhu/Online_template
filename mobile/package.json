@@ -4,9 +4,10 @@
   "private": true,
   "description": "联机大厅 Android 客户端（加入端）",
   "scripts": {
-    "sync": "npx cap sync android",
+    "sync": "npm run sync:js && npx cap sync android",
+    "sync:js": "node scripts/sync-shared-js.js",
     "open": "npx cap open android",
-    "build:apk": "cd android && .\\gradlew.bat assembleDebug"
+    "build:apk": "npm run sync:js && npx cap sync android && cd android && .\\gradlew.bat assembleDebug"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",

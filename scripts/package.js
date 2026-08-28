@@ -12,7 +12,10 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { copyVendoredCloudflaredTo, VENDORED_CLOUDFLARED_FILES } = require('../server/tunnel');
+const {
+  copyVendoredCloudflaredTo,
+  vendoredCloudflaredFilesFor,
+} = require('../server/tunnel');
 
 const ROOT = path.resolve(__dirname, '..');
 const DIST = path.join(ROOT, 'dist');
@@ -106,17 +109,21 @@ function copyAppSources(destDir) {
   });
 }
 
-function bundleCloudflaredTools(destDir) {
+function bundleCloudflaredTools(destDir, platform) {
   const destTools = path.join(destDir, '.tools');
-  const copied = copyVendoredCloudflaredTo(destTools, { quiet: true });
-  const missing = VENDORED_CLOUDFLARED_FILES.filter((n) => !copied.includes(n));
+  const expected = vendoredCloudflaredFilesFor(platform);
+  const copied = copyVendoredCloudflaredTo(destTools, {
+    quiet: true,
+    platform,
+  });
+  const missing = expected.filter((n) => !copied.includes(n));
   if (missing.length) {
     console.warn(
       '  warn: cloudflared 不完整，请在项目根执行 npm run fetch-cloudflared；缺少: ' +
         missing.join(', ')
     );
   } else {
-    console.log('  .tools/ (cloudflared ×' + copied.length + ')');
+    console.log('  .tools/ (' + copied.join(', ') + ')');
   }
 }
 
@@ -137,7 +144,7 @@ function buildWindowsPack() {
   }
 
   console.log('  bundle cloudflared...');
-  bundleCloudflaredTools(DIR_WIN);
+  bundleCloudflaredTools(DIR_WIN, 'win32');
 
   if (process.platform === 'win32') {
     writeWindowsLauncher(DIR_WIN, nodeExeName);
@@ -184,7 +191,7 @@ function windowsReadme(nodeExeName) {
     '- server/       服务端\n' +
     '- public/       前端\n' +
     '- node_modules/ 依赖\n' +
-    '- .tools/       Cloudflare 隧道（cloudflared，Win + Mac）\n' +
+    '- .tools/       Cloudflare 隧道（cloudflared.exe）\n' +
     '- 启动.bat      一键启动\n'
   );
 }
@@ -194,7 +201,7 @@ function buildMacPack() {
   ensureDir(DIR_MAC);
   copyAppSources(DIR_MAC);
   console.log('  bundle cloudflared...');
-  bundleCloudflaredTools(DIR_MAC);
+  bundleCloudflaredTools(DIR_MAC, 'darwin');
 
   const cmd = fs.readFileSync(path.join(ROOT, '启动.command'), 'utf8');
   writeUtf8(path.join(DIR_MAC, '启动.command'), cmd);
@@ -216,7 +223,7 @@ function macReadme() {
     `3. 浏览器打开 http://localhost:${DEFAULT_PORT}\n\n` +
     '说明\n' +
     '----\n' +
-    '- .tools/ 已含 Windows 与 macOS 版 cloudflared（公网隧道）\n' +
+    '- .tools/ 已含 macOS 版 cloudflared（Intel + Apple Silicon）\n' +
     '- 建房仍在本机；手机请用 android 文件夹里的 APK 加入\n'
   );
 }
@@ -284,8 +291,6 @@ function buildAndroidApk() {
     return findExistingApk();
   }
 
-  // 打包前先同步最新 www 资源，再强制重编 APK
-  console.log('  cap sync android...');
   const env = { ...process.env };
   if (!env.JAVA_HOME) {
     const guess = 'D:\\androidtool';
@@ -301,6 +306,19 @@ function buildAndroidApk() {
     }
   }
 
+  // 打包前：public/* → mobile/www，再 cap sync 进 android 工程
+  console.log('  sync shared js → mobile/www...');
+  const syncJs = spawnSync('npm', ['run', 'sync:js'], {
+    cwd: mobileDir,
+    env,
+    stdio: 'inherit',
+    shell: true,
+  });
+  if (syncJs.status !== 0) {
+    console.warn('  sync:js failed');
+  }
+
+  console.log('  cap sync android...');
   const sync = spawnSync('npx', ['cap', 'sync', 'android'], {
     cwd: mobileDir,
     env,
@@ -365,6 +383,31 @@ function copyClientWww(destWww) {
   }
   if (!fs.existsSync(path.join(MOBILE_WWW, 'vendor', 'mqtt.min.js'))) {
     throw new Error('missing mobile/www/vendor/mqtt.min.js (run npm install in mobile/)');
+  }
+  if (!fs.existsSync(path.join(MOBILE_WWW, 'vendor', 'socket.io.min.js'))) {
+    throw new Error(
+      'missing mobile/www/vendor/socket.io.min.js (run: cd mobile && npm run sync:js)'
+    );
+  }
+  if (!fs.existsSync(path.join(MOBILE_WWW, 'js', 'client.js'))) {
+    throw new Error(
+      'missing mobile/www/js/client.js (run: cd mobile && npm run sync:js)'
+    );
+  }
+  if (!fs.existsSync(path.join(MOBILE_WWW, 'play.html'))) {
+    throw new Error(
+      'missing mobile/www/play.html (run: cd mobile && npm run sync:js)'
+    );
+  }
+  if (!fs.existsSync(path.join(MOBILE_WWW, 'games-info.json'))) {
+    throw new Error(
+      'missing mobile/www/games-info.json (run: cd mobile && npm run sync:js)'
+    );
+  }
+  if (!fs.existsSync(path.join(MOBILE_WWW, 'games', 'lasidao', 'panel.html'))) {
+    throw new Error(
+      'missing mobile/www/games (run: cd mobile && npm run sync:js)'
+    );
   }
   rmDir(destWww);
   cpDir(MOBILE_WWW, destWww);

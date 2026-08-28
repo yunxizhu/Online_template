@@ -1,0 +1,118 @@
+{
+  "games": [
+    {
+      "id": "sgs",
+      "label": "三国杀",
+      "minPlayers": 3,
+      "maxPlayers": 8,
+      "modes": [
+        {
+          "id": "identity",
+          "label": "标准身份",
+          "seats": [
+            5,
+            8
+          ]
+        },
+        {
+          "id": "xianzhu",
+          "label": "先主·黄巾",
+          "seats": [
+            5,
+            8
+          ]
+        },
+        {
+          "id": "h2h",
+          "label": "2V2",
+          "seats": [
+            4
+          ]
+        },
+        {
+          "id": "1v2",
+          "label": "1V2",
+          "seats": [
+            3
+          ]
+        }
+      ],
+      "client": {
+        "styles": [
+          "/games/sgs/style.css"
+        ],
+        "scripts": [
+          "/games/sgs/assets.js",
+          "/games/sgs/fx.js",
+          "/games/sgs/ui.js"
+        ],
+        "panel": "/games/sgs/panel.html"
+      }
+    },
+    {
+      "id": "gomoku",
+      "label": "五子棋",
+      "minPlayers": 2,
+      "maxPlayers": 2,
+      "modes": [
+        {
+          "id": "standard",
+          "label": "标准模式"
+        }
+      ],
+      "client": {
+        "styles": [
+          "/games/gomoku/style.css"
+        ],
+        "scripts": [
+          "/games/gomoku/board.js"
+        ],
+        "panel": "/games/gomoku/panel.html"
+      }
+    },
+    {
+      "id": "incan",
+      "label": "印加宝藏",
+      "minPlayers": 3,
+      "maxPlayers": 8,
+      "modes": [
+        {
+          "id": "standard",
+          "label": "标准模式"
+        }
+      ],
+      "client": {
+        "styles": [
+          "/games/incan/style.css"
+        ],
+        "scripts": [
+          "/games/incan/ui.js"
+        ],
+        "panel": "/games/incan/panel.html"
+      }
+    },
+    {
+      "id": "lasidao",
+      "label": "卡拉斯坦",
+      "minPlayers": 2,
+      "maxPlayers": 5,
+      "modes": [
+        {
+          "id": "standard",
+          "label": "标准模式"
+        }
+      ],
+      "client": {
+        "styles": [
+          "/games/lasidao/style.css"
+        ],
+        "scripts": [
+          "/games/lasidao/assets.js",
+          "/games/lasidao/fx.js",
+          "/games/lasidao/ui.js"
+        ],
+        "panel": "/games/lasidao/panel.html"
+      }
+    }
+  ]
+}

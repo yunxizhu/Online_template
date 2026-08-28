@@ -17,16 +17,18 @@
 1. **电脑**先启动联机大厅并创建房间
 2. 手机打开 App → 输入昵称 → **进入大厅**
 3. 在公开房间列表点「加入」，或用「房间码加入」
-4. 大厅内可使用「所有人」聊天（与电脑 MQTT 同源）
+4. 加入后进入 **play 页**（与 PC 相同 `ui.js`）：Socket 进房、房间 UI、对局 UI 均由房主端加载游戏资源
+5. 大厅内可使用「所有人」聊天（与电脑 MQTT 同源）
 
-系统返回键可从房主页面退回本 App 大厅。
+被动主机代开仍会跳转到对方网页。
 
 ## 重新编译
 
 ```bat
 cd mobile
 npm install
-npx cap sync android
-cd android
-gradlew.bat assembleRelease
+npm run build:apk
 ```
+或 release 包：`npm run sync:js && npx cap sync android && cd android && gradlew.bat assembleRelease`
+
+`sync:js` 会把 `public/js`、`public/games` 等同步到 `mobile/www`；`npm run sync` / `build:apk` 已自动先跑这一步。

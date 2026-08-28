@@ -113,7 +113,7 @@ function publicRoomView(room) {
   const waiting = !room.status || room.status === 'waiting';
   const playing = room.status === 'playing';
   const over = Boolean(room.game && room.game.over);
-  const playerCount = (room.players || []).filter((p) => !p.left).length;
+  const playerCount = (room.players || []).filter((p) => !p.left && !p.offline).length;
   const observerCount = (room.observers || []).length;
   return {
     id: room.id,
@@ -627,7 +627,41 @@ class RoomManager {
     if (!auth.ok) return auth;
     const room = auth.room;
     if (room.status !== 'waiting') return { ok: false, error: '对局已开始，无法加入（可观战）' };
-    const seated = (room.players || []).filter((p) => !p.left).length;
+
+    const sid = player.sessionId ? String(player.sessionId).slice(0, 64) : '';
+    const tag = player.tag || null;
+    const offlineSeat = (room.players || []).find(
+      (p) =>
+        p &&
+        !p.left &&
+        p.offline &&
+        ((sid && p.sessionId === sid) ||
+          (!sid &&
+            p.name === player.name &&
+            (p.tag || null) === tag))
+    );
+    if (offlineSeat) {
+      const fromId = offlineSeat.id;
+      if (fromId !== playerId) {
+        this.rebindSeatId(room, fromId, playerId);
+      }
+      offlineSeat.offline = false;
+      delete offlineSeat.offlineAt;
+      offlineSeat.sessionId = sid || offlineSeat.sessionId || null;
+      offlineSeat.name = player.name;
+      offlineSeat.tag = tag;
+      player.roomId = room.id;
+      player.passive = false;
+      return { ok: true, room, reclaimed: true };
+    }
+
+    if (sid) {
+      room.players = (room.players || []).filter(
+        (p) => !p || p.left || !(p.offline && p.sessionId === sid)
+      );
+    }
+
+    const seated = (room.players || []).filter((p) => !p.left && !p.offline).length;
     if (seated >= room.maxPlayers) return { ok: false, error: '房间已满' };
 
     room.players.push({

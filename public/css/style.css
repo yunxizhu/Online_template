@@ -701,6 +701,31 @@ button.secondary:hover {
   border-bottom: 1px solid var(--border);
 }
 
+.room-list-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.22rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.room-list-head {
+  line-height: 1.35;
+}
+
+.room-list-players {
+  font-size: 0.88rem;
+  color: var(--muted);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.room-list-where {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
 .room-list li:last-child,
 .member-list li:last-child {
   border-bottom: none;
@@ -708,6 +733,20 @@ button.secondary:hover {
 
 .room-list li.is-full button:disabled {
   background: #3a4a55;
+}
+
+.room-list-code {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.08rem 0.42rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  color: #ffe2a8;
+  background: rgba(20, 14, 10, 0.55);
+  border: 1px dashed rgba(240, 199, 138, 0.35);
+  border-radius: 4px;
+  vertical-align: middle;
 }
 
 .member-list li.is-left {

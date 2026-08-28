@@ -1,0 +1,14 @@
+.board-wrap {
+  width: min(100%, 480px);
+  margin: 0.75rem auto 0.5rem;
+}
+
+#gomoku-board {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  cursor: pointer;
+  touch-action: manipulation;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}

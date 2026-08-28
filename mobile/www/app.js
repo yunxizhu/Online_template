@@ -7,7 +7,7 @@
   /** 与电脑端默认频道一致，加入端不提供切换 */
   const DEFAULT_CHANNEL = 'xiyun_lianjidating_public';
   const LOGIN_HB_MS = 10000;
-  const ROOM_OFFLINE_MS = 50000;
+  const ROOM_OFFLINE_MS = 15000;
   const LOGIN_OFFLINE_MS = 25000;
   const STALE_CLEAR_MS = 120000;
   const STORAGE_NICK = 'lianji.nick';
@@ -198,6 +198,119 @@
     setJoinOpen(false);
   }
 
+  function hideJoining() {
+    joining = false;
+    if (el.joiningOverlay) el.joiningOverlay.hidden = true;
+  }
+
+  const PLAY_JOIN_KEY = 'lianji.mobilePlayJoin';
+
+  function stashPlayJoin(payload) {
+    const boot = {
+      roomId: String(payload.roomId || payload.id || '')
+        .trim()
+        .toUpperCase(),
+      host: String(payload.host || '').trim(),
+      name: playerName,
+      password: payload.password != null ? String(payload.password) : '',
+      mode: payload.mode === 'spectate' ? 'spectate' : 'join',
+      sessionId,
+      playerTag: playerTag || '',
+      client: MY_CLIENT,
+      role: MY_ROLE,
+    };
+    if (!boot.roomId || !boot.host) {
+      showToast('房间信息不完整');
+      return false;
+    }
+    if (!boot.name) {
+      showToast('请先设置昵称');
+      return false;
+    }
+    try {
+      sessionStorage.setItem(PLAY_JOIN_KEY, JSON.stringify(boot));
+    } catch (_) {
+      showToast('无法保存加入信息');
+      return false;
+    }
+    publishLoginExtra('joining', boot.roomId);
+    showJoining(
+      boot.mode === 'spectate'
+        ? '正在观战 ' + boot.roomId + '…'
+        : '正在加入房间 ' + boot.roomId + '…'
+    );
+    window.location.href = './play.html';
+    return true;
+  }
+
+  function joinRemoteRoom(room, mode, password) {
+    if (joining) return;
+    if (!room || !room.host) {
+      showToast('暂无可用地址');
+      return;
+    }
+    if (mode !== 'spectate' && !roomCanJoin(room)) {
+      showToast(
+        room.status === 'playing' ? '对局已开始，请用观战' : '房间已满'
+      );
+      return;
+    }
+    stashPlayJoin({
+      id: room.id,
+      host: room.host,
+      password,
+      mode: mode || 'join',
+    });
+  }
+
+  function joinRemoteByCode(code, hostUrl, mode, password) {
+    const rid = String(code || '').trim().toUpperCase();
+    const url = String(hostUrl || '').trim();
+    if (!rid && !url) {
+      showToast('请输入房间码或房主地址');
+      return;
+    }
+    if (url) {
+      const base = normalizeHost(url);
+      if (!base) {
+        showToast('地址格式不正确');
+        return;
+      }
+      if (!rid) {
+        showToast('填写房主地址时请同时输入房间码');
+        return;
+      }
+      stashPlayJoin({
+        roomId: rid,
+        host: base,
+        password,
+        mode: mode === 'spectate' ? 'spectate' : 'join',
+      });
+      return;
+    }
+    const now = Date.now();
+    for (const r of rooms.values()) {
+      if (
+        r.id === rid &&
+        r.host &&
+        r.updateTime &&
+        now - r.updateTime <= ROOM_OFFLINE_MS
+      ) {
+        if (mode === 'spectate') {
+          joinRemoteRoom(r, 'spectate', password);
+        } else if (!roomCanJoin(r)) {
+          showToast(
+            r.status === 'playing' ? '对局已开始，请用观战' : '房间已满'
+          );
+        } else {
+          joinRemoteRoom(r, 'join', password);
+        }
+        return;
+      }
+    }
+    showToast('未找到该房间码（对方需在线并广播房间）');
+  }
+
   function askRoomPassword(room) {
     if (!room || !room.hasPassword) return '';
     const v = window.prompt('请输入房间密码（可为空）', '');
@@ -212,9 +325,10 @@
     }
     const password = askRoomPassword(room);
     if (password == null) return;
-    openHost(room.host, room.id, { mode: mode || 'join', password });
+    joinRemoteRoom(room, mode || 'join', password);
   }
 
+  /** 被动主机代开：仍跳转对方网页（无 Socket 会话） */
   function openHost(host, roomId, opts = {}) {
     if (joining) return;
     const base = normalizeHost(host);
@@ -229,7 +343,11 @@
       showToast('地址格式不正确');
       return;
     }
-    const mode = opts.mode === 'spectate' ? 'spectate' : opts.mode === 'createPassive' ? 'createPassive' : 'join';
+    const mode = opts.mode === 'createPassive' ? 'createPassive' : 'join';
+    if (mode !== 'createPassive') {
+      showToast('请从房间列表加入');
+      return;
+    }
     const u = new URL(base + '/');
     u.searchParams.set('guest', '1');
     u.searchParams.set('client', MY_CLIENT);
@@ -245,27 +363,8 @@
     if (sessionId) u.searchParams.set('sid', sessionId);
     if (mode === 'createPassive') {
       u.searchParams.set('createPassive', '1');
-    } else if (roomId) {
-      u.searchParams.set('join', String(roomId).toUpperCase());
-      if (mode === 'spectate') u.searchParams.set('spectate', '1');
-      // 密码不进 URL/MQTT，仅经 sessionStorage 交给房主页再向隧道验密
-      try {
-        if (opts.password != null) {
-          sessionStorage.setItem('lianji.joinPwd', String(opts.password));
-        } else {
-          sessionStorage.removeItem('lianji.joinPwd');
-        }
-      } catch (_) {}
     }
-    const busy =
-      mode === 'createPassive'
-        ? '正在前往被动主机开房…'
-        : mode === 'spectate'
-          ? '正在观战 ' + String(roomId).toUpperCase() + '…'
-          : roomId
-            ? '正在加入房间 ' + String(roomId).toUpperCase() + '…'
-            : '正在加入…';
-    showJoining(busy);
+    showJoining('正在前往被动主机开房…');
     clearLoginBeacon();
     const href = u.toString();
     requestAnimationFrame(() => {
@@ -657,6 +756,7 @@
     if (!ul || !room) return;
     const li = document.createElement('li');
     const info = document.createElement('span');
+    info.className = 'room-list-info';
     const gameLabel = room.gameLabel || room.gameType || '游戏';
     const modeBit = room.gameModeLabel ? '·' + room.gameModeLabel : '';
     let playerBit =
@@ -690,28 +790,37 @@
       meta.className = 'mobile-room-meta';
       meta.textContent = [
         gameLabel + modeBit,
-        playerBit,
         room.id ? '码 ' + room.id : null,
         room.hasPassword ? '密码' : null,
         room.status === 'playing' ? '对局中' : null,
       ]
         .filter(Boolean)
         .join(' · ');
+      const players = document.createElement('span');
+      players.className = 'mobile-room-players';
+      players.textContent = playerBit;
       info.appendChild(title);
       info.appendChild(meta);
+      info.appendChild(players);
     } else {
       info.innerHTML =
+        '<span class="room-list-head">' +
         '<span class="badge game-badge">' +
         escapeHtml(gameLabel) +
         escapeHtml(modeBit) +
         '</span> ' +
         escapeHtml(room.name || room.id || '房间') +
-        '  ' +
-        escapeHtml(playerBit) +
+        (room.id
+          ? ' <span class="room-list-code">' + escapeHtml(String(room.id).toUpperCase()) + '</span>'
+          : '') +
         (room.hasPassword ? ' <span class="badge">密码</span>' : '') +
         (room.status === 'playing'
           ? ' <span class="badge">对局中</span>'
-          : '');
+          : '') +
+        '</span>' +
+        '<span class="room-list-players">' +
+        escapeHtml(playerBit) +
+        '</span>';
     }
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -1002,12 +1111,29 @@
     updateChatPreview(msg);
   }
 
+  function clearPeerRoomBeacon(peerInstanceId) {
+    const id = String(peerInstanceId || '').trim();
+    if (!client || !client.connected || !id || id === instanceId) return;
+    try {
+      client.publish(prefix() + '/room/' + id, '', { qos: 1, retain: true });
+    } catch (_) {}
+  }
+
+  function onPeerLoginCleared(id) {
+    logins.delete(id);
+    rooms.delete(id);
+    clearPeerRoomBeacon(id);
+    renderPeople();
+    renderRooms();
+  }
+
   function prune() {
     const now = Date.now();
     let changed = false;
     for (const [id, p] of logins) {
       if (!p || !p.updateTime || now - p.updateTime > STALE_CLEAR_MS) {
         logins.delete(id);
+        rooms.delete(id);
         changed = true;
       }
     }
@@ -1028,6 +1154,10 @@
   }
 
   function clearLoginBeacon() {
+    if (joining) return;
+    try {
+      if (sessionStorage.getItem(PLAY_JOIN_KEY)) return;
+    } catch (_) {}
     if (!client || !client.connected || !instanceId) return;
     try {
       client.publish(prefix() + '/login/' + instanceId, '', {
@@ -1035,6 +1165,34 @@
         retain: true,
       });
     } catch (_) {}
+  }
+
+  function publishLoginExtra(status, roomId) {
+    if (!client || !client.connected || !entered) return;
+    const payload = {
+      app: APP,
+      instanceId,
+      displayName: playerName,
+      displayTag: playerTag || null,
+      people: [
+        {
+          name: playerName,
+          tag: playerTag || null,
+          status: status || 'idle',
+          roomId: roomId || null,
+          roomName: null,
+          sessionId,
+          client: MY_CLIENT,
+          role: MY_ROLE,
+        },
+      ],
+      loginAt,
+      updateTime: Date.now(),
+    };
+    client.publish(prefix() + '/login/' + instanceId, JSON.stringify(payload), {
+      qos: 1,
+      retain: true,
+    });
   }
 
   function publishLogin() {
@@ -1085,8 +1243,7 @@
       const id = topic.slice(loginPrefix.length);
       if (!id) return;
       if (!raw.trim()) {
-        logins.delete(id);
-        renderPeople();
+        onPeerLoginCleared(id);
         return;
       }
       try {
@@ -1293,35 +1450,6 @@
     }
   }
 
-  function resolveAndJoinByCode(code, mode, password) {
-    const id = String(code || '').trim().toUpperCase();
-    if (!id) {
-      showToast('请输入房间码');
-      return;
-    }
-    const now = Date.now();
-    for (const r of rooms.values()) {
-      if (
-        r.id === id &&
-        r.host &&
-        r.updateTime &&
-        now - r.updateTime <= ROOM_OFFLINE_MS
-      ) {
-        if (mode === 'spectate') {
-          openHost(r.host, r.id, { mode: 'spectate', password });
-        } else if (!roomCanJoin(r)) {
-          showToast(
-            r.status === 'playing' ? '对局已开始，请用观战' : '房间已满'
-          );
-        } else {
-          openHost(r.host, r.id, { mode: 'join', password });
-        }
-        return;
-      }
-    }
-    showToast('未找到该房间码（对方需在线并广播房间）');
-  }
-
   function joinFromModal() {
     const url = String(el.hostUrl.value || '').trim();
     const code = String(el.joinCode.value || '').trim();
@@ -1329,11 +1457,8 @@
       (el.joinPassword && el.joinPassword.value) || ''
     );
     const mode = codeModalMode === 'spectate' ? 'spectate' : 'join';
-    if (url) {
-      openHost(url, code || undefined, { mode, password });
-      return;
-    }
-    resolveAndJoinByCode(code, mode, password);
+    setJoinOpen(false);
+    joinRemoteByCode(code, url, mode, password);
   }
 
   function sendChat(text) {

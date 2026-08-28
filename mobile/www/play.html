@@ -1,19 +1,17 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-mobile-play="1">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title data-i18n="app.pageTitle">联机大厅</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="/css/style.css" />
+  <title>联机对局</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="./css/style.css" />
   <script>
     /* 访客深链：首屏即显示「正在加入」，避免先闪出昵称门 */
     (function () {
       try {
-        var q = new URLSearchParams(location.search || '');
-        if (q.get('guest') === '1' || q.get('join')) {
-          document.documentElement.classList.add('boot-joining');
-        }
+        document.documentElement.classList.add('boot-joining');
+        document.documentElement.dataset.mobilePlay = '1';
       } catch (e) {}
     })();
   </script>
@@ -445,11 +443,14 @@
     })();
   </script>
 
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="/js/i18n.js"></script>
-  <script src="/js/bgm-volume.js"></script>
-  <script src="/js/client.js"></script>
-  <script src="/js/boot-games.js"></script>
-  <script src="/js/ui.js"></script>
+  <link rel="stylesheet" href="./mobile.css" />
+  <script src="./vendor/socket.io.min.js"></script>
+  <script src="./vendor/mqtt.min.js"></script>
+  <script src="./js/i18n.js"></script>
+  <script src="./js/bgm-volume.js"></script>
+  <script src="./js/mqtt-room-resolve.js"></script>
+  <script src="./js/client.js"></script>
+  <script src="./js/boot-games.js"></script>
+  <script src="./js/ui.js"></script>
 </body>
 </html>

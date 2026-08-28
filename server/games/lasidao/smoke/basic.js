@@ -64,7 +64,7 @@ function finishInit(game) {
     if (game.phase === 'init_announce') {
       ok(finishInitAnnounce(game), 'finishInitAnnounce after manual');
       break;
-    }
+  }
   }
   drainWelfareSetup(game);
   assert.strictEqual(game.phase, 'produce', '应进入生产阶段');
