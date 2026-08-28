@@ -12,7 +12,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { ensureCloudflared } = require('../server/tunnel');
+const { copyVendoredCloudflaredTo, VENDORED_CLOUDFLARED_FILES } = require('../server/tunnel');
 
 const ROOT = path.resolve(__dirname, '..');
 const DIST = path.join(ROOT, 'dist');
@@ -106,6 +106,20 @@ function copyAppSources(destDir) {
   });
 }
 
+function bundleCloudflaredTools(destDir) {
+  const destTools = path.join(destDir, '.tools');
+  const copied = copyVendoredCloudflaredTo(destTools, { quiet: true });
+  const missing = VENDORED_CLOUDFLARED_FILES.filter((n) => !copied.includes(n));
+  if (missing.length) {
+    console.warn(
+      '  warn: cloudflared 不完整，请在项目根执行 npm run fetch-cloudflared；缺少: ' +
+        missing.join(', ')
+    );
+  } else {
+    console.log('  .tools/ (cloudflared ×' + copied.length + ')');
+  }
+}
+
 function buildWindowsPack() {
   console.log('\n[windows] portable pack...');
   ensureDir(DIR_WIN);
@@ -122,17 +136,13 @@ function buildWindowsPack() {
     console.log(`  ${nodeExeName} (${getSizeMB(nodeExe)} MB)`);
   }
 
-  console.log('  prepare cloudflared (windows)...');
-  // ensureCloudflared 按当前系统下载；仅在 win 上写入 .tools
+  console.log('  bundle cloudflared...');
+  bundleCloudflaredTools(DIR_WIN);
+
   if (process.platform === 'win32') {
-    return ensureCloudflared().then(() => {
-      if (fs.existsSync(TOOLS_DIR)) {
-        cpDir(TOOLS_DIR, path.join(DIR_WIN, '.tools'));
-        console.log('  .tools/');
-      }
-      writeWindowsLauncher(DIR_WIN, nodeExeName);
-      writeUtf8(path.join(DIR_WIN, 'README.txt'), windowsReadme(nodeExeName));
-    });
+    writeWindowsLauncher(DIR_WIN, nodeExeName);
+    writeUtf8(path.join(DIR_WIN, 'README.txt'), windowsReadme(nodeExeName));
+    return Promise.resolve();
   }
   writeWindowsLauncher(DIR_WIN, 'node.exe');
   writeUtf8(path.join(DIR_WIN, 'README.txt'), windowsReadme('node.exe'));
@@ -174,7 +184,7 @@ function windowsReadme(nodeExeName) {
     '- server/       服务端\n' +
     '- public/       前端\n' +
     '- node_modules/ 依赖\n' +
-    '- .tools/       Cloudflare 隧道工具\n' +
+    '- .tools/       Cloudflare 隧道（cloudflared，Win + Mac）\n' +
     '- 启动.bat      一键启动\n'
   );
 }
@@ -183,8 +193,9 @@ function buildMacPack() {
   console.log('\n[mac] portable pack...');
   ensureDir(DIR_MAC);
   copyAppSources(DIR_MAC);
+  console.log('  bundle cloudflared...');
+  bundleCloudflaredTools(DIR_MAC);
 
-  // 不把 Windows 的 .tools 打进去；Mac 首次启动会自行下载 cloudflared
   const cmd = fs.readFileSync(path.join(ROOT, '启动.command'), 'utf8');
   writeUtf8(path.join(DIR_MAC, '启动.command'), cmd);
   // 在 Windows 上无法 chmod；Mac 用户按 README 执行一次即可
@@ -205,7 +216,7 @@ function macReadme() {
     `3. 浏览器打开 http://localhost:${DEFAULT_PORT}\n\n` +
     '说明\n' +
     '----\n' +
-    '- Cloudflare 隧道工具会在首次启动时自动下载到 .tools/\n' +
+    '- .tools/ 已含 Windows 与 macOS 版 cloudflared（公网隧道）\n' +
     '- 建房仍在本机；手机请用 android 文件夹里的 APK 加入\n'
   );
 }

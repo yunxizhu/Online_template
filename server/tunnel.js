@@ -10,6 +10,22 @@ const { pipeline } = require('stream/promises');
 const { createWriteStream } = require('fs');
 
 const TOOLS_DIR = path.join(__dirname, '..', '.tools');
+
+/** 随仓库分发的 cloudflared（git 跟踪，clone 即用） */
+const VENDORED_CLOUDFLARED = {
+  'win32:amd64': 'cloudflared.exe',
+  'win32:arm64': 'cloudflared.exe',
+  'darwin:amd64': 'cloudflared-darwin-amd64',
+  'darwin:arm64': 'cloudflared-darwin-arm64',
+  'linux:amd64': 'cloudflared-linux-amd64',
+  'linux:arm64': 'cloudflared-linux-arm64',
+};
+
+const VENDORED_CLOUDFLARED_FILES = [
+  'cloudflared.exe',
+  'cloudflared-darwin-amd64',
+  'cloudflared-darwin-arm64',
+];
 const URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i;
 
 /** 公网地址探活间隔（进程仍在但 trycloudflare 域名已死时靠此换新） */
@@ -120,6 +136,65 @@ function probeTunnelUrl(urlString, ops = {}) {
   });
 }
 
+function cloudflaredPlatformKey(platform, arch) {
+  const p = platform || process.platform;
+  const a = arch || process.arch;
+  const normArch = a === 'arm64' ? 'arm64' : 'amd64';
+  return `${p}:${normArch}`;
+}
+
+function vendoredCloudflaredFileName(platform, arch) {
+  return VENDORED_CLOUDFLARED[cloudflaredPlatformKey(platform, arch)] || null;
+}
+
+function vendoredCloudflaredPath(platform, arch) {
+  const name = vendoredCloudflaredFileName(platform, arch);
+  if (!name) return null;
+  const p = path.join(TOOLS_DIR, name);
+  return fs.existsSync(p) ? p : null;
+}
+
+function binUsable(p) {
+  if (!p || !fs.existsSync(p)) return false;
+  try {
+    const st = fs.statSync(p);
+    if (!st.isFile() || st.size < 4096) return false;
+  } catch (_) {
+    return false;
+  }
+  try {
+    const { spawnSync } = require('child_process');
+    const r = spawnSync(p, ['--version'], { timeout: 10000, windowsHide: true });
+    if (r.error) return false;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function copyVendoredCloudflaredTo(destToolsDir, opts = {}) {
+  fs.mkdirSync(destToolsDir, { recursive: true });
+  const copied = [];
+  for (const name of VENDORED_CLOUDFLARED_FILES) {
+    const src = path.join(TOOLS_DIR, name);
+    if (!fs.existsSync(src)) continue;
+    const dst = path.join(destToolsDir, name);
+    fs.copyFileSync(src, dst);
+    if (process.platform !== 'win32' || !name.endsWith('.exe')) {
+      try {
+        fs.chmodSync(dst, 0o755);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    copied.push(name);
+  }
+  if (!opts.quiet && copied.length) {
+    console.log('[tunnel] copied vendored cloudflared:', copied.join(', '));
+  }
+  return copied;
+}
+
 function cloudflaredBinaryName() {
   if (process.platform === 'win32') return 'cloudflared.exe';
   return 'cloudflared';
@@ -181,31 +256,29 @@ function downloadFile(url, dest) {
 
 async function ensureCloudflared() {
   fs.mkdirSync(TOOLS_DIR, { recursive: true });
-  const bin = path.join(TOOLS_DIR, cloudflaredBinaryName());
 
-  function binUsable(p) {
-    if (!fs.existsSync(p)) return false;
-    try {
-      const st = fs.statSync(p);
-      if (!st.isFile() || st.size < 4096) return false;
-    } catch (_) {
-      return false;
+  const vendored = vendoredCloudflaredPath();
+  if (vendored && binUsable(vendored)) {
+    if (process.platform !== 'win32') {
+      try {
+        fs.chmodSync(vendored, 0o755);
+      } catch (_) {
+        /* ignore */
+      }
     }
-    try {
-      const { spawnSync } = require('child_process');
-      const r = spawnSync(p, ['--version'], { timeout: 10000, windowsHide: true });
-      if (r.error) return false;
-      return true;
-    } catch (_) {
-      return false;
-    }
+    return vendored;
   }
 
+  const bin = path.join(TOOLS_DIR, cloudflaredBinaryName());
   if (binUsable(bin)) return bin;
-  try { fs.unlinkSync(bin); } catch (_) {}
+  try {
+    fs.unlinkSync(bin);
+  } catch (_) {
+    /* ignore */
+  }
 
   const url = cloudflaredDownloadUrl();
-  console.log('[tunnel] 正在下载 cloudflared…');
+  console.log('[tunnel] 仓库内无可用 cloudflared，正在下载…');
   console.log('[tunnel]', url);
 
   if (process.platform === 'darwin' && url.endsWith('.tgz')) {
@@ -556,4 +629,9 @@ module.exports = {
   QuickTunnel,
   ensureCloudflared,
   probeTunnelUrl,
+  downloadFile,
+  TOOLS_DIR,
+  VENDORED_CLOUDFLARED_FILES,
+  copyVendoredCloudflaredTo,
+  vendoredCloudflaredPath,
 };
