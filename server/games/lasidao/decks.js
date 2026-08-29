@@ -56,7 +56,7 @@ function shuffle(arr) {
   return a;
 }
 
-/** 资源板块：木/石/食各 10（丰/贫各 5），铁矿 5（仅 2/1） */
+/** 资源板块：木/石/食各 12（丰4/贫8），铁矿 贫6 */
 function buildResourceDeck() {
   const cards = [];
   for (const res of ['wood', 'stone','food']) {
