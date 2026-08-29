@@ -2735,6 +2735,18 @@ window.LasidaoUi = (function () {
     return null;
   }
 
+  /** 判断该空卡位/锁定位是否属于暗置位置（解锁后摆放的卡牌为暗置） */
+  function isSlotFaceDownPosition(areaKey, num, idx) {
+    if (areaKey === 'special') {
+      return num === 2 || num === 4 || num === 6;
+    }
+    if (areaKey === 'resource') {
+      if (num >= 1 && num <= 3) return idx === 2;
+      if (num >= 4 && num <= 6) return idx === 1;
+    }
+    return false;
+  }
+
   /** 合区本轮开放格数 1~6 */
   function areaOpenSlotCount(areaKey, round) {
     const n = Math.max(0, (round || 1) - 1);
@@ -3318,10 +3330,20 @@ window.LasidaoUi = (function () {
           }
           if (locked) {
             empty.classList.add('las-slot-locked');
-            empty.textContent = t('lasidao.unlockRound', { n: unlockN });
+            if (isSlotFaceDownPosition(areaKey, num, idx)) {
+              empty.textContent = t('lasidao.unlockRoundFaceDown', { n: unlockN });
+              empty.classList.add('las-slot-facedown-hint');
+            } else {
+              empty.textContent = t('lasidao.unlockRound', { n: unlockN });
+            }
             if (capacity === 1) slot.classList.add('is-locked');
-      } else {
-            empty.textContent = t('lasidao.emptySlot');
+          } else {
+            if (isSlotFaceDownPosition(areaKey, num, idx)) {
+              empty.textContent = t('lasidao.faceDownSlot');
+              empty.classList.add('las-slot-facedown-hint');
+            } else {
+              empty.textContent = t('lasidao.emptySlot');
+            }
           }
           stack.appendChild(empty);
         }
@@ -8148,7 +8170,7 @@ window.LasidaoUi = (function () {
   }
 
   function makeExilePlayerLabel(p, pid, count) {
-    return (p ? p.name : pid) + ' ×' + count;
+    return (p ? p.name : pid) + (count != null ? ' ×' + count : '');
   }
 
   function decorateExilePlayerName(el, players, pid, game) {
@@ -8898,10 +8920,6 @@ window.LasidaoUi = (function () {
     if (rulesClose) {
       rulesClose.onclick = () => setRulesModalOpen(false);
     }
-    const rulesBackdrop = $('las-rules-backdrop');
-    if (rulesBackdrop) {
-      rulesBackdrop.onclick = () => setRulesModalOpen(false);
-    }
     const rollBtn = $('btn-las-produce-roll');
     if (rollBtn) {
       rollBtn.onclick = () => {
@@ -8947,10 +8965,7 @@ window.LasidaoUi = (function () {
         setVoidSkipModalOpen(true);
       };
     }
-    const voidSkipBackdrop = $('las-void-skip-backdrop');
-    if (voidSkipBackdrop) {
-      voidSkipBackdrop.onclick = () => setVoidSkipModalOpen(false);
-    }
+
     const voidSkipCancel = $('btn-las-void-skip-cancel');
     if (voidSkipCancel) {
       voidSkipCancel.onclick = () => setVoidSkipModalOpen(false);
@@ -9051,10 +9066,6 @@ window.LasidaoUi = (function () {
     if (resetBuildBtn) {
       resetBuildBtn.onclick = () => net.sendAction('resetBuildTurn', {});
     }
-    const exBackdrop = $('las-exchange-backdrop');
-    if (exBackdrop) {
-      exBackdrop.onclick = () => setExchangeModalOpen(false);
-    }
     const exCancel = $('btn-las-exchange-cancel');
     if (exCancel) {
       exCancel.onclick = () => setExchangeModalOpen(false);
@@ -9069,12 +9080,31 @@ window.LasidaoUi = (function () {
     const exConfirm = $('btn-las-exchange-confirm');
     if (exConfirm) {
       exConfirm.onclick = () => {
+        const m = lastGame && mePlayer(lastGame, lastMeId);
+        if (!m) return;
+        const exBuilt = (m.buildings || []).filter(
+          (b) => b.built && b.buildType === 'exchange'
+        ).length;
+        const exCount =
+          lastGame.me && lastGame.me.exchangeCount != null
+            ? Number(lastGame.me.exchangeCount)
+            : Math.min(exBuilt, 3);
+        const need =
+          lastGame.me && lastGame.me.exchangeCost != null
+            ? Number(lastGame.me.exchangeCost)
+            : exCount === 0
+              ? 4
+              : exCount === 1
+                ? 3
+                : exCount === 2
+                  ? 2
+                  : 1;
         const totalFrom = RESOURCES.reduce((sum, r) => sum + (exFromBatches[r] || 0), 0);
         const totalTo = RESOURCES.reduce((sum, r) => sum + (exToBatches[r] || 0), 0);
         if (totalFrom <= 0 || totalTo !== totalFrom) return;
         const noOverlap = RESOURCES.every(r => !(exFromBatches[r] > 0 && exToBatches[r] > 0));
         if (!noOverlap) return;
-        const hasEnough = RESOURCES.every(r => (me.resources[r] || 0) >= need * (exFromBatches[r] || 0));
+        const hasEnough = RESOURCES.every(r => (m.resources[r] || 0) >= need * (exFromBatches[r] || 0));
         if (!hasEnough) return;
         net.sendAction('exchange', {
           from: { ...exFromBatches },
@@ -9109,10 +9139,6 @@ window.LasidaoUi = (function () {
       };
     }
     // Robbery modal bindings
-    const robBackdrop = $('las-robbery-backdrop');
-    if (robBackdrop) {
-      robBackdrop.onclick = () => setRobberyModalOpen(false);
-    }
     const robCancel = $('btn-las-robbery-cancel');
     if (robCancel) {
       robCancel.onclick = () => setRobberyModalOpen(false);
@@ -9132,10 +9158,6 @@ window.LasidaoUi = (function () {
     }
 
     // Redraw modal bindings
-    const redrawBackdrop = $('las-redraw-backdrop');
-    if (redrawBackdrop) {
-      redrawBackdrop.onclick = () => setRedrawModalOpen(false);
-    }
     const redrawCancel = $('btn-las-redraw-cancel');
     if (redrawCancel) {
       redrawCancel.onclick = () => setRedrawModalOpen(false);
@@ -9153,10 +9175,6 @@ window.LasidaoUi = (function () {
     bindRedrawDeckClicks();
 
     // Harvest modal bindings
-    const harvestBackdrop = $('las-harvest-backdrop');
-    if (harvestBackdrop) {
-      harvestBackdrop.onclick = () => setHarvestModalOpen(false);
-    }
     const harvestCancel = $('btn-las-harvest-cancel');
     if (harvestCancel) {
       harvestCancel.onclick = () => setHarvestModalOpen(false);
@@ -9200,10 +9218,6 @@ window.LasidaoUi = (function () {
     }
 
     // 扩建弹窗绑定
-    const expandBackdrop = $('las-expand-backdrop');
-    if (expandBackdrop) {
-      expandBackdrop.onclick = () => setExpandModalOpen(false);
-    }
     const expandCancel = $('btn-las-expand-cancel');
     if (expandCancel) {
       expandCancel.onclick = () => setExpandModalOpen(false);
@@ -9238,20 +9252,12 @@ window.LasidaoUi = (function () {
     });
 
     // Exile modal bindings
-    const exileBackdrop = $('las-exile-backdrop');
-    if (exileBackdrop) {
-      exileBackdrop.onclick = () => setExileModalOpen(false);
-    }
     const exileCancel = $('btn-las-exile-cancel');
     if (exileCancel) {
       exileCancel.onclick = () => setExileModalOpen(false);
     }
 
     // Bandit modal bindings
-    const banditBackdrop = $('las-bandit-backdrop');
-    if (banditBackdrop) {
-      banditBackdrop.onclick = () => setBanditModalOpen(false);
-    }
     const banditCancel = $('btn-las-bandit-cancel');
     if (banditCancel) {
       banditCancel.onclick = () => setBanditModalOpen(false);

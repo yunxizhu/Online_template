@@ -426,27 +426,45 @@
 /* 可建造的未建造建筑：呼吸闪烁提示 */
 .las-build-card.build.is-unbuilt.is-affordable {
   animation: las-build-affordable 1s ease-in-out infinite;
+  filter: grayscale(0);
+  border-color: #c9a227;
+  color: #f0e0a0;
 }
 
 .las-build-card.build.is-unbuilt.is-affordable.is-selected {
   animation: las-build-affordable-selected 1s ease-in-out infinite;
+  filter: grayscale(0);
+  border-color: #c9a227;
+  color: #f0e0a0;
 }
 
 @keyframes las-build-affordable {
   0%, 100% {
-    opacity: 0.65;
+    opacity: 0.9;
+    filter: grayscale(0);
+    border-color: #c9a227;
+    color: #f0e0a0;
   }
   50% {
-    opacity: 0.95;
+    opacity: 1;
+    filter: grayscale(0);
+    border-color: #c9a227;
+    color: #f0e0a0;
   }
 }
 
 @keyframes las-build-affordable-selected {
   0%, 100% {
-    opacity: 0.92;
+    opacity: 0.95;
+    filter: grayscale(0);
+    border-color: #c9a227;
+    color: #f0e0a0;
   }
   50% {
     opacity: 1;
+    filter: grayscale(0);
+    border-color: #c9a227;
+    color: #f0e0a0;
   }
 }
 
@@ -469,6 +487,7 @@
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
+  pointer-events: none;
 }
 
 .las-hand-card-art.has-image {
@@ -1896,14 +1915,10 @@
   width: calc(2.6 * var(--las-rem));
   height: calc(2.6 * var(--las-rem));
   border-radius: 8px;
-  border: 2px solid #6a7880;
-  background: linear-gradient(145deg, #3a474f, #243038);
   font-size: calc(1.25 * var(--las-rem));
-  color: #e8d48b;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 0 #152028, 0 4px 10px rgba(0, 0, 0, 0.25);
   flex: 0 0 auto;
 }
 
@@ -3231,8 +3246,8 @@
   letter-spacing: 0.04em;
 }
 
-/* 结算演绎中：版面保留卡牌，隐藏实体骰以免与 FX 筹码重叠 */
-.las-settling .las-board .las-slot-num .las-die {
+/* 结算演绎中：版面保留卡牌，隐藏工人骰与数量以免与 FX 筹码重叠 */
+.las-settling .las-board .las-slot-num .las-worker-dice.is-overlay {
   visibility: hidden;
 }
 

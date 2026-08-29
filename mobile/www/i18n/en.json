@@ -651,6 +651,8 @@
     "breedLackCap": "Villagers at max {max}",
     "breedFormHint": "Pay {need} wheat ({villagers} villagers × {rate} each), +1 villager; housing slots {free}/{capacity}",
     "unlockRound": "Unlocks round {n}",
+    "unlockRoundFaceDown": "Unlocks round {n} · Hidden",
+    "faceDownSlot": "Hidden",
     "rules": {
       "btn": "Rules",
       "title": "Kalastan · Rules",

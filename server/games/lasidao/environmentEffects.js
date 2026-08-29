@@ -532,7 +532,7 @@ function applyEnvironmentOnSettleSlot(game, ctx) {
       break;
 
     case 'prisonersDilemma': {
-      const top = ranked.find((r) => r.pid !== NEUTRAL_WORKER_ID) || ranked[0];
+      const top = ranked[0];
       const n = top ? Number(top.count) || 0 : 0;
       const alive = (ctx.alivePlayers && ctx.alivePlayers(game)) || [];
       let min = Infinity;

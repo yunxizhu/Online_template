@@ -301,6 +301,7 @@
     "statusEventPrisonerWait": "等待囚徒困境弃牌…",
     "eventPickResource": "晴空万里：任选 1 种资源获得",
     "eventPickResourceHand": "当前手里的资源",
+    "eventPickResourceHandSingle": "已有 {n}",
     "eventPickTwoResources": "渔翁得利：任选获得 {picked}/{need} 个资源（可重复）",
     "eventPickResources": "请选择获得 {picked}/{need} 个资源（可重复）",
     "eventPickTwoResourcesReset": "重选",
@@ -651,6 +652,8 @@
     "breedFormHint": "消耗 {need} 小麦（{villagers} 村民 × 每人 {rate} 小麦），村民 +1；住房空位 {free}/{capacity}",
     "breedTooltip": "消耗 {need} 小麦（{villagers} 村民 × 每人 {rate}），村民 +1；空位 {free}/{capacity}",
     "unlockRound": "第{n}轮解锁",
+    "unlockRoundFaceDown": "第{n}轮解锁 · 暗置",
+    "faceDownSlot": "暗置",
     "rules": {
       "btn": "游戏规则",
       "title": "卡拉斯坦 · 游戏规则",

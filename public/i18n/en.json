@@ -301,6 +301,7 @@
     "statusEventPrisonerWait": "Waiting for Prisoner's Dilemma discards…",
     "eventPickResource": "Clear Skies: gain 1 resource of your choice",
     "eventPickResourceHand": "Resources in hand",
+    "eventPickResourceHandSingle": "Have {n}",
     "eventPickTwoResources": "Fisherman's Gain: choose {picked}/{need} resources (duplicates OK)",
     "eventPickResources": "Choose {picked}/{need} resources (duplicates OK)",
     "eventPickTwoResourcesReset": "Reset",
@@ -650,6 +651,8 @@
     "breedLackCap": "Villagers at max {max}",
     "breedFormHint": "Pay {need} wheat ({villagers} villagers × {rate} each), +1 villager; housing slots {free}/{capacity}",
     "unlockRound": "Unlocks round {n}",
+    "unlockRoundFaceDown": "Unlocks round {n} · Hidden",
+    "faceDownSlot": "Hidden",
     "rules": {
       "btn": "Rules",
       "title": "Kalastan · Rules",
