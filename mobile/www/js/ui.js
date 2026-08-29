@@ -93,9 +93,10 @@
     observerSection: document.getElementById('observer-section'),
     btnStart: document.getElementById('btn-start'),
     btnEditRoom: document.getElementById('btn-edit-room'),
-    btnRoomRules: document.getElementById('btn-room-rules'),
+    btnMenuGameRules: document.getElementById('btn-menu-game-rules'),
     btnLeave: document.getElementById('btn-leave'),
     roomStartHint: document.getElementById('room-start-hint'),
+    roomBanner: document.getElementById('room-banner'),
     roomBannerHint: document.querySelector('.room-banner-hint'),
     gameMenu: document.getElementById('game-menu'),
     btnGameMenu: document.getElementById('btn-game-menu'),
@@ -1464,13 +1465,13 @@
     }
   }
 
-  function showToast(message) {
+  function showToast(message, durationMs) {
     el.toast.textContent = message;
     el.toast.hidden = false;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
       el.toast.hidden = true;
-    }, 3200);
+    }, typeof durationMs === 'number' && durationMs > 0 ? durationMs : 3200);
   }
 
   function showRoomBusy(mode, message) {
@@ -1506,7 +1507,7 @@
       } else {
         showToast(was === 'create' ? t('create.createTimeout') : t('create.joinTimeout'));
       }
-    }, 90000);
+    }, 15000);
   }
 
   function hideRoomBusy() {
@@ -1658,6 +1659,12 @@
     el.btnQuitGame.hidden = currentViewName !== 'game';
   }
 
+  function syncGameRulesMenuItem() {
+    if (!el.btnMenuGameRules) return;
+    const isLasidao = state.room && state.room.gameType === 'lasidao';
+    el.btnMenuGameRules.hidden = !(currentViewName === 'game' && isLasidao);
+  }
+
   function syncChatVisibility(viewName) {
     const name =
       viewName ||
@@ -1709,9 +1716,11 @@
       name === 'room' ? 'phase-room' : name === 'game' ? 'phase-game' : 'phase-lobby'
     );
 
-    // 左上角菜单始终可见；对局中额外显示「退出游戏」
+    // 左上角菜单始终可见；对局中额外显示「退出游戏」与「游戏规则」
     if (el.gameMenu) el.gameMenu.hidden = false;
+    if (el.roomBanner) el.roomBanner.hidden = name !== 'room';
     syncQuitMenuItem();
+    syncGameRulesMenuItem();
     if (name !== 'game') closeGameMenu();
 
     if (el.appPhaseTitle) {
@@ -2076,30 +2085,35 @@
       (where ? ` <span class="room-list-where">· ${escapeHtml(where)}</span>` : '') +
       `</span>` +
       `<span class="room-list-players">${playerBitHtml}</span>`;
-    const btn = document.createElement('button');
-    btn.type = 'button';
     const canJoin = roomCanJoin(room);
     const canSpec = roomCanSpectate(room);
-    if (preferSpectate || (!canJoin && canSpec)) {
-      btn.textContent = '观战';
-      btn.className = 'secondary';
-      if (!canSpec) {
-        btn.disabled = true;
-      } else {
-        btn.addEventListener('click', () => spectateDiscoveredRoom(room));
-      }
+
+    const btnSpec = document.createElement('button');
+    btnSpec.type = 'button';
+    const _specText = t('lobby.spectate');
+    btnSpec.textContent = _specText === 'lobby.spectate' ? '观战' : _specText;
+    btnSpec.className = 'secondary';
+    if (!canSpec) {
+      btnSpec.disabled = true;
+      btnSpec.title = '当前房间不可观战';
     } else {
-      btn.textContent = t('lobby.join');
-      if (!canJoin) {
-        btn.disabled = true;
-        btn.title = room.status === 'playing' ? '对局已开始，请观战' : t('lobby.roomFull');
-        li.classList.add('is-full');
-      } else {
-        btn.addEventListener('click', () => joinDiscoveredRoom(room));
-      }
+      btnSpec.addEventListener('click', () => spectateDiscoveredRoom(room));
     }
+
+    const btnJoin = document.createElement('button');
+    btnJoin.type = 'button';
+    btnJoin.textContent = t('lobby.join');
+    if (!canJoin) {
+      btnJoin.disabled = true;
+      btnJoin.title = room.status === 'playing' ? '对局已开始，请观战' : t('lobby.roomFull');
+      li.classList.add('is-full');
+    } else {
+      btnJoin.addEventListener('click', () => joinDiscoveredRoom(room));
+    }
+
     li.appendChild(info);
-    li.appendChild(btn);
+    li.appendChild(btnSpec);
+    li.appendChild(btnJoin);
     li.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
       showRoomCtx(room, ev.clientX, ev.clientY);
@@ -2642,9 +2656,6 @@
         : isSpectator
           ? '退出观战'
           : t('room.leave');
-    }
-    if (el.btnRoomRules) {
-      el.btnRoomRules.hidden = room.gameType !== 'lasidao';
     }
     if (el.roomBannerHint) {
       el.roomBannerHint.textContent = isSpectator
@@ -3310,7 +3321,7 @@
 
       const ok = await waitForSessionRestore(6000);
       if (ok && isInRestoredGameView()) {
-        showToast(t('toast.rejoined'));
+        showToast(t('toast.rejoined'), 2000);
         if (probe.roomId && state._rejoinSnoozeUntil[probe.roomId]) {
           delete state._rejoinSnoozeUntil[probe.roomId];
         }
@@ -3788,22 +3799,27 @@
       if (action === 'join-their-room') {
         if (!target.roomId) return;
         if (state.roomBusy) return;
+        const theirRoom = (state.lobbyRooms || []).find(
+          (r) => String(r.id).toUpperCase() === String(target.roomId).toUpperCase()
+        );
         const name = state.playerName || t('app.playerDefault');
+        const room = theirRoom || {
+          id: target.roomId,
+          host: target.host,
+          local: target.local === true,
+          hasPassword: false,
+        };
+        const password = askRoomPassword(room);
+        if (password == null) return;
         try {
           await joinRoomWithBusy(async () => {
-            if (target.local === false && target.host) {
-              await net.joinRoomOnHost(
-                target.roomId,
-                name,
-                target.host,
-                lobbyJoinOpts()
-              );
-            } else {
-              await net.joinRoomOnHost(target.roomId, name, null, {
-                ...lobbyJoinOpts(),
-                local: true,
-              });
-            }
+            await net.joinRoomOnHost(room.id, name, room.host, {
+              ...lobbyJoinOpts(),
+              password,
+              hasPassword: Boolean(room.hasPassword),
+              local: room.local === true,
+              preferLocal: room.local === true,
+            });
           });
         } catch (err) {
           showToast(err.message || t('toast.joinFail'));
@@ -3990,8 +4006,9 @@
       setCreatePanelOpen(true, 'edit');
     });
   }
-  if (el.btnRoomRules) {
-    el.btnRoomRules.addEventListener('click', () => {
+  if (el.btnMenuGameRules) {
+    el.btnMenuGameRules.addEventListener('click', () => {
+      closeGameMenu();
       if (
         window.LasidaoUi &&
         typeof window.LasidaoUi.openRules === 'function'
@@ -4059,6 +4076,7 @@
     if (I18n && I18n.applyDom) I18n.applyDom(document);
     syncLangMenuActive();
     syncQuitMenuItem();
+    syncGameRulesMenuItem();
     showView(currentViewName);
     updateCreateForm();
     fillGameOptions(state.games);
@@ -4084,6 +4102,7 @@
   syncLangMenuActive();
   syncBgmMenuSlider();
   syncQuitMenuItem();
+  syncGameRulesMenuItem();
   if (el.roomTurnTime) {
     for (const opt of el.roomTurnTime.options) {
       const v = Number(opt.value);

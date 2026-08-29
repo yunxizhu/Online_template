@@ -998,13 +998,13 @@ ok(ax(g9, p9.id, { type: 'exchange', payload: { from: 'wood', to: 'iron' } }));
 assert.strictEqual(p9.resources.wood, 5);
 assert.strictEqual(p9.resources.iron, 1);
 
-// 多资源同时兑换测试
+// 多资源同时兑换测试（新语义：from/to 按张数）
 p9.resources = { wood: 4, stone: 4, food: 0, iron: 0 };
 ok(
   ax(g9, p9.id, {
     type: 'exchange',
     payload: {
-      from: { wood: 2, stone: 1, food: 0, iron: 0 },
+      from: { wood: 4, stone: 2, food: 0, iron: 0 },
       to: { wood: 0, stone: 0, food: 2, iron: 1 },
     },
   })
@@ -3094,6 +3094,42 @@ console.log('— event teleport die —');
     g2.pendingEventChoice && g2.pendingEventChoice.needChoice === 'teleportDie',
     '派遣后场上应有骰子可传送'
   );
+
+  // 不成为最大者时不触发传送
+  const g3 = createGameState(room(2));
+  finishInit(g3);
+  g3.board.resource.environments[5] = {
+    id: 'env_tp3',
+    kind: 'environment',
+    label: '传送',
+    envType: 'teleport',
+    trigger: 'dispatch',
+    number: 5,
+  };
+  if (!g3.board.resource.tiles.some((t) => t.number === 5)) {
+    g3.board.resource.tiles.push({
+      id: 'res_tp5b',
+      kind: 'resource',
+      resource: 'stone',
+      large: 2,
+      small: 1,
+      number: 5,
+      label: '石头·贫',
+    });
+  }
+  g3.board.resource.workers[5] = { p1: 2 };
+  g3.players[1].dispatched = 2;
+  g3.phase = 'produce';
+  g3.currentPlayerId = 'p0';
+  g3.awaitingProduceRoll = false;
+  g3.dice = { p0: [5], p1: [] };
+  g3.diceBoosted = { p0: [false], p1: [] };
+  ok(applyAction(g3, 'p0', { type: 'placeDice', payload: { face: 5, area: 'resource' } }));
+  assert.ok(
+    !g3.pendingEventChoice || g3.pendingEventChoice.needChoice !== 'teleportDie',
+    '未成为最大者不应触发传送'
+  );
+
   console.log('✓ event teleport die');
 }
 

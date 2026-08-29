@@ -208,8 +208,9 @@ body.is-mobile-chat .app-body:has(.lobby-people:not([hidden])) .app-top {
 }
 
 body.is-mobile-chat .toast-slot {
-  height: 2.75rem;
-  margin-bottom: 0.5rem;
+  top: 0.5rem;
+  right: 0.5rem;
+  max-width: 16rem;
 }
 
 body.is-mobile-chat .toast {
@@ -848,13 +849,6 @@ body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-me-rail {
 body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface > h2 {
   font-size: calc(0.95 * var(--las-rem));
   padding: 0 3.2rem;
-}
-
-body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-rules-btn {
-  top: 0.35rem;
-  left: 0.35rem;
-  font-size: calc(0.72 * var(--las-rem));
-  padding: 0.25rem 0.45rem;
 }
 
 #btn-leave-room,

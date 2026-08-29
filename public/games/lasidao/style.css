@@ -15,8 +15,8 @@
   --las-design-w: 1920;
   --las-design-h: 1080;
   /* 卡牌比例 600×800（3:4），全部随 --las-scale 同比缩放 */
-  --las-card-w: calc(6.5 * var(--las-rem));
-  --las-card-h: calc(var(--las-card-w) * 800 / 600);
+  --las-card-h: calc(7.2 * var(--las-rem));
+  --las-card-w: calc(var(--las-card-h) * 600 / 800);
   --las-slot-pad: calc(0.26 * var(--las-rem));
   --las-slot-tiles-pad-x: calc(0.25 * var(--las-rem));
   --las-card-gap: calc(0.26 * var(--las-rem));
@@ -26,8 +26,8 @@
   --las-hand-card-w: calc(var(--las-card-w) * 1.2);
   --las-hand-card-h: calc(var(--las-hand-card-w) * 800 / 600);
   --las-side-rail-min-h: calc(var(--las-hand-card-h) + 3.5 * var(--las-rem));
-  --las-me-rail-w: calc(var(--las-hand-card-w) * 3 + var(--las-card-gap) * 4);
-  --las-deck-w: calc(7.65 * var(--las-rem));
+  --las-me-rail-w: calc(var(--las-hand-card-w) * 5 + var(--las-card-gap) * 6);
+  --las-deck-w: calc(5.1 * var(--las-rem));
   font-size: calc(1.08 * var(--las-rem));
   width: 100%;
   max-width: 100%;
@@ -49,6 +49,14 @@
 .lasidao-panel > h2 {
   padding: 0 calc(5.5 * var(--las-rem));
   box-sizing: border-box;
+  margin-top: calc(0.15 * var(--las-rem));
+  margin-bottom: calc(0.1 * var(--las-rem));
+  font-size: calc(1.15 * var(--las-rem));
+}
+
+.lasidao-panel .game-status {
+  margin: calc(0.15 * var(--las-rem)) 0 calc(0.3 * var(--las-rem));
+  font-size: calc(0.95 * var(--las-rem));
 }
 
 .las-meta {
@@ -843,6 +851,37 @@
   flex: 0 0 auto;
 }
 
+.las-slot-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: calc(1.5 * var(--las-rem));
+  padding: calc(0.1 * var(--las-rem)) 0;
+  box-sizing: border-box;
+}
+
+.las-slot-confirm-btn {
+  font-size: calc(0.78 * var(--las-rem));
+  padding: calc(0.18 * var(--las-rem)) calc(0.6 * var(--las-rem));
+  border-radius: 6px;
+  border: 1px solid #e8d48b;
+  background: #2a3a45;
+  color: #e8d48b;
+  cursor: pointer;
+  white-space: nowrap;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+
+.las-slot-confirm-btn.is-active {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .las-slot-num {
   flex: 0 0 var(--las-slot-num-h);
   width: 100%;
@@ -1127,6 +1166,8 @@
   min-width: var(--las-card-w);
   min-height: var(--las-card-h);
   box-sizing: border-box;
+  border: 1px dashed rgba(154, 168, 178, 0.45);
+  border-radius: 8px;
 }
 
 .las-slot-empty.las-slot-locked {
@@ -3017,6 +3058,26 @@
   display: none !important;
 }
 
+.las-turn-toast.has-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(0.45 * var(--las-rem));
+}
+
+.las-turn-toast-card {
+  width: calc(var(--las-card-w) * 0.45);
+  min-width: calc(var(--las-card-w) * 0.45);
+  height: calc(var(--las-card-h) * 0.45);
+  min-height: calc(var(--las-card-h) * 0.45);
+  border-radius: 6px;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
 .las-init-all-dice {
   display: flex;
   flex-wrap: wrap;
@@ -3244,11 +3305,6 @@
   color: #ffd2a8;
   font-size: calc(1.2 * var(--las-rem));
   letter-spacing: 0.04em;
-}
-
-/* 结算演绎中：版面保留卡牌，隐藏工人骰与数量以免与 FX 筹码重叠 */
-.las-settling .las-board .las-slot-num .las-worker-dice.is-overlay {
-  visibility: hidden;
 }
 
 .las-tile.is-recycling {
@@ -3958,18 +4014,6 @@
   }
 }
 
-/* �� ?????? �� */
-
-.las-rules-btn {
-  position: absolute;
-  top: calc(0.65 * var(--las-rem));
-  left: calc(0.65 * var(--las-rem));
-  z-index: 6;
-  margin: 0;
-  font-size: calc(0.85 * var(--las-rem));
-  padding: calc(0.35 * var(--las-rem)) calc(0.7 * var(--las-rem));
-}
-
 .las-rules-modal .las-rules-dialog {
   width: min(100%, 680px);
   max-height: min(90vh, 780px);
@@ -4280,4 +4324,30 @@
     transform: translate3d(var(--dx, 0), var(--dy, 120px), 0) rotate(540deg);
     opacity: 0;
   }
+}
+
+.las-act-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(0.5 * var(--las-rem));
+}
+
+.las-build-hand-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(0.5 * var(--las-rem));
+}
+
+.las-permanent-help-btn {
+  font-size: calc(0.78 * var(--las-rem));
+  padding: calc(0.2 * var(--las-rem)) calc(0.45 * var(--las-rem));
+  min-height: auto;
+}
+
+.las-deck-pile-resource .las-deck-stack,
+.las-deck-pile-environment .las-deck-stack,
+.las-deck-pile-special .las-deck-stack {
+  cursor: pointer;
 }

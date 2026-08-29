@@ -549,7 +549,7 @@ class MqttBulletin {
   /**
    * 等待指定房间已成功发出 MQTT 房间心跳（他人可在大厅看到）。
    */
-  async waitForRoomBeacon(roomId, getRoom, { timeoutMs = 90000, onProgress } = {}) {
+  async waitForRoomBeacon(roomId, getRoom, { timeoutMs = 20000, onProgress } = {}) {
     if (!this.enabled || !this._started) {
       return { ok: true, reason: 'disabled' };
     }

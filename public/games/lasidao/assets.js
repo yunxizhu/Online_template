@@ -91,8 +91,11 @@ window.LasidaoAssets = (function () {
   /** 建筑卡面（buildType / resource+tier → 文件名） */
   const BUILDING_IMAGE = {
     'score2': 'jianzhuka_gongdian.png',
+    'score1': 'jianzhuka_xuetang.png',
     'exchange': 'jianzhuka_jishi.png',
     'wishWell': 'jianzhuka_xuyuanjin.png',
+    'eternalThrone': 'jianzhuka_yonghengwangzuo.png',
+    'mixer': 'jianzhuka_daliaoji.png',
     'wood:rich': 'jianzhuka_damucaizuofang.png',
     'wood:poor': 'jianzhuka_xiaomucaizuofang.png',
     'stone:rich': 'jianzhuka_dashicaizuofang.png',

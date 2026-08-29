@@ -652,7 +652,7 @@ window.GameNet = (function () {
     const rid = String(roomId || '')
       .trim()
       .toUpperCase();
-    const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 20000;
+    const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 10000;
     return new Promise((resolve, reject) => {
       const s = ensureSocket();
       let settled = false;

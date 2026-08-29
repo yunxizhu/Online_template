@@ -338,6 +338,12 @@ function countBuiltWishWell(p) {
   ).length;
 }
 
+function countEternalThrone(p) {
+  return (p.buildings || []).filter(
+    (b) => b.built && b.buildType === 'eternalThrone'
+  ).length;
+}
+
 function playersNeedingWishWell(game) {
   return alivePlayers(game).filter(
     (p) => (Number(p.pendingWishWellBonus) || 0) > 0
@@ -1662,8 +1668,12 @@ function completeSettleAfterAnim(game) {
   game.settleAnimAcks = {};
   game.settleAnimUntil = 0;
   game.personalProduceApplied = false;
-  // 结算动画结束后再回收场上未取走的板块（客户端会先播回收动画）
+  // 结算动画结束后再回收场上未取走的板块与工人骰子
   recycleBoard(game);
+  clearAllSlotWorkers(game);
+  for (const p of game.players) {
+    for (const b of p.buildings || []) b.workers = 0;
+  }
   // 生产结算结束后清空歉收标记
   game.barrenMarkerNumber = null;
   game.barrenMarkerArea = null;
@@ -1958,22 +1968,12 @@ function startSettle(game) {
   });
   if (game.over) {
     game.lastSettle = report;
-    clearAllSlotWorkers(game);
-    for (const p of game.players) {
-      for (const b of p.buildings || []) b.workers = 0;
-    }
     return;
   }
 
   game.lastSettle = report;
 
-  // 结算演算结束即清空场上工人；卡牌保留至动画结束后再回收
-  clearAllSlotWorkers(game);
-  for (const p of game.players) {
-    for (const b of p.buildings || []) b.workers = 0;
-  }
-
-  // 版面卡牌保留至结算动画结束再回收（见 completeSettleAfterAnim）
+  // 工人骰子与版面卡牌均保留至结算动画结束后回收（见 completeSettleAfterAnim）
   game.phase = 'settle';
   game.currentPlayerId = null;
   game.settleAnimAcks = {};
@@ -2565,6 +2565,10 @@ function actMercenaryPlace(game, player, payload) {
     if (!tiles.length) {
       return { ok: false, error: `${AREA_LABELS[area]}区 ${face} 号格没有板块` };
     }
+    // 将雇佣骰实际放置到板块上，使其在结算阶段可被统计并正确显示
+    const areaBoard = game.board[area];
+    const slotW = areaBoard.workers[face] || (areaBoard.workers[face] = {});
+    slotW[player.id] = (slotW[player.id] || 0) + 1;
     if (area === 'resource') {
       const got = grantBoardResourceShare(player, tiles, 'large');
       player.roundGained += got.total;
@@ -2903,7 +2907,15 @@ function afterBuildAction(game, playerId, didRealAction) {
     return;
   }
   const p = playerById(game, playerId);
-  if (p) p.caravanPending = false;
+  if (p) {
+    p.caravanPending = false;
+    const throneCount = countEternalThrone(p);
+    if (throneCount > 0) {
+      const gain = throneCount;
+      p.bonusScore = (Number(p.bonusScore) || 0) + gain;
+      pushLog(game, `${p.name} 的永恒王座生效，+${gain} 分`);
+    }
+  }
   game.buildPassed[playerId] = true;
   advanceBuildTurn(game);
 }
@@ -3491,8 +3503,8 @@ function actDiscardUnbuilt(game, player, payload) {
       }
     player.buildings.push(neu);
       let msg = `${player.name} 弃置${wasBuilt ? '已建' : '未建'}「${b.label}」（入弃牌堆），新建筑「${neu.label}」放到原格子`;
-      if (wasBuilt && b.buildType === 'score2' && b.score) {
-        msg += `，宫殿被弃置，失去 +${b.score} 分`;
+      if (wasBuilt && b.score) {
+        msg += `，${b.label}被弃置，失去 +${b.score} 分`;
       }
       pushLog(game, msg);
     } else {
@@ -3501,8 +3513,8 @@ function actDiscardUnbuilt(game, player, payload) {
           ? `（格子 ${slotLabel(slotKeep)}）`
           : '') +
         '（入弃牌堆）';
-      if (wasBuilt && b.buildType === 'score2' && b.score) {
-        msg += `，宫殿被弃置，失去 +${b.score} 分`;
+      if (wasBuilt && b.score) {
+        msg += `，${b.label}被弃置，失去 +${b.score} 分`;
       }
       pushLog(game, msg);
     }
@@ -3512,8 +3524,8 @@ function actDiscardUnbuilt(game, player, payload) {
         ? `（格子 ${slotLabel(slotKeep)}）`
         : '') +
       '（入弃牌堆）';
-    if (wasBuilt && b.buildType === 'score2' && b.score) {
-      msg += `，宫殿被弃置，失去 +${b.score} 分`;
+    if (wasBuilt && b.score) {
+      msg += `，${b.label}被弃置，失去 +${b.score} 分`;
     }
     pushLog(game, msg);
   }
@@ -3758,11 +3770,17 @@ function actExchange(game, player, payload) {
     return { ok: true };
   }
 
-  // 新格式：多资源对象
+  // 新格式：多资源对象（from/to 按“张数”传递）
   if (typeof from !== 'object' || typeof to !== 'object' || from === null || to === null) {
     return { ok: false, error: '资源类型无效' };
   }
 
+  const hasMixer = (player.buildings || []).some(
+    (b) => b.built && b.buildType === 'mixer'
+  );
+
+  const fromCounts = {};
+  const toCounts = {};
   let totalFromCount = 0;
   let totalToCount = 0;
   for (const r of RESOURCES) {
@@ -3771,32 +3789,86 @@ function actExchange(game, player, payload) {
     if (fc > 0 && tc > 0) {
       return { ok: false, error: `${RESOURCE_LABELS[r]} 不能同时换出和换入` };
     }
+    fromCounts[r] = fc;
+    toCounts[r] = tc;
     totalFromCount += fc;
     totalToCount += tc;
   }
   if (totalFromCount === 0 || totalToCount === 0) {
     return { ok: false, error: '请至少选择一种换出和一种换入资源' };
   }
-  if (totalFromCount !== totalToCount) {
-    return { ok: false, error: `换出总批次(${totalFromCount})与换入总批次(${totalToCount})不相等` };
+
+  let batch = 0;
+  if (hasMixer) {
+    // 混合模式：need 张不同资源 → 1 张任意
+    if (totalFromCount % need !== 0) {
+      return {
+        ok: false,
+        error: `换出总张数(${totalFromCount})必须是 ${need} 的倍数（打料机混合兑换）`,
+      };
+    }
+    batch = totalFromCount / need;
+    if (totalToCount !== batch) {
+      return {
+        ok: false,
+        error: `换入总数(${totalToCount})与可兑换数量(${batch})不相等`,
+      };
+    }
+    // 每种资源在同一批次最多出现一次
+    for (const r of RESOURCES) {
+      const fc = fromCounts[r];
+      if (need === 4 && fc !== batch) {
+        return {
+          ok: false,
+          error: '打料机 4 换 1 时，4 种资源必须各出相同数量',
+        };
+      }
+      if (need >= 2 && fc > batch) {
+        return {
+          ok: false,
+          error: `${RESOURCE_LABELS[r]} 数量超过可组成批次上限`,
+        };
+      }
+    }
+  } else {
+    // 普通模式：同种资源 need 张 → 1 张任意
+    let totalBatch = 0;
+    for (const r of RESOURCES) {
+      const fc = fromCounts[r];
+      if (fc > 0 && fc % need !== 0) {
+        return {
+          ok: false,
+          error: `${RESOURCE_LABELS[r]} 数量(${fc})不是 ${need} 的倍数`,
+        };
+      }
+      totalBatch += fc / need;
+    }
+    batch = totalBatch;
+    if (totalToCount !== batch) {
+      return {
+        ok: false,
+        error: `换入总数(${totalToCount})与可兑换批次(${batch})不相等`,
+      };
+    }
   }
 
   for (const r of RESOURCES) {
-    const fc = Math.max(0, Math.floor(Number(from[r]) || 0));
-    const totalNeed = need * fc;
-    if ((player.resources[r] || 0) < totalNeed) {
-      return { ok: false, error: `${RESOURCE_LABELS[r]} 不足，需要 ${totalNeed}` };
+    if ((player.resources[r] || 0) < fromCounts[r]) {
+      return {
+        ok: false,
+        error: `${RESOURCE_LABELS[r]} 不足，需要 ${fromCounts[r]}`,
+      };
     }
   }
 
   const fromParts = [];
   const toParts = [];
   for (const r of RESOURCES) {
-    const fc = Math.max(0, Math.floor(Number(from[r]) || 0));
-    const tc = Math.max(0, Math.floor(Number(to[r]) || 0));
+    const fc = fromCounts[r];
+    const tc = toCounts[r];
     if (fc > 0) {
-      player.resources[r] = (player.resources[r] || 0) - need * fc;
-      fromParts.push(`${need * fc}${RESOURCE_LABELS[r]}`);
+      player.resources[r] = (player.resources[r] || 0) - fc;
+      fromParts.push(`${fc}${RESOURCE_LABELS[r]}`);
     }
     if (tc > 0) {
       player.resources[r] = (player.resources[r] || 0) + tc;
@@ -3810,7 +3882,9 @@ function actExchange(game, player, payload) {
       ? built > exCount
         ? `用集市（建成 ${built} 座，生效 ${exCount} 座，${need}换1）`
         : `用集市（${exCount}座，${need}换1）`
-      : `银行兑换（${need}换1）`;
+      : hasMixer
+        ? `打料机混合兑换（${need}换1）`
+        : `银行兑换（${need}换1）`;
   pushLog(
     game,
     `${player.name} ${sourceLabel}：${fromParts.join('+')} → ${toParts.join('+')}`
@@ -4001,25 +4075,10 @@ function useExile(game, player, payload) {
   if ((slotW[targetId] || 0) < 1) {
     return { ok: false, error: '该玩家在此数字格没有村民' };
   }
-  const slotB =
-    (game.board[area].boosts && game.board[area].boosts[number]) || {};
-  const physical = slotW[targetId];
-  const boosted = Math.min(Number(slotB[targetId]) || 0, physical);
-  const normal = physical - boosted;
-  // 优先驱逐普通骰；无普通则驱逐强化骰
-  if (normal > 0) {
-  slotW[targetId] -= 1;
-  } else {
-    slotW[targetId] -= 1;
-    if (game.board[area].boosts && game.board[area].boosts[number]) {
-      game.board[area].boosts[number][targetId] = Math.max(0, boosted - 1);
-      if (game.board[area].boosts[number][targetId] <= 0) {
-        delete game.board[area].boosts[number][targetId];
-      }
-    }
+  const removed = removeOneDieFromBoardSlot(game, area, number, targetId);
+  if (!removed.ok) {
+    return { ok: false, error: removed.error };
   }
-  if (slotW[targetId] <= 0) delete slotW[targetId];
-  game.board[area].workers[number] = slotW;
   target.dispatched = Math.max(0, target.dispatched - 1);
   pushProduceFx(game, {
     type: 'exile',

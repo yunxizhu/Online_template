@@ -1,11 +1,5 @@
 <!-- Lasidao panel -->
 <div class="panel game-panel lasidao-panel" id="panel-lasidao" hidden>
-  <button
-    id="btn-las-rules"
-    type="button"
-    class="secondary las-rules-btn"
-    data-i18n="lasidao.rules.btn"
-  >????</button>
   <h2 data-i18n="lasidao.title">???</h2>
   <p id="las-round" class="game-status"></p>
   <div id="las-init-banner" class="las-init-banner" hidden></div>
@@ -28,14 +22,63 @@
         <div class="las-rules-section" data-i18n-html="lasidao.rules.backgroundHtml"></div>
         <h4 data-i18n="lasidao.rules.flowTitle">游戏流程</h4>
         <div class="las-rules-section" data-i18n-html="lasidao.rules.flowHtml"></div>
-        <h4 data-i18n="lasidao.rules.permanentTitle">常驻功能</h4>
+        <h4 data-i18n="lasidao.rules.eventTitle">事件牌效果</h4>
+        <div class="las-rules-section" data-i18n-html="lasidao.rules.eventHtml"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="las-permanent-modal" class="modal las-rules-modal" hidden>
+    <div class="modal-backdrop" id="las-permanent-backdrop"></div>
+    <div class="modal-dialog panel las-rules-dialog" role="dialog" aria-modal="true" aria-labelledby="las-permanent-title">
+      <div class="las-rules-head">
+        <h3 id="las-permanent-title" data-i18n="lasidao.permanentHelpTitle">常驻功能</h3>
+        <button id="btn-las-permanent-close" type="button" class="secondary" data-i18n="lasidao.rules.close">关闭</button>
+      </div>
+      <div class="las-rules-body">
         <div class="las-rules-section" data-i18n-html="lasidao.rules.permanentHtml"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="las-resource-deck-modal" class="modal las-rules-modal" hidden>
+    <div class="modal-backdrop" id="las-resource-deck-backdrop"></div>
+    <div class="modal-dialog panel las-rules-dialog" role="dialog" aria-modal="true" aria-labelledby="las-resource-deck-title">
+      <div class="las-rules-head">
+        <h3 id="las-resource-deck-title" data-i18n="lasidao.resourceDeckHelpTitle">资源卡</h3>
+        <button id="btn-las-resource-deck-close" type="button" class="secondary" data-i18n="lasidao.rules.close">关闭</button>
+      </div>
+      <div class="las-rules-body">
+        <div class="las-rules-section" data-i18n-html="lasidao.rules.resourceHtml"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="las-event-deck-modal" class="modal las-rules-modal" hidden>
+    <div class="modal-backdrop" id="las-event-deck-backdrop"></div>
+    <div class="modal-dialog panel las-rules-dialog" role="dialog" aria-modal="true" aria-labelledby="las-event-deck-title">
+      <div class="las-rules-head">
+        <h3 id="las-event-deck-title" data-i18n="lasidao.rules.eventTitle">事件牌效果</h3>
+        <button id="btn-las-event-deck-close" type="button" class="secondary" data-i18n="lasidao.rules.close">关闭</button>
+      </div>
+      <div class="las-rules-body">
+        <div class="las-rules-section" data-i18n-html="lasidao.rules.eventHtml"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="las-special-deck-modal" class="modal las-rules-modal" hidden>
+    <div class="modal-backdrop" id="las-special-deck-backdrop"></div>
+    <div class="modal-dialog panel las-rules-dialog" role="dialog" aria-modal="true" aria-labelledby="las-special-deck-title">
+      <div class="las-rules-head">
+        <h3 id="las-special-deck-title" data-i18n="lasidao.specialDeckHelpTitle">功能卡与建筑卡</h3>
+        <button id="btn-las-special-deck-close" type="button" class="secondary" data-i18n="lasidao.rules.close">关闭</button>
+      </div>
+      <div class="las-rules-body">
         <h4 data-i18n="lasidao.rules.funcTitle">功能卡效果</h4>
         <div class="las-rules-section" data-i18n-html="lasidao.rules.funcHtml"></div>
         <h4 data-i18n="lasidao.rules.buildTitle">建筑卡效果</h4>
         <div class="las-rules-section" data-i18n-html="lasidao.rules.buildHtml"></div>
-        <h4 data-i18n="lasidao.rules.eventTitle">事件牌效果</h4>
-        <div class="las-rules-section" data-i18n-html="lasidao.rules.eventHtml"></div>
       </div>
     </div>
   </div>
@@ -204,7 +247,7 @@
     </div>
   </div>
 
-  <div class="las-playfield">
+  <div class="las-playfield" id="las-playfield">
     <div class="las-table">
       <aside class="las-side-rail" id="las-side-rail" aria-label="dice">
         <div id="las-init-wrap" class="las-init-wrap" hidden>
@@ -237,7 +280,10 @@
   </div>
 
         <div id="las-act-wrap" class="las-act-wrap" hidden>
-          <h3 class="game-sub" data-i18n="lasidao.actRailTitle">?????</h3>
+          <div class="las-act-head">
+            <h3 class="game-sub" data-i18n="lasidao.actRailTitle">?????</h3>
+            <button id="btn-las-act-permanent-help" type="button" class="secondary las-permanent-help-btn" data-i18n="lasidao.permanentHelpBtn">常驻功能</button>
+          </div>
           <div id="las-act-confirm-bar" class="las-act-confirm-bar" aria-hidden="true">
             <button id="btn-las-build-play" type="button" class="las-act-confirm-primary" disabled data-i18n="lasidao.confirmUse">确认发动</button>
             <button id="btn-las-pass" type="button" class="las-act-confirm-secondary secondary" hidden data-i18n="lasidao.passBuild">??????</button>
@@ -261,7 +307,10 @@
       </aside>
 
       <div id="las-build-hand-wrap" class="las-build-hand-wrap" hidden>
-        <div class="las-build-hand-label" data-i18n="lasidao.buildHandTitle">你的功能牌</div>
+        <div class="las-build-hand-head">
+          <div class="las-build-hand-label" data-i18n="lasidao.buildHandTitle">你的功能牌</div>
+          <button id="btn-las-build-permanent-help" type="button" class="secondary las-permanent-help-btn" data-i18n="lasidao.permanentHelpBtn">常驻功能</button>
+        </div>
         <div id="las-build-hand" class="las-build-hand"></div>
         <div id="las-build-hand-bld-label" class="las-build-hand-label las-build-hand-sub" data-i18n="lasidao.unbuiltBuildings" hidden>未建造建筑</div>
         <div id="las-build-hand-bld" class="las-build-hand"></div>
@@ -269,14 +318,14 @@
 
     <div class="las-board-zone">
     <aside class="las-decks" id="las-decks" aria-label="decks">
-      <div class="las-deck-pile las-deck-pile-resource" data-deck="resource">
+      <div class="las-deck-pile las-deck-pile-resource" data-deck="resource" data-i18n-attr="title:lasidao.deckResourceTooltip" title="查看资源卡牌介绍">
         <div class="las-deck-stack" id="las-deck-stack-resource"></div>
         <div class="las-deck-info">
           <span class="las-deck-name" data-i18n="lasidao.area.resource">资源</span>
           <span class="las-deck-counts"><span id="las-deck-res">0</span>/<span id="las-discard-res">0</span></span>
         </div>
       </div>
-      <div class="las-deck-pile las-deck-pile-special" data-deck="special">
+      <div class="las-deck-pile las-deck-pile-special" data-deck="special" data-i18n-attr="title:lasidao.deckSpecialTooltip" title="查看功能/建筑卡牌介绍">
         <div class="las-deck-stack" id="las-deck-stack-special"></div>
         <div class="las-deck-info">
           <span class="las-deck-name" data-i18n="lasidao.area.special">功能/建筑</span>
@@ -284,7 +333,7 @@
           <span class="las-deck-counts"><span id="las-deck-sp">0</span>/<span id="las-discard-sp">0</span></span>
         </div>
       </div>
-      <div class="las-deck-pile las-deck-pile-environment" data-deck="environment">
+      <div class="las-deck-pile las-deck-pile-environment" data-deck="environment" data-i18n-attr="title:lasidao.deckEnvironmentTooltip" title="查看事件卡牌介绍">
         <div class="las-deck-stack" id="las-deck-stack-environment"></div>
         <div class="las-deck-info">
           <span class="las-deck-name" data-i18n="lasidao.area.environment">事件</span>

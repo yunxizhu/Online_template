@@ -407,6 +407,10 @@ function applyEnvironmentOnDispatch(game, ctx) {
     }
 
     case 'teleport': {
+      const workersTp = game.board.resource.workers[num] || {};
+      if (!becameStrictSlotLeader(workersTp, player.id, ctx.count)) {
+        return null;
+      }
       if (countAllDiceOnBoard(game) <= 0) {
         if (ctx.pushLog) {
           ctx.pushLog(

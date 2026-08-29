@@ -34,8 +34,11 @@ const BANDIT_RAID_COUNT = 2;
 const BUILD_TYPES = {
   produce: '资源建筑',
   score2: '宫殿',
+  score1: '学堂',
   exchange: '集市',
   wishWell: '许愿井',
+  eternalThrone: '永恒王座',
+  mixer: '打料机',
 };
 
 let _uid = 1;
@@ -187,6 +190,20 @@ function makeScore2() {
   };
 }
 
+function makeScore1() {
+  return {
+    id: nextId('bld'),
+    kind: 'building',
+    buildType: 'score1',
+    label: '学堂(+1)',
+    cost: { wood: 1, stone: 1, food: 1, iron: 1 },
+    produce: 0,
+    score: 1,
+    needsWorker: false,
+    functionalOnly: true,
+  };
+}
+
 function makeExchange() {
   return {
     id: nextId('bld'),
@@ -216,6 +233,37 @@ function makeWishWell() {
   };
 }
 
+/** 允许使用不同资源按兑换比例兑换 */
+function makeMixer() {
+  return {
+    id: nextId('bld'),
+    kind: 'building',
+    buildType: 'mixer',
+    label: '打料机',
+    cost: { wood: 1, stone: 1, iron: 2 },
+    img: 'jianzhuka_daliaoji.png',
+    produce: 0,
+    score: 0,
+    needsWorker: false,
+    functionalOnly: true,
+  };
+}
+
+/** 每个建造回合结束时获得 1 胜利点 */
+function makeEternalThrone() {
+  return {
+    id: nextId('bld'),
+    kind: 'building',
+    buildType: 'eternalThrone',
+    label: '永恒王座',
+    cost: { wood: 5, stone: 5, food: 5, iron: 5 },
+    produce: 0,
+    score: 0,
+    needsWorker: false,
+    functionalOnly: true,
+  };
+}
+
 /** 建筑卡堆：木/石/食生产建筑 2富3贫；铁矿 0富3贫（未洗，供合堆组装） */
 function buildBuildingDeckRaw() {
   const cards = [];
@@ -230,8 +278,11 @@ function buildBuildingDeckRaw() {
   cards.push(makeProduceBuild('iron', false));
   cards.push(makeProduceBuild('iron', false));
   for (let i = 0; i < 4; i++) cards.push(makeScore2());
+  for (let i = 0; i < 5; i++) cards.push(makeScore1());
   for (let i = 0; i < 5; i++) cards.push(makeExchange());
   for (let i = 0; i < 3; i++) cards.push(makeWishWell());
+  for (let i = 0; i < 2; i++) cards.push(makeMixer());
+  for (let i = 0; i < 2; i++) cards.push(makeEternalThrone());
   return cards;
 }
 
@@ -285,13 +336,6 @@ const ENVIRONMENT_CATALOG = [
     desc: '上场时在本格放置 3 枚中立骰。派遣时可将本格 1 枚中立骰移到任意板块数字格（无中立骰则不可发动）',
   },
   {
-    envType: 'mercenaries',
-    label: '雇佣军',
-    trigger: 'preSettle',
-    setup: 'mercenary2',
-    desc: '上场时放置 2 枚雇佣骰。全员放置完骰子后、生产判定（抵消与获资源）开始前：若本格有唯一第一名则由其投掷并放置（并列第一不触发）；放置后按对应格大份立即获得资源；若放到有派遣触发事件的格上则同样触发该效果，然后才进入生产判定',
-  },
-  {
     envType: 'oneMountain',
     label: '一山不容二虎',
     trigger: 'settle',
@@ -332,10 +376,17 @@ const ENVIRONMENT_CATALOG = [
     desc: '派遣时：可将场上（含本格）你自己的 1 枚骰子收回到手中',
   },
   {
+    envType: 'weiQiRescueZhao',
+    label: '围魏救赵',
+    trigger: 'dispatch',
+    setup: 'neutralParitySlots',
+    desc: '上场时：本格为奇数则在资源区与功能/建筑区各偶数格各放置 1 枚中立骰；本格为偶数则各奇数格各放置 1 枚中立骰。派遣时：选择任意有其他中立骰的板块，将其上全部中立骰集中到本事件格',
+  },
+  {
     envType: 'teleport',
     label: '传送',
     trigger: 'dispatch',
-    desc: '派遣时：将场上任意板块任意玩家（含中立）的 1 枚骰子传送到任意有板块的格子（不触发目标格派遣事件）',
+    desc: '派遣：成为本格最大者时（首次亦触发；继续加码不重复），将场上任意板块任意玩家（含中立）的 1 枚骰子传送到任意有板块的格子（不触发目标格派遣事件）',
   },
   {
     envType: 'keepOverflow',
@@ -344,12 +395,13 @@ const ENVIRONMENT_CATALOG = [
     desc: '生产结算后：本格第一名（可并列）跳过本轮生产结算后的资源弃牌阶段',
   },
   {
-    envType: 'weiQiRescueZhao',
-    label: '围魏救赵',
-    trigger: 'dispatch',
-    setup: 'neutralParitySlots',
-    desc: '上场时：本格为奇数则在资源区与功能/建筑区各偶数格各放置 1 枚中立骰；本格为偶数则各奇数格各放置 1 枚中立骰。派遣时：选择任意有其他中立骰的板块，将其上全部中立骰集中到本事件格',
+    envType: 'mercenaries',
+    label: '雇佣军',
+    trigger: 'preSettle',
+    setup: 'mercenary2',
+    desc: '上场时放置 2 枚雇佣骰。全员放置完骰子后、生产判定（抵消与获资源）开始前：若本格有唯一第一名则由其投掷并放置（并列第一不触发）；放置后按对应格大份立即获得资源；若放到有派遣触发事件的格上则同样触发该效果，然后才进入生产判定',
   },
+  
 ];
 
 const ENVIRONMENT_BY_TYPE = Object.fromEntries(

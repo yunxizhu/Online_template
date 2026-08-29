@@ -88,6 +88,9 @@
               </label>
             </div>
           </div>
+          <button type="button" id="btn-menu-game-rules" role="menuitem" hidden data-i18n="lasidao.rules.btn">
+            游戏规则
+          </button>
           <button type="button" id="btn-quit-game" role="menuitem" hidden data-i18n="menu.quitGame">
             退出游戏并返回大厅
           </button>
@@ -96,6 +99,12 @@
       <div id="match-clock" class="match-clock" hidden aria-live="polite">
         <span class="match-clock-label" data-i18n="game.matchTime">对局</span>
         <strong id="match-clock-time" class="match-clock-time">00:00</strong>
+      </div>
+      <div id="room-banner" class="room-banner" hidden>
+        <span class="room-banner-tag" data-i18n="room.entered">已进入房间</span>
+        <span class="room-banner-hint" data-i18n="room.waiting">等待开局</span>
+        <span id="room-game-label" class="room-banner-game">—</span>
+        <span id="room-password-badge" class="badge" hidden data-i18n="room.password">密码</span>
       </div>
       <div class="app-top-mid">
         <div class="app-top-title-row">
@@ -170,7 +179,9 @@
               <h2>空闲房间</h2>
               <ul id="room-list" class="room-list"></ul>
               <p id="room-list-empty" class="muted" data-i18n="lobby.noPublicRooms">暂无空闲房间</p>
-              <h2 class="lobby-playing-title">对局中</h2>
+            </div>
+            <div class="panel lobby-rooms">
+              <h2>对局中</h2>
               <ul id="room-list-playing" class="room-list"></ul>
               <p id="room-list-playing-empty" class="muted">暂无进行中的房间</p>
             </div>
@@ -180,10 +191,6 @@
         <!-- 房间 -->
         <section id="view-room" class="view view-room" hidden>
           <div class="room-shell">
-            <div class="room-banner">
-              <span class="room-banner-tag" data-i18n="room.entered">已进入房间</span>
-              <span class="room-banner-hint" data-i18n="room.waiting">等待开局</span>
-            </div>
             <div class="panel room-panel">
               <div class="room-panel-head">
                 <div>
@@ -195,10 +202,6 @@
                   <strong id="room-code" class="room-code-value">—</strong>
                 </div>
               </div>
-              <p class="room-meta">
-                <span id="room-game-label">—</span>
-                <span id="room-password-badge" class="badge" hidden data-i18n="room.password">密码</span>
-              </p>
               <h3 class="room-members-title" data-i18n="room.members">房间成员</h3>
               <ul id="member-list" class="member-list"></ul>
               <div id="observer-section" class="room-observer-section" hidden>
@@ -208,7 +211,6 @@
               <div class="row room-actions">
                 <button id="btn-start" type="button" hidden data-i18n="room.start">开始游戏</button>
                 <button id="btn-edit-room" type="button" class="secondary" hidden data-i18n="room.edit">修改房间</button>
-                <button id="btn-room-rules" type="button" class="secondary" hidden data-i18n="lasidao.rules.btn">游戏规则</button>
                 <button id="btn-leave" type="button" class="secondary btn-leave-room" data-i18n="room.leave">离开房间</button>
               </div>
               <p class="muted" id="room-start-hint" data-i18n="room.startHint">人齐后，房主可直接开始游戏。</p>

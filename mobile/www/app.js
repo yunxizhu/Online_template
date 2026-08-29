@@ -111,14 +111,14 @@
     return 'lianji/v1/' + channelName();
   }
 
-  function showToast(text) {
+  function showToast(text, durationMs) {
     if (!el.toast) return;
     el.toast.textContent = text;
     el.toast.hidden = false;
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
       el.toast.hidden = true;
-    }, 2800);
+    }, typeof durationMs === 'number' && durationMs > 0 ? durationMs : 2800);
   }
 
   function normalizeHost(raw) {
@@ -822,37 +822,38 @@
         escapeHtml(playerBit) +
         '</span>';
     }
-    const btn = document.createElement('button');
-    btn.type = 'button';
     const canJoin = roomCanJoin(room);
     const canSpec = roomCanSpectate(room);
-    if (preferSpectate || (!canJoin && canSpec)) {
-      btn.textContent = '观战';
-      btn.className = 'secondary';
-      if (!canSpec) {
-        btn.disabled = true;
-        btn.title = !room.host ? '暂无可用地址' : '不可观战';
-      } else {
-        btn.addEventListener('click', () =>
-          openRoomWithPassword(room, 'spectate')
-        );
-      }
+
+    const btnSpec = document.createElement('button');
+    btnSpec.type = 'button';
+    btnSpec.textContent = '观战';
+    btnSpec.className = 'secondary';
+    if (!canSpec) {
+      btnSpec.disabled = true;
+      btnSpec.title = !room.host ? '暂无可用地址' : '不可观战';
     } else {
-      btn.textContent = '加入';
-      if (!canJoin) {
-        btn.disabled = true;
-        btn.title = !room.host
-          ? '暂无可用地址'
-          : room.status === 'playing'
-            ? '对局已开始，请观战'
-            : '房间已满';
-        li.classList.add('is-full');
-      } else {
-        btn.addEventListener('click', () => openRoomWithPassword(room, 'join'));
-      }
+      btnSpec.addEventListener('click', () => openRoomWithPassword(room, 'spectate'));
     }
+
+    const btnJoin = document.createElement('button');
+    btnJoin.type = 'button';
+    btnJoin.textContent = '加入';
+    if (!canJoin) {
+      btnJoin.disabled = true;
+      btnJoin.title = !room.host
+        ? '暂无可用地址'
+        : room.status === 'playing'
+          ? '对局已开始，请观战'
+          : '房间已满';
+      li.classList.add('is-full');
+    } else {
+      btnJoin.addEventListener('click', () => openRoomWithPassword(room, 'join'));
+    }
+
     li.appendChild(info);
-    li.appendChild(btn);
+    li.appendChild(btnSpec);
+    li.appendChild(btnJoin);
     li.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
       showRoomCtx(room, ev.clientX, ev.clientY);

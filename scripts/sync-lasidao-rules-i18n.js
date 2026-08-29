@@ -51,7 +51,7 @@ function envCardHtml(def, lang) {
       recall:
         'Dispatch: recall 1 of your dice from any board slot, including this slot (skip if none).',
       teleport:
-        'Dispatch: move 1 die (any player or neutral) from any slot to any slot with tiles; destination does not trigger dispatch events.',
+        'Dispatch: when you become slot leader (first time counts; stacking more as leader does not retrigger), move 1 die (any player or neutral) from any slot to any slot with tiles; destination does not trigger dispatch events.',
       keepOverflow:
         'After production settle: 1st place on this slot (ties included) skips resource discard for this round.',
       weiQiRescueZhao:
@@ -113,6 +113,22 @@ const enPermanent =
   '<dt>Market trade</dt><dd>Anytime: default bank 4:1; Markets improve rate (1→3:1, 2→2:1, ≥3→1:1, counts at most 3).</dd>' +
   '</dl>';
 
+const zhResource =
+  '<p>资源板块共 4 种：木、石、小麦、铁。木/石/小麦各有丰/贫两档；铁矿仅贫档。</p>' +
+  '<dl class="las-rules-dl">' +
+  '<dt>丰</dt><dd>大份 3、小份 2。每轮个人产出阶段，已建成对应资源建筑自动产出 2 个该资源。</dd>' +
+  '<dt>贫</dt><dd>大份 2、小份 1。每轮个人产出阶段，已建成对应资源建筑自动产出 1 个该资源。</dd>' +
+  '<dt>铁矿·贫</dt><dd>大份 2、小份 1。资源建筑造价 1 木 1 石 1 铁，产出 1 铁。</dd>' +
+  '</dl>';
+
+const enResource =
+  '<p>Resources come in four types: wood, stone, wheat, and iron. Wood/stone/wheat have rich/poor tiers; iron is only poor.</p>' +
+  '<dl class="las-rules-dl">' +
+  '<dt>Rich</dt><dd>Large share 3, small share 2. Built resource buildings auto-produce 2/round.</dd>' +
+  '<dt>Poor</dt><dd>Large share 2, small share 1. Built resource buildings auto-produce 1/round.</dd>' +
+  '<dt>Iron · Poor</dt><dd>Cost 1W 1S 1I, produces 1 iron/round.</dd>' +
+  '</dl>';
+
 const zhFunc =
   '<dl class="las-rules-dl">' +
   '<dt data-las-card="func:harvest">丰收（5）</dt><dd>建造阶段：任选获得 2 个资源（各 1）。</dd>' +
@@ -148,6 +164,7 @@ const zhBuild =
   '<dt data-las-cards="build:wood:rich build:stone:rich build:food:rich">资源建筑·富（木/石/小麦各 2）</dt><dd>木：2 石 3 小麦 2 铁，每轮自动产出 2 木。石：2 木 3 小麦 2 铁，产出 2 石。小麦：3 木 3 石 1 铁，产出 2 小麦。</dd>' +
   '<dt data-las-cards="build:wood:poor build:stone:poor build:food:poor build:iron:poor">资源建筑·贫</dt><dd>木/石/小麦（各 3）：贫档造价见卡面，产出 1。铁（3）：1 木 1 石 1 铁，产出 1 铁。建成后每轮个人产出阶段自动产出，无需工人。</dd>' +
   '<dt data-las-card="build:score2">宫殿（+2）（4）</dt><dd>造价 3 木 3 石 3 小麦 2 铁。建成即 +2 分，无需工人。被弃置的宫殿不再计分。</dd>' +
+  '<dt data-las-card="build:score1">学堂（+1）（3）</dt><dd>造价 1 木 1 石 1 小麦 1 铁。建成即 +1 分，无需工人。被弃置的学堂不再计分。</dd>' +
   '<dt data-las-card="build:exchange">集市（5）</dt><dd>造价 1 木 1 石 1 小麦。建成后提升兑换比例（默认银行 4:1，1 座→3:1，2 座→2:1，≥3 座→1:1）。相同建筑可叠放同一建筑格；兑换比例最多按 3 座计算。</dd>' +
   '<dt data-las-card="build:wishWell">许愿井（3）</dt><dd>造价 1 木 1 石 1 小麦 1 铁。每建成一座：个人产出阶段可选任意 1 种资源 +1（多座可叠或分配）。无需工人。</dd>' +
   '</dl>';
@@ -157,21 +174,23 @@ const enBuild =
   '<dt data-las-cards="build:wood:rich build:stone:rich build:food:rich">Resource building · Rich (×2 each)</dt><dd>Wood: 2S 3 wheat 2I → 2 wood/round. Stone: 2W 3 wheat 2I → 2 stone. Wheat: 3W 3S 1I → 2 wheat.</dd>' +
   '<dt data-las-cards="build:wood:poor build:stone:poor build:food:poor build:iron:poor">Resource building · Poor</dt><dd>Wood/Stone/Wheat×3: poor costs on card, produce 1. Iron×3: 1W 1S 1I → 1 iron. Auto-produce in personal production step.</dd>' +
   '<dt data-las-card="build:score2">Palace (+2) (4)</dt><dd>Cost 3W 3S 3 wheat 2I. +2 when built.</dd>' +
+  '<dt data-las-card="build:score1">School (+1) (3)</dt><dd>Cost 1W 1S 1 wheat 1I. +1 when built.</dd>' +
   '<dt data-las-card="build:exchange">Market (5)</dt><dd>Cost 1W 1S 1 wheat. Trade rate: default 4:1, 1→3:1, 2→2:1, ≥3→1:1. Same-type buildings may stack; rate counts at most 3.</dd>' +
   '<dt data-las-card="build:wishWell">Wish Well (3)</dt><dd>Cost 1W 1S 1 wheat 1I. Personal production: +1 any resource per well.</dd>' +
   '</dl>';
 
-function apply(lang, flow, permanent, func, build) {
+function apply(lang, flow, permanent, func, build, resource) {
   const p = path.join(ROOT, 'public/i18n', `${lang}.json`);
   const j = JSON.parse(fs.readFileSync(p, 'utf8'));
   j.lasidao.rules.flowHtml = flow;
   j.lasidao.rules.permanentHtml = permanent;
   j.lasidao.rules.funcHtml = func;
   j.lasidao.rules.buildHtml = build;
+  j.lasidao.rules.resourceHtml = resource;
   j.lasidao.rules.eventHtml = buildEventHtml(lang);
   fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
   console.log('updated', lang);
 }
 
-apply('zh', zhFlow, zhPermanent, zhFunc, zhBuild);
-apply('en', enFlow, enPermanent, enFunc, enBuild);
+apply('zh', zhFlow, zhPermanent, zhFunc, zhBuild, zhResource);
+apply('en', enFlow, enPermanent, enFunc, enBuild, enResource);

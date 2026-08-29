@@ -779,32 +779,47 @@ button.secondary:hover {
 }
 
 .room-banner {
-  display: flex;
-  flex-wrap: wrap;
+  display: inline-flex;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 0.55rem 0.85rem;
-  margin: 0 0 0.75rem;
-  padding: 0.55rem 0.85rem;
-  border-radius: 8px;
+  gap: 0.4rem;
+  margin: 0.35rem 0 0;
+  padding: 0.2rem 0.55rem;
+  border-radius: 6px;
   border: 1px solid rgba(201, 133, 58, 0.45);
   background: linear-gradient(90deg, rgba(201, 133, 58, 0.22), rgba(80, 50, 24, 0.35));
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.room-banner[hidden] {
+  display: none !important;
+}
+
+.room-banner .badge {
+  margin-left: 0;
 }
 
 .room-banner-tag {
   display: inline-flex;
   align-items: center;
-  padding: 0.15rem 0.55rem;
+  padding: 0.1rem 0.45rem;
   border-radius: 999px;
   background: var(--room-accent);
   color: #1a120a;
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.02em;
 }
 
 .room-banner-hint {
   color: #e8d2b0;
-  font-size: 0.88rem;
+  font-size: 0.82rem;
+}
+
+.room-banner-game {
+  color: #cbb89a;
+  font-size: 0.82rem;
 }
 
 .room-panel {
@@ -861,12 +876,6 @@ button.secondary:hover {
   letter-spacing: 0.12em;
   color: #ffe2a8;
   font-variant-numeric: tabular-nums;
-}
-
-.room-meta {
-  margin: 0 0 0.85rem;
-  color: #cbb89a;
-  font-size: 0.9rem;
 }
 
 .room-members-title {
@@ -1447,15 +1456,20 @@ body.phase-room .chat-tabs button.is-on {
 }
 
 .toast-slot {
-  position: relative;
-  height: 3rem;
-  margin-bottom: 0.65rem;
-  flex-shrink: 0;
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 9999;
+  height: auto;
+  width: auto;
+  max-width: 18rem;
+  margin: 0;
+  pointer-events: none;
 }
 
 .toast {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  inset: auto;
   box-sizing: border-box;
   margin: 0;
   background: #3a2a2a;
@@ -1468,6 +1482,8 @@ body.phase-room .chat-tabs button.is-on {
   overflow: hidden;
   font-size: 0.9rem;
   line-height: 1.35;
+  pointer-events: auto;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
 }
 
 .toast[hidden] {
