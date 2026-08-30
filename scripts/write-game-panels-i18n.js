@@ -30,13 +30,11 @@ const lasPanel = `<!-- Lasidao panel -->
   </div>
 
   <div id="las-dice-wrap" class="las-dice-wrap" hidden>
-    <h3 class="game-sub" data-i18n="lasidao.yourDice">你的骰子</h3>
-    <div id="las-dice-stage" class="las-dice-stage">
-      <div id="las-dice" class="las-dice"></div>
-      <div id="las-dice-groups" class="las-dice-groups" hidden></div>
+    <div class="las-dice-sub-row">
+      <h3 class="game-sub" data-i18n="lasidao.yourDice">你的骰子</h3>
+      <p id="las-dice-hint" class="muted las-hint"></p>
+      <div id="las-dispatch-preview" class="las-dispatch-preview" hidden></div>
     </div>
-    <p id="las-dice-hint" class="muted las-hint"></p>
-    <div id="las-dispatch-preview" class="las-dispatch-preview" hidden></div>
     <div class="row las-actions" id="las-produce-actions">
       <button id="btn-las-confirm" type="button" hidden data-i18n="lasidao.confirmDispatch">确认派遣</button>
       <button id="btn-las-void" type="button" class="secondary" data-i18n="lasidao.voidDispatch">放弃派遣（丢弃1资源）</button>
@@ -48,6 +46,10 @@ const lasPanel = `<!-- Lasidao panel -->
         <button type="button" data-res="iron" data-i18n="lasidao.res.iron">铁</button>
         <button type="button" class="secondary" id="btn-las-void-cancel" data-i18n="lasidao.cancel">取消</button>
       </div>
+    </div>
+    <div id="las-dice-stage" class="las-dice-stage">
+      <div id="las-dice" class="las-dice"></div>
+      <div id="las-dice-groups" class="las-dice-groups" hidden></div>
     </div>
   </div>
 

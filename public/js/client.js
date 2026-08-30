@@ -287,6 +287,7 @@ window.GameNet = (function () {
       'room:verifyPassword:result',
       'game:started',
       'game:state',
+      'game:play-reveal',
       'game:error',
       'game:player-left',
       'game:quit-ok',
@@ -981,6 +982,10 @@ window.GameNet = (function () {
     ensureSocket().emit('room:start');
   }
 
+  function inviteLobby() {
+    ensureSocket().emit('room:inviteLobby');
+  }
+
   function quitGame() {
     ensureSocket().emit('game:leave');
   }
@@ -1046,6 +1051,7 @@ window.GameNet = (function () {
     leaveRoom,
     setReady,
     startGame,
+    inviteLobby,
     quitGame,
     sendChat,
     sendAction,

@@ -12,6 +12,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const tar = require('tar');
 const {
   copyVendoredCloudflaredTo,
   vendoredCloudflaredFilesFor,
@@ -71,6 +72,29 @@ function getSizeMB(p) {
 function removeFile(file) {
   if (!fs.existsSync(file)) return;
   fs.rmSync(file, { force: true });
+}
+
+async function archiveMacTarGz(sourceDir, outputName) {
+  const outFile = path.join(DIST, outputName);
+  const entryName = path.basename(sourceDir);
+  console.log(`  打包 ${entryName} → ${outputName}（保留 Unix 执行权限）...`);
+  await tar.create({
+    gzip: true,
+    file: outFile,
+    cwd: DIST,
+    portable: true,
+    onWriteEntry(entry) {
+      const name = (entry.path || '').replace(/\\/g, '/');
+      if (name.endsWith('.command') || /\/\.tools\/cloudflared/.test(name)) {
+        entry.stat.mode = 0o755;
+      } else if (entry.type === 'Directory') {
+        entry.stat.mode = 0o755;
+      } else {
+        entry.stat.mode = 0o644;
+      }
+    },
+  }, [entryName]);
+  console.log(`  => ${outputName} (${getSizeMB(outFile)} MB)`);
 }
 
 function writeUtf8(file, text) {
@@ -196,7 +220,7 @@ function windowsReadme(nodeExeName) {
   );
 }
 
-function buildMacPack() {
+async function buildMacPack() {
   console.log('\n[mac] portable pack...');
   ensureDir(DIR_MAC);
   copyAppSources(DIR_MAC);
@@ -205,9 +229,10 @@ function buildMacPack() {
 
   const cmd = fs.readFileSync(path.join(ROOT, '启动.command'), 'utf8');
   writeUtf8(path.join(DIR_MAC, '启动.command'), cmd);
-  // 在 Windows 上无法 chmod；Mac 用户按 README 执行一次即可
   writeUtf8(path.join(DIR_MAC, 'README.txt'), macReadme());
   console.log('  启动.command');
+
+  await archiveMacTarGz(DIR_MAC, 'lianji-mac.tar.gz');
 }
 
 function macReadme() {
@@ -217,13 +242,17 @@ function macReadme() {
     '本包已含运行依赖。需要本机安装 Node.js 18+（官网或 brew install node）。\n\n' +
     '用法\n' +
     '----\n' +
-    '1. 若双击「启动.command」提示无权限，在终端执行：\n' +
-    '   chmod +x 启动.command\n' +
+    '1. 解压 lianji-mac.tar.gz，进入 mac/ 文件夹\n' +
     '2. 双击「启动.command」\n' +
-    `3. 浏览器打开 http://localhost:${DEFAULT_PORT}\n\n` +
+    '3. 首次若提示“无法验证开发者”：\n' +
+    '   · 前往“系统设置 → 隐私与安全性”点击“仍要打开”\n' +
+    '   · 或按住 Control 键点击文件，选择“打开”\n' +
+    '4. 之后可直接双击运行\n' +
+    `5. 浏览器打开 http://localhost:${DEFAULT_PORT}\n\n` +
     '说明\n' +
     '----\n' +
-    '- .tools/ 已含 macOS 版 cloudflared（Intel + Apple Silicon）\n' +
+    '· tar.gz 已保留文件执行权限，无需再执行 chmod +x\n' +
+    '· .tools/ 已含 macOS 版 cloudflared（Intel + Apple Silicon）\n' +
     '- 建房仍在本机；手机请用 android 文件夹里的 APK 加入\n'
   );
 }
@@ -378,6 +407,15 @@ function buildAndroidPack() {
 }
 
 function copyClientWww(destWww) {
+  // 打包前先把 public/ 的最新共享资源同步到 mobile/www（防止 i18n、游戏面板等遗漏）
+  const syncJs = spawnSync('node', [path.join(ROOT, 'mobile', 'scripts', 'sync-shared-js.js')], {
+    cwd: ROOT,
+    stdio: 'inherit',
+  });
+  if (syncJs.status !== 0) {
+    console.warn('  sync-shared-js.js failed, continuing with existing mobile/www');
+  }
+
   if (!fs.existsSync(MOBILE_WWW)) {
     throw new Error('missing mobile/www');
   }
@@ -450,7 +488,7 @@ function buildClientWindowsPack() {
   console.log('  启动.bat + www/ (no node.exe)');
 }
 
-function buildClientMacPack() {
+async function buildClientMacPack() {
   console.log('\n[client-mac] lightweight join client (no Node)...');
   ensureDir(DIR_CLIENT_MAC);
   copyClientWww(path.join(DIR_CLIENT_MAC, 'www'));
@@ -471,12 +509,16 @@ function buildClientMacPack() {
     '联机大厅 · macOS 纯客户端（轻量 / 仅加入）\n' +
       '========================================\n' +
       '不需要 Node.js。\n' +
-      '首次: chmod +x 启动.command\n' +
-      '然后双击「启动.command」用浏览器打开本地大厅。\n' +
+      '双击「启动.command」用浏览器打开本地大厅。\n' +
+      '首次若提示“无法验证开发者”：\n' +
+      '  前往“系统设置 → 隐私与安全性”点击“仍要打开”\n' +
+      '  或按住 Control 键点击文件，选择“打开”\n\n' +
       '不能创建房间；进房后从房主电脑加载游戏资源。\n\n' +
       '也可直接打开 www/index.html\n'
   );
   console.log('  启动.command + www/ (no node)');
+
+  await archiveMacTarGz(DIR_CLIENT_MAC, 'lianji-client-mac.tar.gz');
 }
 
 function androidReadme(hasApk) {
@@ -550,7 +592,7 @@ async function main() {
     step += 1;
     console.log(`\n[${step}/${total}] Build mac/ ...`);
     rmDir(DIR_MAC);
-    buildMacPack();
+    await buildMacPack();
   }
   if (targets.android) {
     step += 1;
@@ -568,7 +610,7 @@ async function main() {
     step += 1;
     console.log(`\n[${step}/${total}] Build client-mac/ ...`);
     rmDir(DIR_CLIENT_MAC);
-    buildClientMacPack();
+    await buildClientMacPack();
   }
 
   console.log('\nDone! Output paths:');

@@ -35,6 +35,8 @@ function pickPrimaryLanIP() {
 const PORT = Number(process.env.PORT) || 3000;
 const INSTANCE_ID = crypto.randomUUID();
 const HALL_CHAT_ROOM = 'hall';
+const INVITE_COOLDOWN_MS = 10000;
+const lastInviteAt = new Map(); // socketId -> timestamp
 const app = express();
 const server = http.createServer(app);
 
@@ -401,6 +403,15 @@ function joinHallChat(socket) {
 
 function broadcastChatAllLocal(msg) {
   io.to(HALL_CHAT_ROOM).emit('chat:message', msg);
+}
+
+/** 向本实例中处于大厅/等待房的玩家广播邀请 */
+function broadcastInviteLocal(msg) {
+  for (const [sid, p] of rooms.players) {
+    if (p.status === 'idle' || p.status === 'room') {
+      io.to(sid).emit('lobby:invite', msg);
+    }
+  }
 }
 
 function emitChatAll(msg) {
@@ -1123,6 +1134,7 @@ io.on('connection', (socket) => {
           roomId: leftRoomId,
         });
         mqttClearRoomOnDissolve();
+        if (tunnel && !rooms.rooms.size) tunnel.stop();
       }
 
       const result = rooms.setPlayerPassive(socket.id, false);
@@ -1241,6 +1253,7 @@ io.on('connection', (socket) => {
     mqttOnLogin();
     if (result.dissolved) mqttClearRoomOnDissolve();
     else mqttAfterRoomChange();
+    if (result.dissolved && tunnel && !rooms.rooms.size) tunnel.stop();
   });
 
   socket.on('game:leave', () => {
@@ -1277,6 +1290,7 @@ io.on('connection', (socket) => {
     mqttOnLogin();
     if (result.dissolved) mqttClearRoomOnDissolve();
     else mqttAfterRoomChange();
+    if (result.dissolved && tunnel && !rooms.rooms.size) tunnel.stop();
   });
 
   socket.on('room:ready', (data = {}) => {
@@ -1286,6 +1300,46 @@ io.on('connection', (socket) => {
       return;
     }
     emitRoomUpdate(result.room);
+  });
+
+  socket.on('room:inviteLobby', () => {
+    const player = rooms.getPlayer(socket.id);
+    if (!player || !player.roomId) return;
+    const room = rooms.getRoom(player.roomId);
+    if (!room || room.status !== 'waiting') return;
+    if (room.hostId !== socket.id) return;
+
+    const now = Date.now();
+    const last = lastInviteAt.get(socket.id) || 0;
+    if (now - last < INVITE_COOLDOWN_MS) {
+      socket.emit('room:error', { message: '邀请过于频繁，请稍后再试' });
+      return;
+    }
+    lastInviteAt.set(socket.id, now);
+
+    const seated = (room.players || []).filter((p) => p && !p.left).length;
+    const msg = {
+      app: 'lianji',
+      kind: 'invite',
+      instanceId: INSTANCE_ID,
+      roomId: room.id,
+      hostName: player.name || '房主',
+      hostTag: player.tag || null,
+      gameType: room.gameType || '',
+      gameLabel: room.gameLabel || '',
+      gameMode: room.gameMode || '',
+      gameModeLabel: room.gameModeLabel || '',
+      playerCount: seated,
+      maxPlayers: room.maxPlayers,
+      at: Date.now(),
+      host: null,
+    };
+
+    broadcastInviteLocal(msg);
+    if (mqttBulletin && mqttBulletin.enabled) {
+      const advertiseHost = tunnel ? (tunnel.getPublicUrl() || localBaseUrl()) : localBaseUrl();
+      mqttBulletin.publishInvite({ ...msg, host: advertiseHost });
+    }
   });
 
   socket.on('room:start', () => {
@@ -1349,6 +1403,10 @@ io.on('connection', (socket) => {
 
     const wasOver = Boolean(room.game && room.game.over);
     const wasStatus = room.status;
+    const prevRevealId =
+      room.game && room.game.lastPlayReveal
+        ? room.game.lastPlayReveal.id
+        : null;
     const result = mod.applyAction(room.game, socket.id, {
       type: data.type,
       payload: data.payload,
@@ -1362,6 +1420,11 @@ io.on('connection', (socket) => {
     handleAbandonedPlayers(room);
     // 服务端接受的操作视为有效操作，刷新思考时间
     syncTurnTimer(room, { onTimeout: handleTurnTimeout });
+    // 若有新的卡片使用展示，先即时广播轻量事件，让其他玩家立刻看到动画
+    const newReveal = room.game && room.game.lastPlayReveal;
+    if (newReveal && newReveal.id && newReveal.id !== prevRevealId) {
+      io.to(room.id).emit('game:play-reveal', { reveal: newReveal });
+    }
     emitGameState(room);
     // 对局刚结束：立刻刷新房间状态并广播
     afterPlayingMutation(room, { wasOver, wasStatus });
@@ -1398,6 +1461,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
+    lastInviteAt.delete(socket.id);
     // 对局中断线：标记离线并保留牌局，便于重连；大厅/等待房仍直接离开
     const result = rooms.markOffline(socket.id);
     if (result.leftRoomId && result.room) {
@@ -1434,6 +1498,9 @@ mqttBulletin = new MqttBulletin({
   onChange: onRosterChange,
   onChat: (msg) => {
     broadcastChatAllLocal(msg);
+  },
+  onInvite: (msg) => {
+    broadcastInviteLocal(msg);
   },
 });
 

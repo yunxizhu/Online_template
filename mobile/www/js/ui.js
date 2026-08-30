@@ -93,8 +93,11 @@
     observerSection: document.getElementById('observer-section'),
     btnStart: document.getElementById('btn-start'),
     btnEditRoom: document.getElementById('btn-edit-room'),
+    btnInviteLobby: document.getElementById('btn-invite-lobby'),
     btnMenuGameRules: document.getElementById('btn-menu-game-rules'),
     btnLeave: document.getElementById('btn-leave'),
+    inviteToastSlot: document.getElementById('invite-toast-slot'),
+    btnMenuInviteBlock: document.getElementById('btn-menu-invite-block'),
     roomStartHint: document.getElementById('room-start-hint'),
     roomBanner: document.getElementById('room-banner'),
     roomBannerHint: document.querySelector('.room-banner-hint'),
@@ -162,6 +165,16 @@
   let toastTimer = null;
   let roomBusyTimer = null;
   let leavingToLocal = false;
+  const inviteToasts = [];
+  const BLOCK_INVITES_MS = 15 * 60 * 1000;
+  const BLOCK_INVITES_KEY = 'lianji.blockInvitesUntil';
+  let blockInvitesUntil = (function loadBlockInvites() {
+    try {
+      const v = Number(localStorage.getItem(BLOCK_INVITES_KEY));
+      if (Number.isFinite(v) && v > Date.now()) return v;
+    } catch (_) {}
+    return 0;
+  })();
   let ignoreRoomLeftId = null;
   let ignoreRoomLeftUntil = 0;
   let lobbyRefreshTimer = null;
@@ -1474,6 +1487,139 @@
     }, typeof durationMs === 'number' && durationMs > 0 ? durationMs : 3200);
   }
 
+  function isBlockingInvites() {
+    return Date.now() < blockInvitesUntil;
+  }
+
+  function removeInviteToast(toastEl) {
+    if (!toastEl) return;
+    if (toastEl._autoCloseTimer) {
+      clearTimeout(toastEl._autoCloseTimer);
+      toastEl._autoCloseTimer = null;
+    }
+    const idx = inviteToasts.indexOf(toastEl);
+    if (idx !== -1) inviteToasts.splice(idx, 1);
+    toastEl.remove();
+  }
+
+  function clearAllInviteToasts() {
+    while (inviteToasts.length) {
+      const el = inviteToasts.pop();
+      if (el && el.parentNode) el.remove();
+    }
+  }
+
+  function blockAllInvites() {
+    blockInvitesUntil = Date.now() + BLOCK_INVITES_MS;
+    try {
+      localStorage.setItem(BLOCK_INVITES_KEY, String(blockInvitesUntil));
+    } catch (_) {}
+    clearAllInviteToasts();
+    syncInviteBlockMenuItem();
+    showToast(t('invite.blockedHint') || '15 分钟内不再接收房间邀请');
+  }
+
+  function syncInviteBlockMenuItem() {
+    if (!el.btnMenuInviteBlock) return;
+    const isOn = isBlockingInvites();
+    el.btnMenuInviteBlock.textContent = isOn
+      ? (t('invite.blockAllOn') || '已关闭房间邀请')
+      : (t('invite.blockAllMenu') || '不接受房间邀请');
+    el.btnMenuInviteBlock.classList.toggle('is-active', isOn);
+  }
+
+  function showInviteToast(data) {
+    if (!el.inviteToastSlot) return;
+    if (isBlockingInvites()) return;
+
+    const host = window.PlayerNick.fullLabel(data.hostName, data.hostTag);
+    const game = gameLabelOf(data.gameType, data.gameLabel || data.gameType);
+    const mode = data.gameModeLabel || data.gameMode || '';
+    const line1 = t('invite.text', { host });
+    const line2 = mode ? `${game} · ${mode}` : game;
+    const line3 = t('invite.roomCount', {
+      cur: data.playerCount,
+      max: data.maxPlayers,
+    });
+
+    const toast = document.createElement('div');
+    toast.className = 'invite-toast';
+    toast.dataset.roomId = data.roomId || '';
+    toast.dataset.host = data.host || '';
+
+    const head = document.createElement('div');
+    head.className = 'invite-toast-head';
+
+    const body = document.createElement('div');
+    body.className = 'invite-toast-body';
+    body.textContent = [line1, line2, line3].join('\n');
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'icon-btn invite-toast-close';
+    closeBtn.setAttribute('aria-label', t('invite.dismiss') || '关闭');
+    closeBtn.textContent = '×';
+    closeBtn.addEventListener('click', () => removeInviteToast(toast));
+
+    head.appendChild(body);
+    head.appendChild(closeBtn);
+
+    const actions = document.createElement('div');
+    actions.className = 'invite-toast-actions';
+
+    const rejectBtn = document.createElement('button');
+    rejectBtn.type = 'button';
+    rejectBtn.className = 'invite-toast-reject';
+    rejectBtn.dataset.action = 'reject';
+    rejectBtn.textContent = t('invite.reject') || '拒绝';
+    rejectBtn.addEventListener('click', () => removeInviteToast(toast));
+
+    const acceptBtn = document.createElement('button');
+    acceptBtn.type = 'button';
+    acceptBtn.className = 'invite-toast-accept';
+    acceptBtn.dataset.action = 'accept';
+    acceptBtn.textContent = t('invite.accept') || '接受';
+    acceptBtn.addEventListener('click', () => {
+      const rid = toast.dataset.roomId;
+      const host = toast.dataset.host || null;
+      removeInviteToast(toast);
+      if (rid) {
+        const name = state.playerName || el.playerName.value.trim() || t('app.playerDefault');
+        joinRoomWithBusy(async () => {
+          const opts = { password: '' };
+          if (!host) opts.local = true;
+          await net.enterRoomOnHost(rid, name, host, opts);
+        }).catch((err) => {
+          showToast(err.message || t('toast.joinFail'));
+        });
+      }
+    });
+
+    actions.appendChild(rejectBtn);
+    actions.appendChild(acceptBtn);
+
+    const blockBtn = document.createElement('button');
+    blockBtn.type = 'button';
+    blockBtn.className = 'invite-toast-block';
+    blockBtn.dataset.action = 'block';
+    blockBtn.textContent = t('invite.blockAllBtn') || '15分钟内不接受任何邀请';
+    blockBtn.addEventListener('click', () => {
+      removeInviteToast(toast);
+      blockAllInvites();
+    });
+
+    toast.appendChild(head);
+    toast.appendChild(actions);
+    toast.appendChild(blockBtn);
+    el.inviteToastSlot.appendChild(toast);
+    inviteToasts.push(toast);
+
+    // 自动关闭（可选）
+    const autoCloseMs = 15000;
+    const autoCloseTimer = setTimeout(() => removeInviteToast(toast), autoCloseMs);
+    toast._autoCloseTimer = autoCloseTimer;
+  }
+
   function showRoomBusy(mode, message) {
     state.roomBusy = mode;
     if (el.roomBusyOverlay) {
@@ -2580,23 +2726,38 @@
     el.roomPasswordBadge.hidden = !room.hasPassword;
 
     el.memberList.innerHTML = '';
-    for (const p of room.players) {
-      const li = document.createElement('li');
-      li.dataset.speakerKey = memberSpeakerKey(p);
-      const isMe = state.me && p.id === state.me.id;
-      const isHost = p.id === room.hostId;
-      const left = document.createElement('span');
-      left.innerHTML =
-        nickHtml(p.name, p.tag) +
-        (isMe ? ' <span class="you">(' + t('common.you') + ')</span>' : '') +
-        (isHost ? ' <span class="badge">' + t('room.host') + '</span>' : '');
-      left.title = window.PlayerNick.fullLabel(p.name, p.tag);
-      const right = document.createElement('span');
-      right.className = 'muted';
-      right.textContent = isHost ? t('room.host') : t('room.seated');
-      li.appendChild(left);
-      li.appendChild(right);
-      el.memberList.appendChild(li);
+    const maxSlots = room.maxPlayers || (room.players || []).length || 0;
+    const players = room.players || [];
+    for (let i = 0; i < maxSlots; i++) {
+      const p = players[i];
+      const slot = document.createElement('div');
+      slot.className = 'room-player-slot' + (p ? '' : ' is-empty');
+      if (p) {
+        if (p.left) slot.classList.add('is-left');
+        slot.dataset.speakerKey = memberSpeakerKey(p);
+        const isMe = state.me && p.id === state.me.id;
+        const isHost = p.id === room.hostId;
+        const nick = document.createElement('span');
+        nick.className = 'room-slot-nick';
+        nick.innerHTML =
+          nickHtml(p.name, p.tag) +
+          (isMe ? ' <span class="you">(' + t('common.you') + ')</span>' : '') +
+          (isHost ? ' <span class="badge">' + t('room.host') + '</span>' : '');
+        nick.title = window.PlayerNick.fullLabel(p.name, p.tag);
+        const status = document.createElement('span');
+        status.className = 'muted room-slot-status';
+        if (p.left) status.textContent = t('room.left');
+        else if (isHost) status.textContent = t('room.host');
+        else status.textContent = t('room.seated');
+        slot.appendChild(nick);
+        slot.appendChild(status);
+      } else {
+        const empty = document.createElement('span');
+        empty.className = 'room-slot-empty';
+        empty.textContent = t('room.emptySeat');
+        slot.appendChild(empty);
+      }
+      el.memberList.appendChild(slot);
     }
 
     const observers = room.observers || [];
@@ -2649,6 +2810,9 @@
     el.btnStart.disabled = seated < min;
     if (el.btnEditRoom) {
       el.btnEditRoom.hidden = !isHost || room.status === 'playing';
+    }
+    if (el.btnInviteLobby) {
+      el.btnInviteLobby.hidden = !isHost || room.status === 'playing';
     }
     if (el.btnLeave) {
       el.btnLeave.textContent = isHost
@@ -2757,9 +2921,11 @@
           }
           renderGame();
         } catch (err) {
-          console.warn('game panels load failed', err);
+          console.error('scheduleRenderGame failed:', err && err.stack ? err.stack : err);
           showToast(t('game.loadFail'));
-          renderGame();
+          try { renderGame(); } catch (innerErr) {
+            console.error('renderGame retry failed:', innerErr && innerErr.stack ? innerErr.stack : innerErr);
+          }
         }
       })();
     };
@@ -2946,6 +3112,7 @@
   }
 
   async function leaveAndReturnLocal() {
+    hideRoomBusy();
     if (navigateJoinClientHome()) {
       markSelfRoomLeave((state.room && state.room.id) || state._lastRoomId);
       try {
@@ -2984,6 +3151,7 @@
 
   /** 房间失效/解散：退出并回到本机大厅 */
   async function bounceToLocalLobby(message, opts = {}) {
+    hideRoomBusy();
     if (navigateJoinClientHome()) {
       if (message) showToast(message);
       try {
@@ -3999,6 +4167,12 @@
   syncCreatePasswordUi();
 
   el.btnStart.addEventListener('click', () => net.startGame());
+  if (el.btnInviteLobby) {
+    el.btnInviteLobby.addEventListener('click', () => {
+      net.inviteLobby();
+      showToast(t('room.inviteSent') || '邀请已发送');
+    });
+  }
   if (el.btnEditRoom) {
     el.btnEditRoom.addEventListener('click', () => {
       if (!state.room || !state.me || state.room.hostId !== state.me.id) return;
@@ -4042,6 +4216,21 @@
       toggleBgmSub();
     });
   }
+  if (el.btnMenuInviteBlock) {
+    el.btnMenuInviteBlock.addEventListener('click', () => {
+      closeGameMenu();
+      if (isBlockingInvites()) {
+        blockInvitesUntil = 0;
+        try {
+          localStorage.removeItem(BLOCK_INVITES_KEY);
+        } catch (_) {}
+        syncInviteBlockMenuItem();
+        showToast(t('invite.blockAllOff') || '已恢复接收房间邀请');
+      } else {
+        blockAllInvites();
+      }
+    });
+  }
   if (el.menuBgmRange && window.BgmVolume) {
     el.menuBgmRange.addEventListener('input', (ev) => {
       ev.stopPropagation();
@@ -4077,6 +4266,7 @@
     syncLangMenuActive();
     syncQuitMenuItem();
     syncGameRulesMenuItem();
+    syncInviteBlockMenuItem();
     showView(currentViewName);
     updateCreateForm();
     fillGameOptions(state.games);
@@ -4103,6 +4293,7 @@
   syncBgmMenuSlider();
   syncQuitMenuItem();
   syncGameRulesMenuItem();
+  syncInviteBlockMenuItem();
   if (el.roomTurnTime) {
     for (const opt of el.roomTurnTime.options) {
       const v = Number(opt.value);
@@ -4213,6 +4404,14 @@
     }
   });
 
+  net.on('lobby:invite', (data) => {
+    if (!data || !data.roomId) return;
+    // 仅在大厅/等待房时显示邀请弹窗
+    if (state.game) return;
+    if (isBlockingInvites()) return;
+    showInviteToast(data);
+  });
+
   net.on('room:creating', (data) => {
     if (state.roomBusy !== 'create') return;
     updateRoomBusyMessage((data && data.message) || t('create.creating'));
@@ -4271,7 +4470,12 @@
         if (gameChanged) fillCreateFormFromRoom(data.room);
       }
       if (data.room.id && data.room.id !== prevRoomId) {
-        showToast(t('room.enteredNamed', { name: data.room.name || data.room.id }));
+        const toastSlot = el.toast && el.toast.parentElement;
+        if (toastSlot) toastSlot.classList.add('is-left');
+        showToast(t('room.enteredNamed', { name: data.room.name || data.room.id }), 2000);
+        setTimeout(() => {
+          if (toastSlot) toastSlot.classList.remove('is-left');
+        }, 2000);
       }
     }
     state._lastRoomId = data.room.id || null;
@@ -4462,6 +4666,16 @@
     showView('game');
     scheduleRenderGame();
     maybeGuestExitAfterGameOver(data && data.state);
+  });
+  net.on('game:play-reveal', (data) => {
+    if (
+      state.game &&
+      state.game.type === 'lasidao' &&
+      window.LasidaoUi &&
+      typeof window.LasidaoUi.onPlayReveal === 'function'
+    ) {
+      window.LasidaoUi.onPlayReveal(data);
+    }
   });
   net.on('game:error', (data) => showToast(data.message || t('toast.opFail')));
   net.on('chat:message', (msg) => pushChatMessage(msg));

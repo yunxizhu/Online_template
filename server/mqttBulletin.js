@@ -132,6 +132,7 @@ class MqttBulletin {
     peekTunnelUrl,
     onChange,
     onChat,
+    onInvite,
   }) {
     const opt = loadOptions(rootDir || process.cwd());
     this.enabled = !opt.disabled;
@@ -146,6 +147,7 @@ class MqttBulletin {
     this.peekTunnelUrl = peekTunnelUrl || (() => '');
     this.onChange = onChange || (() => {});
     this.onChat = onChat || (() => {});
+    this.onInvite = onInvite || (() => {});
     this.loginAt = Date.now();
     this.client = null;
     this._started = false;
@@ -248,6 +250,10 @@ class MqttBulletin {
 
   #chatAllTopic() {
     return `${this.#prefix()}/chat/all`;
+  }
+
+  #inviteTopic() {
+    return `${this.#prefix()}/invite`;
   }
 
   #warn(err) {
@@ -416,6 +422,9 @@ class MqttBulletin {
       client.subscribe(this.#chatAllTopic(), { qos: 1 }, (err) => {
         if (err) this.#warn(err);
         this.#flushChatQueue();
+      });
+      client.subscribe(this.#inviteTopic(), { qos: 1 }, (err) => {
+        if (err) this.#warn(err);
       });
       this.onChange();
     });
@@ -657,6 +666,24 @@ class MqttBulletin {
     }
   }
 
+  publishInvite(msg) {
+    if (!this.enabled || !this._started) return false;
+    const c = this.client;
+    if (!c || !c.connected) return false;
+    try {
+      c.publish(this.#inviteTopic(), JSON.stringify(msg), {
+        qos: 1,
+        retain: false,
+      }, (err) => {
+        if (err) this.#warn(err);
+      });
+      return true;
+    } catch (err) {
+      this.#warn(err);
+      return false;
+    }
+  }
+
   async touchLogin() {
     if (!this.enabled || !this._started) return;
     const now = Date.now();
@@ -824,6 +851,31 @@ class MqttBulletin {
           sessionId: p.sessionId ? String(p.sessionId).slice(0, 48) : null,
           instanceId: p.instanceId || null,
           text: body,
+          at: Number(p.at) || Date.now(),
+        });
+      } catch (_) {}
+      return;
+    }
+    const inviteTopic = this.#inviteTopic();
+    if (topic === inviteTopic || topic.endsWith('/invite')) {
+      if (!raw.trim()) return;
+      try {
+        const p = JSON.parse(raw);
+        if (!p || p.app !== APP_SIGNATURE || p.kind !== 'invite') return;
+        if (p.instanceId && p.instanceId === this.instanceId) return;
+        this.onInvite({
+          app: APP_SIGNATURE,
+          kind: 'invite',
+          instanceId: p.instanceId || null,
+          roomId: String(p.roomId || '').toUpperCase(),
+          hostName: String(p.hostName || '玩家').trim().slice(0, 24),
+          hostTag: p.hostTag ? String(p.hostTag).slice(0, 12) : null,
+          gameType: String(p.gameType || ''),
+          gameLabel: String(p.gameLabel || ''),
+          gameMode: String(p.gameMode || ''),
+          gameModeLabel: String(p.gameModeLabel || ''),
+          playerCount: Number(p.playerCount || 0),
+          maxPlayers: Number(p.maxPlayers || 0),
           at: Number(p.at) || Date.now(),
         });
       } catch (_) {}

@@ -1723,11 +1723,11 @@
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) scheduleChatCollapse();
     });
-    // 点聊天室外区域：收起（手机端失焦补强）
+    // 点聊天室外区域：收起并失焦（所有客户端统一行为）
     document.addEventListener(
       'pointerdown',
       (ev) => {
-        if (!isMobileChatUi() || !el.chatDock || el.chatDock.hidden) return;
+        if (!el.chatDock || el.chatDock.hidden) return;
         if (!el.chatDock.classList.contains('is-active')) return;
         if (el.chatDock.contains(ev.target)) return;
         if (el.chatInput) {

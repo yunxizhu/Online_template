@@ -24,7 +24,8 @@
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
-    "@yao-pkg/pkg": "^6.22.0"
+    "@yao-pkg/pkg": "^6.22.0",
+    "tar": "^7.5.22"
   },
   "pkg": {
     "targets": [
