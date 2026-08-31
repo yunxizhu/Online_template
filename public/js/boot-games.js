@@ -15,31 +15,53 @@ window.GameBoot = (function () {
 
   function loadStylesheet(href) {
     return new Promise((resolve, reject) => {
-      if (document.querySelector(`link[data-game-asset="${href}"]`)) {
+      const existing = document.querySelector(
+        `link[data-game-asset="${href}"]`
+      );
+      // 仅复用已成功加载的；失败残留的标签会挡住重试，导致永远缺样式
+      if (existing && existing.dataset.gameAssetOk === '1') {
         resolve();
         return;
       }
+      if (existing) existing.remove();
       const link = document.createElement('link');
       link.rel = 'stylesheet';
       link.href = href;
       link.dataset.gameAsset = href;
-      link.onload = () => resolve();
-      link.onerror = () => reject(new Error('样式加载失败: ' + href));
+      link.onload = () => {
+        link.dataset.gameAssetOk = '1';
+        resolve();
+      };
+      link.onerror = () => {
+        link.remove();
+        reject(new Error('样式加载失败: ' + href));
+      };
       document.head.appendChild(link);
     });
   }
 
   function loadScript(src) {
     return new Promise((resolve, reject) => {
-      if (document.querySelector(`script[data-game-asset="${src}"]`)) {
+      const existing = document.querySelector(
+        `script[data-game-asset="${src}"]`
+      );
+      // 失败残留的 script 标签若被当成已加载，会跳过重试且全局 API 不存在
+      if (existing && existing.dataset.gameAssetOk === '1') {
         resolve();
         return;
       }
+      if (existing) existing.remove();
       const s = document.createElement('script');
       s.src = src;
       s.dataset.gameAsset = src;
-      s.onload = () => resolve();
-      s.onerror = () => reject(new Error('脚本加载失败: ' + src));
+      s.onload = () => {
+        s.dataset.gameAssetOk = '1';
+        resolve();
+      };
+      s.onerror = () => {
+        s.remove();
+        reject(new Error('脚本加载失败: ' + src));
+      };
       document.body.appendChild(s);
     });
   }
@@ -49,26 +71,34 @@ window.GameBoot = (function () {
     if (!mount) return;
     const base = baseUrl ? String(baseUrl).replace(/\/$/, '') : '';
 
-    for (const g of games || []) {
-      const client = g.client;
-      if (!client) continue;
+    // 半截失败后重试：先清空，避免重复插入面板 HTML
+    mount.innerHTML = '';
 
-      for (const href of client.styles || []) {
-        await loadStylesheet(absAssetUrl(base, href));
-      }
+    try {
+      for (const g of games || []) {
+        const client = g.client;
+        if (!client) continue;
 
-      if (client.panel) {
-        const panelUrl = absAssetUrl(base, client.panel);
-        const html = await fetch(panelUrl).then((r) => {
-          if (!r.ok) throw new Error('面板加载失败: ' + panelUrl);
-          return r.text();
-        });
-        mount.insertAdjacentHTML('beforeend', html);
-      }
+        for (const href of client.styles || []) {
+          await loadStylesheet(absAssetUrl(base, href));
+        }
 
-      for (const src of client.scripts || []) {
-        await loadScript(absAssetUrl(base, src));
+        if (client.panel) {
+          const panelUrl = absAssetUrl(base, client.panel);
+          const html = await fetch(panelUrl).then((r) => {
+            if (!r.ok) throw new Error('面板加载失败: ' + panelUrl);
+            return r.text();
+          });
+          mount.insertAdjacentHTML('beforeend', html);
+        }
+
+        for (const src of client.scripts || []) {
+          await loadScript(absAssetUrl(base, src));
+        }
       }
+    } catch (err) {
+      mount.innerHTML = '';
+      throw err;
     }
   }
 

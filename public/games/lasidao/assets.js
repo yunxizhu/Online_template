@@ -113,6 +113,7 @@ window.LasidaoAssets = (function () {
 
   /** 内存预热：避免每次 render 重建 DOM 后重复走网络/解码 */
   const _imgWarm = new Map();
+  const IMAGE_WARM_MS = 8000;
 
   function warmImage(url) {
     if (!url) return Promise.resolve(false);
@@ -122,16 +123,46 @@ window.LasidaoAssets = (function () {
     const img = hit || new Image();
     _imgWarm.set(url, img);
     img._p = new Promise((resolve) => {
+      let settled = false;
       const finish = (ok) => {
+        if (settled) return;
+        settled = true;
+        if (img._warmTimer) {
+          clearTimeout(img._warmTimer);
+          img._warmTimer = null;
+        }
         img._p = null;
         resolve(ok);
       };
       img.onload = () => finish(true);
       img.onerror = () => finish(false);
+      img._warmTimer = setTimeout(() => finish(false), IMAGE_WARM_MS);
       if (img.src !== url) img.src = url;
       else if (img.complete) finish(img.naturalWidth > 0);
     });
     return img._p;
+  }
+
+  let _preloadPromise = null;
+  let _preloadDone = false;
+
+  /** 开局预热全部卡面（浏览器 HTTP 缓存 + 内存 decode 缓存）；单图失败/超时不阻断 */
+  function preloadPictures() {
+    if (_preloadDone) return Promise.resolve(true);
+    if (_preloadPromise) return _preloadPromise;
+    const urls = [...collectAllPictureFiles()].map((f) => picUrl(f));
+    _preloadPromise = Promise.all(urls.map((u) => warmImage(u)))
+      .then(() => {
+        _preloadDone = true;
+        return true;
+      })
+      .catch(() => {
+        // 仍标记完成，避免每次阶段切换反复卡住整局渲染
+        _preloadDone = true;
+        _preloadPromise = null;
+        return false;
+      });
+    return _preloadPromise;
   }
 
   function collectAllPictureFiles() {
@@ -150,26 +181,6 @@ window.LasidaoAssets = (function () {
       }
     }
     return files;
-  }
-
-  let _preloadPromise = null;
-  let _preloadDone = false;
-
-  /** 开局预热全部卡面（浏览器 HTTP 缓存 + 内存 decode 缓存） */
-  function preloadPictures() {
-    if (_preloadDone) return Promise.resolve(true);
-    if (_preloadPromise) return _preloadPromise;
-    const urls = [...collectAllPictureFiles()].map((f) => picUrl(f));
-    _preloadPromise = Promise.all(urls.map((u) => warmImage(u)))
-      .then(() => {
-        _preloadDone = true;
-        return true;
-      })
-      .catch(() => {
-        _preloadPromise = null;
-        return false;
-      });
-    return _preloadPromise;
   }
 
   function isPreloadDone() {

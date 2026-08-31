@@ -1,0 +1,62 @@
+  <div class="las-playfield" id="las-playfield">
+    <div class="las-table">
+      <aside class="las-side-rail" id="las-side-rail" aria-label="actions">
+        <div id="las-act-wrap" class="las-act-wrap" hidden>
+          <div class="las-act-head">
+            <h3 class="game-sub" data-i18n="lasidao.actRailTitle">操作栏</h3>
+          </div>
+          <div id="las-act-confirm-bar" class="las-act-confirm-bar" aria-hidden="true">
+            <button id="btn-las-build-play" type="button" class="las-act-confirm-primary" disabled data-i18n="lasidao.confirmUse">确认发动</button>
+            <button id="btn-las-pass" type="button" class="las-act-confirm-secondary secondary" hidden data-i18n="lasidao.passBuild">跳过本轮建造</button>
+          </div>
+          <p id="las-act-hint" class="muted las-hint"></p>
+          <div id="las-func-panel" class="las-func-panel" hidden>
+            <div id="las-func-form"></div>
+          </div>
+        </div>
+      </aside>
+
+    <div class="las-board-zone">
+    <aside class="las-decks" id="las-decks" aria-label="decks">
+      <div class="las-deck-pile las-deck-pile-resource" data-deck="resource" data-i18n-attr="title:lasidao.deckResourceTooltip" title="查看资源卡牌介绍">
+        <div class="las-deck-stack" id="las-deck-stack-resource"></div>
+        <div class="las-deck-info">
+          <span class="las-deck-name" data-i18n="lasidao.area.resource">资源</span>
+          <span class="las-deck-counts"><span id="las-deck-res">0</span>/<span id="las-discard-res">0</span></span>
+        </div>
+      </div>
+      <div class="las-deck-pile las-deck-pile-special" data-deck="special" data-i18n-attr="title:lasidao.deckSpecialTooltip" title="查看功能/建筑卡牌介绍">
+        <div class="las-deck-stack" id="las-deck-stack-special"></div>
+        <div class="las-deck-info">
+          <span class="las-deck-name" data-i18n="lasidao.area.special">功能/建筑</span>
+          <span class="las-deck-top" id="las-deck-special-top"></span>
+          <span class="las-deck-counts"><span id="las-deck-sp">0</span>/<span id="las-discard-sp">0</span></span>
+        </div>
+      </div>
+      <div class="las-deck-pile las-deck-pile-environment" data-deck="environment" data-i18n-attr="title:lasidao.deckEnvironmentTooltip" title="查看事件卡牌介绍">
+        <div class="las-deck-stack" id="las-deck-stack-environment"></div>
+        <div class="las-deck-info">
+          <span class="las-deck-name" data-i18n="lasidao.area.environment">事件</span>
+          <span class="las-deck-counts"><span id="las-deck-env">0</span>/<span id="las-discard-env">0</span></span>
+        </div>
+      </div>
+      <p class="las-deck-hint muted" data-i18n="lasidao.deckHint">抽/弃</p>
+    </aside>
+
+    <div class="las-table-boards">
+      <div class="las-table-top">
+        <section class="las-board-section las-board-section-resource">
+          <h3 class="game-sub" data-i18n="lasidao.areaResource">资源板块</h3>
+          <div id="las-board-resource" class="las-board las-board-resource" data-area="resource"></div>
+        </section>
+      </div>
+
+      <div class="las-table-bottom">
+        <section class="las-board-section las-board-section-special">
+          <h3 class="game-sub" data-i18n="lasidao.areaSpecial">功能/建筑板块</h3>
+          <div id="las-board-special" class="las-board las-board-special" data-area="special"></div>
+        </section>
+      </div>
+    </div>
+    </div>
+  </div>

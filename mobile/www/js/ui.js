@@ -1699,18 +1699,49 @@
     if (A && typeof A.preloadPictures === 'function') A.preloadPictures();
   }
 
-  /** 开局前确保卡图就绪；未完成则显示加载遮罩 */
-  async function ensureLasidaoAssetsReady() {
+  /** 开局前尽量等卡图就绪；超时也放行，避免整局卡死 */
+  const LASIDAO_ASSETS_WAIT_MS = 10000;
+
+  async function ensureLasidaoAssetsReady(opts) {
+    const A = window.LasidaoAssets;
+    if (!A || typeof A.preloadPictures !== 'function') return true;
+    if (typeof A.isPreloadDone === 'function' && A.isPreloadDone()) return true;
+
+    const blockUi = !(opts && opts.blockUi === false);
+    const pending = A.preloadPictures();
+    if (typeof A.isPreloadDone === 'function' && A.isPreloadDone()) return true;
+
+    if (blockUi) {
+      showRoomBusy('assets', t('lasidao.loadingAssets'));
+    }
+    let timer = null;
+    try {
+      const timed = new Promise((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), LASIDAO_ASSETS_WAIT_MS);
+      });
+      const result = await Promise.race([
+        Promise.resolve(pending).then(() => 'ok'),
+        timed,
+      ]);
+      return result === 'ok';
+    } catch (err) {
+      console.warn('lasidao assets preload failed', err);
+      return false;
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (blockUi && state.roomBusy === 'assets') hideRoomBusy();
+    }
+  }
+
+  /** 对局中后台预热，不挡渲染、不盖遮罩 */
+  function kickLasidaoAssetsBackground() {
     const A = window.LasidaoAssets;
     if (!A || typeof A.preloadPictures !== 'function') return;
     if (typeof A.isPreloadDone === 'function' && A.isPreloadDone()) return;
-    const pending = A.preloadPictures();
-    if (typeof A.isPreloadDone === 'function' && A.isPreloadDone()) return;
-    showRoomBusy('assets', t('lasidao.loadingAssets'));
     try {
-      await pending;
-    } finally {
-      if (state.roomBusy === 'assets') hideRoomBusy();
+      A.preloadPictures();
+    } catch (err) {
+      console.warn('lasidao background preload failed', err);
     }
   }
 
@@ -2916,15 +2947,28 @@
         try {
           await ensureGamePanelsReady();
           const game = state.game;
+          // 对局中绝不阻塞渲染等卡图；仅后台预热
           if (game && game.type === 'lasidao' && !game.over) {
-            await ensureLasidaoAssetsReady();
+            kickLasidaoAssetsBackground();
           }
           renderGame();
         } catch (err) {
           console.error('scheduleRenderGame failed:', err && err.stack ? err.stack : err);
           showToast(t('game.loadFail'));
-          try { renderGame(); } catch (innerErr) {
-            console.error('renderGame retry failed:', innerErr && innerErr.stack ? innerErr.stack : innerErr);
+          // 面板可能半截失败：清标记后允许下次再试
+          try {
+            if (!gamePanelsMounted()) {
+              gamePanelsBound = false;
+              gamePanelsReadyPromise = null;
+            }
+          } catch (_) {}
+          try {
+            renderGame();
+          } catch (innerErr) {
+            console.error(
+              'renderGame retry failed:',
+              innerErr && innerErr.stack ? innerErr.stack : innerErr
+            );
           }
         }
       })();

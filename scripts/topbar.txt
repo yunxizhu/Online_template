@@ -1,0 +1,68 @@
+  <div class="las-top-bar" id="las-top-bar">
+    <div class="las-top-left" id="las-top-left">
+      <h2 data-i18n="lasidao.title">???</h2>
+      <p id="las-round" class="game-status"></p>
+      <div id="las-init-banner" class="las-init-banner" hidden></div>
+      <p id="las-status" class="muted las-status-simple"></p>
+    </div>
+    <div class="las-me-panel" id="las-me-panel">
+      <div class="las-me-cell las-me-cell-00" id="las-me-cell-00">
+        <div class="las-me-info-grid" id="las-me-info-grid">
+          <div class="las-me-info-item las-me-info-name" id="las-me-info-name"></div>
+          <div class="las-me-info-item las-me-info-caps" id="las-me-info-caps"></div>
+          <div class="las-me-info-item las-me-info-stats" id="las-me-info-stats"></div>
+          <div class="las-me-info-item las-me-info-res" id="las-me-info-res"></div>
+        </div>
+      </div>
+      <div class="las-me-cell las-me-cell-01" id="las-me-cell-01">
+        <div id="las-permanent-actions" class="las-permanent-grid las-permanent-grid-me">
+          <button id="btn-las-build-house" type="button" data-i18n="lasidao.buildHousePermanent">建造房子</button>
+          <button id="btn-las-exchange" type="button" data-i18n="lasidao.exchangeBtn">兑换</button>
+          <button id="btn-las-breed" type="button" data-i18n="lasidao.breedPermanent">繁殖村民</button>
+          <button id="btn-las-buy-func" type="button" data-i18n="lasidao.buyFuncPermanent">购买功能卡</button>
+          <button id="btn-las-expand-perm" type="button" data-i18n="lasidao.expandPermanent">扩建</button>
+          <button id="btn-las-reset-build" type="button" class="secondary las-perm-reset" data-i18n="lasidao.resetBuildTurn">重置回合</button>
+        </div>
+      </div>
+      <div class="las-me-cell las-me-cell-10" id="las-me-cell-10">
+        <div class="las-me-build-slots" id="las-me-build-slots"></div>
+      </div>
+      <div class="las-me-cell las-me-cell-11" id="las-me-cell-11">
+        <div id="las-me-func-hand" class="las-me-func-hand"></div>
+        <div id="las-unbuilt-bld-label" class="las-build-hand-label las-build-hand-sub" data-i18n="lasidao.unbuiltBuildings" hidden>未建造建筑</div>
+        <div id="las-unbuilt-bld" class="las-unbuilt-bld"></div>
+      </div>
+      <div class="las-me-cell las-me-cell-20" id="las-me-cell-20">
+        <div id="las-init-wrap" class="las-init-wrap" hidden>
+          <div id="las-init-dice" class="las-dice las-init-dice" hidden></div>
+          <div class="row las-actions las-side-actions">
+            <button id="btn-las-init-roll" type="button" data-i18n="lasidao.initRoll">先手投掷</button>
+          </div>
+        </div>
+        <div id="las-roll-wrap" class="las-roll-wrap" hidden>
+          <div class="row las-actions las-side-actions">
+            <button id="btn-las-produce-roll" type="button" data-i18n="lasidao.produceRoll">投掷</button>
+            <button id="btn-las-remote-dice" type="button" class="secondary" hidden data-i18n="lasidao.useRemoteDice">使用遥控骰子</button>
+          </div>
+          <p id="las-roll-hint" class="muted las-hint" data-i18n="lasidao.rollHint">请点击「投掷」或「使用遥控骰子」</p>
+        </div>
+        <div id="las-dice-wrap" class="las-dice-wrap" hidden>
+          <h3 class="game-sub" data-i18n="lasidao.yourDice">你的骰子</h3>
+          <div id="las-dice-stage" class="las-dice-stage">
+            <div id="las-dice" class="las-dice"></div>
+            <div id="las-dice-groups" class="las-dice-groups" hidden></div>
+          </div>
+          <p id="las-dice-hint" class="muted las-hint"></p>
+          <div id="las-dispatch-preview" class="las-dispatch-preview" hidden></div>
+          <div class="row las-actions las-side-actions" id="las-produce-actions">
+            <button id="btn-las-confirm" type="button" hidden data-i18n="lasidao.confirmDispatch">确认派遣</button>
+            <button id="btn-las-void" type="button" class="secondary" data-i18n="lasidao.produceSkip">跳过</button>
+          </div>
+        </div>
+      </div>
+      <div class="las-me-cell las-me-cell-21" id="las-me-cell-21"></div>
+    </div>
+    <div class="las-top-right" id="las-top-right">
+      <div id="las-produce-idle" class="las-produce-idle" hidden aria-live="polite"></div>
+    </div>
+  </div>

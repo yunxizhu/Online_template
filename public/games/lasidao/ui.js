@@ -338,6 +338,9 @@ window.LasidaoUi = (function () {
   /** 结算动画期间冻结板块（骰子+卡牌），直到回收动画结束 */
   let settleBoardFreeze = null;
   let settleBoardFreezeKey = null;
+  /** 结算动画期间冻结手牌（保留生产阶段已获资源） */
+  let settleHandFreeze = null;
+  let settleHandFreezeKey = null;
   let lastRenderPrevGame = null;
   /** 结算前短暂展示最后一手派遣的骰子 */
   let settleDispatchHoldTimer = null;
@@ -543,6 +546,8 @@ window.LasidaoUi = (function () {
     dispatchBoardFreeze = null;
     settleBoardFreeze = null;
     settleBoardFreezeKey = null;
+    settleHandFreeze = null;
+    settleHandFreezeKey = null;
     lastRenderPrevGame = null;
     lastLogRenderKey = '';
     lastLogNewestKey = '';
@@ -2401,6 +2406,10 @@ window.LasidaoUi = (function () {
     return `${newest && newest.at != null ? newest.at : ''}:${logEntryText(newest)}`;
   }
 
+  function logRowKey(row) {
+    return `${row && row.at != null ? row.at : ''}:${logEntryText(row)}`;
+  }
+
   function renderGameLog(game) {
     const log = $('las-log');
     if (!log) return;
@@ -2409,22 +2418,35 @@ window.LasidaoUi = (function () {
     if (key === lastLogRenderKey && log.children.length > 0) return;
 
     const newestKey = logNewestKey(rows);
-    const canAppend =
+    // 一次状态推送可能带多条日志（如最后一次跳过立刻进结算）；需全部追加，不能只插最新一条
+    if (
       newestKey &&
       newestKey !== lastLogNewestKey &&
+      lastLogNewestKey &&
       log.children.length > 0 &&
-      log.children.length <= LAS_LOG_MAX;
-
-    if (canAppend) {
-      const li = document.createElement('li');
-      li.textContent = logEntryText(rows[rows.length - 1]);
-      log.insertBefore(li, log.firstChild);
-      while (log.children.length > LAS_LOG_MAX) {
-        log.removeChild(log.lastChild);
+      log.children.length <= LAS_LOG_MAX
+    ) {
+      let prevIdx = -1;
+      for (let i = rows.length - 1; i >= 0; i--) {
+        if (logRowKey(rows[i]) === lastLogNewestKey) {
+          prevIdx = i;
+          break;
+        }
       }
-      lastLogRenderKey = key;
-      lastLogNewestKey = newestKey;
-      return;
+      if (prevIdx >= 0 && prevIdx < rows.length - 1) {
+        const newRows = rows.slice(prevIdx + 1);
+        for (let i = 0; i < newRows.length; i++) {
+          const li = document.createElement('li');
+          li.textContent = logEntryText(newRows[i]);
+          log.insertBefore(li, log.firstChild);
+        }
+        while (log.children.length > LAS_LOG_MAX) {
+          log.removeChild(log.lastChild);
+        }
+        lastLogRenderKey = key;
+        lastLogNewestKey = newestKey;
+        return;
+      }
     }
 
     lastLogRenderKey = key;
@@ -7138,7 +7160,9 @@ window.LasidaoUi = (function () {
       _prevGame &&
       game.phase !== 'build' &&
       game.phase !== 'settle_act';
-    const handGame = freezeHandGame ? _prevGame : game;
+    const handGame = freezeHandGame
+      ? resolveHandFreezeGame(game, _prevGame)
+      : game;
 
     const deferHeavy = shouldDeferHeavyPanels(game);
     const forceHands = mustRenderHandsNow(game, meId);
@@ -7728,6 +7752,66 @@ window.LasidaoUi = (function () {
     // 只有在真正的 settle 阶段才使用 freeze；settle_act / build / produce 等应使用最新 state
     if (game.phase !== 'settle') return false;
     return true;
+  }
+
+  /**
+   * 结算动画期间冻结手牌：隐藏版面结算刚发的资源/卡，但保留生产阶段已到手的（如最后一跳爆骰换资源）。
+   * produce→settle 同一次推送时 prev 还是跳过前状态，不能直接用 prev。
+   */
+  function resolveHandFreezeGame(game, prevGame) {
+    const report = game && game.lastSettle;
+    const key =
+      report && report.at != null
+        ? `${report.round || ''}:${report.at}`
+        : null;
+    if (key && settleHandFreeze && settleHandFreezeKey === key) {
+      return settleHandFreeze;
+    }
+
+    let snap;
+    if (
+      prevGame &&
+      prevGame.phase === 'produce' &&
+      game &&
+      report
+    ) {
+      const resById = Object.create(null);
+      for (const p of game.players || []) {
+        if (!p || !p.id) continue;
+        resById[p.id] = { ...(p.resources || {}) };
+      }
+      for (const slot of report.slots || []) {
+        if (!slot || slot.area !== 'resource') continue;
+        for (const g of slot.gains || []) {
+          if (!g || !g.pid || !resById[g.pid]) continue;
+          const bag = resById[g.pid];
+          for (const d of g.detail || []) {
+            if (!d || !d.resource) continue;
+            bag[d.resource] = Math.max(
+              0,
+              (Number(bag[d.resource]) || 0) - (Number(d.amount) || 0)
+            );
+          }
+        }
+      }
+      const patchPlayer = (p) => {
+        if (!p || !p.id || !resById[p.id]) return p;
+        return { ...p, resources: resById[p.id] };
+      };
+      snap = {
+        ...prevGame,
+        players: (prevGame.players || []).map(patchPlayer),
+        me: prevGame.me ? patchPlayer(prevGame.me) : prevGame.me,
+      };
+    } else {
+      snap = prevGame || game;
+    }
+
+    if (key) {
+      settleHandFreeze = snap;
+      settleHandFreezeKey = key;
+    }
+    return snap;
   }
 
   function resolveBoardGame(game, prevGame) {
