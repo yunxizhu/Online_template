@@ -8,6 +8,8 @@
 window.LasidaoAssets = (function () {
   const RES = '/games/lasidao/res';
   const PIC = RES + '/picture';
+  /** 换图后改这个数字，可绕过浏览器旧缓存（曾 max-age=7d） */
+  const ASSET_VER = '20260901a';
 
   function remoteAssetRoot() {
     try {
@@ -21,7 +23,9 @@ window.LasidaoAssets = (function () {
     const p = String(path || '');
     if (!p) return p;
     const root = remoteAssetRoot();
-    return root ? root + (p.startsWith('/') ? p : '/' + p) : p;
+    const abs = root ? root + (p.startsWith('/') ? p : '/' + p) : p;
+    if (!ASSET_VER) return abs;
+    return abs + (abs.includes('?') ? '&' : '?') + 'v=' + encodeURIComponent(ASSET_VER);
   }
 
   /** resource + rich → 文件名 */

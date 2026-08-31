@@ -82,11 +82,11 @@
                   min="0"
                   max="100"
                   step="5"
-                  value="100"
+                  value="10"
                   aria-valuemin="0"
                   aria-valuemax="100"
                 />
-                <span class="menu-bgm-value" id="menu-bgm-value" aria-live="polite">100%</span>
+                <span class="menu-bgm-value" id="menu-bgm-value" aria-live="polite">10%</span>
               </label>
             </div>
           </div>
@@ -108,6 +108,42 @@
       <div class="app-top-mid">
         <div class="app-top-title-row">
           <h1 id="app-phase-title" data-i18n="app.title">联机大厅</h1>
+          <div class="spectators-watch" id="spectators-watch" hidden>
+            <button
+              type="button"
+              id="btn-spectators"
+              class="spectators-btn"
+              aria-haspopup="true"
+              aria-expanded="false"
+              aria-controls="spectators-pop"
+            >
+              <span data-i18n="room.spectatorsBtn">观战玩家</span>：<strong id="spectators-count">0</strong>
+            </button>
+            <div
+              id="spectators-pop"
+              class="spectators-pop"
+              hidden
+              role="dialog"
+              aria-labelledby="spectators-pop-title"
+            >
+              <div class="spectators-pop-head">
+                <strong id="spectators-pop-title" data-i18n="room.spectatorsTitle">观战玩家</strong>
+                <button
+                  type="button"
+                  id="btn-spectators-close"
+                  class="icon-btn spectators-pop-close"
+                  data-i18n-attr="aria-label:room.spectatorsClose"
+                  aria-label="关闭"
+                >
+                  ×
+                </button>
+              </div>
+              <ul id="spectators-list" class="spectators-list"></ul>
+              <p id="spectators-empty" class="muted spectators-empty" data-i18n="room.spectatorsEmpty">
+                暂无观战玩家
+              </p>
+            </div>
+          </div>
           <div class="header-nick" id="header-nick" hidden>
             <span id="nick-display" class="nick-display" data-i18n="app.playerDefault">玩家</span>
             <input

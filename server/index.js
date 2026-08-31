@@ -81,7 +81,20 @@ function getSgsResourseDir() {
   return path.join(__dirname, 'games', 'sgs', 'resourse');
 }
 const sgsResourseDir = getSgsResourseDir();
-app.use('/games/sgs/res', express.static(sgsResourseDir, { maxAge: '7d', etag: true }));
+const staticResOpts = {
+  // 开发默认不长期缓存；生产也允许协商校验，换图后靠 ?v= 或 ETag 更新
+  maxAge: process.env.NODE_ENV === 'production' ? '1h' : 0,
+  etag: true,
+  lastModified: true,
+  setHeaders(res) {
+    if (process.env.NODE_ENV !== 'production') {
+      res.setHeader('Cache-Control', 'no-store');
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate');
+    }
+  },
+};
+app.use('/games/sgs/res', express.static(sgsResourseDir, staticResOpts));
 
 // 卡拉斯坦资源：server/games/lasidao/resourse → /games/lasidao/res/
 function getLasidaoResourseDir() {
@@ -95,7 +108,7 @@ function getLasidaoResourseDir() {
   }
   return path.join(__dirname, 'games', 'lasidao', 'resourse');
 }
-app.use('/games/lasidao/res', express.static(getLasidaoResourseDir(), { maxAge: '7d', etag: true }));
+app.use('/games/lasidao/res', express.static(getLasidaoResourseDir(), staticResOpts));
 // 浏览器默认还会请求 /favicon.ico
 app.get('/favicon.ico', (_req, res) => {
   res.redirect(301, '/favicon.svg');
@@ -1047,6 +1060,13 @@ io.on('connection', (socket) => {
     joinHallChat(socket);
     const me = rooms.getPlayer(socket.id);
     dropIdleSessionGhosts(me && me.sessionId, socket.id);
+    if (!result.already) {
+      socket.to(result.room.id).emit('room:spectatorJoined', {
+        id: socket.id,
+        name: (me && me.name) || data.playerName || '玩家',
+        tag: (me && me.tag) || null,
+      });
+    }
     emitRoomUpdate(result.room, socket);
     emitPlayerMe(socket, me, data.playerName);
     if (result.room.status === 'playing' && result.room.game) {

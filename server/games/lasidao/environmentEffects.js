@@ -49,24 +49,36 @@ function addNeutralEachSlot(game) {
   }
 }
 
-/** 围魏救赵：事件格为奇数则偶数格各 1 中立骰，事件格为偶数则奇数格各 1 中立骰 */
-function paritySlotsForEvent(eventNumber) {
-  const eventOdd = Number(eventNumber) % 2 === 1;
-  const slots = [];
-  for (let n = 1; n <= 6; n++) {
-    const slotOdd = n % 2 === 1;
-    if (eventOdd && !slotOdd) slots.push(n);
-    if (!eventOdd && slotOdd) slots.push(n);
-  }
-  return slots;
+/** 围魏救赵：按 2×3 数字格邻接，给周边格各放 1 枚中立骰 */
+const WEI_QI_ADJACENT_SLOTS = {
+  1: [2, 4],
+  2: [1, 3, 5],
+  3: [2, 6],
+  4: [1, 5],
+  5: [2, 4, 6],
+  6: [3, 5],
+};
+
+function adjacentSlotsForEvent(eventNumber) {
+  const key = Number(eventNumber);
+  return (WEI_QI_ADJACENT_SLOTS[key] || []).slice();
 }
 
-function addNeutralParitySlots(game, eventNumber) {
-  for (const n of paritySlotsForEvent(eventNumber)) {
+/** @deprecated 旧奇偶逻辑；保留别名以免外部引用断裂 */
+function paritySlotsForEvent(eventNumber) {
+  return adjacentSlotsForEvent(eventNumber);
+}
+
+function addNeutralAdjacentSlots(game, eventNumber) {
+  for (const n of adjacentSlotsForEvent(eventNumber)) {
     for (const area of ['resource', 'special']) {
       addNeutral(game, area, n, 1);
     }
   }
+}
+
+function addNeutralParitySlots(game, eventNumber) {
+  addNeutralAdjacentSlots(game, eventNumber);
 }
 
 function countNeutralGatherSources(game, toArea, toNumber) {
@@ -123,11 +135,11 @@ function firstComeGrantTier(round) {
   return 1;
 }
 
-/** 先到先得：第 1–4 轮需 2 村民，第 5–8 轮需 4，第 9 轮起需 6 */
+/** 先到先得：第 1–4 轮需 2 村民，第 5–8 轮需 3，第 9 轮起需 4 */
 function firstComeRequiredWorkers(round) {
   const r = Number(round) || 1;
-  if (r >= 9) return 6;
-  if (r >= 5) return 4;
+  if (r >= 9) return 4;
+  if (r >= 5) return 3;
   return 2;
 }
 
@@ -192,15 +204,16 @@ function setupEnvironmentOnBoard(game, env, number, helpers) {
         );
       }
       break;
+    case 'neutralAdjacentSlots':
     case 'neutralParitySlots':
-      addNeutralParitySlots(game, number);
+      addNeutralAdjacentSlots(game, number);
       if (helpers && helpers.pushLog) {
-        const slots = paritySlotsForEvent(number);
-        const parityLabel =
-          Number(number) % 2 === 1 ? '偶数' : '奇数';
+        const slots = adjacentSlotsForEvent(number);
         helpers.pushLog(
           game,
-          `「${env.label}」：资源区与功能/建筑区各 ${parityLabel} 格（${slots.join('、')}）各放置 1 枚中立骰`
+          `「${env.label}」：资源区与功能/建筑区周边格（${slots.join(
+            '、'
+          )}）各放置 1 枚中立骰`
         );
       }
       break;
@@ -321,7 +334,7 @@ function countAllDiceOnBoard(game) {
 function applyEnvironmentOnDispatch(game, ctx) {
   if (!game || !ctx || ctx.area !== 'resource') return null;
   const num = Number(ctx.number);
-  if (num < 4 || num > 6) return null;
+  if (num < 1 || num > 6) return null;
   const env = envOnResourceSlot(game, num);
   if (!env || !hasDispatchEffect(env)) return null;
   const player = ctx.player;
@@ -387,12 +400,18 @@ function applyEnvironmentOnDispatch(game, ctx) {
     }
 
     case 'recall': {
-      const ownOnBoard = countOwnDiceOnBoard(game, player.id);
-      if (ownOnBoard <= 0) {
+      // 不可召回刚放到本事件格的骰子；仅统计其它格上自己的骰
+      const ownElsewhere = countOwnDiceOnBoard(
+        game,
+        player.id,
+        'resource',
+        num
+      );
+      if (ownElsewhere <= 0) {
         if (ctx.pushLog) {
           ctx.pushLog(
             game,
-            `${player.name} 触发「${env.label}」：场上无自己的骰子可召回`
+            `${player.name} 触发「${env.label}」：场上无其它可召回的骰子，跳过`
           );
         }
         return { envType: env.envType, label: env.label, skipped: true };
@@ -403,6 +422,8 @@ function applyEnvironmentOnDispatch(game, ctx) {
         label: env.label,
         number: num,
         playerId: player.id,
+        excludeArea: 'resource',
+        excludeNumber: num,
       };
     }
 
@@ -784,7 +805,9 @@ module.exports = {
   grantMap,
   addNeutral,
   addNeutralEachSlot,
+  addNeutralAdjacentSlots,
   addNeutralParitySlots,
+  adjacentSlotsForEvent,
   paritySlotsForEvent,
   neutralCountOn,
   countNeutralGatherSources,

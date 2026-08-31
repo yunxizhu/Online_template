@@ -49,13 +49,13 @@ function envCardHtml(def, lang) {
       welfareMinimum:
         'On appear: lowest-score player(s) each pick any 2 resources (ties all apply; duplicates OK). Multiple copies resolve separately.',
       recall:
-        'Dispatch: recall 1 of your dice from any board slot, including this slot (skip if none).',
+        'Dispatch: recall 1 of your dice from a board slot other than this dispatch target; skip if none elsewhere.',
       teleport:
-        'Dispatch: when you become slot leader (first time counts; stacking more as leader does not retrigger), move 1 die (any player or neutral) from any slot to any slot with tiles; destination does not trigger dispatch events.',
+        'Dispatch: when you become slot leader (first time counts; stacking more as leader does not retrigger), move 1 die (any player or neutral) from any slot to any slot with tiles; destination triggers dispatch events.',
       keepOverflow:
         'After settle cancel: 1st place on this slot skips resource discard for this round and picks any 2 resources.',
       weiQiRescueZhao:
-        'Setup: if this event slot is odd, place 1 neutral on each even slot in resource and function/building areas; if even, place 1 on each odd slot. Dispatch: choose another slot with neutrals and move all neutrals here.',
+        'Setup: place 1 neutral on each orthogonally adjacent number slot (1→2/4, 2→1/3/5, 3→2/6, 4→1/5, 5→2/4/6, 6→3/5) in both resource and function/building areas. Dispatch: choose another slot with neutrals and move all neutrals here.',
     };
     dd = enMap[def.envType] || dd;
   }
@@ -65,8 +65,8 @@ function envCardHtml(def, lang) {
 function buildEventHtml(lang) {
   const intro =
     lang === 'zh'
-      ? '<p>每轮向资源区 4/5/6 号格各放 1 张；整堆 15 张每轮重洗，可重复出现。派遣触发在派到该格时立刻结算；另有生产判定前触发（全员放置完毕、获资源前）；结算触发在骰子抵消后结算。</p>'
-      : '<p>Each round places 1 event on resource slots 4/5/6; the 15-card deck reshuffles every round. Dispatch triggers resolve on placement; pre-resolve triggers fire after all dice are placed and before resource gains; settle triggers resolve after cancel.</p>';
+      ? '<p>每轮向资源区 1–6 号格各放 1 张；用完抽牌堆后才将弃牌堆洗混再抽（与资源、功能/建筑合堆相同）。派遣触发在派到该格时立刻结算；另有生产判定前触发（全员放置完毕、获资源前）；结算触发在骰子抵消后结算。</p>'
+      : '<p>Each round places 1 event on resource slots 1–6; reshuffle discard into the draw pile only when the draw pile is empty (same as resource and function/building decks). Dispatch triggers resolve on placement; pre-resolve triggers fire after all dice are placed and before resource gains; settle triggers resolve after cancel.</p>';
   const items = ENVIRONMENT_CATALOG.map((d) => envCardHtml(d, lang)).join('');
   return `${intro}<dl class="las-rules-dl">${items}</dl>`;
 }
@@ -94,22 +94,22 @@ const enFlow =
   '<p>At any time, reaching <strong>10</strong> VP wins immediately (some events such as Resist Barbarians can end the game at <strong>15</strong> VP).</p>';
 
 const zhPermanent =
-  '<p>建造阶段，每回合不限次数。开局每人 <strong>3 村民、2 间房子</strong>（每房容纳 2 村民），无初始资源。</p>' +
+  '<p>建造阶段。开局每人 <strong>3 村民、2 间房子</strong>（每房容纳 2 村民），无初始资源。建造房子、繁殖村民、扩建各 <strong>每回合限 1 次</strong>；兑换与购买功能卡不限次数。</p>' +
   '<dl class="las-rules-dl">' +
-  '<dt>建造房子</dt><dd>支付 3 木 3 石 1 铁，房子 +1、+1 分。</dd>' +
-  '<dt>繁殖村民</dt><dd>消耗 <strong>等于当前村民数</strong> 的小麦，村民 +1（上限 15）。需至少 1 个空位（空位 = 住房容量 − 村民数）。</dd>' +
-  '<dt>购买功能卡</dt><dd>支付 3 小麦 2 铁：从功能/建筑合堆顶抽 3 张，选 1 保留；合堆不足 3 张时洗混弃牌堆合并后再抽。超出手牌/建筑上限须先弃置。</dd>' +
-  '<dt>扩建</dt><dd>消耗 <strong>各 1 木 1 石 1 麦 1 铁</strong>（固定，不随次数增加）。三选一：建筑格 / 功能卡格 / 资源卡位（资源手牌上限 +4）。功能卡「免费扩建」效果相同但无资源消耗。</dd>' +
+  '<dt>建造房子</dt><dd>每回合限 1 次。支付 3 木 3 石 1 铁，房子 +1、+1 分。</dd>' +
+  '<dt>繁殖村民</dt><dd>每回合限 1 次。消耗 <strong>等于当前村民数</strong> 的小麦，村民 +1（上限 15）。需至少 1 个空位（空位 = 住房容量 − 村民数）。</dd>' +
+  '<dt>购买功能卡</dt><dd>支付 1 木 1 石 2 铁：从功能/建筑合堆顶抽 3 张，选 1 保留；合堆不足 3 张时洗混弃牌堆合并后再抽。超出手牌/建筑上限须先弃置。</dd>' +
+  '<dt>扩建</dt><dd>每回合限 1 次。消耗 <strong>各 1 木 1 石 1 麦 1 铁</strong>（固定，不随次数增加）。三选一：建筑格 / 功能卡格 / 资源卡位（资源手牌上限 +4）。功能卡「免费扩建」效果相同但无资源消耗，且不占用常驻扩建次数。</dd>' +
   '<dt>集市兑换</dt><dd>随时可用：默认银行 4:1；已建集市提升比例（1 座→3:1，2 座→2:1，≥3 座→1:1，最多按 3 座计）。</dd>' +
   '</dl>';
 
 const enPermanent =
-  '<p>Build phase, unlimited uses per round. Start with <strong>3 villagers, 2 houses</strong> (2 villagers per house), no resources.</p>' +
+  '<p>Build phase. Start with <strong>3 villagers, 2 houses</strong> (2 villagers per house), no resources. Build House, Breed, and Expand are each <strong>once per turn</strong>; Exchange and Buy Function Card are unlimited.</p>' +
   '<dl class="las-rules-dl">' +
-  '<dt>Build House</dt><dd>Pay 3W 3S 1I; +1 house and +1 VP.</dd>' +
-  '<dt>Breed Villagers</dt><dd>Pay wheat = <strong>current villager count</strong>; +1 villager (max 15). Needs 1 free housing slot.</dd>' +
-  '<dt>Buy Function Card</dt><dd>Pay 3 wheat 2 iron: draw 3 from merged deck top, keep 1; reshuffle discard into deck if fewer than 3. Discard if over hand/building cap.</dd>' +
-  '<dt>Capacity</dt><dd>Cost <strong>1 each</strong> wood, stone, food &amp; iron (fixed). Pick one: building slot, function hand, or resource slot (+4 cap). Free Expand function card does the same for free.</dd>' +
+  '<dt>Build House</dt><dd>Once per turn. Pay 3W 3S 1I; +1 house and +1 VP.</dd>' +
+  '<dt>Breed Villagers</dt><dd>Once per turn. Pay wheat = <strong>current villager count</strong>; +1 villager (max 15). Needs 1 free housing slot.</dd>' +
+  '<dt>Buy Function Card</dt><dd>Pay 1 wood 1 stone 2 iron: draw 3 from merged deck top, keep 1; reshuffle discard into deck if fewer than 3. Discard if over hand/building cap.</dd>' +
+  '<dt>Capacity</dt><dd>Once per turn. Cost <strong>1 each</strong> wood, stone, food &amp; iron (fixed). Pick one: building slot, function hand, or resource slot (+4 cap). Free Expand function card does the same for free and does not use the permanent Expand limit.</dd>' +
   '<dt>Market trade</dt><dd>Anytime: default bank 4:1; Markets improve rate (1→3:1, 2→2:1, ≥3→1:1, counts at most 3).</dd>' +
   '</dl>';
 
@@ -131,9 +131,9 @@ const enResource =
 
 const zhFunc =
   '<dl class="las-rules-dl">' +
-  '<dt data-las-card="func:harvest">丰收（5）</dt><dd>建造阶段：任选获得 2 个资源（各 1）。</dd>' +
-  '<dt data-las-card="func:remoteDice">遥控骰子（2）</dt><dd>生产阶段、轮到你时、投掷前：本回合可指定任意点数派遣。</dd>' +
-  '<dt data-las-card="func:exile">驱逐（5）</dt><dd>生产阶段、轮到你时：驱逐目标玩家在某数字格的 1 名村民。</dd>' +
+  '<dt data-las-card="func:harvest">丰收（5）</dt><dd>建造阶段：任选获得 3 个资源（可重复）。</dd>' +
+  '<dt data-las-card="func:remoteDice">遥控骰子（2）</dt><dd>生产阶段、轮到你时可用（投掷前后均可）：本回合可指定任意点数派遣。</dd>' +
+  '<dt data-las-card="func:exile">驱逐（5）</dt><dd>生产阶段、轮到你时：将目标玩家在某数字格的 1 枚骰子移到另一有板块的数字格。</dd>' +
   '<dt data-las-card="func:enhance">强化（2）</dt><dd>建造阶段：强化 1 枚未强化过的骰子（最多 3 枚；达上限则无法发动）。强化骰结算时计为 2（普通骰计 1）。</dd>' +
   '<dt data-las-card="func:recruit">征召（5）</dt><dd>建造阶段：下一轮生产阶段临时村民 +2，可参与投骰与派遣；该生产阶段结束后消失。</dd>' +
   '<dt data-las-card="func:redraw">重抽（3）</dt><dd>建造阶段：从功能/建筑合堆顶抽 3 张，选 1 保留，其余弃入弃牌堆；合堆不足时洗混弃牌堆合并后再抽。保留后超出手牌上限须先弃置。</dd>' +
@@ -146,9 +146,9 @@ const zhFunc =
 
 const enFunc =
   '<dl class="las-rules-dl">' +
-  '<dt data-las-card="func:harvest">Harvest (5)</dt><dd>Build: gain any 2 resources (1 each).</dd>' +
-  '<dt data-las-card="func:remoteDice">Remote Dice (2)</dt><dd>Your produce turn, before rolling: choose any faces.</dd>' +
-  '<dt data-las-card="func:exile">Exile (5)</dt><dd>Your produce turn: remove 1 villager of a target on a number slot.</dd>' +
+  '<dt data-las-card="func:harvest">Harvest (5)</dt><dd>Build: gain any 3 resources (duplicates OK).</dd>' +
+  '<dt data-las-card="func:remoteDice">Remote Dice (2)</dt><dd>Your produce turn (before or after rolling): choose any faces.</dd>' +
+  '<dt data-las-card="func:exile">Exile (5)</dt><dd>Your produce turn: move 1 villager of a target from a number slot to another slot with tiles.</dd>' +
   '<dt data-las-card="func:enhance">Enhance (2)</dt><dd>Build: enhance 1 unenhanced die (max 3). Counts as 2 in settle.</dd>' +
   '<dt data-las-card="func:recruit">Recruit (5)</dt><dd>Build: next produce +2 temp villagers; gone after that produce.</dd>' +
   '<dt data-las-card="func:redraw">Redraw (3)</dt><dd>Build: draw 3 from merged deck top, keep 1; reshuffle discard if needed. Discard if over hand cap after keeping.</dd>' +
@@ -164,8 +164,8 @@ const zhBuild =
   '<dt data-las-cards="build:wood:rich build:stone:rich build:food:rich">资源建筑·富（木/石/小麦各 2）</dt><dd>木：2 石 3 小麦 2 铁，每轮自动产出 2 木。石：2 木 3 小麦 2 铁，产出 2 石。小麦：3 木 3 石 1 铁，产出 2 小麦。</dd>' +
   '<dt data-las-cards="build:wood:poor build:stone:poor build:food:poor build:iron:poor">资源建筑·贫</dt><dd>木/石/小麦（各 3）：贫档造价见卡面，产出 1。铁（3）：1 木 1 石 1 铁，产出 1 铁。建成后每轮个人产出阶段自动产出，无需工人。</dd>' +
   '<dt data-las-card="build:score2">宫殿（+2）（4）</dt><dd>造价 3 木 3 石 3 小麦 2 铁。建成即 +2 分，无需工人。被弃置的宫殿不再计分。</dd>' +
-  '<dt data-las-card="build:score1">学堂（+1）（3）</dt><dd>造价 1 木 1 石 1 小麦 1 铁。建成即 +1 分，无需工人。被弃置的学堂不再计分。</dd>' +
-  '<dt data-las-card="build:exchange">集市（5）</dt><dd>造价 1 木 1 石 1 小麦。建成后提升兑换比例（默认银行 4:1，1 座→3:1，2 座→2:1，≥3 座→1:1）。相同建筑可叠放同一建筑格；兑换比例最多按 3 座计算。</dd>' +
+  '<dt data-las-card="build:score1">学堂（+1）（7）</dt><dd>入手即 +1 胜利点并置入弃牌堆，无需建造、不占建筑格。</dd>' +
+  '<dt data-las-card="build:exchange">集市（5）</dt><dd>造价 1 木 1 石 1 小麦。建成后提升兑换比例（默认银行 3:1，1 座→2:1，≥2 座→1:1；兑换最多计 2 座）。第 3 座获得称号「商业巨擎」并 +2 胜利点（建成集市不足 3 座时失去）。相同建筑可叠放同一建筑格。</dd>' +
   '<dt data-las-card="build:wishWell">许愿井（3）</dt><dd>造价 1 木 1 石 1 小麦 1 铁。每建成一座：个人产出阶段可选任意 1 种资源 +1（多座可叠或分配）。无需工人。</dd>' +
   '</dl>';
 
@@ -175,7 +175,7 @@ const enBuild =
   '<dt data-las-cards="build:wood:poor build:stone:poor build:food:poor build:iron:poor">Resource building · Poor</dt><dd>Wood/Stone/Wheat×3: poor costs on card, produce 1. Iron×3: 1W 1S 1I → 1 iron. Auto-produce in personal production step.</dd>' +
   '<dt data-las-card="build:score2">Palace (+2) (4)</dt><dd>Cost 3W 3S 3 wheat 2I. +2 when built.</dd>' +
   '<dt data-las-card="build:score1">School (+1) (3)</dt><dd>Cost 1W 1S 1 wheat 1I. +1 when built.</dd>' +
-  '<dt data-las-card="build:exchange">Market (5)</dt><dd>Cost 1W 1S 1 wheat. Trade rate: default 4:1, 1→3:1, 2→2:1, ≥3→1:1. Same-type buildings may stack; rate counts at most 3.</dd>' +
+  '<dt data-las-card="build:exchange">Market (5)</dt><dd>Cost 1W 1S 1 wheat. Trade rate: default bank 3:1, 1→2:1, ≥2→1:1 (rate counts at most 2). 3rd market grants title Commerce Tycoon and +2 VP (lost if built markets fall below 3). Same-type buildings may stack.</dd>' +
   '<dt data-las-card="build:wishWell">Wish Well (3)</dt><dd>Cost 1W 1S 1 wheat 1I. Personal production: +1 any resource per well.</dd>' +
   '</dl>';
 

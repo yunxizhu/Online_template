@@ -140,6 +140,21 @@
   display: none;
 }
 
+.las-skip-settle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: calc(0.25 * var(--las-rem)) auto 0;
+  padding: calc(0.28 * var(--las-rem)) calc(0.7 * var(--las-rem));
+  font-size: calc(0.82 * var(--las-rem));
+  line-height: 1.2;
+  flex: 0 0 auto;
+}
+
+.las-skip-settle-btn[hidden] {
+  display: none;
+}
+
 .las-player-band {
   width: 100%;
   justify-self: center;
@@ -428,14 +443,9 @@
   flex: 0 0 auto;
 }
 
+.las-pcell-perm .las-permanent-grid > button,
+.las-pcell-perm .las-permanent-grid .las-perm-row > button,
 .las-pcell-perm .las-permanent-grid .las-perm-btn-wrap > button {
-  min-height: var(--las-act-btn-min-h);
-  padding: var(--las-act-btn-pad-y) var(--las-act-btn-pad-x);
-  font-size: var(--las-act-btn-font);
-  line-height: 1.15;
-}
-
-.las-pcell-perm .las-permanent-grid > button {
   min-height: var(--las-act-btn-min-h);
   padding: var(--las-act-btn-pad-y) var(--las-act-btn-pad-x);
   font-size: var(--las-act-btn-font);
@@ -1052,11 +1062,25 @@
 }
 
 .las-permanent-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  column-gap: var(--las-act-btn-gap, calc(0.5 * var(--las-rem)));
-  row-gap: calc(0.38 * var(--las-rem));
+  display: flex;
+  flex-direction: column;
+  gap: calc(0.38 * var(--las-rem));
   width: 100%;
+}
+
+.las-perm-row {
+  display: grid;
+  column-gap: var(--las-act-btn-gap, calc(0.5 * var(--las-rem)));
+  width: 100%;
+  min-width: 0;
+}
+
+.las-perm-row-1 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.las-perm-row-2 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .las-permanent-grid.is-dimmed .las-perm-btn-wrap > button {
@@ -1072,7 +1096,8 @@
   cursor: pointer;
 }
 
-.las-permanent-grid.is-dimmed .las-perm-btn-wrap.las-perm-exchange > button:not(:disabled) {
+.las-permanent-grid.is-dimmed .las-perm-btn-wrap.las-perm-exchange > button:not(:disabled),
+.las-permanent-grid.is-dimmed .las-perm-btn-wrap.las-perm-trade > button:not(:disabled) {
   opacity: 1;
   filter: none;
   cursor: pointer;
@@ -1083,8 +1108,8 @@
   box-shadow: 0 0 0 1px rgba(104, 162, 104, 0.22);
 }
 
-.las-pcell-func .las-func-hand > .las-card.is-affordable:not(:disabled),
-.las-pcell-build .las-pboard-card.is-affordable:not(:disabled) {
+.las-pcell-func .las-func-hand > .las-card.is-affordable:not(:disabled):not(.is-inert),
+.las-pcell-build .las-pboard-card.is-affordable:not(:disabled):not(.is-inert) {
   border-color: rgba(104, 162, 104, 0.75);
   box-shadow: 0 0 0 1px rgba(104, 162, 104, 0.22);
 }
@@ -1635,6 +1660,7 @@
     var(--las-slot-cards-w) + 2 * var(--las-slot-pad) +
       2 * var(--las-slot-tiles-pad-x)
   );
+  position: relative;
   background: #1a242b;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -1892,9 +1918,9 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: calc(0.12 * var(--las-rem));
-  margin-top: calc(0.2 * var(--las-rem));
-  padding-top: calc(0.25 * var(--las-rem));
+  gap: calc(0.08 * var(--las-rem));
+  margin-top: calc(0.14 * var(--las-rem));
+  padding-top: calc(0.16 * var(--las-rem));
   border-top: 1px dashed var(--las-divider);
   width: 100%;
 }
@@ -1909,7 +1935,7 @@
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--las-board-card-gap);
   min-height: var(--las-card-h);
 }
@@ -1923,27 +1949,93 @@
   min-height: var(--las-card-h);
 }
 
-.las-env-stash-card {
-  position: relative;
+.las-env-stash-wrap {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: calc(0.28 * var(--las-rem));
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 
-.las-env-stash-count {
+.las-env-stash-title {
+  font-size: calc(0.68 * var(--las-rem));
+  line-height: 1.2;
+  font-weight: 700;
+  color: #e8d9a8;
+  text-align: center;
+  max-width: calc(3.4 * var(--las-rem));
+  white-space: normal;
+}
+
+.las-env-stash-stack {
+  --las-stash-scale: 0.55;
+  --las-stash-offset: calc(0.42 * var(--las-rem));
+  --las-stash-n: 4;
+  position: relative;
+  flex: 0 0 auto;
+  width: calc(
+    var(--las-card-w) * var(--las-stash-scale) +
+      (var(--las-stash-n) - 1) * var(--las-stash-offset)
+  );
+  height: calc(
+    var(--las-card-h) * var(--las-stash-scale) +
+      (var(--las-stash-n) - 1) * var(--las-stash-offset)
+  );
+  cursor: help;
+  pointer-events: auto;
+}
+
+.las-slot-env .las-env-stash-card {
   position: absolute;
-  right: calc(0.18 * var(--las-rem));
-  bottom: calc(0.18 * var(--las-rem));
-  z-index: 2;
-  min-width: calc(1.55 * var(--las-rem));
-  padding: calc(0.08 * var(--las-rem)) calc(0.28 * var(--las-rem));
+  left: calc(var(--las-stash-i, 0) * var(--las-stash-offset));
+  top: calc(var(--las-stash-i, 0) * var(--las-stash-offset));
+  z-index: calc(1 + var(--las-stash-i, 0));
+  --las-stash-scale: 0.55;
+  width: calc(var(--las-card-w) * var(--las-stash-scale));
+  height: calc(var(--las-card-h) * var(--las-stash-scale));
+  min-width: calc(var(--las-card-w) * var(--las-stash-scale));
+  min-height: calc(var(--las-card-h) * var(--las-stash-scale));
+  margin: 0;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+.las-env-stash-stack > .las-env-stash-count {
+  position: absolute;
+  right: calc(0.06 * var(--las-rem));
+  bottom: calc(0.06 * var(--las-rem));
+  z-index: 20;
+  min-width: calc(1.35 * var(--las-rem));
+  padding: calc(0.06 * var(--las-rem)) calc(0.22 * var(--las-rem));
   border-radius: 999px;
   border: 1px solid rgba(80, 60, 30, 0.55);
   background: rgba(255, 248, 230, 0.96);
   color: #4a3a22;
-  font-size: calc(0.78 * var(--las-rem));
+  font-size: calc(0.72 * var(--las-rem));
   font-weight: 700;
   line-height: 1.2;
   text-align: center;
   pointer-events: none;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+.las-card-tip.has-multi-preview {
+  max-width: calc(34 * var(--las-rem));
+}
+
+.las-card-tip-preview-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(0.35 * var(--las-rem));
+  width: 100%;
+}
+
+.las-card-tip-preview.is-stash-mini {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 600 / 800;
+  min-height: 0;
 }
 
 .las-env-mercenary-dice {
@@ -3053,9 +3145,10 @@
 
 .las-barren-marker {
   position: absolute;
-  top: calc(0.35 * var(--las-rem));
-  right: calc(0.35 * var(--las-rem));
-  z-index: 2;
+  /* 锚在数字格条带右上角（slot 顶部即为数字区） */
+  top: calc(0.18 * var(--las-rem));
+  right: calc(0.18 * var(--las-rem));
+  z-index: 6;
   display: inline-flex;
   align-items: center;
   gap: calc(0.22 * var(--las-rem));
@@ -3068,6 +3161,8 @@
   color: #fff8ef;
   cursor: help;
   pointer-events: auto;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 
 .las-barren-marker .las-die-swatch {
@@ -3101,7 +3196,6 @@
 }
 
 .las-slot.has-barren-marker {
-  position: relative;
   outline: 1px dashed rgba(138, 75, 42, 0.55);
 }
 
@@ -4106,23 +4200,27 @@
   flex-direction: column;
   align-items: center;
   gap: calc(0.65 * var(--las-rem));
+  max-width: min(96vw, calc(32 * var(--las-rem)));
+  padding: calc(0.75 * var(--las-rem)) calc(0.9 * var(--las-rem));
 }
 
 .las-play-reveal-text {
   line-height: 1.35;
+  font-size: calc(1.15 * var(--las-rem));
 }
 
 .las-play-reveal-card {
-  width: calc(var(--las-card-w) * 0.62);
-  min-width: calc(var(--las-card-w) * 0.62);
-  height: calc(var(--las-card-h) * 0.62);
-  min-height: calc(var(--las-card-h) * 0.62);
+  /* 与悬停大图同级，不再用手牌缩略尺寸 */
+  width: min(86vw, calc(29 * var(--las-rem)));
+  min-width: min(86vw, calc(29 * var(--las-rem)));
+  height: min(calc(86vw * 800 / 600), calc(29 * var(--las-rem) * 800 / 600));
+  min-height: min(calc(86vw * 800 / 600), calc(29 * var(--las-rem) * 800 / 600));
   border-radius: 8px;
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.16);
 }
 
 .las-init-all-dice {
@@ -4173,6 +4271,26 @@
 .las-slot.las-settle-barren {
   outline-color: #c97845;
   animation: las-slot-barren-pulse 0.85s ease-in-out 2;
+}
+
+/* 结算演绎加速（与 fx.js SETTLE_SPEED=2.5 对齐） */
+.las-settling .las-slot.las-settle-winner {
+  animation-duration: 0.28s;
+}
+.las-settling .las-slot.las-settle-barren {
+  animation-duration: 0.34s;
+}
+.las-settling .las-fx-worker.is-cancel {
+  animation-duration: 0.18s;
+}
+.las-settling .las-fx-worker {
+  transition-duration: 0.12s, 0.14s;
+}
+.las-settling .las-fx-loot.is-pop {
+  animation-duration: 0.22s;
+}
+.las-settling .las-mvp-flash {
+  animation-duration: 0.4s;
 }
 
 @keyframes las-slot-barren-pulse {
@@ -4478,13 +4596,32 @@
   width: 100%;
 }
 
+.las-player-title {
+  display: inline-block;
+  margin-left: calc(0.25 * var(--las-rem));
+  padding: 0 calc(0.28 * var(--las-rem));
+  border-radius: calc(0.2 * var(--las-rem));
+  border: 1px solid #c9a227;
+  background: rgba(201, 162, 39, 0.18);
+  color: #f0d78c;
+  font-size: calc(0.68 * var(--las-rem));
+  line-height: 1.35;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
 .las-other-info-player {
   display: flex;
   align-items: center;
   justify-content: flex-start;
+  flex-wrap: wrap;
   gap: calc(0.18 * var(--las-rem));
   min-width: 0;
   grid-row: 1 / span 2;
+}
+
+.las-me-info-player {
+  flex-wrap: wrap;
 }
 
 .las-other-info-player .las-pboard-title {
@@ -4511,6 +4648,109 @@
   line-height: 1.2;
   color: var(--muted);
   text-align: left;
+}
+
+.las-other-info-trade {
+  display: none !important;
+}
+
+.las-other-trade-btn {
+  padding: calc(0.18 * var(--las-rem)) calc(0.55 * var(--las-rem));
+  font-size: calc(0.74 * var(--las-rem));
+  line-height: 1.2;
+}
+
+.las-trade-target-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: calc(0.28 * var(--las-rem));
+  margin-top: calc(0.35 * var(--las-rem));
+}
+
+.las-trade-target-row[hidden] {
+  display: none !important;
+}
+
+.las-trade-target-label {
+  font-size: calc(0.82 * var(--las-rem));
+  color: var(--muted);
+}
+
+.las-trade-target-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(0.35 * var(--las-rem));
+}
+
+.las-trade-target-chip {
+  min-height: calc(1.7 * var(--las-rem));
+  padding: calc(0.2 * var(--las-rem)) calc(0.55 * var(--las-rem));
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #1a242b;
+  color: inherit;
+  cursor: pointer;
+}
+
+.las-trade-target-chip.is-selected {
+  border-color: #c9a227;
+  box-shadow: 0 0 0 1px rgba(201, 162, 39, 0.35);
+  color: #f0e0a0;
+}
+
+.las-trade-decision-body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(0.55 * var(--las-rem));
+  margin: calc(0.35 * var(--las-rem)) 0 calc(0.55 * var(--las-rem));
+}
+
+.las-trade-decision-block h4 {
+  margin: 0 0 calc(0.25 * var(--las-rem));
+  font-size: calc(0.92 * var(--las-rem));
+  text-align: center;
+}
+
+.las-trade-card-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(0.35 * var(--las-rem));
+  justify-content: center;
+  min-height: calc(4.2 * var(--las-rem));
+  align-items: center;
+}
+
+.las-trade-face {
+  position: relative;
+  width: calc(3.6 * var(--las-rem));
+  height: calc(5.1 * var(--las-rem));
+  border-radius: calc(0.28 * var(--las-rem));
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-color: #243038;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+.las-trade-face-count {
+  position: absolute;
+  right: calc(0.18 * var(--las-rem));
+  bottom: calc(0.18 * var(--las-rem));
+  min-width: calc(1.2 * var(--las-rem));
+  padding: 0 calc(0.18 * var(--las-rem));
+  border-radius: calc(0.2 * var(--las-rem));
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: calc(0.82 * var(--las-rem));
+  line-height: 1.35;
+  text-align: center;
+}
+
+.las-trade-empty {
+  color: #9aa7b2;
+  font-size: calc(0.85 * var(--las-rem));
 }
 
 .las-other-slots-section {
@@ -5127,7 +5367,9 @@
   overflow: hidden;
 }
 
-.las-pboard-card:disabled {
+.las-pboard-card:disabled,
+.las-pboard-card.is-inert,
+.las-card.is-inert {
   cursor: default;
   opacity: 0.95;
 }
@@ -5582,4 +5824,52 @@
 .las-deck-pile-environment .las-deck-stack,
 .las-deck-pile-special .las-deck-stack {
   cursor: pointer;
+}
+
+/* 弹窗外「显示/隐藏」：折叠内容时仍保留按钮 */
+.modal.is-content-hidden {
+  pointer-events: none;
+}
+
+.modal.is-content-hidden > .modal-backdrop,
+.modal.is-content-hidden > .modal-dialog {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.las-modal-vis-toggle {
+  --las-modal-vis-i: 0;
+  position: fixed;
+  top: calc(
+    0.85 * var(--las-rem, 1rem) + var(--las-modal-vis-i) *
+      (2.55 * var(--las-rem, 1rem))
+  );
+  right: calc(0.85 * var(--las-rem, 1rem));
+  z-index: 1200;
+  min-height: calc(2.2 * var(--las-rem, 1rem));
+  padding: calc(0.35 * var(--las-rem, 1rem)) calc(0.75 * var(--las-rem, 1rem));
+  border-radius: 8px;
+  border: 1px solid #c9a227;
+  background: rgba(22, 28, 34, 0.96);
+  color: #f0e0a0;
+  font-size: calc(0.88 * var(--las-rem, 1rem));
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  pointer-events: auto;
+}
+
+.las-modal-vis-toggle:hover {
+  background: rgba(36, 44, 52, 0.98);
+  border-color: #e8d48b;
+}
+
+.las-modal-vis-toggle[hidden] {
+  display: none !important;
+}
+
+.las-modal-vis-toggle[aria-pressed='true'] {
+  color: #9ad0ff;
+  border-color: #6aa8d8;
 }

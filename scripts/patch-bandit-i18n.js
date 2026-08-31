@@ -6,9 +6,9 @@ const zhExtra = {
   'lasidao.confirmBandit': '放置中立骰子',
   'lasidao.confirmUse': '确认发动',
   'lasidao.func.breed': '消耗等同当前村民数的小麦，村民 +1（上限 15）',
-  'lasidao.func.harvest': '获得任意 2 个资源（各 1）',
+  'lasidao.func.harvest': '获得任意 3 个资源（可重复）',
   'lasidao.func.remoteDice': '投掷前使用：可指定任意点数派遣',
-  'lasidao.func.exile': '驱逐目标玩家在某数字格的 1 名村民',
+  'lasidao.func.exile': '将目标玩家在某数字格的 1 枚骰子移到另一有板块的数字格',
   'lasidao.func.buildHouse': '支付 4木 3石 2铁，+1 分',
   'lasidao.func.redraw': '从功能或建筑牌堆重抽 1 张',
   'lasidao.func.banditRaid':
@@ -22,9 +22,9 @@ const enExtra = {
   'lasidao.confirmBandit': 'Place neutral dice',
   'lasidao.confirmUse': 'Confirm',
   'lasidao.func.breed': 'Pay food equal to villager count; +1 villager (max 15)',
-  'lasidao.func.harvest': 'Gain any 2 resources (1 each)',
+  'lasidao.func.harvest': 'Gain any 3 resources (duplicates OK)',
   'lasidao.func.remoteDice': 'Before rolling: dispatch with any faces',
-  'lasidao.func.exile': 'Remove 1 villager of a player from a number slot',
+  'lasidao.func.exile': 'Move 1 villager of a player from a number slot to another slot with tiles',
   'lasidao.func.buildHouse': 'Pay 4 wood 3 stone 2 iron; +1 score',
   'lasidao.func.redraw': 'Redraw 1 card from function or building deck',
   'lasidao.func.banditRaid':

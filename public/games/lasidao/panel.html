@@ -9,6 +9,15 @@
         <div id="las-settle-banner" class="las-settle-banner" hidden></div>
       </div>
       <p id="las-status" class="muted las-status-line" hidden></p>
+      <button
+        id="btn-las-skip-settle"
+        type="button"
+        class="secondary las-skip-settle-btn"
+        hidden
+        data-i18n="lasidao.skipSettleAnim"
+      >
+        跳过结算动画
+      </button>
     </div>
 
     <div class="las-player-band" id="las-player-band">
@@ -19,12 +28,17 @@
         </div>
         <div class="las-pcell las-pcell-perm" id="las-pcell-perm">
           <div id="las-permanent-actions" class="las-permanent-grid">
-            <button id="btn-las-build-house" type="button" data-i18n="lasidao.buildHousePermanent">建造房子</button>
-            <button id="btn-las-exchange" type="button" data-i18n="lasidao.exchangeBtn">兑换</button>
-            <button id="btn-las-breed" type="button" data-i18n="lasidao.breedPermanent">繁殖村民</button>
-            <button id="btn-las-buy-func" type="button" data-i18n="lasidao.buyFuncPermanent">购买功能卡</button>
-            <button id="btn-las-expand-perm" type="button" data-i18n="lasidao.expandPermanent">扩建</button>
-            <button id="btn-las-reset-build" type="button" class="secondary las-perm-reset" data-i18n="lasidao.resetBuildTurn">重置回合</button>
+            <div class="las-perm-row las-perm-row-1">
+              <button id="btn-las-build-house" type="button" data-i18n="lasidao.buildHousePermanent">建造房子</button>
+              <button id="btn-las-expand-perm" type="button" data-i18n="lasidao.expandPermanent">扩建</button>
+              <button id="btn-las-breed" type="button" data-i18n="lasidao.breedPermanent">繁殖村民</button>
+            </div>
+            <div class="las-perm-row las-perm-row-2">
+              <button id="btn-las-buy-func" type="button" data-i18n="lasidao.buyFuncPermanent">购买功能卡</button>
+              <button id="btn-las-exchange" type="button" data-i18n="lasidao.exchangeBtn">兑换</button>
+              <button id="btn-las-trade" type="button" data-i18n="lasidao.tradeBtn">交易</button>
+              <button id="btn-las-reset-build" type="button" class="secondary las-perm-reset" data-i18n="lasidao.resetBuildTurn">重置回合</button>
+            </div>
           </div>
           <p id="las-act-hint" class="muted las-hint las-act-hint-slot" aria-hidden="true"></p>
           <div class="las-func-panel-slot">
@@ -61,6 +75,7 @@
             </div>
             <div class="row las-actions las-side-actions" id="las-produce-actions">
               <button id="btn-las-confirm" type="button" hidden data-i18n="lasidao.confirmDispatch">确认派遣</button>
+              <button id="btn-las-remote-dice-post" type="button" class="secondary" hidden data-i18n="lasidao.useRemoteDice">使用遥控骰子</button>
               <button id="btn-las-void" type="button" class="secondary" data-i18n="lasidao.produceSkip">跳过</button>
             </div>
           </div>
@@ -176,6 +191,60 @@
         <button id="btn-las-exchange-confirm" type="button" data-i18n="lasidao.exchangeBtn" disabled>兑换</button>
         <button id="btn-las-exchange-reset" type="button" class="secondary" data-i18n="lasidao.exchangeReset">重置</button>
         <button id="btn-las-exchange-cancel" type="button" class="secondary" data-i18n="lasidao.cancel">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="las-trade-propose-modal" class="modal las-trade-propose-modal las-exchange-modal" hidden>
+    <div class="modal-backdrop" id="las-trade-propose-backdrop"></div>
+    <div class="modal-dialog panel las-exchange-dialog las-trade-propose-dialog" role="dialog" aria-modal="true" aria-labelledby="las-trade-propose-title">
+      <div class="las-exchange-head">
+        <h3 id="las-trade-propose-title" data-i18n="lasidao.tradeProposeTitle">发起交易</h3>
+        <p id="las-trade-propose-hint" class="muted las-hint"></p>
+        <div id="las-trade-target-row" class="las-trade-target-row">
+          <span class="las-trade-target-label" data-i18n="lasidao.tradePickTarget">选择交易对象</span>
+          <div id="las-trade-target-list" class="las-trade-target-list"></div>
+        </div>
+      </div>
+      <div class="las-exchange-body">
+        <div class="las-ex-col">
+          <h4 data-i18n="lasidao.tradeGive">你交出</h4>
+          <div id="las-trade-give-list" class="las-ex-list"></div>
+        </div>
+        <div class="las-ex-divider">⇄</div>
+        <div class="las-ex-col">
+          <h4 data-i18n="lasidao.tradeTake">你获得</h4>
+          <div id="las-trade-take-list" class="las-ex-list"></div>
+        </div>
+      </div>
+      <div class="las-exchange-foot row las-actions">
+        <button id="btn-las-trade-propose-confirm" type="button" data-i18n="lasidao.tradeProposeConfirm" disabled>发起交易</button>
+        <button id="btn-las-trade-propose-reset" type="button" class="secondary" data-i18n="lasidao.exchangeReset">重置</button>
+        <button id="btn-las-trade-propose-cancel" type="button" class="secondary" data-i18n="lasidao.cancel">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="las-trade-decision-modal" class="modal las-trade-decision-modal las-harvest-modal" hidden>
+    <div class="modal-backdrop" id="las-trade-decision-backdrop"></div>
+    <div class="modal-dialog panel las-harvest-dialog las-trade-decision-dialog" role="dialog" aria-modal="true" aria-labelledby="las-trade-decision-title">
+      <div class="las-harvest-head">
+        <h3 id="las-trade-decision-title" data-i18n="lasidao.tradeDecisionTitle">交易请求</h3>
+        <p id="las-trade-decision-from" class="muted las-hint"></p>
+      </div>
+      <div class="las-trade-decision-body">
+        <div class="las-trade-decision-block">
+          <h4 data-i18n="lasidao.tradeYouGive">你交出</h4>
+          <div id="las-trade-decision-give" class="las-trade-card-row"></div>
+        </div>
+        <div class="las-trade-decision-block">
+          <h4 data-i18n="lasidao.tradeYouReceive">你获得</h4>
+          <div id="las-trade-decision-receive" class="las-trade-card-row"></div>
+        </div>
+      </div>
+      <div class="las-harvest-foot row las-actions">
+        <button id="btn-las-trade-accept" type="button" data-i18n="lasidao.tradeAccept">接受交易</button>
+        <button id="btn-las-trade-reject" type="button" class="secondary" data-i18n="lasidao.tradeReject">拒绝交易</button>
       </div>
     </div>
   </div>

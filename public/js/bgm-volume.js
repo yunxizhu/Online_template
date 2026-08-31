@@ -3,7 +3,7 @@
 /** 全局 BGM 音量（0–1），localStorage 持久化，供各游戏 assets 与菜单共用 */
 window.BgmVolume = (function () {
   const STORAGE_KEY = 'lianji.bgmVolume';
-  const DEFAULT = 1;
+  const DEFAULT = 0.1;
 
   function clamp(v) {
     const n = Number(v);

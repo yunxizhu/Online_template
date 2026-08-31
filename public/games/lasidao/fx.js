@@ -41,6 +41,47 @@ window.LasidaoFx = (function () {
     return new Promise((r) => setTimeout(r, ms));
   }
 
+  /** 结算演绎相对原速度的倍率（越大越快） */
+  const SETTLE_SPEED = 2.5;
+  let settleGen = 0;
+
+  function settleAbortError() {
+    const err = new Error('settle-aborted');
+    err.name = 'SettleAbort';
+    return err;
+  }
+
+  function isSettleAbort(err) {
+    return Boolean(err && err.name === 'SettleAbort');
+  }
+
+  function settleMs(ms) {
+    return Math.max(1, Math.round(Number(ms) / SETTLE_SPEED));
+  }
+
+  async function settleSleep(ms) {
+    const gen = settleGen;
+    await sleep(settleMs(ms));
+    if (gen !== settleGen) throw settleAbortError();
+  }
+
+  function abortSettle() {
+    settleGen += 1;
+    setBanner('');
+    clearLayer();
+    document
+      .querySelectorAll(
+        '.las-settle-focus, .las-settle-winner, .las-settle-barren'
+      )
+      .forEach((el) => {
+        el.classList.remove(
+          'las-settle-focus',
+          'las-settle-winner',
+          'las-settle-barren'
+        );
+      });
+  }
+
   function ensureLayer() {
     let layer = $('las-fx-layer');
     if (!layer) {
@@ -323,7 +364,9 @@ window.LasidaoFx = (function () {
         srcEl.style.opacity = '0.15';
       }
     }
-    await flyTo(fly, toEl, opts && opts.ms != null ? opts.ms : 1000);
+    const flyMs =
+      opts && opts.ms != null ? opts.ms : settleMs(1000);
+    await flyTo(fly, toEl, flyMs);
     if (fly.parentNode) fly.remove();
   }
 
@@ -481,7 +524,11 @@ window.LasidaoFx = (function () {
             ? 'environment'
             : item.area;
       const fromEl = deckEl(fromDeck);
-      const toEl = tileEl(item.id) || slotEl(item.area, item.number);
+      const toEl =
+        tileEl(item.id) ||
+        (item.area === 'environment'
+          ? slotEl('resource', item.number)
+          : slotEl(item.area, item.number));
       const from = rectCenter(fromEl);
       const to = rectCenter(toEl);
       if (!from || !to) {
@@ -606,7 +653,7 @@ window.LasidaoFx = (function () {
       );
       if (chip) chips.push({ el: chip, pid, cancelled: cancelledSet.has(pid) });
     }
-    await sleep(600);
+    await settleSleep(600);
 
     const cancelChips = chips.filter((c) => c.cancelled);
     if (cancelChips.length) {
@@ -623,12 +670,12 @@ window.LasidaoFx = (function () {
           mark.style.left = r.x + 'px';
           mark.style.top = r.y + 'px';
           layer.appendChild(mark);
-          setTimeout(() => mark.remove(), 900);
+          setTimeout(() => mark.remove(), settleMs(900));
         }
       }
-      await sleep(900);
+      await settleSleep(900);
       for (const c of cancelChips) c.el.classList.add('is-gone');
-      await sleep(500);
+      await settleSleep(500);
       for (const c of cancelChips) c.el.remove();
     }
 
@@ -653,9 +700,9 @@ window.LasidaoFx = (function () {
         barrenPop.style.left = center.x + 'px';
         barrenPop.style.top = center.y - 12 + 'px';
         layer.appendChild(barrenPop);
-        setTimeout(() => barrenPop.remove(), 1200);
+        setTimeout(() => barrenPop.remove(), settleMs(1200));
       }
-      await sleep(1100);
+      await settleSleep(1100);
       boardSlot.classList.remove('las-settle-barren');
     }
 
@@ -679,19 +726,19 @@ window.LasidaoFx = (function () {
             crown.style.left = r.x + 'px';
             crown.style.top = r.y - 18 + 'px';
             layer.appendChild(crown);
-            setTimeout(() => crown.remove(), 1100);
+            setTimeout(() => crown.remove(), settleMs(1100));
           }
         } else {
           c.el.classList.add('is-second');
         }
       }
       boardSlot.classList.add('las-settle-winner');
-      await sleep(900);
+      await settleSleep(900);
     } else if (Object.keys(before).length) {
       setBanner(
         t('lasidao.fx.slotNobody', { area: areaLab, number: slot.number })
       );
-      await sleep(700);
+      await settleSleep(700);
     }
 
     if (slot.area === 'resource' && (slot.gains || []).length) {
@@ -738,11 +785,11 @@ window.LasidaoFx = (function () {
             { faceUp: true }
           );
           if (ti < tilesForGain.length - 1) {
-            await sleep(280);
+            await settleSleep(280);
           }
         }
         if (gi < gains.length - 1) {
-          await sleep(500);
+          await settleSleep(500);
         }
       }
     } else if (
@@ -764,7 +811,7 @@ window.LasidaoFx = (function () {
           faceUp: false,
         });
         if (ti < tiles.length - 1) {
-          await sleep(500);
+          await settleSleep(500);
         }
       }
     }
@@ -773,7 +820,7 @@ window.LasidaoFx = (function () {
       if (c.el && c.el.parentNode) c.el.remove();
     }
     boardSlot.classList.remove('las-settle-focus', 'las-settle-winner', 'las-settle-barren');
-    await sleep(200);
+    await settleSleep(200);
   }
 
   async function playSettle(game) {
@@ -793,18 +840,18 @@ window.LasidaoFx = (function () {
 
     if (!slots.length) {
       setBanner(t('lasidao.fx.noWorkers'));
-      await sleep(600);
+      await settleSleep(600);
       setBanner('');
       return;
     }
 
     setBanner(t('lasidao.fx.start'));
-    await sleep(600);
+    await settleSleep(600);
 
     for (let si = 0; si < slots.length; si++) {
       await playSlot(game, slots[si]);
       if (si < slots.length - 1) {
-        await sleep(500);
+        await settleSleep(500);
       }
     }
 
@@ -822,9 +869,9 @@ window.LasidaoFx = (function () {
           fly.style.left = from.x + 'px';
           fly.style.top = from.y - 30 + 'px';
           layer.appendChild(fly);
-          await sleep(400);
+          await settleSleep(400);
           fly.classList.add('is-pop');
-          await sleep(800);
+          await settleSleep(800);
           fly.remove();
         }
       }
@@ -840,10 +887,12 @@ window.LasidaoFx = (function () {
       const target = playerEl(report.mvp.id);
       if (target) {
         target.classList.add('las-mvp-flash');
-        await sleep(1400);
+        target.style.animationDuration = settleMs(1000) + 'ms';
+        await settleSleep(1400);
         target.classList.remove('las-mvp-flash');
+        target.style.animationDuration = '';
       } else {
-        await sleep(1200);
+        await settleSleep(1200);
       }
     }
 
@@ -865,7 +914,7 @@ window.LasidaoFx = (function () {
     setBanner(t('lasidao.fx.recycleBoard'));
 
     if (!tileNodes.length) {
-      await sleep(500);
+      await settleSleep(500);
       setBanner('');
       return;
     }
@@ -924,10 +973,10 @@ window.LasidaoFx = (function () {
       layer.appendChild(fly);
 
       const to = toLayerPt(toClient);
-      const ms = Math.max(280, flyDurationMs(fromClient, toClient));
+      const ms = settleMs(Math.max(280, flyDurationMs(fromClient, toClient)));
       jobs.push(
         (async () => {
-          await sleep(i * 55);
+          await settleSleep(i * 55);
           await flyToPoint(fly, from, to, ms, {
             fade: true,
             fadeTo: 0.05,
@@ -939,49 +988,55 @@ window.LasidaoFx = (function () {
     }
 
     await Promise.all(jobs);
-    await sleep(200);
+    await settleSleep(200);
     setBanner('');
     clearLayer();
   }
 
-  /** 驱逐：高亮格子，村民被逐出 */
+  /** 驱逐：将棋子从源格移到目标格 */
   async function playExile(opts) {
     opts = opts || {};
     const layer = ensureLayer();
     if (!layer) return;
     const game = opts.game || {};
-    let focusEl = null;
-    if (opts.buildingId) {
-      focusEl =
-        personalBuildNumEl(opts.buildingId) ||
-        personalBuildEl(opts.buildingId);
-    } else if (opts.area != null && opts.number != null) {
-      focusEl = slotEl(opts.area, opts.number);
-    }
+    const fromEl =
+      opts.area != null && opts.number != null
+        ? slotEl(opts.area, opts.number)
+        : null;
+    const toEl =
+      opts.toArea != null && opts.toNumber != null
+        ? slotEl(opts.toArea, opts.toNumber)
+        : null;
     const targetName = nameOf(game, opts.targetId);
     const actorName = nameOf(game, opts.actorId);
-    const areaLab = opts.area ? areaLabel(opts.area) : '';
+    const fromLab = opts.area ? areaLabel(opts.area) : '';
+    const toLab = opts.toArea ? areaLabel(opts.toArea) : '';
 
     setBanner(
-      opts.buildingId
-        ? t('lasidao.fx.exileBuilding', {
+      opts.toArea != null && opts.toNumber != null
+        ? t('lasidao.fx.exileMove', {
             actor: actorName,
             target: targetName,
+            area: fromLab,
+            number: opts.number,
+            toArea: toLab,
+            toNumber: opts.toNumber,
           })
         : t('lasidao.fx.exile', {
             actor: actorName,
             target: targetName,
-            area: areaLab,
+            area: fromLab,
             number: opts.number,
           })
     );
 
-    if (focusEl) focusEl.classList.add('las-fx-exile-focus');
-    await sleep(450);
+    if (fromEl) fromEl.classList.add('las-fx-exile-focus');
+    if (toEl) toEl.classList.add('las-fx-exile-focus');
+    await sleep(350);
 
     const chip = spawnWorkerChip(
       layer,
-      focusEl,
+      fromEl,
       opts.targetId,
       1,
       targetName,
@@ -990,6 +1045,7 @@ window.LasidaoFx = (function () {
     if (chip) {
       chip.classList.add('is-exile-victim');
       const from = rectCenter(chip);
+      const to = rectCenter(toEl) || from;
       const mark = document.createElement('div');
       mark.className = 'las-fx-pop is-exile';
       mark.textContent = t('lasidao.fx.exileMark');
@@ -997,16 +1053,24 @@ window.LasidaoFx = (function () {
         mark.style.left = from.x + 'px';
         mark.style.top = from.y - 28 + 'px';
         layer.appendChild(mark);
-        setTimeout(() => mark.remove(), 1000);
+        setTimeout(() => mark.remove(), 900);
       }
-      await sleep(250);
-      chip.classList.add('is-exile-out');
-      await sleep(700);
+      await sleep(200);
+      if (from && to && (from.x !== to.x || from.y !== to.y)) {
+        chip.style.transition = 'left 0.55s ease, top 0.55s ease, transform 0.55s ease';
+        chip.style.left = to.x + 'px';
+        chip.style.top = to.y + 'px';
+        await sleep(580);
+      } else {
+        chip.classList.add('is-exile-out');
+        await sleep(700);
+      }
       if (chip.parentNode) chip.remove();
     }
 
-    if (focusEl) focusEl.classList.remove('las-fx-exile-focus');
-    await sleep(300);
+    if (fromEl) fromEl.classList.remove('las-fx-exile-focus');
+    if (toEl) toEl.classList.remove('las-fx-exile-focus');
+    await sleep(250);
     setBanner('');
   }
 
@@ -1159,5 +1223,8 @@ window.LasidaoFx = (function () {
     playVictory,
     clearLayer,
     setBanner,
+    abortSettle,
+    settleSleep,
+    isSettleAbort,
   };
 })();

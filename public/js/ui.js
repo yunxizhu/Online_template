@@ -53,6 +53,13 @@
     lobbyPeopleList: document.getElementById('lobby-people-list'),
     lobbyPeopleTitle: document.getElementById('lobby-people-title'),
     appPhaseTitle: document.getElementById('app-phase-title'),
+    spectatorsWatch: document.getElementById('spectators-watch'),
+    btnSpectators: document.getElementById('btn-spectators'),
+    spectatorsCount: document.getElementById('spectators-count'),
+    spectatorsPop: document.getElementById('spectators-pop'),
+    spectatorsList: document.getElementById('spectators-list'),
+    spectatorsEmpty: document.getElementById('spectators-empty'),
+    btnSpectatorsClose: document.getElementById('btn-spectators-close'),
     lobbyPeopleEmpty: document.getElementById('lobby-people-empty'),
     lobbyPeopleCount: document.getElementById('lobby-people-count'),
     btnRefreshDoc: document.getElementById('btn-refresh-doc'),
@@ -1349,7 +1356,9 @@
     }
     const base = gameAssetBaseUrl();
     const infoPath = base ? base + '/api/info' : '/api/info';
-    const info = await fetch(infoPath).then((r) => r.json());
+    const res = await fetch(infoPath, { cache: 'no-cache' });
+    if (!res.ok) throw new Error('api/info HTTP ' + res.status);
+    const info = await res.json();
     return info.games || [];
   }
 
@@ -1412,10 +1421,17 @@
     syncRemoteAssetBase();
     const panelBase = isMobilePlayPage() ? '' : gameAssetBaseUrl();
     state.games = await fetchGamesCatalog();
-    await window.GameBoot.mountPanels(state.games, panelBase || undefined);
+    const result = await window.GameBoot.mountPanels(
+      state.games,
+      panelBase || undefined
+    );
+    if (result && result.fail && result.fail.length) {
+      console.warn('部分游戏资源未加载', result.fail);
+    }
     if (I18n && typeof I18n.applyDom === 'function') {
       I18n.applyDom(document.getElementById('game-panels') || document);
     }
+    return result;
   }
 
   let gamePanelsReadyPromise = null;
@@ -1426,22 +1442,78 @@
     return Boolean(mount && mount.children.length > 0);
   }
 
+  function gameUiReadyFor(type) {
+    if (!type) return gamePanelsMounted();
+    const panel = document.getElementById('panel-' + type);
+    if (!panel) return false;
+    if (type === 'lasidao') return Boolean(window.LasidaoUi);
+    if (type === 'sgs') return Boolean(window.SgsUi);
+    if (type === 'incan') return Boolean(window.IncanUi);
+    if (type === 'gomoku') return Boolean(window.GomokuBoard || el.gomokuCanvas);
+    return true;
+  }
+
+  function resetGamePanelsState() {
+    gamePanelsBound = false;
+    gamePanelsReadyPromise = null;
+  }
+
   async function ensureGamePanelsReady() {
-    if (gamePanelsBound && gamePanelsMounted()) return;
+    const needType = currentGameType();
+    if (
+      gamePanelsBound &&
+      gamePanelsMounted() &&
+      (!needType || gameUiReadyFor(needType))
+    ) {
+      return;
+    }
+    // 已绑定但当前游戏 UI 丢失（半截失败）→ 强制重挂
+    if (gamePanelsBound && needType && !gameUiReadyFor(needType)) {
+      resetGamePanelsState();
+    }
     if (!gamePanelsReadyPromise) {
       gamePanelsReadyPromise = mountGamePanels()
-        .then(() => {
+        .then((result) => {
+          bindGamePanelUi();
+          gamePanelsBound = gamePanelsMounted();
           if (!gamePanelsBound) {
-            bindGamePanelUi();
-            gamePanelsBound = true;
+            throw new Error('游戏面板未挂载');
           }
+          if (result && result.fail && result.fail.length) {
+            const need = currentGameType();
+            const needFailed =
+              need && result.fail.some((f) => f.id === need);
+            if (needFailed || !result.ok.length) {
+              const ids = result.fail.map((f) => f.id).join(', ');
+              showToastSafe(t('game.loadFail') + ' (' + ids + ')', 5000);
+            } else {
+              console.warn(
+                '部分非当前游戏资源未加载',
+                result.fail.map((f) => f.id)
+              );
+            }
+          }
+          return result;
         })
         .catch((err) => {
-          gamePanelsReadyPromise = null;
+          resetGamePanelsState();
           throw err;
         });
     }
     await gamePanelsReadyPromise;
+  }
+
+  function showToastSafe(message, durationMs) {
+    try {
+      if (typeof showToast === 'function') {
+        showToast(message, durationMs);
+        return;
+      }
+    } catch (_) {}
+    const toast = document.getElementById('toast');
+    if (!toast) return;
+    toast.hidden = false;
+    toast.textContent = message;
   }
 
   function bindGamePanelUi() {
@@ -1471,10 +1543,10 @@
     try {
       await ensureGamePanelsReady();
     } catch (err) {
-      console.error(err);
-      document.getElementById('toast').hidden = false;
-      document.getElementById('toast').textContent = t('game.loadFail');
-      return;
+      // 不中断整页初始化：大厅仍可用，进房/开局时再重试挂载
+      console.error('game panels boot failed', err);
+      resetGamePanelsState();
+      showToastSafe(t('game.loadFail'), 5000);
     }
   }
 
@@ -1935,6 +2007,67 @@
     syncBgm(name);
     syncChatTabs();
     updateMatchClock();
+    syncSpectatorsWatchUi();
+  }
+
+  function humanSpectators(room) {
+    return (room && room.observers ? room.observers : []).filter(
+      (o) => o && !o.passiveHost
+    );
+  }
+
+  function closeSpectatorsPop() {
+    if (!el.spectatorsPop || !el.btnSpectators) return;
+    el.spectatorsPop.hidden = true;
+    el.btnSpectators.setAttribute('aria-expanded', 'false');
+  }
+
+  function fillSpectatorsList() {
+    if (!el.spectatorsList || !el.spectatorsEmpty) return;
+    const list = humanSpectators(state.room);
+    el.spectatorsList.innerHTML = '';
+    for (const o of list) {
+      const li = document.createElement('li');
+      const isMe = state.me && o.id === state.me.id;
+      li.innerHTML =
+        nickHtml(o.name, o.tag) +
+        (isMe ? ' <span class="you">(我)</span>' : '');
+      li.title = window.PlayerNick.fullLabel(o.name, o.tag);
+      el.spectatorsList.appendChild(li);
+    }
+    el.spectatorsEmpty.hidden = list.length > 0;
+  }
+
+  function openSpectatorsPop() {
+    if (!el.spectatorsPop || !el.btnSpectators) return;
+    fillSpectatorsList();
+    el.spectatorsPop.hidden = false;
+    el.btnSpectators.setAttribute('aria-expanded', 'true');
+  }
+
+  function toggleSpectatorsPop() {
+    if (!el.spectatorsPop) return;
+    if (el.spectatorsPop.hidden) openSpectatorsPop();
+    else closeSpectatorsPop();
+  }
+
+  function syncSpectatorsWatchUi() {
+    if (!el.spectatorsWatch) return;
+    const inGameView =
+      currentViewName === 'game' ||
+      (state.room && state.room.status === 'playing' && !el.viewGame.hidden);
+    const show = Boolean(state.room && inGameView);
+    el.spectatorsWatch.hidden = !show;
+    if (!show) {
+      closeSpectatorsPop();
+      return;
+    }
+    const n = humanSpectators(state.room).length;
+    if (el.spectatorsCount) el.spectatorsCount.textContent = String(n);
+    if (el.btnSpectators) {
+      el.btnSpectators.title = t('room.spectatorsTitle') + '：' + n;
+    }
+    if (el.spectatorsPop && !el.spectatorsPop.hidden) fillSpectatorsList();
   }
 
   function escapeHtml(s) {
@@ -2953,15 +3086,12 @@
           }
           renderGame();
         } catch (err) {
-          console.error('scheduleRenderGame failed:', err && err.stack ? err.stack : err);
-          showToast(t('game.loadFail'));
-          // 面板可能半截失败：清标记后允许下次再试
-          try {
-            if (!gamePanelsMounted()) {
-              gamePanelsBound = false;
-              gamePanelsReadyPromise = null;
-            }
-          } catch (_) {}
+          console.error(
+            'scheduleRenderGame failed:',
+            err && err.stack ? err.stack : err
+          );
+          showToastSafe(t('game.loadFail'), 5000);
+          resetGamePanelsState();
           try {
             renderGame();
           } catch (innerErr) {
@@ -4242,6 +4372,21 @@
       toggleGameMenu();
     });
   }
+  if (el.btnSpectators) {
+    el.btnSpectators.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      toggleSpectatorsPop();
+    });
+  }
+  if (el.btnSpectatorsClose) {
+    el.btnSpectatorsClose.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      closeSpectatorsPop();
+    });
+  }
+  if (el.spectatorsPop) {
+    el.spectatorsPop.addEventListener('click', (ev) => ev.stopPropagation());
+  }
   if (el.btnQuitGame) {
     el.btnQuitGame.addEventListener('click', () => {
       closeGameMenu();
@@ -4300,9 +4445,15 @@
     });
   }
   document.addEventListener('click', (ev) => {
-    if (!el.gameMenu) return;
-    if (el.gameMenu.contains(ev.target)) return;
-    closeGameMenu();
+    if (el.gameMenu && !el.gameMenu.contains(ev.target)) {
+      closeGameMenu();
+    }
+    if (
+      el.spectatorsWatch &&
+      !el.spectatorsWatch.contains(ev.target)
+    ) {
+      closeSpectatorsPop();
+    }
   });
 
   function refreshAfterLangChange() {
@@ -4472,6 +4623,7 @@
     const prev = state.room;
     state.room = data.room;
     syncPassiveExitButton();
+    syncSpectatorsWatchUi();
     const keepEdit =
       state.createModalMode === 'edit' &&
       el.createRoomModal &&
@@ -4489,8 +4641,14 @@
           })
           .catch((err) => {
             console.warn('game panels load failed', err);
+            resetGamePanelsState();
+            showToastSafe(t('game.loadFail'), 5000);
             showView('game');
-            if (state.game) renderGame();
+            if (state.game) {
+              try {
+                renderGame();
+              } catch (_) {}
+            }
           });
       };
       if (data.room.gameType === 'lasidao') {
@@ -4613,6 +4771,17 @@
       return;
     }
     await bounceToLocalLobby(t('toast.roomClosed'));
+  });
+
+  net.on('room:spectatorJoined', (data) => {
+    if (!data) return;
+    if (state.me && data.id && data.id === state.me.id) return;
+    if (!state.room) return;
+    const name = window.PlayerNick.fullLabel(
+      data.name || t('app.playerDefault'),
+      data.tag || ''
+    );
+    showToast(t('app.spectatorJoined', { name }), 3000);
   });
 
   net.on('room:error', (data) => {
@@ -5052,6 +5221,7 @@
         await ensureGamePanelsReady();
       } catch (err) {
         console.warn('game panels preload failed', err);
+        resetGamePanelsState();
         showToast(t('game.loadFail'));
       }
       if (state.room) {
