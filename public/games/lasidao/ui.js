@@ -159,6 +159,7 @@ window.LasidaoUi = (function () {
 
 
   const RESOURCES = ['wood', 'stone', 'food', 'iron'];
+  const LAS_LOG_MAX = 60;
 
   const FUNC_RULE = {
     breed: 'lasidao.func.breed',
@@ -283,7 +284,7 @@ window.LasidaoUi = (function () {
   let harvestCardId = null;
   let harvestCounts = {};
   let harvestMaxCount = 2;
-  let harvestTitleText = '';
+  let harvestSourceText = '';
 
   let expandCardId = null;
   let expandDirection = null;
@@ -325,7 +326,8 @@ window.LasidaoUi = (function () {
   let lastGamePhase = null;
   let settleAnimKey = null;
   let settlePlaying = false;
-  let lastLogRenderLen = 0;
+  let lastLogRenderKey = '';
+  let lastLogNewestKey = '';
   let victoryModalKey = null;
   let victoryAnimPlaying = false;
   let onLeaveLobbyRef = null;
@@ -367,6 +369,8 @@ window.LasidaoUi = (function () {
   let lastShownPlayRevealId = null;
   let playRevealTimer = null;
   let lasScaleBound = false;
+  let lasViewportScrollDone = false;
+  let lasViewportScrollTimer = null;
 
   const LAS_DESIGN_W = 1920;
   const LAS_DESIGN_H = 1080;
@@ -440,6 +444,48 @@ window.LasidaoUi = (function () {
     }
   }
 
+  function getLasViewportScrollGap() {
+    const panel = $('panel-lasidao');
+    if (!panel) return 12;
+    const rem = parseFloat(getComputedStyle(panel).getPropertyValue('--las-rem')) || 16;
+    return Math.max(8, rem * 0.35);
+  }
+
+  function scrollToPlayerBand() {
+    const band = $('las-player-band');
+    const panel = $('panel-lasidao');
+    if (!band || !panel || panel.hidden) return false;
+    const gap = getLasViewportScrollGap();
+    const rect = band.getBoundingClientRect();
+    const scrollRoot = document.scrollingElement || document.documentElement;
+    const target = Math.max(0, rect.top + scrollRoot.scrollTop - gap);
+    window.scrollTo({ top: target, left: 0, behavior: 'auto' });
+    return true;
+  }
+
+  function scheduleLasViewportScroll() {
+    if (lasViewportScrollDone) return;
+    if (lasViewportScrollTimer) {
+      clearTimeout(lasViewportScrollTimer);
+      lasViewportScrollTimer = null;
+    }
+    const finish = () => {
+      if (lasViewportScrollDone) return;
+      if (scrollToPlayerBand()) lasViewportScrollDone = true;
+    };
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        finish();
+        if (!lasViewportScrollDone) {
+          lasViewportScrollTimer = setTimeout(() => {
+            lasViewportScrollTimer = null;
+            finish();
+          }, 100);
+        }
+      });
+    });
+  }
+
   function clearDiceTimers() {
     for (const t of diceAnim.timers) clearTimeout(t);
     for (const t of diceAnim.intervals) clearInterval(t);
@@ -498,6 +544,8 @@ window.LasidaoUi = (function () {
     settleBoardFreeze = null;
     settleBoardFreezeKey = null;
     lastRenderPrevGame = null;
+    lastLogRenderKey = '';
+    lastLogNewestKey = '';
     if (settleDispatchHoldTimer) {
       clearTimeout(settleDispatchHoldTimer);
       settleDispatchHoldTimer = null;
@@ -521,6 +569,11 @@ window.LasidaoUi = (function () {
     lastShownPlayRevealId = null;
     hidePlayReveal(true);
     hideTurnToast(true);
+    lasViewportScrollDone = false;
+    if (lasViewportScrollTimer) {
+      clearTimeout(lasViewportScrollTimer);
+      lasViewportScrollTimer = null;
+    }
     if (window.LasidaoFx && typeof window.LasidaoFx.clearLayer === 'function') {
       window.LasidaoFx.clearLayer();
     }
@@ -737,6 +790,23 @@ window.LasidaoUi = (function () {
     for (const p of game.players || []) {
       if (!p || p.id === meId || !p.name) continue;
       if (text.indexOf(p.name) >= 0) return true;
+    }
+    return false;
+  }
+
+  /** play-reveal 已播报时，避免日志再弹同款顶部 toast */
+  function playRevealSuppressesLogToast(game, meId, prev, logText) {
+    const reveal = game && game.lastPlayReveal;
+    if (!reveal || !reveal.id || reveal.id === prev.lastPlayRevealId) return false;
+    if (!reveal.actorId || reveal.actorId === meId) return false;
+    if (!logText) return false;
+    if (reveal.stepText && logText === reveal.stepText) return true;
+    if (
+      reveal.kind === 'step' ||
+      reveal.kind === 'building' ||
+      reveal.kind === 'function'
+    ) {
+      return logActorIsOther(logText, game, meId);
     }
     return false;
   }
@@ -988,8 +1058,10 @@ window.LasidaoUi = (function () {
         if (logMentionsOtherAction(text, game, meId)) lastOther = text;
       }
       if (lastOther) {
-        showTurnToast(lastOther);
-        return true;
+        if (!playRevealSuppressesLogToast(game, meId, prev, lastOther)) {
+          showTurnToast(lastOther);
+          return true;
+        }
       }
       if (produceStartName) {
         const me = mePlayer(game, meId);
@@ -1197,6 +1269,8 @@ window.LasidaoUi = (function () {
         positionCardTip(tip, e, wrap);
       });
       wrap.addEventListener('mouseleave', () => hideCardTip());
+      wrap.addEventListener('pointerdown', () => hideCardTip());
+      btn.addEventListener('click', () => hideCardTip());
     }
     return wrap;
   }
@@ -1947,6 +2021,33 @@ window.LasidaoUi = (function () {
     return -1;
   }
 
+  function remainingMercenaryDice(merc) {
+    const roll = (merc && merc.roll) || [];
+    const placed = new Set((merc && merc.placed) || []);
+    const out = [];
+    for (let i = 0; i < roll.length; i++) {
+      if (!placed.has(i)) out.push(Number(roll[i]) || 0);
+    }
+    return out;
+  }
+
+  function mercenaryDieIndexForFace(merc, face) {
+    if (face == null) return -1;
+    const roll = (merc && merc.roll) || [];
+    const placed = new Set((merc && merc.placed) || []);
+    const want = Number(face);
+    for (let i = 0; i < roll.length; i++) {
+      if (!placed.has(i) && Number(roll[i]) === want) return i;
+    }
+    return -1;
+  }
+
+  function mercenaryDieIndexForSkip(merc, face) {
+    const byFace = mercenaryDieIndexForFace(merc, face);
+    if (byFace >= 0) return byFace;
+    return currentMercenaryDieIndex(merc);
+  }
+
   function mercenaryCurrentFace(game) {
     const merc = game && game.mercenary;
     if (!merc) return null;
@@ -1997,16 +2098,11 @@ window.LasidaoUi = (function () {
     mercenaryToastKey = key;
     if (!(merc.roll && merc.roll.length)) {
       showTurnToast(t('lasidao.eventMercenaryRollToast'), 2200);
-    } else if (currentMercenaryDieIndex(merc) >= 0) {
-      const idx = currentMercenaryDieIndex(merc);
-      showTurnToast(
-        t('lasidao.eventMercenaryPlaceDieToast', {
-          face: merc.roll[idx],
-          cur: idx + 1,
-          total: merc.roll.length,
-        }),
-        1800
-      );
+    } else if (
+      currentMercenaryDieIndex(merc) >= 0 &&
+      (merc.placed || []).length === 0
+    ) {
+      showTurnToast(t('lasidao.eventMercenaryPlaceHint'), 2200);
     }
   }
 
@@ -2069,18 +2165,20 @@ window.LasidaoUi = (function () {
     if (!confirm) return;
 
     if (isMercenaryPlaceMode(lastGame, lastMeId) && diceReady()) {
-      const face = mercenaryCurrentFace(lastGame);
-      if (face == null) {
+      if (selectedFace == null) {
         confirm.hidden = true;
+        confirm.disabled = true;
         syncSlotConfirmButtons();
         return;
       }
       if (!selectedTarget) {
         confirm.hidden = true;
+        confirm.disabled = true;
         syncSlotConfirmButtons();
         return;
       }
       confirm.hidden = false;
+      confirm.disabled = false;
       syncSlotConfirmButtons();
       return;
     }
@@ -2102,16 +2200,19 @@ window.LasidaoUi = (function () {
 
     if (selectedFace == null) {
       confirm.hidden = true;
+      confirm.disabled = true;
       return;
     }
 
     if (!selectedTarget) {
       confirm.hidden = true;
+      confirm.disabled = true;
       syncSlotConfirmButtons();
       return;
     }
 
     confirm.hidden = false;
+    confirm.disabled = false;
     syncSlotConfirmButtons();
   }
 
@@ -2147,7 +2248,7 @@ window.LasidaoUi = (function () {
           selectedTarget.number === num
         ) {
           if (lastGame && isMercenaryPlaceMode(lastGame, lastMeId)) {
-            show = diceReady();
+            show = diceReady() && selectedFace != null;
           } else if (lastGame && isRemoteMode(lastGame)) {
             show = diceReady() && selectedWildCount > 0;
           } else {
@@ -2161,25 +2262,38 @@ window.LasidaoUi = (function () {
 
   function updateDiceHint() {
     const hint = $('las-dice-hint');
-    if (!hint) return;
+    const rollHint = $('las-roll-hint');
     if (isMercenaryRollMode(lastGame, lastMeId)) {
-      hint.textContent = t('lasidao.eventMercenaryRollHint');
+      const mercHint = t('lasidao.eventMercenaryRollHint');
+      if (rollHint) rollHint.textContent = mercHint;
+      if (hint) hint.textContent = mercHint;
       return;
     }
+    if (rollHint && lastGame && lastGame.phase === 'produce' && isMyTurn(lastGame, lastMeId) && isAwaitingRoll(lastGame)) {
+      rollHint.textContent = t('lasidao.rollHint');
+    }
+    if (!hint) return;
     if (isMercenaryPlaceMode(lastGame, lastMeId)) {
       if (diceAnim.stage === 'rolling') {
         hint.textContent = t('lasidao.diceRolling');
       } else if (diceAnim.stage === 'grouping') {
         hint.textContent = t('lasidao.diceGrouping');
       } else if (diceAnim.stage === 'ready') {
-        const face = mercenaryCurrentFace(lastGame);
-        if (!selectedTarget) {
-          hint.textContent = t('lasidao.eventMercenaryPickTarget', {
-            face: face || '?',
+        const count =
+          selectedFace != null
+            ? countByFace(diceAnim.finalDice)[selectedFace] || 0
+            : 0;
+        if (selectedFace == null) {
+          hint.textContent = t('lasidao.dicePickFaceOrBoard');
+        } else if (!selectedTarget) {
+          hint.textContent = t('lasidao.previewNeedTarget', {
+            face: selectedFace,
+            count,
           });
         } else {
-          hint.textContent = t('lasidao.eventMercenaryPreview', {
-            face: face || '?',
+          hint.textContent = t('lasidao.previewReady', {
+            face: selectedFace,
+            count,
             target: dispatchTargetLabel(selectedTarget),
           });
         }
@@ -2265,49 +2379,81 @@ window.LasidaoUi = (function () {
     }
   }
 
+  function logEntryText(row) {
+    if (!row) return '';
+    if (typeof row === 'string') return row;
+    return row.text != null ? String(row.text) : '';
+  }
+
+  function logRenderKey(rows) {
+    if (!rows || !rows.length) return '0';
+    return rows
+      .map(
+        (r) =>
+          `${r && r.at != null ? r.at : ''}:${logEntryText(r)}`
+      )
+      .join('\n');
+  }
+
+  function logNewestKey(rows) {
+    if (!rows || !rows.length) return '';
+    const newest = rows[rows.length - 1];
+    return `${newest && newest.at != null ? newest.at : ''}:${logEntryText(newest)}`;
+  }
+
   function renderGameLog(game) {
     const log = $('las-log');
     if (!log) return;
     const rows = game.log || [];
-    const len = rows.length;
-    if (len === lastLogRenderLen && log.children.length > 0) return;
-    const newest = len > 0 ? rows[len - 1] : null;
-    if (
-      len === lastLogRenderLen + 1 &&
-      newest &&
+    const key = logRenderKey(rows);
+    if (key === lastLogRenderKey && log.children.length > 0) return;
+
+    const newestKey = logNewestKey(rows);
+    const canAppend =
+      newestKey &&
+      newestKey !== lastLogNewestKey &&
       log.children.length > 0 &&
-      log.children.length <= 60
-    ) {
+      log.children.length <= LAS_LOG_MAX;
+
+    if (canAppend) {
       const li = document.createElement('li');
-      li.textContent = newest.text;
+      li.textContent = logEntryText(rows[rows.length - 1]);
       log.insertBefore(li, log.firstChild);
-      while (log.children.length > 60) {
+      while (log.children.length > LAS_LOG_MAX) {
         log.removeChild(log.lastChild);
       }
-      lastLogRenderLen = len;
+      lastLogRenderKey = key;
+      lastLogNewestKey = newestKey;
       return;
     }
-    lastLogRenderLen = len;
+
+    lastLogRenderKey = key;
+    lastLogNewestKey = newestKey;
     log.innerHTML = '';
-    for (const row of rows.slice().reverse().slice(0, 60)) {
+    for (const row of rows.slice().reverse().slice(0, LAS_LOG_MAX)) {
       const li = document.createElement('li');
-      li.textContent = row.text;
+      li.textContent = logEntryText(row);
       log.appendChild(li);
     }
   }
 
-  function pickAreaTarget(areaKey, num) {
-    if (isMercenaryPlaceMode(lastGame, lastMeId)) {
-      const face = mercenaryCurrentFace(lastGame);
-      if (face == null || Number(num) !== face) return;
-      selectedFace = face;
-      selectedTarget = { type: 'area', area: areaKey, number: num };
-      syncBoardPickHighlight();
-      renderGroupedDice();
-      updateDispatchPreview();
-      updateDiceHint();
-      return;
+  function appendGameLogLine(text) {
+    if (!text) return;
+    const log = $('las-log');
+    if (!log) return;
+    for (let i = 0; i < log.children.length; i++) {
+      if (log.children[i].textContent === text) return;
     }
+    const li = document.createElement('li');
+    li.textContent = text;
+    log.insertBefore(li, log.firstChild);
+    while (log.children.length > LAS_LOG_MAX) {
+      log.removeChild(log.lastChild);
+    }
+    lastLogNewestKey = `local:${Date.now()}:${text}`;
+  }
+
+  function pickAreaTarget(areaKey, num) {
     const remote = lastGame && isRemoteMode(lastGame);
     if (!remote) {
       if (!hasAvailableFace(num)) return;
@@ -3165,7 +3311,6 @@ window.LasidaoUi = (function () {
     const teleportPick = isTeleportPickMode(game, meId);
     const banditPick = isBanditPickMode(game, meId);
     const mercPlace = isMercenaryPlaceMode(game, meId);
-    const mercFace = mercPlace ? mercenaryCurrentFace(game) : null;
     const round = game.round || 1;
     const openCount = areaOpenSlotCount(areaKey, round);
     const lockedByRound = areaKey === 'special' && num > openCount;
@@ -3183,16 +3328,8 @@ window.LasidaoUi = (function () {
         (mercPlace && diceReady()));
     const canPick =
       canPickBase &&
-      (mercPlace
-        ? mercFace === num
-        : remote
-          ? selectedWildCount > 0
-          : faces.length > 0);
-    const matchFace = mercPlace
-      ? mercFace === num
-      : remote
-        ? true
-        : faces.indexOf(num) >= 0;
+      (remote ? selectedWildCount > 0 : faces.length > 0);
+    const matchFace = remote ? true : faces.indexOf(num) >= 0;
     const barrenSelectable =
       barrenPick &&
       (areaKey === 'resource' || (areaKey === 'special' && !lockedByRound));
@@ -3327,7 +3464,7 @@ window.LasidaoUi = (function () {
         selectedTarget.number === num
       ) {
         if (lastGame && isMercenaryPlaceMode(lastGame, lastMeId)) {
-          show = diceReady();
+          show = diceReady() && selectedFace != null;
         } else if (lastGame && isRemoteMode(lastGame)) {
           show = diceReady() && selectedWildCount > 0;
         } else {
@@ -3469,7 +3606,6 @@ window.LasidaoUi = (function () {
     const teleportPick = isTeleportPickMode(game, meId);
     const banditPick = isBanditPickMode(game, meId);
     const mercPlace = isMercenaryPlaceMode(game, meId);
-    const mercFace = mercPlace ? mercenaryCurrentFace(game) : null;
 
     for (let num = 1; num <= 6; num++) {
       const slotInfo =
@@ -3540,16 +3676,8 @@ window.LasidaoUi = (function () {
           (mercPlace && diceReady()));
       const canPick =
         canPickBase &&
-        (mercPlace
-          ? mercFace === num
-          : remote
-            ? selectedWildCount > 0
-            : faces.length > 0);
-      const matchFace = mercPlace
-        ? mercFace === num
-        : remote
-          ? true
-          : faces.indexOf(num) >= 0;
+        (remote ? selectedWildCount > 0 : faces.length > 0);
+      const matchFace = remote ? true : faces.indexOf(num) >= 0;
       const barrenSelectable =
         barrenPick &&
         (areaKey === 'resource' ||
@@ -4428,6 +4556,7 @@ window.LasidaoUi = (function () {
     if (!roll.length) {
       if (diceAnim.stage !== 'idle') resetDiceAnim();
       if (rollWrap) rollWrap.hidden = false;
+      wrap.hidden = true;
       if (produceActions) produceActions.hidden = true;
       if (confirm) confirm.hidden = true;
       if (voidBtn) voidBtn.hidden = true;
@@ -4470,27 +4599,26 @@ window.LasidaoUi = (function () {
         mercenaryRollAnimDoneKey = mercenaryRollAnimKey;
         maybeShowMercenaryToast(game, meId);
       }
-      const face = roll[idx];
-      if (
-        diceAnim.finalDice.length !== 1 ||
-        diceAnim.finalDice[0] !== face
-      ) {
-        diceAnim.finalDice = [face];
-        diceAnim.finalBoosted = [false];
-        selectedFace = face;
-        selectedTarget = null;
-        renderGroupedDice();
+      clearBuildDicePanelMode();
+      const remaining = remainingMercenaryDice(merc);
+      const remainKey = remaining.join(',');
+      const curKey = (diceAnim.finalDice || []).join(',');
+      if (curKey !== remainKey) {
+        diceAnim.finalDice = remaining.slice();
+        diceAnim.finalBoosted = remaining.map(() => false);
+        if (
+          selectedFace != null &&
+          remaining.indexOf(selectedFace) < 0
+        ) {
+          resetDiceSelection();
+        }
       }
-      setDiceTitle(
-        t('lasidao.eventMercenaryPlaceDie', {
-          face,
-          cur: idx + 1,
-          total: roll.length,
-        })
-      );
+      renderGroupedDice();
+      setDiceTitle(t('lasidao.eventMercenaryTitle'));
       if (voidBtn) {
         voidBtn.hidden = false;
         voidBtn.textContent = t('lasidao.eventMercenarySkipDie');
+        voidBtn.disabled = false;
       }
       if (confirm) {
         confirm.textContent = t('lasidao.confirmDispatch');
@@ -4510,6 +4638,117 @@ window.LasidaoUi = (function () {
   function setDiceTitle(text) {
     const title = $('las-dice-title');
     if (title) title.textContent = text;
+  }
+
+  function getBuildActionState(game, me) {
+    const isBuild = Boolean(game && game.phase === 'build');
+    const myTurn = Boolean(me && isMyTurn(game, me.id));
+    const canAct = Boolean(isBuild && myTurn && me && !me.buildPassed);
+    const hasSel = Boolean(
+      selectedFuncId || selectedBuildingId || selectedPermanent
+    );
+    const mustDiscard = Boolean(
+      me &&
+        (me.pendingDiscardFunc || me.pendingDiscardBuild) &&
+        !me.pendingDiscardRes
+    );
+    const canPlay = Boolean(canAct && hasSel && !mustDiscard);
+    return { isBuild, canAct, hasSel, mustDiscard, canPlay };
+  }
+
+  function buildConfirmButtonText(game, me) {
+    if (selectedBuildingId) {
+      const b = (me.buildings || []).find((x) => x.id === selectedBuildingId);
+      return b && b.slot == null
+        ? t('lasidao.confirmPlaceBuilding')
+        : t('lasidao.confirmConstruct');
+    }
+    if (selectedPermanent === 'buildHouse') {
+      return t('lasidao.confirmBuildHouse');
+    }
+    if (selectedPermanent === 'breed') {
+      return t('lasidao.confirmBreed');
+    }
+    if (selectedPermanent === 'expand') {
+      return t('lasidao.confirmExpand');
+    }
+    if (selectedPermanent === 'exchange') {
+      return t('lasidao.confirmExchange');
+    }
+    if (selectedPermanent === 'buyFunc') {
+      return t('lasidao.confirmBuyFunc');
+    }
+    return t('lasidao.confirmUse');
+  }
+
+  function clearBuildDicePanelMode() {
+    const pcell = $('las-pcell-dice');
+    const wrap = $('las-dice-wrap');
+    if (pcell) pcell.classList.remove('is-build-actions');
+    if (wrap) wrap.classList.remove('is-build-actions');
+    const diceHead = wrap && wrap.querySelector('.las-dice-head');
+    const diceStage = $('las-dice-stage');
+    if (diceHead) diceHead.hidden = false;
+    if (diceStage) diceStage.hidden = false;
+    const confirmBtn = $('btn-las-confirm');
+    const passBtn = $('btn-las-void');
+    if (confirmBtn) confirmBtn.disabled = false;
+    if (passBtn) passBtn.disabled = false;
+  }
+
+  function syncBuildDicePanel(game, me) {
+    const wrap = $('las-dice-wrap');
+    const rollWrap = $('las-roll-wrap');
+    const produceActions = $('las-produce-actions');
+    const confirmBtn = $('btn-las-confirm');
+    const passBtn = $('btn-las-void');
+    const diceHead = wrap && wrap.querySelector('.las-dice-head');
+    const diceStage = $('las-dice-stage');
+    const diceEl = $('las-dice');
+    const groupsEl = $('las-dice-groups');
+    const hint = $('las-dice-hint');
+    const { isBuild, canAct, mustDiscard, canPlay } = getBuildActionState(
+      game,
+      me
+    );
+
+    clearBuildDicePanelMode();
+
+    if (!isBuild || !canAct) {
+      if (wrap && isBuild) wrap.hidden = true;
+      if (produceActions && isBuild) produceActions.hidden = true;
+      return;
+    }
+
+    const pcell = $('las-pcell-dice');
+    if (pcell) pcell.classList.add('is-build-actions');
+    if (wrap) wrap.classList.add('is-build-actions');
+
+    if (rollWrap) rollWrap.hidden = true;
+    if (wrap) wrap.hidden = false;
+    if (diceHead) diceHead.hidden = true;
+    if (diceStage) diceStage.hidden = true;
+    if (diceEl) {
+      diceEl.hidden = true;
+      diceEl.innerHTML = '';
+    }
+    if (groupsEl) {
+      groupsEl.hidden = true;
+      groupsEl.innerHTML = '';
+    }
+    if (produceActions) produceActions.hidden = false;
+    if (hint) hint.textContent = '';
+
+    if (confirmBtn) {
+      confirmBtn.hidden = false;
+      confirmBtn.disabled = !canPlay;
+      confirmBtn.textContent = buildConfirmButtonText(game, me);
+    }
+    if (passBtn) {
+      passBtn.hidden = false;
+      passBtn.disabled = mustDiscard;
+      passBtn.textContent = t('lasidao.passBuild');
+    }
   }
 
   function renderSpectatorDice(dice, color, boostFlags) {
@@ -4584,6 +4823,13 @@ window.LasidaoUi = (function () {
     const produceActions = $('las-produce-actions');
     if (confirm) confirm.textContent = t('lasidao.confirmDispatch');
 
+    if (game.phase === 'build') {
+      syncBuildDicePanel(game, mePlayer(game, meId));
+      return;
+    }
+
+    clearBuildDicePanelMode();
+
     if (game.phase !== 'produce') {
       if (diceAnim.stage !== 'idle') resetDiceAnim();
       wrap.hidden = true;
@@ -4603,28 +4849,10 @@ window.LasidaoUi = (function () {
       return;
     }
 
-    // ?????????????????
+    // 他人回合且尚未投掷：不展示等待提示
     if (!myTurn && active && active.awaitingRoll) {
       if (diceAnim.stage !== 'idle') resetDiceAnim();
-    wrap.hidden = false;
-      setDiceTitle(t('lasidao.otherAwaitingRoll', { name: actorName }));
-      const diceEl = $('las-dice');
-      const groupsEl = $('las-dice-groups');
-      if (diceEl) {
-        diceEl.hidden = false;
-        diceEl.innerHTML =
-          '<span class="muted">' + t('lasidao.waitingOtherRoll') + '</span>';
-      }
-      if (groupsEl) {
-        groupsEl.hidden = true;
-        groupsEl.innerHTML = '';
-      }
-      if (preview) preview.hidden = true;
-      if (confirm) confirm.hidden = true;
-      if (voidBtn) voidBtn.hidden = true;
-      if (produceActions) produceActions.hidden = true;
-      const hint = $('las-dice-hint');
-      if (hint) hint.textContent = '';
+      wrap.hidden = true;
       return;
     }
 
@@ -4646,6 +4874,9 @@ window.LasidaoUi = (function () {
 
     if (myTurn) {
       setDiceTitle(t('lasidao.yourDice'));
+      if (confirm) {
+        confirm.disabled = false;
+      }
       if (voidBtn) {
         voidBtn.hidden = false;
         voidBtn.textContent = t('lasidao.produceSkip');
@@ -5266,6 +5497,8 @@ window.LasidaoUi = (function () {
 
   function renderActRail(game, meId) {
     const hint = $('las-act-hint');
+    const permCell = $('las-pcell-perm');
+    if (permCell) permCell.classList.toggle('is-build-turn', game.phase === 'build');
     if (!hint) return;
     hideCardTip();
 
@@ -5277,19 +5510,18 @@ window.LasidaoUi = (function () {
     }
 
     if (game.phase === 'build') {
-      if (
-        isMyTurn(game, meId) &&
-        (me.pendingDiscardFunc || me.pendingDiscardBuild)
-      ) {
+      const mustDiscard =
+        me &&
+        (me.pendingDiscardFunc || me.pendingDiscardBuild) &&
+        !me.pendingDiscardRes;
+      if (mustDiscard) {
         hint.textContent = me.pendingDiscardFunc
           ? t('lasidao.discardFuncTip')
           : t('lasidao.discardBuildTip', {
               n: me.maxBuildings || game.maxBuildings || 3,
             });
       } else {
-        hint.textContent = isMyTurn(game, meId)
-          ? t('lasidao.actRailHintBuild')
-          : t('lasidao.actRailHintBuildWait');
+        hint.textContent = '';
       }
     } else if (game.phase === 'produce') {
       hint.textContent = '';
@@ -5306,76 +5538,13 @@ window.LasidaoUi = (function () {
     hint.setAttribute('aria-hidden', hint.textContent ? 'false' : 'true');
   }
 
-  /** 建造阶段：手牌已并入顶部玩家面板，此处仅同步确认栏 */
+  /** 建造阶段：确认/跳过按钮在骰子区 */
   function renderBuildHand(game, meId) {
     syncBuildConfirmBar(game, mePlayer(game, meId));
   }
 
   function syncBuildConfirmBar(game, me) {
-    const bar = $('las-act-confirm-bar');
-    const playBtn = $('btn-las-build-play');
-    const passBtn = $('btn-las-pass');
-    if (!bar || !playBtn) return;
-
-    const isBuild = game && game.phase === 'build';
-    const myTurn = Boolean(me && isMyTurn(game, me.id));
-    const canAct = Boolean(isBuild && myTurn && me && !me.buildPassed);
-    const hasSel = Boolean(
-      selectedFuncId || selectedBuildingId || selectedPermanent
-    );
-    const mustDiscard =
-      me &&
-      (me.pendingDiscardFunc || me.pendingDiscardBuild) &&
-      !me.pendingDiscardRes;
-
-    bar.hidden = false;
-    bar.setAttribute('aria-hidden', canAct ? 'false' : 'true');
-    const canPlay = Boolean(canAct && hasSel && !mustDiscard);
-    playBtn.hidden = false;
-    playBtn.disabled = !canPlay;
-
-    if (passBtn) {
-      passBtn.hidden = false;
-      passBtn.setAttribute(
-        'aria-hidden',
-        !canAct || mustDiscard ? 'true' : 'false'
-      );
-      passBtn.disabled = !canAct;
-      passBtn.textContent = t('lasidao.passBuild');
-    }
-
-    if (!canAct) {
-      playBtn.onclick = null;
-      return;
-    }
-
-    if (selectedBuildingId) {
-      const b = (me.buildings || []).find((x) => x.id === selectedBuildingId);
-      playBtn.textContent =
-        b && b.slot == null
-          ? t('lasidao.confirmPlaceBuilding')
-          : t('lasidao.confirmConstruct');
-    } else if (selectedPermanent === 'buildHouse') {
-      playBtn.textContent = t('lasidao.confirmBuildHouse');
-    } else if (selectedPermanent === 'breed') {
-      playBtn.textContent = t('lasidao.confirmBreed');
-    } else if (selectedPermanent === 'expand') {
-      playBtn.textContent = t('lasidao.confirmExpand');
-    } else if (selectedPermanent === 'exchange') {
-      playBtn.textContent = t('lasidao.confirmExchange');
-    } else if (selectedPermanent === 'buyFunc') {
-      playBtn.textContent = t('lasidao.confirmBuyFunc');
-    } else {
-      playBtn.textContent = t('lasidao.confirmUse');
-    }
-
-    playBtn.onclick = canPlay
-      ? () =>
-          confirmBuildHandSelection(
-            lastGame || game,
-            mePlayer(lastGame || game, me.id)
-          )
-      : null;
+    syncBuildDicePanel(game, me);
   }
 
   /** @deprecated 兼容旧调用，统一走 syncBuildConfirmBar */
@@ -5463,6 +5632,7 @@ window.LasidaoUi = (function () {
             ? $('btn-las-expand-perm')
             : $('btn-las-exchange')
     );
+    hideCardTip();
     selectedFuncId = null;
     selectedBuildingId = null;
     selectedPermanent = selectedPermanent === kind ? null : kind;
@@ -5495,10 +5665,11 @@ window.LasidaoUi = (function () {
     if (!card || !canPlayFuncCard(game, me.id, card.funcType)) return;
 
     if (card.funcType === 'harvest') {
-      harvestCardId = card.id;
-      harvestCounts = { wood: 0, stone: 0, food: 0, iron: 0 };
-      setHarvestModalOpen(true);
-      renderHarvestModal();
+      openHarvestModal({
+        source: card.label || '丰收',
+        maxCount: 2,
+        cardId: card.id,
+      });
     } else if (card.funcType === 'redraw') {
       redrawCardId = card.id;
       setRedrawModalOpen(true);
@@ -6513,82 +6684,10 @@ window.LasidaoUi = (function () {
     const form = $('las-func-form');
     if (!panel || !form) return;
 
-    // 建造阶段：选中常驻功能
-    if (
-      game.phase === 'build' &&
-      selectedPermanent &&
-      me &&
-      !me.buildPassed
-    ) {
-      panel.hidden = false;
+    if (game.phase === 'build') {
+      panel.hidden = true;
       form.innerHTML = '';
-      const title = document.createElement('p');
-      const tip = document.createElement('p');
-      tip.className = 'muted';
-      if (selectedPermanent === 'buildHouse') {
-        title.textContent = t('lasidao.permanentFormTitle', {
-          label: t('lasidao.buildHousePermanent'),
-        });
-        tip.textContent = t('lasidao.func.buildHouse');
-      } else if (selectedPermanent === 'breed') {
-        title.textContent = t('lasidao.permanentFormTitle', {
-          label: t('lasidao.breedPermanent'),
-        });
-        tip.textContent = t('lasidao.breedFormHint', breedCostPayload(game, me));
-      } else if (selectedPermanent === 'expand') {
-        title.textContent = t('lasidao.permanentFormTitle', {
-          label: t('lasidao.expandPermanent'),
-        });
-        tip.textContent = t('lasidao.expandPermanentTip', expandCostPayload(game));
-      } else if (selectedPermanent === 'exchange') {
-        title.textContent = t('lasidao.permanentFormTitle', {
-          label: t('lasidao.exchangeBtn'),
-        });
-        tip.textContent = t('lasidao.exchangeFormHint');
-      } else {
-        panel.hidden = true;
-        form.innerHTML = '';
-        return;
-      }
-      form.appendChild(title);
-      form.appendChild(tip);
       return;
-    }
-
-    // 建造阶段：选中建筑时显示说明（确认按钮在 play-bar）
-    if (
-      game.phase === 'build' &&
-      selectedBuildingId &&
-      me &&
-      !me.buildPassed
-    ) {
-      const b = (me.buildings || []).find((x) => x.id === selectedBuildingId);
-      if (b && !b.built) {
-        panel.hidden = false;
-        form.innerHTML = '';
-        const title = document.createElement('p');
-        const placing = b.slot == null;
-        title.textContent = t(
-          placing
-            ? 'lasidao.placeBuildingFormTitle'
-            : 'lasidao.constructFormTitle',
-          { label: b.label || '?' }
-        );
-        form.appendChild(title);
-        const tip = document.createElement('p');
-        tip.className = 'muted';
-        tip.textContent = t(
-          placing
-            ? 'lasidao.placeBuildingFormHint'
-            : 'lasidao.constructFormHint'
-        );
-        form.appendChild(tip);
-        const costTip = document.createElement('p');
-        costTip.className = 'muted';
-        costTip.textContent = buildBldTooltip(b, defaultResLabels());
-        form.appendChild(costTip);
-        return;
-      }
     }
 
     if (!selectedFuncId || !me) {
@@ -6623,11 +6722,6 @@ window.LasidaoUi = (function () {
       tip.className = 'muted';
     tip.textContent = funcRuleText(card.funcType) || card.label;
       form.appendChild(tip);
-
-    // 建造阶段：确认走上方 play-bar，侧栏只展示说明
-    if (game.phase === 'build') {
-      return;
-    }
 
       const go = document.createElement('button');
       go.type = 'button';
@@ -6843,7 +6937,7 @@ window.LasidaoUi = (function () {
       eventTwoResPick = { wood: 0, stone: 0, food: 0, iron: 0 };
       if (confirmBtn) confirmBtn.hidden = true;
       if (skipBtn) skipBtn.hidden = true;
-      if (harvestTitleText) setHarvestModalOpen(false);
+      if (harvestSourceText) setHarvestModalOpen(false);
       return;
     }
 
@@ -6862,30 +6956,25 @@ window.LasidaoUi = (function () {
       if (title) title.textContent = choice.label || t('lasidao.environmentSlot');
       if (choice.needChoice === 'pickResource') {
         modal.hidden = true;
-        harvestCounts = { wood: 0, stone: 0, food: 0, iron: 0 };
-        harvestMaxCount = 1;
-        harvestTitleText = t('lasidao.eventPickResource');
-        const hTitle = $('las-harvest-title');
-        const hTotal = $('las-harvest-total');
-        if (hTitle) hTitle.textContent = harvestTitleText;
-        if (hTotal) hTotal.textContent = '0 / 1';
-        setHarvestModalOpen(true);
-        renderHarvestModal();
+        openHarvestModal({
+          source: choice.label || t('lasidao.environmentSlot'),
+          maxCount: 1,
+        });
+        const harvestCancel = $('btn-las-harvest-cancel');
+        if (harvestCancel) harvestCancel.hidden = false;
         return;
       } else if (choice.needChoice === 'pickTwoResources') {
         modal.hidden = true;
-        harvestCounts = { wood: 0, stone: 0, food: 0, iron: 0 };
         const pickCount = choice.count || 2;
-        harvestMaxCount = pickCount;
-        harvestTitleText = t('lasidao.eventPickResources', { picked: 0, need: pickCount });
-        const hTitle = $('las-harvest-title');
-        const hTotal = $('las-harvest-total');
-        if (hTitle) hTitle.textContent = harvestTitleText;
-        if (hTotal) hTotal.textContent = '0 / ' + pickCount;
+        openHarvestModal({
+          source: choice.label || t('lasidao.environmentSlot'),
+          maxCount: pickCount,
+        });
         const harvestCancel = $('btn-las-harvest-cancel');
-        if (harvestCancel) harvestCancel.hidden = choice.resume === 'welfareSetup' || choice.resume === 'keepOverflow';
-        setHarvestModalOpen(true);
-        renderHarvestModal();
+        if (harvestCancel) {
+          harvestCancel.hidden =
+            choice.resume === 'welfareSetup' || choice.resume === 'keepOverflow';
+        }
         return;
       }
       return;
@@ -7093,11 +7182,6 @@ window.LasidaoUi = (function () {
     if (game.over) {
       const permActOver = $('las-permanent-actions');
       if (permActOver) permActOver.classList.add('is-dimmed');
-      const confirmBarOver = $('las-act-confirm-bar');
-      if (confirmBarOver) {
-        confirmBarOver.hidden = false;
-        confirmBarOver.setAttribute('aria-hidden', 'true');
-      }
       const produceActionsOver = $('las-produce-actions');
       if (produceActionsOver) produceActionsOver.hidden = true;
     }
@@ -7114,7 +7198,6 @@ window.LasidaoUi = (function () {
       initBtn.hidden = true;
     }
 
-    const passBtn = $('btn-las-pass');
     // 常驻功能按钮（建造房子 / 兑换 / 繁殖村民）
     const permAct = $('las-permanent-actions');
     const buildHouseBtn = $('btn-las-build-house');
@@ -7256,24 +7339,30 @@ window.LasidaoUi = (function () {
         syncBuildConfirmBar(game, me);
       }
     }
-    // 结算行动：仅有待弃牌时显示行动区，弃完自动推进，不显示跳过
-    if (game.phase === 'settle_act' && passBtn) {
-      passBtn.hidden = true;
-      passBtn.disabled = true;
-    }
 
     syncBuildConfirmBar(game, mePlayer(game, meId));
 
     const voidBtn = $('btn-las-void');
-    if (voidBtn && game.phase !== 'produce' && game.phase !== 'event_mercenary') {
+    if (
+      voidBtn &&
+      game.phase !== 'produce' &&
+      game.phase !== 'event_mercenary' &&
+      game.phase !== 'build'
+    ) {
       voidBtn.hidden = true;
     }
     const produceActions = $('las-produce-actions');
-    if (produceActions && game.phase !== 'produce' && game.phase !== 'event_mercenary') {
+    if (
+      produceActions &&
+      game.phase !== 'produce' &&
+      game.phase !== 'event_mercenary' &&
+      game.phase !== 'build'
+    ) {
       produceActions.hidden = true;
     }
 
     renderGameLog(game);
+    scheduleLasViewportScroll();
   }
 
   function isSettlePipelinePhase(phase) {
@@ -7978,8 +8067,11 @@ window.LasidaoUi = (function () {
     if (!netRef || !lastGame || dispatchBusy) return;
     if (!isMercenaryPlaceMode(lastGame, lastMeId)) return;
     const merc = lastGame.mercenary;
-    const idx = currentMercenaryDieIndex(merc);
-    if (idx < 0 || !selectedTarget || selectedTarget.type !== 'area') return;
+    if (selectedFace == null || !selectedTarget || selectedTarget.type !== 'area') {
+      return;
+    }
+    const idx = mercenaryDieIndexForFace(merc, selectedFace);
+    if (idx < 0) return;
     const face = merc.roll[idx];
     if (Number(selectedTarget.number) !== face) return;
 
@@ -8019,7 +8111,7 @@ window.LasidaoUi = (function () {
     if (!netRef || !lastGame) return;
     if (!isMercenaryPlaceMode(lastGame, lastMeId)) return;
     const merc = lastGame.mercenary;
-    const idx = currentMercenaryDieIndex(merc);
+    const idx = mercenaryDieIndexForSkip(merc, selectedFace);
     if (idx < 0) return;
     netRef.sendAction('mercenaryPlace', { index: idx, skip: true });
     resetDiceSelection();
@@ -8736,6 +8828,13 @@ window.LasidaoUi = (function () {
     }
   }
 
+  function voidSkipOwnLabel(own) {
+    const el = document.createElement('span');
+    el.className = 'las-void-skip-qty-top';
+    el.textContent = t('lasidao.eventPickResourceHandSingle', { n: own });
+    return el;
+  }
+
   function renderVoidSkipModal() {
     const body = $('las-void-skip-body');
     const confirmBtn = $('btn-las-void-skip-confirm');
@@ -8796,10 +8895,13 @@ window.LasidaoUi = (function () {
 
     if (voidSkipMode === 'burn') {
       for (const res of RESOURCES) {
+        const own = (me && me.resources && me.resources[res]) || 0;
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className =
           'las-void-skip-item' + (voidSkipRes === res ? ' is-selected' : '');
+
+        btn.appendChild(voidSkipOwnLabel(own));
 
         const cardEl = document.createElement('div');
         cardEl.className = 'las-void-skip-card';
@@ -8834,15 +8936,18 @@ window.LasidaoUi = (function () {
 
     for (const res of RESOURCES) {
       const own = (me && me.resources && me.resources[res]) || 0;
-      if (own < 1) continue;
       const sel = Number(voidSkipPayPick[res]) || 0;
-      const canAdd = picked < 2 && sel < own;
+      const isEmpty = own < 1;
+      const canAdd = !isEmpty && picked < 2 && sel < own;
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className =
         'las-void-skip-item' +
         (sel > 0 ? ' is-selected' : '') +
-        (!canAdd ? ' is-disabled' : '');
+        (isEmpty ? ' is-empty' : '') +
+        (isEmpty || !canAdd ? ' is-disabled' : '');
+
+      btn.appendChild(voidSkipOwnLabel(own));
 
       const cardEl = document.createElement('div');
       cardEl.className = 'las-void-skip-card';
@@ -8851,10 +8956,6 @@ window.LasidaoUi = (function () {
           ? Assets.resourceHandImageUrl(res)
           : '';
       if (url) cardEl.style.backgroundImage = 'url("' + url + '")';
-
-      const qty = document.createElement('span');
-      qty.className = 'las-void-skip-qty';
-      qty.textContent = '×' + own;
 
       const label = document.createElement('span');
       label.className = 'las-void-skip-label';
@@ -8868,9 +8969,8 @@ window.LasidaoUi = (function () {
       }
 
       btn.appendChild(cardEl);
-      btn.appendChild(qty);
       btn.appendChild(label);
-      btn.disabled = !canAdd;
+      btn.disabled = isEmpty || !canAdd;
       btn.onclick = () => {
         if (!canAdd) return;
         voidSkipPayPick[res] = (voidSkipPayPick[res] || 0) + 1;
@@ -8904,14 +9004,54 @@ window.LasidaoUi = (function () {
       harvestCardId = null;
       harvestCounts = {};
       harvestMaxCount = 2;
-      harvestTitleText = '';
+      harvestSourceText = '';
       const harvestCancel = $('btn-las-harvest-cancel');
       if (harvestCancel) harvestCancel.hidden = false;
+      const sourceEl = $('las-harvest-source');
+      if (sourceEl) {
+        sourceEl.textContent = '';
+        sourceEl.hidden = true;
+      }
     } else {
       if (window.I18n && window.I18n.applyDom) {
         window.I18n.applyDom(modal);
       }
     }
+  }
+
+  function formatHarvestPickTitle(need) {
+    if (need === 1) return t('lasidao.harvestPickOne');
+    return t('lasidao.harvestPickMany', { need });
+  }
+
+  function updateHarvestModalHead() {
+    const sourceEl = $('las-harvest-source');
+    const titleEl = $('las-harvest-title');
+    if (sourceEl) {
+      if (harvestSourceText) {
+        sourceEl.textContent = t('lasidao.harvestSourceLabel', {
+          source: harvestSourceText,
+        });
+        sourceEl.hidden = false;
+      } else {
+        sourceEl.textContent = '';
+        sourceEl.hidden = true;
+      }
+    }
+    if (titleEl) {
+      titleEl.textContent = formatHarvestPickTitle(harvestMaxCount);
+    }
+  }
+
+  function openHarvestModal(opts) {
+    opts = opts || {};
+    harvestCardId = opts.cardId || null;
+    harvestSourceText = opts.source || '';
+    harvestMaxCount = opts.maxCount || 2;
+    harvestCounts = { wood: 0, stone: 0, food: 0, iron: 0 };
+    setHarvestModalOpen(true);
+    updateHarvestModalHead();
+    renderHarvestModal();
   }
 
   function renderHarvestModal() {
@@ -8995,13 +9135,9 @@ window.LasidaoUi = (function () {
   function updateHarvestTotal() {
     const totalEl = $('las-harvest-total');
     const confirmBtn = $('btn-las-harvest-confirm');
-    const titleEl = $('las-harvest-title');
     const total = Object.values(harvestCounts).reduce((a, b) => a + b, 0);
     if (totalEl) {
       totalEl.textContent = total + ' / ' + harvestMaxCount;
-    }
-    if (titleEl && harvestTitleText && harvestMaxCount > 1) {
-      titleEl.textContent = t('lasidao.eventPickResources', { picked: total, need: harvestMaxCount });
     }
     if (confirmBtn) {
       confirmBtn.disabled = total !== harvestMaxCount;
@@ -9304,6 +9440,18 @@ window.LasidaoUi = (function () {
       }
     }
 
+    let targetReceive = 0;
+    if (totalFrom > 0) {
+      if (hasMixer) {
+        targetReceive = Math.floor(totalFrom / need);
+      } else {
+        for (const r of RESOURCES) {
+          const fc = exFromBatches[r] || 0;
+          if (fc > 0 && fc % need === 0) targetReceive += fc / need;
+        }
+      }
+    }
+
     if (confirmBtn) {
       confirmBtn.disabled = !ready;
       if (ready) {
@@ -9312,7 +9460,7 @@ window.LasidaoUi = (function () {
         });
       } else if (totalFrom > 0 || totalTo > 0) {
         confirmBtn.textContent = t('lasidao.exchangeNeedMatch', {
-          left: hasMixer ? Math.floor(totalFrom / need) : totalFrom,
+          left: targetReceive,
           right: totalTo,
         });
       } else {
@@ -9442,6 +9590,14 @@ window.LasidaoUi = (function () {
     const voidBtn = $('btn-las-void');
     if (voidBtn) {
       voidBtn.onclick = () => {
+        if (lastGame && lastGame.phase === 'build') {
+          if (!netRef) return;
+          const me = mePlayer(lastGame, lastMeId);
+          const { mustDiscard } = getBuildActionState(lastGame, me);
+          if (mustDiscard) return;
+          netRef.sendAction('pass', {});
+          return;
+        }
         if (isBanditPickMode(lastGame, lastMeId)) {
           banditCardId = null;
           selectedTarget = null;
@@ -9488,6 +9644,13 @@ window.LasidaoUi = (function () {
     const confirmBtn = $('btn-las-confirm');
     if (confirmBtn) {
       confirmBtn.onclick = () => {
+        if (lastGame && lastGame.phase === 'build') {
+          confirmBuildHandSelection(
+            lastGame,
+            mePlayer(lastGame, lastMeId)
+          );
+          return;
+        }
         if (isBarrenMarkerPickMode(lastGame, lastMeId)) {
           confirmBarrenMarkerPlace();
           return;
@@ -9502,10 +9665,6 @@ window.LasidaoUi = (function () {
         }
         confirmDispatch();
       };
-    }
-    const passBtn = $('btn-las-pass');
-    if (passBtn) {
-      passBtn.onclick = () => net.sendAction('pass', {});
     }
     const victoryLeaveBtn = $('btn-las-victory-leave');
     if (victoryLeaveBtn) {
@@ -9709,7 +9868,7 @@ window.LasidaoUi = (function () {
           });
           setHarvestModalOpen(false);
           selectedFuncId = null;
-        } else if (harvestTitleText) {
+        } else if (harvestSourceText) {
           if (harvestMaxCount === 1) {
             for (const res of RESOURCES) {
               if ((harvestCounts[res] || 0) > 0) {
@@ -9835,6 +9994,7 @@ window.LasidaoUi = (function () {
     resetSession,
     bindButtons,
     onPlayReveal,
+    appendGameLogLine,
     openRules: () => setRulesModalOpen(true),
     makeBoardSlotEmptyEl,
     replaceBoardTileWithEmpty,

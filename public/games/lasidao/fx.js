@@ -95,6 +95,15 @@ window.LasidaoFx = (function () {
     );
   }
 
+  function pushGameLog(text) {
+    if (
+      window.LasidaoUi &&
+      typeof window.LasidaoUi.appendGameLogLine === 'function'
+    ) {
+      window.LasidaoUi.appendGameLogLine(text);
+    }
+  }
+
   function setBanner(text) {
     const b = $('las-settle-banner');
     if (!b) return;
@@ -707,15 +716,15 @@ window.LasidaoFx = (function () {
         const target = playerEl(g.pid);
         const shareKey = g.rank === 2 ? 'small' : 'large';
         const resStr = formatGainResDetail(g.detail);
-        setBanner(
-          t('lasidao.fx.gainRes', {
-            area: areaLab,
-            number: slot.number,
-            name: g.name,
-            rank: g.rank || 1,
-            res: resStr,
-          })
-        );
+        const gainLine = t('lasidao.fx.gainRes', {
+          area: areaLab,
+          number: slot.number,
+          name: g.name,
+          rank: g.rank || 1,
+          res: resStr,
+        });
+        setBanner(gainLine);
+        pushGameLog(gainLine);
         const tilesForGain = (slot.tiles || []).filter(
           (tile) => Number(tile[shareKey]) > 0 && tile.resource
         );
@@ -745,9 +754,9 @@ window.LasidaoFx = (function () {
       const claim = slot.claimedBy;
       const target = playerEl(claim.pid);
       const kind = areaLabel(slot.area);
-      setBanner(
-        t('lasidao.fx.claimCards', { name: claim.name, kind })
-      );
+      const claimLine = t('lasidao.fx.claimCards', { name: claim.name, kind });
+      setBanner(claimLine);
+      pushGameLog(claimLine);
       const tiles = slot.tiles || [];
       for (let ti = 0; ti < tiles.length; ti++) {
         const tile = tiles[ti];
@@ -802,6 +811,8 @@ window.LasidaoFx = (function () {
     if ((report.buildings || []).length) {
       setBanner(t('lasidao.fx.buildingProduce'));
       for (const b of report.buildings) {
+        const produceLine = `${b.name} 的${b.label}产出 ${b.amount} ${resLabel(b.resource) || b.resource || ''}`;
+        pushGameLog(produceLine);
         const target = playerEl(b.pid);
         const fly = document.createElement('div');
         fly.className = 'las-fx-loot is-res';

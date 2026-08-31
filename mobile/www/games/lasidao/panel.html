@@ -18,10 +18,6 @@
           <div id="las-me-settle-slot" class="las-me-settle-slot" aria-hidden="true"></div>
         </div>
         <div class="las-pcell las-pcell-perm" id="las-pcell-perm">
-          <div id="las-act-confirm-bar" class="las-act-confirm-bar" aria-hidden="true">
-            <button id="btn-las-build-play" type="button" class="las-act-confirm-primary" disabled data-i18n="lasidao.confirmUse">确认发动</button>
-            <button id="btn-las-pass" type="button" class="las-act-confirm-secondary secondary" hidden data-i18n="lasidao.passBuild">跳过建造</button>
-          </div>
           <div id="las-permanent-actions" class="las-permanent-grid">
             <button id="btn-las-build-house" type="button" data-i18n="lasidao.buildHousePermanent">建造房子</button>
             <button id="btn-las-exchange" type="button" data-i18n="lasidao.exchangeBtn">兑换</button>
@@ -237,7 +233,8 @@
     <div class="modal-backdrop" id="las-harvest-backdrop"></div>
     <div class="modal-dialog panel las-harvest-dialog" role="dialog" aria-modal="true" aria-labelledby="las-harvest-title">
       <div class="las-harvest-head">
-        <h3 id="las-harvest-title" data-i18n="lasidao.harvestTitle">选择 2 个资源</h3>
+        <p id="las-harvest-source" class="las-harvest-source muted las-hint" hidden></p>
+        <h3 id="las-harvest-title" data-i18n="lasidao.harvestPickMany">请选择获得资源</h3>
         <p id="las-harvest-total" class="muted las-hint">0 / 2</p>
       </div>
       <div id="las-harvest-body" class="las-harvest-body"></div>

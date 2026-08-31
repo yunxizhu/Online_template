@@ -639,8 +639,10 @@ function mergeResourceGainDetail(target, absorbed) {
   }
 }
 
-function formatSettleResourceGainLog(num, gain) {
+function formatSettleResourceGainLog(num, gain, areaKey) {
   const rank = Number(gain.rank) || 1;
+  const area =
+    areaKey === 'special' ? '功能/建筑' : '资源';
   const resParts = (gain.detail || []).map(
     (d) =>
       `${d.amount}个${RESOURCE_LABELS[d.resource] || d.resource || '?'}`
@@ -648,7 +650,7 @@ function formatSettleResourceGainLog(num, gain) {
   const resStr = resParts.length
     ? resParts.join('、')
     : `${gain.amount || 0}个资源`;
-  return `资源格 ${num}，${gain.name} 第${rank}名，获得${resStr}`;
+  return `${area}区 ${num} 号格，${gain.name} 第${rank}名，获得${resStr}`;
 }
 
 function pushLog(game, text) {
@@ -1628,10 +1630,6 @@ function applySettleBuildingProduce(game, report) {
     if (amt <= 0) continue;
     p.resources[entry.resource] = (p.resources[entry.resource] || 0) + amt;
     p.roundGained += amt;
-    pushLog(
-      game,
-      `${p.name} 的${entry.label}产出 ${amt} ${RESOURCE_LABELS[entry.resource]}`
-    );
   }
 }
 
@@ -1900,10 +1898,9 @@ function startSettle(game) {
     });
 
     if (gains.length) {
-      pushLog(
-        game,
-        gains.map((g) => formatSettleResourceGainLog(num, g)).join('；')
-      );
+      for (const g of gains) {
+        pushLog(game, formatSettleResourceGainLog(num, g, 'resource'));
+      }
     } else if (Object.keys(before).length && !barren) {
       pushLog(game, `资源格 ${num}：全部抵消，无人采集`);
     }
@@ -1983,6 +1980,15 @@ function startSettle(game) {
   }
 
   collectSettleBuildingReport(game, report);
+  for (const entry of report.buildings || []) {
+    if (!entry.resource) continue;
+    const amt = Number(entry.amount) || 0;
+    if (amt <= 0) continue;
+    pushLog(
+      game,
+      `${entry.name} 的${entry.label}产出 ${amt} ${RESOURCE_LABELS[entry.resource] || entry.resource}`
+    );
+  }
 
   // 生产结算后、弃牌前：抵抗南蛮等（按名次从第一名起发分，达 15 立刻结束）
   applyResistBarbariansAfterSettle(game, report, {
@@ -4949,7 +4955,7 @@ function publicGameState(game, viewerId) {
           placed: (game.mercenaryPlaced || []).slice(),
         }
       : null,
-    log: game.log.slice(-20),
+    log: game.log.slice(-60),
     players: game.players.map((p) => {
       const isMe = p.id === viewerId;
       return {

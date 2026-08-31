@@ -31,7 +31,7 @@
   --las-panel-card-h: calc(var(--las-hand-card-h) * 3 / 4);
   --las-side-rail-min-h: calc(var(--las-hand-card-h) + 3.5 * var(--las-rem));
   --las-me-rail-w: calc(var(--las-hand-card-w) * 5 + var(--las-card-gap) * 6);
-  --las-deck-w: calc(5.1 * var(--las-rem));
+  --las-deck-w: calc(10.2 * var(--las-rem));
   font-size: calc(1.08 * var(--las-rem));
   width: 100%;
   max-width: 100%;
@@ -355,6 +355,10 @@
   pointer-events: none;
 }
 
+.las-pcell-perm.is-build-turn .las-func-panel-slot {
+  display: none;
+}
+
 .las-pcell-perm .las-func-panel-slot {
   position: absolute;
   left: 0;
@@ -414,36 +418,6 @@
   --las-act-btn-pad-y: calc(0.1 * var(--las-rem));
   --las-act-btn-pad-x: calc(0.22 * var(--las-rem));
   --las-act-btn-gap: calc(1 * var(--las-rem));
-}
-
-.las-pcell-perm .las-act-confirm-bar {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 80%;
-  margin: 0;
-  min-height: var(--las-act-btn-min-h);
-  gap: var(--las-act-btn-gap);
-  z-index: 5;
-}
-
-.las-pcell-perm .las-act-confirm-bar[aria-hidden='true'] {
-  width: 1px;
-  height: 1px;
-  min-height: 0;
-  overflow: hidden;
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.las-pcell-perm .las-act-confirm-bar .las-act-confirm-primary,
-.las-pcell-perm .las-act-confirm-bar .las-act-confirm-secondary {
-  min-width: calc(3.6 * var(--las-rem));
-  max-width: calc(6.2 * var(--las-rem));
-  min-height: var(--las-act-btn-min-h);
-  padding: var(--las-act-btn-pad-y) var(--las-act-btn-pad-x);
-  font-size: var(--las-act-btn-font);
 }
 
 .las-pcell-perm .las-permanent-grid {
@@ -686,6 +660,46 @@
   display: flex !important;
   visibility: hidden;
   pointer-events: none;
+}
+
+/* 建造回合：骰子区仅保留居中的确认/跳过 */
+.las-pcell-dice.is-build-actions {
+  --las-panel-dice-total-h: calc(
+    var(--las-panel-dice-pad-y) * 2 + var(--las-panel-dice-actions-h)
+  );
+  height: var(--las-panel-dice-total-h);
+  min-height: var(--las-panel-dice-total-h);
+  max-height: var(--las-panel-dice-total-h);
+}
+
+.las-pcell-dice.is-build-actions .las-dice-panel-slot {
+  height: var(--las-panel-dice-total-h);
+  min-height: var(--las-panel-dice-total-h);
+  max-height: var(--las-panel-dice-total-h);
+}
+
+.las-pcell-dice.is-build-actions .las-dice-wrap.is-build-actions {
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  justify-items: center;
+}
+
+.las-pcell-dice.is-build-actions .las-dice-wrap.is-build-actions .las-dice-head {
+  display: none !important;
+}
+
+.las-pcell-dice.is-build-actions .las-dice-wrap.is-build-actions .las-dice-stage {
+  display: none !important;
+}
+
+.las-pcell-dice.is-build-actions .las-dice-wrap.is-build-actions #las-produce-actions {
+  grid-row: 1;
+  grid-column: 1;
+  align-self: center;
+  justify-self: center;
+  justify-content: center;
+  width: 100%;
 }
 
 .las-pcell-dice .las-dice-head {
@@ -989,66 +1003,6 @@
   margin: 0;
 }
 
-/* 建造回合：标题下方固定确认栏，与常驻功能按钮同尺寸并居中 */
-.las-act-confirm-bar {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: center;
-  gap: var(--las-act-btn-gap, calc(0.62 * var(--las-rem)));
-  min-height: var(--las-act-btn-min-h, calc(1.72 * var(--las-rem)));
-  box-sizing: border-box;
-}
-
-.las-act-confirm-bar[aria-hidden='true'] {
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.las-act-confirm-bar[aria-hidden='true'] .las-act-confirm-primary,
-.las-act-confirm-bar[aria-hidden='true'] .las-act-confirm-secondary {
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.las-act-confirm-bar .las-act-confirm-primary,
-.las-act-confirm-bar .las-act-confirm-secondary {
-  width: auto;
-  flex: 0 1 auto;
-  min-width: calc(5.2 * var(--las-rem));
-  max-width: calc(9.5 * var(--las-rem));
-  min-height: var(--las-act-btn-min-h, calc(1.72 * var(--las-rem)));
-  padding: var(--las-act-btn-pad-y, calc(0.2 * var(--las-rem)))
-    var(--las-act-btn-pad-x, calc(0.38 * var(--las-rem)));
-  font-size: var(--las-act-btn-font, calc(0.78 * var(--las-rem)));
-  font-weight: 600;
-  margin: 0;
-  box-sizing: border-box;
-}
-
-.las-act-confirm-bar .las-act-confirm-primary:disabled,
-.las-act-confirm-bar .las-act-confirm-secondary:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  filter: grayscale(0.15);
-}
-
-.las-act-confirm-bar button[hidden] {
-  display: inline-flex !important;
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.las-act-confirm-bar button:not([hidden]) {
-  visibility: visible;
-  pointer-events: auto;
-}
-
-.las-act-confirm-secondary[aria-hidden='true'] {
-  visibility: hidden;
-  pointer-events: none;
-}
-
 .las-act-wrap > .las-hint {
   margin: 0;
 }
@@ -1177,22 +1131,6 @@
   flex-wrap: wrap;
   align-items: center;
   gap: calc(0.35 * var(--las-rem));
-}
-
-.las-pass-row {
-  margin-top: calc(0.65 * var(--las-rem)) !important;
-  padding-top: calc(0.55 * var(--las-rem));
-  border-top: 1px solid #2e3a42;
-}
-
-/* legacy: pass 已并入标题下确认栏 */
-.las-pass-row[hidden] {
-  display: none !important;
-}
-
-.las-pass-row #btn-las-pass {
-  width: 100%;
-  font-weight: 600;
 }
 
 .las-act-passed {
@@ -1434,7 +1372,8 @@
   flex-direction: row;
   flex-wrap: nowrap;
   align-items: flex-start;
-  justify-content: space-evenly;
+  justify-content: flex-start;
+  gap: calc(0.55 * var(--las-rem));
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
@@ -1514,7 +1453,7 @@
   flex-direction: column;
   flex-wrap: nowrap;
   gap: calc(0.85 * var(--las-rem));
-  padding: calc(0.55 * var(--las-rem)) calc(0.65 * var(--las-rem)) calc(0.65 * var(--las-rem));
+  padding: calc(0.5 * var(--las-rem)) calc(0.65 * var(--las-rem));
   background: #10161b;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -1529,16 +1468,17 @@
 }
 
 .las-deck-pile {
-  --las-deck-stack: calc(0.22 * var(--las-rem));
-  --las-deck-stack-2: calc(0.44 * var(--las-rem));
+  --las-deck-stack: calc(0.44 * var(--las-rem));
+  --las-deck-stack-2: calc(0.88 * var(--las-rem));
   display: flex;
   flex-direction: column;
   align-items: center;
   /* gap + stack 的 margin-bottom 一起躲开向下的叠牌阴影 */
   gap: calc(0.28 * var(--las-rem));
   flex: 0 0 auto;
-  width: 100%;
-  padding: 0 var(--las-deck-stack-2) 0 0;
+  width: auto;
+  max-width: 100%;
+  padding: 0 var(--las-deck-stack-2) 0 var(--las-deck-stack);
   box-sizing: border-box;
 }
 
@@ -1600,7 +1540,8 @@
   gap: calc(0.08 * var(--las-rem));
   line-height: 1.2;
   font-size: calc(0.78 * var(--las-rem));
-  width: 100%;
+  width: var(--las-deck-w);
+  max-width: 100%;
   text-align: center;
   flex: 0 0 auto;
   position: relative;
@@ -1648,10 +1589,30 @@
 
 .las-board-section-resource {
   border-color: #3d6b4a;
+  margin-left: auto;
+  --las-board-zone-card-scale: 1.1;
+  --las-card-h: calc(7.2 * var(--las-rem) * var(--las-board-zone-card-scale));
+  --las-card-w: calc(var(--las-card-h) * 600 / 800);
+  --las-board-card-gap: calc(0.52 * var(--las-rem) * var(--las-board-zone-card-scale));
 }
 
 .las-board-section-special {
   border-color: #6a5a8a;
+  margin-left: auto;
+  --las-board-zone-card-scale: 1.1;
+  --las-card-h: calc(7.2 * var(--las-rem) * var(--las-board-zone-card-scale));
+  --las-card-w: calc(var(--las-card-h) * 600 / 800);
+  --las-board-card-gap: calc(0.52 * var(--las-rem) * var(--las-board-zone-card-scale));
+}
+
+.las-board-section-resource .las-board {
+  justify-content: start;
+  margin: 0;
+}
+
+.las-board-section-special .las-board {
+  justify-content: end;
+  margin: 0;
 }
 
 /* 3�2 ??????????????? */
@@ -3312,9 +3273,9 @@
 .las-ex-item-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   width: 100%;
-  gap: calc(0.5 * var(--las-rem));
+  gap: calc(0.18 * var(--las-rem));
   margin: 0;
   flex-wrap: nowrap;
 }
@@ -3352,7 +3313,6 @@
   border: 1px solid var(--border);
   background: #1a2228 center / cover no-repeat;
   flex: 0 0 auto;
-  margin: 0 auto;
 }
 
 .las-ex-count {
@@ -3570,6 +3530,11 @@
 .las-harvest-head h3 {
   margin: 0;
   font-size: calc(2.2 * var(--las-rem));
+}
+.las-harvest-head .las-harvest-source {
+  margin: 0 0 calc(0.35 * var(--las-rem));
+  font-size: calc(1.5 * var(--las-rem));
+  color: #e8d48b;
 }
 .las-harvest-head .las-hint {
   margin-top: calc(0.5 * var(--las-rem));
@@ -4900,6 +4865,7 @@
   margin: 0 auto;
 }
 .las-void-skip-item {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -4923,6 +4889,12 @@
 .las-void-skip-item:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+.las-void-skip-item.is-empty .las-void-skip-card {
+  filter: grayscale(0.9);
+}
+.las-void-skip-item.is-empty:hover {
+  background: transparent;
 }
 .las-void-skip-item.is-selected:disabled {
   opacity: 1;
