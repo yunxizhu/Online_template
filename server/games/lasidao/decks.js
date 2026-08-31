@@ -392,7 +392,7 @@ const ENVIRONMENT_CATALOG = [
     envType: 'keepOverflow',
     label: '吃不了兜着走',
     trigger: 'settle',
-    desc: '生产结算后：本格第一名（可并列）跳过本轮生产结算后的资源弃牌阶段',
+    desc: '结算抵消后：本格第一名跳过本轮资源弃牌阶段，并任选 2 个资源',
   },
   {
     envType: 'mercenaries',

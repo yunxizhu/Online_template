@@ -274,6 +274,7 @@ window.GameNet = (function () {
       'lobby:passive',
       'lobby:passiveProgress',
       'lobby:mqtt-reconnect-result',
+      'lobby:invite',
       'player:me',
       'session:reclaimed',
       'session:reclaim-failed',

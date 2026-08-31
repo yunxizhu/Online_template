@@ -1,12 +1,87 @@
 <!-- Lasidao panel -->
 <div class="panel game-panel lasidao-panel" id="panel-lasidao" hidden>
-  <h2 data-i18n="lasidao.title">???</h2>
-  <p id="las-round" class="game-status"></p>
-  <div id="las-init-banner" class="las-init-banner" hidden></div>
-  <p id="las-status" class="muted"></p>
-  <div id="las-produce-idle" class="las-produce-idle" hidden aria-live="polite"></div>
-  <div id="las-settle-banner" class="las-settle-banner" hidden></div>
+  <div class="las-top-band" id="las-top-band">
+    <div class="las-top-title-col">
+      <h2 data-i18n="lasidao.title">卡拉斯坦</h2>
+      <p id="las-round" class="game-status las-title-round"></p>
+      <div class="las-title-banner-slot">
+        <div id="las-init-banner" class="las-init-banner" hidden></div>
+        <div id="las-settle-banner" class="las-settle-banner" hidden></div>
+      </div>
+      <p id="las-status" class="muted las-status-line" hidden></p>
+    </div>
+
+    <div class="las-player-band" id="las-player-band">
+      <div class="las-player-grid" id="las-player-grid">
+        <div class="las-pcell las-pcell-info" id="las-pcell-info">
+          <div id="las-boards-me" class="las-boards-me"></div>
+          <div id="las-me-settle-slot" class="las-me-settle-slot" aria-hidden="true"></div>
+        </div>
+        <div class="las-pcell las-pcell-perm" id="las-pcell-perm">
+          <div id="las-act-confirm-bar" class="las-act-confirm-bar" aria-hidden="true">
+            <button id="btn-las-build-play" type="button" class="las-act-confirm-primary" disabled data-i18n="lasidao.confirmUse">确认发动</button>
+            <button id="btn-las-pass" type="button" class="las-act-confirm-secondary secondary" hidden data-i18n="lasidao.passBuild">跳过建造</button>
+          </div>
+          <div id="las-permanent-actions" class="las-permanent-grid">
+            <button id="btn-las-build-house" type="button" data-i18n="lasidao.buildHousePermanent">建造房子</button>
+            <button id="btn-las-exchange" type="button" data-i18n="lasidao.exchangeBtn">兑换</button>
+            <button id="btn-las-breed" type="button" data-i18n="lasidao.breedPermanent">繁殖村民</button>
+            <button id="btn-las-buy-func" type="button" data-i18n="lasidao.buyFuncPermanent">购买功能卡</button>
+            <button id="btn-las-expand-perm" type="button" data-i18n="lasidao.expandPermanent">扩建</button>
+            <button id="btn-las-reset-build" type="button" class="secondary las-perm-reset" data-i18n="lasidao.resetBuildTurn">重置回合</button>
+          </div>
+          <p id="las-act-hint" class="muted las-hint las-act-hint-slot" aria-hidden="true"></p>
+          <div class="las-func-panel-slot">
+            <div id="las-func-panel" class="las-func-panel" hidden>
+              <div id="las-func-form"></div>
+            </div>
+          </div>
+        </div>
+        <div class="las-pcell las-pcell-build" id="las-pcell-build"></div>
+        <div class="las-pcell las-pcell-func" id="las-pcell-func"></div>
+        <div class="las-pcell las-pcell-dice" id="las-pcell-dice" aria-label="dice">
+          <div class="las-dice-panel-slot">
+          <div id="las-init-wrap" class="las-init-wrap" hidden>
+            <div id="las-init-dice" class="las-dice las-init-dice" hidden></div>
+            <div class="row las-actions las-side-actions">
+              <button id="btn-las-init-roll" type="button" data-i18n="lasidao.initRoll">投掷决定先手</button>
+            </div>
+          </div>
+          <div id="las-roll-wrap" class="las-roll-wrap" hidden>
+            <div class="row las-actions las-side-actions">
+              <button id="btn-las-produce-roll" type="button" data-i18n="lasidao.produceRoll">投掷</button>
+              <button id="btn-las-remote-dice" type="button" class="secondary" hidden data-i18n="lasidao.useRemoteDice">使用遥控骰子</button>
+            </div>
+            <p id="las-roll-hint" class="muted las-hint" data-i18n="lasidao.rollHint">轮到你了：请投掷，或使用遥控骰子</p>
+          </div>
+          <div id="las-dice-wrap" class="las-dice-wrap" hidden>
+            <div class="las-dice-head">
+              <h3 id="las-dice-title" class="game-sub las-dice-title" data-i18n="lasidao.yourDice">你的骰子</h3>
+              <p id="las-dice-hint" class="muted las-hint las-dice-hint"></p>
+            </div>
+            <div id="las-dice-stage" class="las-dice-stage">
+              <div id="las-dice" class="las-dice"></div>
+              <div id="las-dice-groups" class="las-dice-groups" hidden></div>
+            </div>
+            <div class="row las-actions las-side-actions" id="las-produce-actions">
+              <button id="btn-las-confirm" type="button" hidden data-i18n="lasidao.confirmDispatch">确认派遣</button>
+              <button id="btn-las-void" type="button" class="secondary" data-i18n="lasidao.produceSkip">跳过</button>
+            </div>
+          </div>
+          </div>
+        </div>
+        <div class="las-pcell las-pcell-empty" id="las-pcell-empty" aria-hidden="true"></div>
+      </div>
+    </div>
+
+    <div class="las-top-idle-col">
+      <div class="las-idle-slot">
+        <div id="las-produce-idle" class="las-produce-idle" hidden aria-live="polite"></div>
+      </div>
+    </div>
+  </div>
   <div id="las-turn-toast" class="las-turn-toast" hidden role="status" aria-live="polite"></div>
+  <div id="las-play-reveal" class="las-play-reveal" hidden role="status" aria-live="polite"></div>
   <div id="las-fx-layer" class="las-fx-layer" aria-hidden="true"></div>
   <div id="las-card-tip" class="las-card-tip" hidden></div>
 
@@ -173,6 +248,22 @@
     </div>
   </div>
 
+  <div id="las-settle-discard-modal" class="modal las-settle-discard-modal las-harvest-modal" hidden>
+    <div class="modal-backdrop" id="las-settle-discard-backdrop"></div>
+    <div class="modal-dialog panel las-harvest-dialog las-settle-discard-dialog" role="dialog" aria-modal="true" aria-labelledby="las-settle-discard-title">
+      <div class="las-harvest-head">
+        <h3 id="las-settle-discard-title"></h3>
+        <p id="las-settle-discard-total" class="muted las-hint"></p>
+        <p id="las-settle-discard-hint" class="muted las-hint"></p>
+      </div>
+      <div id="las-settle-discard-body" class="las-harvest-body"></div>
+      <div class="las-harvest-foot row las-actions">
+        <button id="btn-las-settle-discard-confirm" type="button" data-i18n="lasidao.discardResConfirm" disabled>确认弃置</button>
+        <button id="btn-las-settle-discard-reset" type="button" class="secondary" data-i18n="lasidao.discardResReset" hidden>重置</button>
+      </div>
+    </div>
+  </div>
+
   <div id="las-void-skip-modal" class="modal las-void-skip-modal" hidden>
     <div class="modal-backdrop" id="las-void-skip-backdrop"></div>
     <div class="modal-dialog panel las-void-skip-dialog" role="dialog" aria-modal="true" aria-labelledby="las-void-skip-title">
@@ -249,73 +340,6 @@
 
   <div class="las-playfield" id="las-playfield">
     <div class="las-table">
-      <aside class="las-side-rail" id="las-side-rail" aria-label="dice">
-        <div id="las-init-wrap" class="las-init-wrap" hidden>
-          <div id="las-init-dice" class="las-dice las-init-dice" hidden></div>
-          <div class="row las-actions las-side-actions">
-            <button id="btn-las-init-roll" type="button" data-i18n="lasidao.initRoll">?????????</button>
-          </div>
-        </div>
-
-        <div id="las-roll-wrap" class="las-roll-wrap" hidden>
-          <div class="row las-actions las-side-actions">
-            <button id="btn-las-produce-roll" type="button" data-i18n="lasidao.produceRoll">??</button>
-            <button id="btn-las-remote-dice" type="button" class="secondary" hidden data-i18n="lasidao.useRemoteDice">??????</button>
-          </div>
-          <p id="las-roll-hint" class="muted las-hint" data-i18n="lasidao.rollHint">????????????????</p>
-        </div>
-
-  <div id="las-dice-wrap" class="las-dice-wrap" hidden>
-          <h3 class="game-sub" data-i18n="lasidao.yourDice">????</h3>
-    <div id="las-dice-stage" class="las-dice-stage">
-      <div id="las-dice" class="las-dice"></div>
-      <div id="las-dice-groups" class="las-dice-groups" hidden></div>
-    </div>
-          <p id="las-dice-hint" class="muted las-hint"></p>
-    <div id="las-dispatch-preview" class="las-dispatch-preview" hidden></div>
-          <div class="row las-actions las-side-actions" id="las-produce-actions">
-            <button id="btn-las-confirm" type="button" hidden data-i18n="lasidao.confirmDispatch">????</button>
-            <button id="btn-las-void" type="button" class="secondary" data-i18n="lasidao.produceSkip">跳过</button>
-    </div>
-  </div>
-
-        <div id="las-act-wrap" class="las-act-wrap" hidden>
-          <div class="las-act-head">
-            <h3 class="game-sub" data-i18n="lasidao.actRailTitle">?????</h3>
-            <button id="btn-las-act-permanent-help" type="button" class="secondary las-permanent-help-btn" data-i18n="lasidao.permanentHelpBtn">常驻功能</button>
-          </div>
-          <div id="las-act-confirm-bar" class="las-act-confirm-bar" aria-hidden="true">
-            <button id="btn-las-build-play" type="button" class="las-act-confirm-primary" disabled data-i18n="lasidao.confirmUse">确认发动</button>
-            <button id="btn-las-pass" type="button" class="las-act-confirm-secondary secondary" hidden data-i18n="lasidao.passBuild">??????</button>
-          </div>
-          <p id="las-act-hint" class="muted las-hint"></p>
-          <div id="las-act-hand" class="las-act-hand"></div>
-
-          <div id="las-permanent-actions" class="las-permanent-grid" hidden>
-            <button id="btn-las-build-house" type="button" data-i18n="lasidao.buildHousePermanent">建造房子</button>
-            <button id="btn-las-exchange" type="button" data-i18n="lasidao.exchangeBtn">兑换</button>
-            <button id="btn-las-breed" type="button" data-i18n="lasidao.breedPermanent">繁殖村民</button>
-            <button id="btn-las-buy-func" type="button" data-i18n="lasidao.buyFuncPermanent">购买功能卡</button>
-            <button id="btn-las-expand-perm" type="button" data-i18n="lasidao.expandPermanent">扩建</button>
-            <button id="btn-las-reset-build" type="button" class="secondary las-perm-reset" data-i18n="lasidao.resetBuildTurn">重置回合</button>
-          </div>
-
-          <div id="las-func-panel" class="las-func-panel" hidden>
-            <div id="las-func-form"></div>
-          </div>
-        </div>
-      </aside>
-
-      <div id="las-build-hand-wrap" class="las-build-hand-wrap" hidden>
-        <div class="las-build-hand-head">
-          <div class="las-build-hand-label" data-i18n="lasidao.buildHandTitle">你的功能牌</div>
-          <button id="btn-las-build-permanent-help" type="button" class="secondary las-permanent-help-btn" data-i18n="lasidao.permanentHelpBtn">常驻功能</button>
-        </div>
-        <div id="las-build-hand" class="las-build-hand"></div>
-        <div id="las-build-hand-bld-label" class="las-build-hand-label las-build-hand-sub" data-i18n="lasidao.unbuiltBuildings" hidden>未建造建筑</div>
-        <div id="las-build-hand-bld" class="las-build-hand"></div>
-      </div>
-
     <div class="las-board-zone">
     <aside class="las-decks" id="las-decks" aria-label="decks">
       <div class="las-deck-pile las-deck-pile-resource" data-deck="resource" data-i18n-attr="title:lasidao.deckResourceTooltip" title="查看资源卡牌介绍">
@@ -343,30 +367,20 @@
       <p class="las-deck-hint muted" data-i18n="lasidao.deckHint">抽/弃</p>
     </aside>
 
-    <div class="las-table-boards">
-      <div class="las-table-top">
-        <section class="las-board-section las-board-section-resource">
-          <h3 class="game-sub" data-i18n="lasidao.areaResource">????</h3>
-          <div id="las-board-resource" class="las-board las-board-resource" data-area="resource"></div>
-        </section>
-      </div>
+    <section class="las-board-section las-board-section-resource">
+      <h3 class="game-sub" data-i18n="lasidao.areaResource">资源板块</h3>
+      <div id="las-board-resource" class="las-board las-board-resource" data-area="resource"></div>
+    </section>
 
-      <div class="las-table-bottom">
-        <section class="las-board-section las-board-section-special">
-          <h3 class="game-sub" data-i18n="lasidao.areaSpecial">功能/建筑板块</h3>
-          <div id="las-board-special" class="las-board las-board-special" data-area="special"></div>
-        </section>
-      </div>
+    <section class="las-board-section las-board-section-special">
+      <h3 class="game-sub" data-i18n="lasidao.areaSpecial">功能/建筑板块</h3>
+      <div id="las-board-special" class="las-board las-board-special" data-area="special"></div>
+    </section>
     </div>
     </div>
   </div>
 
-  <aside class="las-me-rail" id="las-me-rail" aria-label="my-board">
-    <div id="las-boards-me" class="las-boards-me"></div>
-  </aside>
-  </div>
-
-  <h3 class="game-sub" id="las-others-title" data-i18n="lasidao.players">????</h3>
+  <h3 class="game-sub" id="las-others-title" data-i18n="lasidao.players">其他玩家</h3>
   <div id="las-boards-host" class="las-boards-host"></div>
   <!-- ??????????????????????? JS ?? boards -->
   <div id="las-me-res" class="las-res" hidden></div>

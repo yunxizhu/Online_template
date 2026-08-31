@@ -688,7 +688,7 @@ function applyResistBarbariansAfterSettle(game, report, helpers) {
   }
 }
 
-/** 本格第一名玩家 id（并列第一均计入，排除中立） */
+/** 本格第一名玩家 id（抵消后剩余骰子最多者，排除中立） */
 function firstPlacePlayerIds(ranked) {
   const players = (ranked || []).filter(
     (r) => r && r.pid && r.pid !== NEUTRAL_WORKER_ID
@@ -703,7 +703,7 @@ function firstPlacePlayerIds(ranked) {
 
 /**
  * 生产结算（抵消并发资源）全部完成后、弃牌前：
- * 吃不了兜着走：本格第一名跳过本轮资源弃牌阶段。
+ * 吃不了兜着走：本格第一名跳过本轮资源弃牌阶段，并任选 2 个资源。
  */
 function applyKeepOverflowAfterSettle(game, report, helpers) {
   if (!game || game.over || !report) return;
@@ -711,6 +711,8 @@ function applyKeepOverflowAfterSettle(game, report, helpers) {
   const pushLog = helpers && helpers.pushLog;
   const syncPending = helpers && helpers.syncResourceHandPending;
   if (!playerById) return;
+
+  if (!game.pendingKeepOverflowQueue) game.pendingKeepOverflowQueue = [];
 
   for (const slot of report.slots || []) {
     if (!slot || slot.area !== 'resource') continue;
@@ -734,12 +736,20 @@ function applyKeepOverflowAfterSettle(game, report, helpers) {
       } else {
         p.pendingDiscardRes = false;
       }
+      game.pendingKeepOverflowQueue.push({
+        playerId: pid,
+        envType: env.envType,
+        label: env.label,
+        envNumber: slot.number,
+        resume: 'keepOverflow',
+        count: 2,
+      });
       names.push(p.name);
     }
     if (pushLog && names.length) {
       pushLog(
         game,
-        `「${env.label}」：${names.join('、')}（本格第一名）跳过资源弃牌阶段`
+        `「${env.label}」：${names.join('、')}（本格第一名）跳过资源弃牌阶段，并任选 2 个资源`
       );
     }
   }

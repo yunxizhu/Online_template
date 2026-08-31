@@ -402,6 +402,8 @@ function applyPersonalProduceIfNeeded(game) {
 function advancePostSettlePipeline(game) {
   if (game.over) return;
 
+  if (tryStartNextKeepOverflowChoice(game)) return;
+
   if (anyoneNeedsResourceDiscard(game)) {
     beginSettleActPhase(game, 'resource');
     return;
@@ -881,6 +883,7 @@ function drawToArea(game, kind, count) {
       ...card,
       number,
       faceDown,
+      cardIndexOnSlot,
     });
   }
   return tiles;
@@ -903,6 +906,30 @@ function tryStartNextWelfareMinimumChoice(game) {
   game.currentPlayerId = next.playerId;
   game.phase = 'produce';
   game.awaitingProduceRoll = false;
+  const p = playerById(game, next.playerId);
+  pushLog(
+    game,
+    `${p ? p.name : '?'} 请选择「${next.label}」的 ${count} 个资源`
+  );
+  return true;
+}
+
+function tryStartNextKeepOverflowChoice(game) {
+  if (game.over || game.pendingEventChoice) return false;
+  const q = game.pendingKeepOverflowQueue;
+  if (!q || !q.length) return false;
+  const next = q.shift();
+  const count = next.count || 2;
+  game.pendingEventChoice = {
+    playerId: next.playerId,
+    needChoice: 'pickTwoResources',
+    envType: next.envType,
+    label: next.label,
+    envNumber: next.envNumber,
+    resume: 'keepOverflow',
+    count,
+  };
+  game.currentPlayerId = next.playerId;
   const p = playerById(game, next.playerId);
   pushLog(
     game,
@@ -1270,6 +1297,7 @@ function createGameState(room) {
     pendingEventChoice: null,
     pendingRedrawChoice: null,
     pendingWelfareMinimumQueue: [],
+    pendingKeepOverflowQueue: [],
     pendingPrisonerDiscards: {},
     pendingMercenaryQueue: [],
     mercenaryRoll: null,
@@ -1716,6 +1744,7 @@ function startSettle(game) {
   game.pendingEventChoice = null;
   game.pendingPrisonerDiscards = {};
   game.pendingMercenaryQueue = [];
+  game.pendingKeepOverflowQueue = [];
   game.mercenaryRoll = null;
   game.mercenaryPlaced = [];
   for (const p of alivePlayers(game)) {
@@ -2084,6 +2113,11 @@ function finishPendingEventChoice(game) {
     if (!game.roundProduceBegun) {
       beginProduce(game);
     }
+    return;
+  }
+  if (choice.resume === 'keepOverflow') {
+    if (tryStartNextKeepOverflowChoice(game)) return;
+    advancePostSettlePipeline(game);
     return;
   }
   afterProduceAction(game, choice.playerId);
@@ -2956,6 +2990,48 @@ function applyAction(game, playerId, action) {
   const type = action && action.type;
   const payload = (action && action.payload) || {};
 
+  if (game.pendingRedrawChoice) {
+    if (game.pendingRedrawChoice.playerId !== playerId) {
+      return { ok: false, error: '等待其他玩家完成重抽选择' };
+    }
+    if (type === 'redrawPick') {
+      return actRedrawPick(game, player, payload);
+    }
+    return { ok: false, error: '请先完成重抽选择' };
+  }
+
+  // 派遣 / 结算后事件选择等（跨阶段，须先于 settle 阶段守卫）
+  if (game.pendingEventChoice) {
+    if (game.pendingEventChoice.playerId !== playerId) {
+      return { ok: false, error: '等待其他玩家完成事件选择' };
+    }
+    if (type === 'eventPickResource') {
+      return actEventPickResource(game, player, payload);
+    }
+    if (type === 'eventPickTwoResources') {
+      return actEventPickTwoResources(game, player, payload);
+    }
+    if (type === 'eventMoveBarrenMarker') {
+      return actEventMoveBarrenMarker(game, player, payload);
+    }
+    if (type === 'eventMoveNeutral') {
+      return actEventMoveNeutral(game, player, payload);
+    }
+    if (type === 'eventRecallDie') {
+      return actEventRecallDie(game, player, payload);
+    }
+    if (type === 'eventTeleportFrom') {
+      return actEventTeleportFrom(game, player, payload);
+    }
+    if (type === 'eventTeleportTo') {
+      return actEventTeleportTo(game, player, payload);
+    }
+    if (type === 'eventGatherNeutrals') {
+      return actEventGatherNeutrals(game, player, payload);
+    }
+    return { ok: false, error: '请先完成事件牌选择' };
+  }
+
   if (game.phase === 'settle') {
     if (type === 'finishSettleAnim') {
       return finishSettleAnim(game, playerId);
@@ -2990,48 +3066,6 @@ function applyAction(game, playerId, action) {
   }
   if (type === 'placeBuildingSlot') {
     return actPlaceBuildingSlot(game, player, payload);
-  }
-
-  if (game.pendingRedrawChoice) {
-    if (game.pendingRedrawChoice.playerId !== playerId) {
-      return { ok: false, error: '等待其他玩家完成重抽选择' };
-    }
-    if (type === 'redrawPick') {
-      return actRedrawPick(game, player, payload);
-    }
-    return { ok: false, error: '请先完成重抽选择' };
-  }
-
-  // 派遣 / 雇佣军放置触发的事件选择（跨阶段）
-  if (game.pendingEventChoice) {
-    if (game.pendingEventChoice.playerId !== playerId) {
-      return { ok: false, error: '等待其他玩家完成事件选择' };
-    }
-    if (type === 'eventPickResource') {
-      return actEventPickResource(game, player, payload);
-    }
-    if (type === 'eventPickTwoResources') {
-      return actEventPickTwoResources(game, player, payload);
-    }
-    if (type === 'eventMoveBarrenMarker') {
-      return actEventMoveBarrenMarker(game, player, payload);
-    }
-    if (type === 'eventMoveNeutral') {
-      return actEventMoveNeutral(game, player, payload);
-    }
-    if (type === 'eventRecallDie') {
-      return actEventRecallDie(game, player, payload);
-    }
-    if (type === 'eventTeleportFrom') {
-      return actEventTeleportFrom(game, player, payload);
-    }
-    if (type === 'eventTeleportTo') {
-      return actEventTeleportTo(game, player, payload);
-    }
-    if (type === 'eventGatherNeutrals') {
-      return actEventGatherNeutrals(game, player, payload);
-    }
-    return { ok: false, error: '请先完成事件牌选择' };
   }
 
   if (game.phase === 'init_announce') {
@@ -3765,10 +3799,14 @@ function actExchange(game, player, payload) {
           ? `用集市（建成 ${built} 座，生效 ${exCount} 座，${need}换1）`
           : `用集市（${exCount}座，${need}换1）`
         : `银行兑换（${need}换1）`;
-    pushLog(
-      game,
-      `${player.name} ${sourceLabel}：${totalNeed}${RESOURCE_LABELS[from]} → ${count}${RESOURCE_LABELS[to]}`
-    );
+    const stepText = `${player.name} ${sourceLabel}：${totalNeed}${RESOURCE_LABELS[from]} → ${count}${RESOURCE_LABELS[to]}`;
+    pushLog(game, stepText);
+    pushPlayReveal(game, {
+      kind: 'step',
+      actorId: player.id,
+      actorName: player.name,
+      stepText,
+    });
     return { ok: true };
   }
 
@@ -3887,10 +3925,14 @@ function actExchange(game, player, payload) {
       : hasMixer
         ? `打料机混合兑换（${need}换1）`
         : `银行兑换（${need}换1）`;
-  pushLog(
-    game,
-    `${player.name} ${sourceLabel}：${fromParts.join('+')} → ${toParts.join('+')}`
-  );
+  const stepText = `${player.name} ${sourceLabel}：${fromParts.join('+')} → ${toParts.join('+')}`;
+  pushLog(game, stepText);
+  pushPlayReveal(game, {
+    kind: 'step',
+    actorId: player.id,
+    actorName: player.name,
+    stepText,
+  });
   return { ok: true };
 }
 
@@ -4621,6 +4663,7 @@ function publicTile(t) {
       id: t.id,
       kind: t.kind,
       number: t.number,
+      cardIndexOnSlot: t.cardIndexOnSlot != null ? t.cardIndexOnSlot : null,
       faceDown: true,
       label: null,
       resource: null,
@@ -4639,6 +4682,7 @@ function publicTile(t) {
     kind: t.kind,
     label: t.label,
     number: t.number,
+    cardIndexOnSlot: t.cardIndexOnSlot != null ? t.cardIndexOnSlot : null,
     faceDown: false,
     resource: t.resource || null,
     rich: t.rich,

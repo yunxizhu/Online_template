@@ -877,6 +877,7 @@ class MqttBulletin {
           playerCount: Number(p.playerCount || 0),
           maxPlayers: Number(p.maxPlayers || 0),
           at: Number(p.at) || Date.now(),
+          host: p.host ? String(p.host).replace(/\/$/, '') : null,
         });
       } catch (_) {}
       return;

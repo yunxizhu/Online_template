@@ -406,11 +406,13 @@ function broadcastChatAllLocal(msg) {
 }
 
 /** 向本实例中处于大厅/等待房的玩家广播邀请 */
-function broadcastInviteLocal(msg) {
-  for (const [sid, p] of rooms.players) {
-    if (p.status === 'idle' || p.status === 'room') {
-      io.to(sid).emit('lobby:invite', msg);
-    }
+function broadcastInviteLocal(msg, excludeSocketId = null) {
+  const people = rooms.listLobbyPeople();
+  for (const person of people) {
+    if (excludeSocketId && person.id === excludeSocketId) continue;
+    if (person.status !== 'idle' && person.status !== 'room') continue;
+    if (msg.roomId && person.roomId && person.roomId === msg.roomId) continue;
+    io.to(person.id).emit('lobby:invite', msg);
   }
 }
 
@@ -1335,7 +1337,7 @@ io.on('connection', (socket) => {
       host: null,
     };
 
-    broadcastInviteLocal(msg);
+    broadcastInviteLocal(msg, socket.id);
     if (mqttBulletin && mqttBulletin.enabled) {
       const advertiseHost = tunnel ? (tunnel.getPublicUrl() || localBaseUrl()) : localBaseUrl();
       mqttBulletin.publishInvite({ ...msg, host: advertiseHost });

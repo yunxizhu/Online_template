@@ -3331,9 +3331,26 @@ console.log('— event keepOverflow skip discard —');
   assert.ok(p0.skipSettleResourceDiscard, '第一名应豁免资源弃牌');
   assert.strictEqual(p0.resources.wood, 14, '第一名应保留结算所得');
   assert.strictEqual(p1.resources.wood, 13, '第二名应获得小份');
+  assert.ok(
+    (g.pendingKeepOverflowQueue || []).some((q) => q.playerId === p0.id),
+    '应排队等待任选资源'
+  );
   ok(finishSettleAnimForce(g));
-  assert.strictEqual(g.phase, 'settle_act', '仍有玩家需弃牌时应进入弃牌阶段');
+  assert.ok(
+    g.pendingEventChoice &&
+      g.pendingEventChoice.playerId === p0.id &&
+      g.pendingEventChoice.needChoice === 'pickTwoResources',
+    '动画结束后应弹出任选资源'
+  );
+  ok(
+    applyAction(g, p0.id, {
+      type: 'eventPickTwoResources',
+      payload: { amounts: { wood: 2 } },
+    })
+  );
+  assert.strictEqual(g.phase, 'settle_act', '选完资源后仍有玩家需弃牌时应进入弃牌阶段');
   assert.strictEqual(p0.pendingDiscardRes, false, '第一名仍无需弃资源');
+  assert.strictEqual(p0.resources.wood, 16, '第一名应获得额外 2 资源');
   assert.ok(p1.pendingDiscardRes, '第二名仍需弃牌');
   while (p1.pendingDiscardRes && g.phase === 'settle_act') {
     ok(
@@ -3343,7 +3360,7 @@ console.log('— event keepOverflow skip discard —');
       })
     );
   }
-  assert.strictEqual(p0.resources.wood, 14, '第一名超上限资源应保留');
+  assert.strictEqual(p0.resources.wood, 16, '第一名超上限资源应保留');
   console.log('✓ event keepOverflow skip discard');
 }
 
