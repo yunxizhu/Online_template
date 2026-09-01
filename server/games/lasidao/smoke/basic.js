@@ -28,22 +28,39 @@ function ok(r, msg) {
 
 function drainWelfareSetup(game) {
   let guard = 0;
-  while (
-    (game.pendingEventChoice &&
+  while (guard++ <= 50) {
+    const pending = game.pendingWelfareMinimumChoices || {};
+    const ids = Object.keys(pending);
+    if (!ids.length && !(game.pendingWelfareMinimumQueue || []).length) {
+      if (
+        !game.pendingEventChoice ||
+        game.pendingEventChoice.resume !== 'welfareSetup'
+      ) {
+        break;
+      }
+    }
+    for (const id of ids) {
+      const count = (pending[id] && pending[id].count) || 2;
+      ok(
+        applyAction(game, id, {
+          type: 'eventPickTwoResources',
+          payload: { amounts: { wood: count } },
+        })
+      );
+    }
+    if (
+      game.pendingEventChoice &&
       game.pendingEventChoice.needChoice === 'pickTwoResources' &&
-      game.pendingEventChoice.resume === 'welfareSetup') ||
-    ((game.pendingWelfareMinimumQueue || []).length > 0 &&
-      !game.pendingEventChoice)
-  ) {
-    if (guard++ > 50) break;
-    if (!game.pendingEventChoice) break;
-    const ch = game.pendingEventChoice;
-    ok(
-      applyAction(game, ch.playerId, {
-        type: 'eventPickTwoResources',
-        payload: { amounts: { wood: 2 } },
-      })
-    );
+      game.pendingEventChoice.resume === 'welfareSetup'
+    ) {
+      const ch = game.pendingEventChoice;
+      ok(
+        applyAction(game, ch.playerId, {
+          type: 'eventPickTwoResources',
+          payload: { amounts: { wood: ch.count || 2 } },
+        })
+      );
+    }
   }
 }
 
@@ -243,25 +260,27 @@ function drainNonProduce(game) {
       continue;
     }
     if (game.phase === 'event_discard') {
-      const pid = game.currentPlayerId;
-      const p = game.players.find((x) => x.id === pid);
-      const left = Number((game.pendingPrisonerDiscards || {})[pid]) || 0;
-      if (!pid || left <= 0) break;
-      const res = ['wood', 'stone', 'food', 'iron'].find(
-        (r) => (p.resources[r] || 0) > 0
-      );
-      if (res) {
-        ok(
-          applyAction(game, pid, {
-            type: 'eventDiscard',
-            payload: { kind: 'resource', resource: res },
-          })
+      let acted = false;
+      for (const p of game.players) {
+        if (p.left) continue;
+        const left = Number((game.pendingPrisonerDiscards || {})[p.id]) || 0;
+        if (left <= 0) continue;
+        const res = ['wood', 'stone', 'food', 'iron'].find(
+          (r) => (p.resources[r] || 0) > 0
         );
-      } else {
-        // 无资源可弃则清掉以免卡死
-        delete game.pendingPrisonerDiscards[pid];
-        game.pendingPrisonerDiscards = game.pendingPrisonerDiscards || {};
+        if (res) {
+          ok(
+            applyAction(game, p.id, {
+              type: 'eventDiscard',
+              payload: { kind: 'resource', resource: res },
+            })
+          );
+          acted = true;
+        } else {
+          delete game.pendingPrisonerDiscards[p.id];
+        }
       }
+      if (!acted) break;
       continue;
     }
     if (game.phase === 'settle') {
@@ -284,6 +303,53 @@ function drainNonProduce(game) {
       if (!acted) break;
       continue;
     }
+    if (game.phase === 'settle_act') {
+      let acted = false;
+      for (const p of game.players) {
+        if (p.left) continue;
+        if (p.pendingDiscardRes) {
+          const pick = ['wood', 'stone', 'food', 'iron'].find(
+            (r) => (p.resources[r] || 0) > 0
+          );
+          if (pick) {
+            ok(
+              applyAction(game, p.id, {
+                type: 'discardResource',
+                payload: { resource: pick },
+              })
+            );
+            acted = true;
+            continue;
+          }
+        }
+        if (p.pendingDiscardFunc && p.funcCards[0]) {
+          ok(
+            applyAction(game, p.id, {
+              type: 'discardFunc',
+              payload: { cardId: p.funcCards[0].id },
+            })
+          );
+          acted = true;
+          continue;
+        }
+        if (p.pendingDiscardBuild) {
+          const pick = p.buildings.find((b) => !b.built);
+          if (pick) {
+            ok(
+              applyAction(game, p.id, {
+                type: 'discardUnbuilt',
+                payload: { buildingId: pick.id },
+              })
+            );
+          } else {
+            ok(applyAction(game, p.id, { type: 'discardPendingBuild' }));
+          }
+          acted = true;
+        }
+      }
+      if (!acted) break;
+      continue;
+    }
     const pid = game.currentPlayerId;
     if (!pid) break;
     const p = game.players.find((x) => x.id === pid);
@@ -299,45 +365,6 @@ function drainNonProduce(game) {
         })
       );
       continue;
-    }
-    if (game.phase === 'settle_act') {
-      if (p.pendingDiscardRes) {
-        const pick = ['wood', 'stone', 'food', 'iron'].find(
-          (r) => (p.resources[r] || 0) > 0
-        );
-        if (pick) {
-          ok(
-            applyAction(game, pid, {
-              type: 'discardResource',
-              payload: { resource: pick },
-            })
-          );
-          continue;
-        }
-    }
-    if (p.pendingDiscardFunc && p.funcCards[0]) {
-      ok(
-        applyAction(game, pid, {
-          type: 'discardFunc',
-          payload: { cardId: p.funcCards[0].id },
-        })
-      );
-      continue;
-    }
-    if (p.pendingDiscardBuild) {
-        const pick = p.buildings.find((b) => !b.built);
-        if (pick) {
-        ok(
-          applyAction(game, pid, {
-            type: 'discardUnbuilt',
-              payload: { buildingId: pick.id },
-          })
-        );
-        continue;
-        }
-        ok(applyAction(game, pid, { type: 'discardPendingBuild' }));
-        continue;
-      }
     }
     ok(applyAction(game, pid, { type: 'pass' }));
   }
@@ -655,6 +682,152 @@ console.log('— buy func card permanent —');
   assert.ok(!g.pendingRedrawChoice);
   assert.ok(p.funcCards.some((c) => c.id === 'buy_keep'));
   console.log('✓ buy func card permanent');
+}
+
+console.log('— buy func score1 instant —');
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p = g.players[0];
+  const school = {
+    id: 'buy_school',
+    kind: 'building',
+    buildType: 'score1',
+    label: '学堂(+1)',
+    score: 1,
+    instantScore: true,
+    cost: {},
+  };
+  const drop1 = {
+    id: 'buy_drop_a',
+    kind: 'function',
+    funcType: 'harvest',
+    label: '丰收·弃',
+  };
+  const drop2 = {
+    id: 'buy_drop_b',
+    kind: 'function',
+    funcType: 'recruit',
+    label: '征召·弃',
+  };
+  g.specialDeck.unshift(drop2, drop1, school);
+  p.resources = { wood: 1, stone: 1, food: 0, iron: 2 };
+  p.bonusScore = 0;
+  g.phase = 'build';
+  g.currentPlayerId = p.id;
+  g.buildPassed = {};
+  const bldBefore = p.buildings.length;
+  ok(applyAction(g, p.id, { type: 'buyFuncCardPermanent' }));
+  ok(
+    applyAction(g, p.id, {
+      type: 'redrawPick',
+      payload: { keepId: 'buy_school' },
+    })
+  );
+  assert.strictEqual(p.bonusScore, 1, '学堂应立刻 +1 分');
+  assert.strictEqual(p.buildings.length, bldBefore, '学堂不应进入建筑格');
+  assert.ok(
+    !p.buildings.some((b) => b.id === 'buy_school'),
+    '建筑列表中不应有学堂'
+  );
+  assert.ok(
+    (g.specialDiscard || []).some((c) => c.id === 'buy_drop_a'),
+    '未选牌应入弃牌堆'
+  );
+  assert.ok(
+    (g.specialDiscard || []).some((c) => c.id === 'buy_school'),
+    '学堂应直接入合堆弃牌堆'
+  );
+  assert.ok(g.lastPlayReveal && g.lastPlayReveal.kind === 'building');
+  assert.strictEqual(g.lastPlayReveal.card && g.lastPlayReveal.card.buildType, 'score1');
+  console.log('✓ buy func score1 instant');
+}
+
+console.log('— special board score1 instant —');
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p0 = g.players[0];
+  const school = {
+    id: 'board_school',
+    kind: 'building',
+    buildType: 'score1',
+    label: '学堂(+1)',
+    score: 1,
+    instantScore: true,
+    number: 1,
+    faceDown: false,
+    cardIndexOnSlot: 1,
+  };
+  g.board.special.tiles = [school];
+  g.board.special.workers = {
+    1: { p0: 3, p1: 1 },
+    2: {},
+    3: {},
+    4: {},
+    5: {},
+    6: {},
+  };
+  g.board.special.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  p0.bonusScore = 0;
+  const bldBefore = p0.buildings.length;
+  startSettle(g);
+  assert.strictEqual(p0.bonusScore, 1, '板块结算取得学堂应立刻 +1 分');
+  assert.strictEqual(p0.buildings.length, bldBefore, '学堂不应进入建筑格');
+  assert.ok(
+    !p0.buildings.some((b) => b.id === 'board_school'),
+    '建筑列表中不应有学堂'
+  );
+  assert.ok(
+    (g.specialDiscard || []).some((c) => c.id === 'board_school'),
+    '学堂应直接入合堆弃牌堆'
+  );
+  assert.ok(
+    !g.board.special.tiles.some((t) => t.id === 'board_school'),
+    '板块卡应被收走'
+  );
+  assert.ok(g.lastPlayReveal && g.lastPlayReveal.kind === 'building');
+  assert.strictEqual(
+    g.lastPlayReveal.card && g.lastPlayReveal.card.buildType,
+    'score1'
+  );
+  console.log('✓ special board score1 instant');
+}
+
+console.log('— special board score1 instant faceDown —');
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p0 = g.players[0];
+  const school = {
+    id: 'board_school_fd',
+    kind: 'building',
+    buildType: 'score1',
+    label: '学堂(+1)',
+    score: 1,
+    instantScore: true,
+    number: 2,
+    faceDown: true,
+    cardIndexOnSlot: 1,
+  };
+  g.board.special.tiles = [school];
+  g.board.special.workers = {
+    1: {},
+    2: { p0: 2, p1: 1 },
+    3: {},
+    4: {},
+    5: {},
+    6: {},
+  };
+  g.board.special.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  p0.bonusScore = 0;
+  startSettle(g);
+  assert.strictEqual(p0.bonusScore, 1, '暗置学堂结算取得也应立刻 +1 分');
+  assert.ok(
+    (g.specialDiscard || []).some((c) => c.id === 'board_school_fd'),
+    '暗置学堂应入弃牌堆'
+  );
+  console.log('✓ special board score1 instant faceDown');
 }
 
 console.log('— redraw overflow func hand —');
@@ -1682,11 +1855,22 @@ console.log('— demolition unbuilds score building —');
     }),
     '目标选择建筑'
   );
-  assert.strictEqual(scoreOf(victim), 0);
+  assert.strictEqual(scoreOf(victim), 2, '宫殿拆迁后已获分数应保留');
   const pal = victim.buildings.find((b) => b.id === 'pal_v');
   assert.ok(pal && !pal.built, '宫殿变为未建造');
+  victim.resources = { wood: 9, stone: 9, food: 9, iron: 9 };
+  g.currentPlayerId = victim.id;
+  ok(
+    applyAction(g, victim.id, {
+      type: 'construct',
+      payload: { buildingId: 'pal_v' },
+    }),
+    '宫殿应可再次建造'
+  );
+  assert.ok(pal.built, '宫殿应已再次建造');
+  assert.strictEqual(scoreOf(victim), 4, '再次建造宫殿应再 +2 分');
   assert.ok(!actor.funcCards.some((c) => c.id === 'ib_card'), '拆迁卡已打出');
-  console.log('✓ demolition removes score from unbuilt palace');
+  console.log('✓ demolition keeps palace score and allows rebuild');
 }
 
 {
@@ -1733,6 +1917,100 @@ console.log('— demolition unbuilds score building —');
   console.log('✓ demolition only usable in build phase');
 }
 
+console.log('— demolition self-target —');
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const actor = g.players[0];
+  g.phase = 'build';
+  g.currentPlayerId = actor.id;
+  g.buildPassed = {};
+  actor.funcCards.push({
+    id: 'ib_self',
+    funcType: 'illegalBuild',
+    label: '拆迁',
+    kind: 'function',
+  });
+  actor.buildings.push({
+    id: 'pal_self',
+    kind: 'building',
+    buildType: 'score1',
+    label: '神庙',
+    cost: {},
+    score: 1,
+    built: true,
+    slot: 1,
+    workers: 0,
+    faceDown: false,
+  });
+  ok(
+    applyAction(g, actor.id, {
+      type: 'useFunc',
+      payload: { cardId: 'ib_self', targetId: actor.id },
+    }),
+    '拆迁可选择自己'
+  );
+  assert.ok(g.pendingIllegalBuild);
+  assert.strictEqual(g.pendingIllegalBuild.targetId, actor.id);
+  ok(
+    applyAction(g, actor.id, {
+      type: 'illegalBuildPick',
+      payload: { buildingId: 'pal_self' },
+    }),
+    '自选拆迁建筑'
+  );
+  const pal = actor.buildings.find((b) => b.id === 'pal_self');
+  assert.ok(pal && !pal.built, '自选拆迁后建筑变为未建造');
+  assert.ok(!actor.funcCards.some((c) => c.id === 'ib_self'), '拆迁卡已打出');
+  console.log('✓ demolition allows self-target');
+}
+
+console.log('— demolition cancel before building pick —');
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const actor = g.players[0];
+  const victim = g.players[1];
+  g.phase = 'build';
+  g.currentPlayerId = actor.id;
+  actor.funcCards.push({
+    id: 'ib_cancel',
+    funcType: 'illegalBuild',
+    label: '拆迁',
+    kind: 'function',
+  });
+  victim.buildings.push({
+    id: 'pal_v2',
+    kind: 'building',
+    buildType: 'score1',
+    label: '神庙',
+    cost: {},
+    score: 1,
+    built: true,
+    slot: 1,
+    workers: 0,
+    faceDown: false,
+  });
+  ok(
+    applyAction(g, actor.id, {
+      type: 'useFunc',
+      payload: { cardId: 'ib_cancel', targetId: victim.id },
+    }),
+    '拆迁选择目标'
+  );
+  assert.ok(g.pendingIllegalBuild);
+  ok(
+    applyAction(g, actor.id, {
+      type: 'cancelIllegalBuild',
+      payload: {},
+    }),
+    '发动者可取消拆迁'
+  );
+  assert.ok(!g.pendingIllegalBuild);
+  assert.ok(actor.funcCards.some((c) => c.id === 'ib_cancel'), '取消后卡牌保留');
+  console.log('✓ demolition cancel retains card');
+}
+
 function drainSettleAnim(g) {
   if (g.phase !== 'settle') return;
   const { finishSettleAnimForce } = require('../engine');
@@ -1742,23 +2020,27 @@ function drainSettleAnim(g) {
 function drainPrisonerDiscard(g) {
   let guard = 0;
   while (g.phase === 'event_discard' && guard++ < 200) {
-    const pid = g.currentPlayerId;
-    const p = g.players.find((x) => x.id === pid);
-    const left = Number((g.pendingPrisonerDiscards || {})[pid]) || 0;
-    if (!pid || !p || left <= 0) break;
-    const res = ['wood', 'stone', 'food', 'iron'].find(
-      (r) => (p.resources[r] || 0) > 0
-    );
-    if (res) {
-      ok(
-        applyAction(g, pid, {
-          type: 'eventDiscard',
-          payload: { kind: 'resource', resource: res },
-        })
+    let acted = false;
+    for (const p of g.players) {
+      if (p.left) continue;
+      const left = Number((g.pendingPrisonerDiscards || {})[p.id]) || 0;
+      if (left <= 0) continue;
+      const res = ['wood', 'stone', 'food', 'iron'].find(
+        (r) => (p.resources[r] || 0) > 0
       );
-    } else {
-      delete g.pendingPrisonerDiscards[pid];
+      if (res) {
+        ok(
+          applyAction(g, p.id, {
+            type: 'eventDiscard',
+            payload: { kind: 'resource', resource: res },
+          })
+        );
+        acted = true;
+      } else {
+        delete g.pendingPrisonerDiscards[p.id];
+      }
     }
+    if (!acted) break;
   }
 }
 
@@ -1796,7 +2078,6 @@ function drainSettleAct(g) {
           (r) => (p.resources[r] || 0) > 0
         );
         if (pick) {
-          g.currentPlayerId = p.id;
           ok(
             applyAction(g, p.id, {
               type: 'discardResource',
@@ -1804,11 +2085,10 @@ function drainSettleAct(g) {
             })
           );
           acted = true;
-          break;
+          continue;
         }
       }
       if (p.pendingDiscardFunc && p.funcCards[0]) {
-        g.currentPlayerId = p.id;
         ok(
           applyAction(g, p.id, {
             type: 'discardFunc',
@@ -1816,10 +2096,9 @@ function drainSettleAct(g) {
           })
         );
         acted = true;
-        break;
+        continue;
       }
       if (p.pendingDiscardBuild) {
-        g.currentPlayerId = p.id;
         const pick = p.buildings.find((b) => !b.built);
         if (pick) {
           ok(
@@ -1832,13 +2111,9 @@ function drainSettleAct(g) {
           ok(applyAction(g, p.id, { type: 'discardPendingBuild' }));
         }
         acted = true;
-        break;
       }
     }
-    if (acted) continue;
-    const pid = g.currentPlayerId;
-    if (pid) ok(applyAction(g, pid, { type: 'pass' }));
-    else break;
+    if (!acted) break;
   }
 }
 
@@ -2020,7 +2295,7 @@ console.log('— settle act when building over cap —');
   g.lastSettle = { at: Date.now(), round: g.round, slots: [], buildings: [] };
   ok(finishSettleAnimForce(g));
   assert.strictEqual(g.phase, 'settle_act', '卡牌超上限应进入弃牌阶段');
-  assert.strictEqual(g.settleActScope, 'card');
+  assert.strictEqual(g.settleActScope, 'all');
   g.currentPlayerId = 'p0';
   g.settleActPassed = {};
   const pub = publicGameState(g, p0.id);
@@ -2178,9 +2453,7 @@ console.log('— settle act discard order + pending build queue —');
   );
   assert.strictEqual(p0.pendingDiscardRes, false);
   assert.strictEqual(g.phase, 'settle_act', '资源弃完后应继续处理卡牌');
-  assert.strictEqual(g.settleActScope, 'card');
-  g.currentPlayerId = p0.id;
-  g.settleActPassed = {};
+  assert.strictEqual(g.settleActScope, 'resource');
 
   ok(applyAction(g, p0.id, { type: 'discardPendingBuild' }));
   assert.ok(p0.pendingDiscardBuild && p0.pendingDiscardBuild.newCard, '应还有待取舍建筑');
@@ -2708,25 +2981,14 @@ console.log('— prisoner discard after personal produce —');
   finishInit(g);
   const p0 = g.players[0];
   const p1 = g.players[1];
-  g.phase = 'settle_act';
-  g.settleActScope = 'resource';
+  g.phase = 'wish_well';
   g.personalProduceApplied = true;
   g.produceFinishOrder = [p0.id, p1.id];
-  g.currentPlayerId = p0.id;
-  g.settleActPassed = {};
+  g.currentPlayerId = null;
   p0.pendingDiscardRes = false;
   p1.pendingDiscardRes = false;
   p0.pendingWishWellBonus = 2;
   g.pendingPrisonerDiscards = { [p0.id]: 1 };
-  while (g.phase === 'settle_act') {
-    ok(applyAction(g, g.currentPlayerId, { type: 'pass' }));
-  }
-  assert.strictEqual(
-    g.phase,
-    'wish_well',
-    '许愿井应在囚徒弃牌之前（同属个人产出）'
-  );
-  assert.strictEqual(p0.pendingWishWellBonus, 2, '许愿井应尚未结算');
   ok(
     applyAction(g, p0.id, {
       type: 'allocateWishWell',
@@ -2736,8 +2998,9 @@ console.log('— prisoner discard after personal produce —');
   assert.strictEqual(
     g.phase,
     'event_discard',
-    '囚徒弃牌应在许愿井之后'
+    '许愿井完成后应进入囚徒弃牌'
   );
+  assert.strictEqual(p0.pendingWishWellBonus, 0, '许愿井应已结算');
   console.log('✓ prisoner discard after personal produce');
 }
 
@@ -2753,29 +3016,9 @@ console.log('— prisoner discard skip when no/short resources —');
   g.personalProduceApplied = true;
   g.produceFinishOrder = [p0.id, p1.id];
   g.pendingPrisonerDiscards = { [p0.id]: 3 };
-  g.phase = 'settle_act';
-  g.settleActScope = 'resource';
+  g.phase = 'event_discard';
   g.currentPlayerId = p0.id;
-  g.settleActPassed = {};
-  p0.pendingDiscardRes = false;
-  p1.pendingDiscardRes = false;
-  while (g.phase === 'settle_act') {
-    ok(applyAction(g, g.currentPlayerId, { type: 'pass' }));
-  }
-  // 可能经过 wish_well；推进到建造或清空囚徒
-  if (g.phase === 'wish_well') {
-    for (const p of g.players) {
-      const n = Number(p.pendingWishWellBonus) || 0;
-      if (n > 0) {
-        ok(
-          applyAction(g, p.id, {
-            type: 'allocateWishWell',
-            payload: { alloc: { wood: n, stone: 0, food: 0, iron: 0 } },
-          })
-        );
-      }
-    }
-  }
+  ok(applyAction(g, p0.id, { type: 'eventDiscard', payload: {} }));
   assert.ok(
     g.phase !== 'event_discard' ||
       !((g.pendingPrisonerDiscards || {})[p0.id] > 0),
@@ -2795,47 +3038,9 @@ console.log('— prisoner discard skip when no/short resources —');
   b.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
   g2.personalProduceApplied = true;
   g2.produceFinishOrder = [a.id, b.id];
-  g2.pendingPrisonerDiscards = { [a.id]: 3 };
+  g2.pendingPrisonerDiscards = { [a.id]: 1 };
   g2.phase = 'event_discard';
   g2.currentPlayerId = a.id;
-  // 直接走 ensure：通过一次 ensurePrisonerDiscardPlayer 路径——用 apply 触发
-  // begin 等价：手动钳制后弃牌
-  const { finishSettleAnimForce: _f } = require('../engine');
-  // 调 begin 路径：phase 已是 event_discard，用 discard 前先让 ensure 钳制
-  // 通过 applyAction 弃 1 次应清空（钳成 1）
-  // 先用 pass 无法；直接调用 apply 弃木
-  // 需要先 clamp：通过 ensurePrisonerDiscardPlayer 导出？改用 begin 流程
-  // 重置并用 advancePostSettlePipeline 入口
-  g2.phase = 'settle_act';
-  g2.settleActScope = 'resource';
-  g2.settleActPassed = {};
-  a.pendingDiscardRes = false;
-  b.pendingDiscardRes = false;
-  g2.currentPlayerId = a.id;
-  g2.pendingPrisonerDiscards = { [a.id]: 3 };
-  a.resources = { wood: 1, stone: 0, food: 0, iron: 0 };
-  while (g2.phase === 'settle_act') {
-    ok(applyAction(g2, g2.currentPlayerId, { type: 'pass' }));
-  }
-  if (g2.phase === 'wish_well') {
-    for (const p of g2.players) {
-      const n = Number(p.pendingWishWellBonus) || 0;
-      if (n > 0) {
-        ok(
-          applyAction(g2, p.id, {
-            type: 'allocateWishWell',
-            payload: { alloc: { wood: n, stone: 0, food: 0, iron: 0 } },
-          })
-        );
-      }
-    }
-  }
-  assert.strictEqual(g2.phase, 'event_discard', '应进入囚徒弃牌');
-  assert.strictEqual(
-    Number((g2.pendingPrisonerDiscards || {})[a.id]) || 0,
-    1,
-    '不足 3 张时应钳为持有量 1'
-  );
   ok(
     applyAction(g2, a.id, {
       type: 'eventDiscard',
@@ -2967,9 +3172,16 @@ console.log('— event welfare minimum lowest score —');
   ];
   g5.environmentDiscard = [];
   ok(finishInitAnnounce(g5));
-  assert.ok(g5.pendingEventChoice, '最低分玩家应待选资源');
-  assert.strictEqual(g5.pendingEventChoice.playerId, q0.id);
-  assert.strictEqual(g5.pendingEventChoice.count, 3, '第5轮应为3个资源');
+  assert.ok(
+    g5.pendingWelfareMinimumChoices &&
+      g5.pendingWelfareMinimumChoices[q0.id],
+    '最低分玩家应待选资源'
+  );
+  assert.strictEqual(
+    g5.pendingWelfareMinimumChoices[q0.id].count,
+    3,
+    '第5轮应为3个资源'
+  );
   assert.ok(!g5.roundProduceBegun, '选完资源前不应正式开始生产');
   // 只选2个应被拒绝
   const reject = applyAction(g5, q0.id, {
@@ -3257,47 +3469,42 @@ console.log('— event recall die —');
   ok(applyAction(g, 'p0', { type: 'placeDice', payload: { face: 4, area: 'resource' } }));
   assert.ok(g.pendingEventChoice && g.pendingEventChoice.needChoice === 'recallDie');
   assert.strictEqual(g.pendingEventChoice.excludeNumber, 4);
-  const bad = applyAction(g, 'p0', {
+  assert.strictEqual(g.pendingEventChoice.justPlacedCount, 1);
+  const onlyJustPlaced = applyAction(g, 'p0', {
     type: 'eventRecallDie',
     payload: { area: 'resource', number: 4 },
   });
-  assert.ok(!bad.ok, '不可召回刚放的本格骰子');
-  ok(
-    applyAction(g, 'p0', {
-      type: 'eventRecallDie',
-      payload: { area: 'resource', number: 1 },
-    })
-  );
+  assert.ok(onlyJustPlaced.ok, '本格有旧骰子时应可召回 1 枚');
   assert.ok(!g.pendingEventChoice);
-  assert.strictEqual((g.board.resource.workers[1] || {}).p0 || 0, 0);
-  assert.strictEqual((g.board.resource.workers[4] || {}).p0 || 0, 2);
-  assert.ok(g.dice.p0.includes(1), '召回的骰子应回到手中');
+  assert.strictEqual((g.board.resource.workers[4] || {}).p0 || 0, 1, '刚放置的骰子应留在本格');
+  assert.strictEqual((g.board.resource.workers[1] || {}).p0 || 0, 1, '其它格不受影响');
+  assert.ok(g.dice.p0.includes(4), '召回的骰面应为 4 号格');
   assert.strictEqual(p0.dispatched, 2, '召回后已派遣数应减 1');
 
-  g.board.resource.workers[3] = { p0: 2 };
+  g.board.resource.workers[3] = { [p0.id]: 2 };
   if (!g.board.resource.boosts) g.board.resource.boosts = {};
-  g.board.resource.boosts[3] = { p0: 1 };
+  g.board.resource.boosts[3] = { [p0.id]: 1 };
   g.pendingEventChoice = {
-    playerId: 'p0',
+    playerId: p0.id,
     needChoice: 'recallDie',
     label: '召回',
     excludeArea: 'resource',
     excludeNumber: 4,
+    justPlacedCount: 1,
   };
-  const needPick = applyAction(g, 'p0', {
+  const needPick = applyAction(g, p0.id, {
     type: 'eventRecallDie',
     payload: { area: 'resource', number: 3 },
   });
   assert.ok(!needPick.ok, '同格两种骰子须指定类型');
   ok(
-    applyAction(g, 'p0', {
+    applyAction(g, p0.id, {
       type: 'eventRecallDie',
       payload: { area: 'resource', number: 3, enhanced: true },
     })
   );
-  assert.strictEqual(g.board.resource.workers[3].p0, 1);
-  assert.strictEqual((g.board.resource.boosts[3] || {}).p0 || 0, 0);
-  assert.ok(g.diceBoosted.p0.includes(true), '召回的应为强化骰');
+  assert.strictEqual(g.board.resource.workers[3][p0.id], 1);
+  assert.strictEqual((g.board.resource.boosts[3] || {})[p0.id] || 0, 0, '应召回强化骰');
 
   const g2 = createGameState(room(2));
   finishInit(g2);
@@ -3897,7 +4104,24 @@ console.log('— event deck draws until empty then reshuffles discard —');
           if (picked) break;
         }
         if (picked) {
-          ok(applyAction(g, pid, { type: 'eventRecallDie', payload: picked }));
+          const ab = g.board[picked.area];
+          const wSlot = ((ab.workers[picked.number] || {})[pid]) || 0;
+          const boosted = Math.min(
+            Number(
+              (ab.boosts &&
+                ab.boosts[picked.number] &&
+                ab.boosts[picked.number][pid]) ||
+                0
+            ),
+            wSlot
+          );
+          const enhanced = boosted > 0 && wSlot - boosted <= 0;
+          ok(
+            applyAction(g, pid, {
+              type: 'eventRecallDie',
+              payload: { ...picked, enhanced },
+            })
+          );
         }
       } else if (ch.needChoice === 'gatherNeutrals') {
         const toArea = ch.toArea || 'resource';
@@ -4052,7 +4276,24 @@ console.log('— event deck reshuffles discard when draw pile empty —');
           if (picked) break;
         }
         if (picked) {
-          ok(applyAction(g, pid, { type: 'eventRecallDie', payload: picked }));
+          const ab = g.board[picked.area];
+          const wSlot = ((ab.workers[picked.number] || {})[pid]) || 0;
+          const boosted = Math.min(
+            Number(
+              (ab.boosts &&
+                ab.boosts[picked.number] &&
+                ab.boosts[picked.number][pid]) ||
+                0
+            ),
+            wSlot
+          );
+          const enhanced = boosted > 0 && wSlot - boosted <= 0;
+          ok(
+            applyAction(g, pid, {
+              type: 'eventRecallDie',
+              payload: { ...picked, enhanced },
+            })
+          );
         } else {
           g.pendingEventChoice = null;
         }
@@ -4613,9 +4854,9 @@ console.log('— exile picks enhanced die —');
     })
   );
   assert.strictEqual((g.board.resource.workers[2] || {})[p1.id], 1);
-  assert.strictEqual((g.board.resource.boosts[2] || {})[p1.id], 0);
+  assert.strictEqual((g.board.resource.boosts[2] || {})[p1.id] || 0, 0);
   assert.strictEqual((g.board.resource.workers[5] || {})[p1.id], 1);
-  assert.strictEqual((g.board.resource.boosts[5] || {})[p1.id], 1);
+  assert.strictEqual((g.board.resource.boosts[5] || {})[p1.id] || 0, 1);
   assert.strictEqual(p1.enhancedPlaced, 1, '移走强化骰后 enhancedPlaced 不变');
   console.log('✓ exile picks enhanced die');
 }

@@ -296,6 +296,27 @@ function setupEnvironmentOnBoard(game, env, number, helpers) {
   }
 }
 
+function countRecallableOwnDice(game, playerId, dispatchArea, dispatchNumber, justPlacedCount) {
+  if (!game || !playerId) return 0;
+  let total = 0;
+  for (const area of ['resource', 'special']) {
+    const workers = (game.board[area] && game.board[area].workers) || {};
+    for (let num = 1; num <= 6; num++) {
+      const w = workers[num] || {};
+      total += Number(w[playerId]) || 0;
+    }
+  }
+  const jp = Math.max(0, Number(justPlacedCount) || 0);
+  if (dispatchArea && Number(dispatchNumber) >= 1 && Number(dispatchNumber) <= 6) {
+    const workers =
+      (game.board[dispatchArea] && game.board[dispatchArea].workers) || {};
+    const onDispatchSlot =
+      Number((workers[dispatchNumber] || {})[playerId]) || 0;
+    total -= Math.min(jp, onDispatchSlot);
+  }
+  return total;
+}
+
 function countOwnDiceOnBoard(game, playerId, excludeArea, excludeNumber) {
   if (!game || !playerId) return 0;
   let total = 0;
@@ -400,14 +421,15 @@ function applyEnvironmentOnDispatch(game, ctx) {
     }
 
     case 'recall': {
-      // 不可召回刚放到本事件格的骰子；仅统计其它格上自己的骰
-      const ownElsewhere = countOwnDiceOnBoard(
+      const justPlaced = Math.max(1, Number(ctx.count) || 1);
+      const recallable = countRecallableOwnDice(
         game,
         player.id,
         'resource',
-        num
+        num,
+        justPlaced
       );
-      if (ownElsewhere <= 0) {
+      if (recallable <= 0) {
         if (ctx.pushLog) {
           ctx.pushLog(
             game,
@@ -424,6 +446,7 @@ function applyEnvironmentOnDispatch(game, ctx) {
         playerId: player.id,
         excludeArea: 'resource',
         excludeNumber: num,
+        justPlacedCount: justPlaced,
       };
     }
 

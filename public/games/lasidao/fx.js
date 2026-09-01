@@ -113,9 +113,23 @@ window.LasidaoFx = (function () {
     );
   }
 
-  function slotNumEl(area, number) {
+  function slotOverlayEl(area, number) {
     return document.querySelector(
-      `.las-slot[data-area="${area}"][data-num="${number}"] .las-slot-num`
+      `.las-slot[data-area="${area}"][data-num="${number}"] .las-slot-overlay`
+    );
+  }
+
+  function slotTilesWrapEl(area, number) {
+    return document.querySelector(
+      `.las-slot[data-area="${area}"][data-num="${number}"] .las-slot-tiles-wrap`
+    );
+  }
+
+  function slotNumEl(area, number) {
+    return (
+      slotOverlayEl(area, number) ||
+      slotTilesWrapEl(area, number) ||
+      slotEl(area, number)
     );
   }
 
@@ -252,10 +266,21 @@ window.LasidaoFx = (function () {
     return Math.sqrt(dx * dx + dy * dy);
   }
 
-  /** ???? 1200px/s??? 0.1s */
+  /** 飞行动画基准速度 1200px/s，最短 0.1s */
   function flyDurationMs(from, to) {
     const d = distPx(from, to);
     return Math.max(100, Math.round((d / 1200) * 1000));
+  }
+
+  /** 板块摆放（发牌）相对原速度的倍率（越大越快） */
+  const DEAL_SPEED = 2;
+
+  function dealMs(ms) {
+    return Math.max(1, Math.round(Number(ms) / DEAL_SPEED));
+  }
+
+  function dealFlyDurationMs(from, to) {
+    return dealMs(flyDurationMs(from, to));
   }
 
   const DEAL_FLIP_MS = 200;
@@ -470,9 +495,15 @@ window.LasidaoFx = (function () {
   }
 
   async function flipDealCard(card) {
+    const flipMs = dealMs(DEAL_FLIP_MS);
+    const inner = card.querySelector('.las-fx-deal-inner');
+    if (inner) {
+      inner.style.transition =
+        'transform ' + flipMs + 'ms cubic-bezier(0.4, 0.05, 0.2, 1)';
+    }
     void card.offsetWidth;
     card.classList.add('is-flipped');
-    await sleep(DEAL_FLIP_MS);
+    await sleep(flipMs);
   }
 
   function revealDealtTile(item, toEl) {
@@ -490,7 +521,7 @@ window.LasidaoFx = (function () {
     fly.style.left = from.x + 'px';
     fly.style.top = from.y + 'px';
     layer.appendChild(fly);
-    const ms = flyDurationMs(from, to);
+    const ms = dealFlyDurationMs(from, to);
     await flyToPoint(fly, from, to, ms, {
       fade: false,
       ease: 'linear',
@@ -538,7 +569,7 @@ window.LasidaoFx = (function () {
         inflight.push(dealOneCard(layer, item, from, to, toEl));
       }
       if (i < list.length - 1) {
-        await sleep(DEAL_STAGGER_MS);
+        await sleep(dealMs(DEAL_STAGGER_MS));
       }
     }
     await Promise.all(inflight);

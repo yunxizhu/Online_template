@@ -400,6 +400,34 @@ function playerNeedsSettleAct(p, scope) {
   );
 }
 
+function beginConcurrentDiscardPhase(game) {
+  game.phase = 'settle_act';
+  game.settleActScope = 'all';
+  game.settleActPassed = {};
+  game.currentPlayerId = null;
+  syncAllDiscardPending(game);
+  const discardNames = alivePlayers(game)
+    .filter((p) => playerNeedsSettleAct(p, 'all'))
+    .map((p) => p.name);
+  pushLog(
+    game,
+    discardNames.length
+      ? `—— 弃牌阶段（${discardNames.join('、')}）——`
+      : '—— 弃牌阶段 ——'
+  );
+}
+
+function tryFinishConcurrentDiscardPhase(game) {
+  if (game.phase !== 'settle_act') return;
+  for (const p of alivePlayers(game)) {
+    syncFuncHandPending(p);
+    syncResourceHandPending(p, game);
+  }
+  if (!anyoneNeedsDiscard(game)) {
+    finishSettleActPhase(game);
+  }
+}
+
 function applyPersonalProduceIfNeeded(game) {
   if (game.personalProduceApplied) return;
   const report = game.lastSettle;
@@ -410,7 +438,7 @@ function applyPersonalProduceIfNeeded(game) {
   game.personalProduceApplied = true;
 }
 
-/** 结算动画结束后：弃牌阶段（资源 → 功能/建筑卡）→ 个人产出（资源建筑 + 许愿井）→ 囚徒弃牌 → 建造
+/** 结算动画结束后：弃牌（全员并行）→ 个人产出+许愿井（全员并行）→ 囚徒弃牌（全员并行）→ 建造
  * （仅弃牌阶段检查资源上限；个人产出后不检查；建造阶段内再获得资源亦不强制弃牌）
  * 雇佣军在全员放置完毕、生产判定开始前单独处理，见 tryEnterPreSettleMercenaryOrSettle
  */
@@ -419,13 +447,10 @@ function advancePostSettlePipeline(game) {
 
   if (tryStartNextKeepOverflowChoice(game)) return;
 
-  if (anyoneNeedsResourceDiscard(game)) {
-    beginSettleActPhase(game, 'resource');
-    return;
-  }
+  syncAllDiscardPending(game);
 
-  if (anyoneNeedsCardDiscard(game)) {
-    beginSettleActPhase(game, 'card');
+  if (anyoneNeedsDiscard(game)) {
+    beginConcurrentDiscardPhase(game);
     return;
   }
 
@@ -446,8 +471,9 @@ function advancePostSettlePipeline(game) {
 
 function tryEndRoundAfterBuild(game) {
   if (game.over) return;
+  syncAllDiscardPending(game);
   if (anyoneNeedsCardDiscard(game)) {
-    beginSettleActPhase(game, 'card');
+    beginConcurrentDiscardPhase(game);
     return;
   }
   endRound(game);
@@ -494,14 +520,9 @@ function clampPrisonerDiscardsToOwned(game) {
 
 function beginPrisonerDiscardPhase(game) {
   game.phase = 'event_discard';
+  game.currentPlayerId = null;
   pushLog(game, '—— 事件弃牌：囚徒困境 ——');
   clampPrisonerDiscardsToOwned(game);
-  const order = game.produceFinishOrder || [];
-  const ids = Object.keys(game.pendingPrisonerDiscards || {}).filter(
-    (id) => (Number(game.pendingPrisonerDiscards[id]) || 0) > 0
-  );
-  game.currentPlayerId =
-    ids.find((id) => order.includes(id)) || ids[0] || null;
   ensurePrisonerDiscardPlayer(game);
 }
 
@@ -509,19 +530,11 @@ function ensurePrisonerDiscardPlayer(game) {
   if (game.phase !== 'event_discard') return;
   clampPrisonerDiscardsToOwned(game);
   if (!anyoneNeedsPrisonerDiscard(game)) {
+    game.currentPlayerId = null;
     advancePostSettlePipeline(game);
     return;
   }
-  const map = game.pendingPrisonerDiscards || {};
-  const order = game.produceFinishOrder || [];
-  const candidates = Object.keys(map).filter((id) => (Number(map[id]) || 0) > 0);
-  let pick =
-    (game.currentPlayerId && candidates.includes(game.currentPlayerId)
-      ? game.currentPlayerId
-      : null) ||
-    candidates.find((id) => order.includes(id)) ||
-    candidates[0];
-  game.currentPlayerId = pick;
+  game.currentPlayerId = null;
 }
 
 function beginMercenaryPhase(game) {
@@ -948,22 +961,50 @@ function deckKindOfTile(tile) {
   return tile.kind === 'resource' ? 'resource' : 'function';
 }
 
-function tryStartNextWelfareMinimumChoice(game) {
+function beginWelfareMinimumConcurrent(game) {
   if (game.pendingEventChoice) return false;
   const q = game.pendingWelfareMinimumQueue;
   if (!q || !q.length) return false;
-  const next = q.shift();
-  const count = next.count || 2;
-  game.pendingEventChoice = { ...next, count };
-  game.currentPlayerId = next.playerId;
+  if (!game.pendingWelfareMinimumChoices) {
+    game.pendingWelfareMinimumChoices = {};
+  }
+  const names = [];
+  const label = (q[0] && q[0].label) || '低保户';
+  while (q.length) {
+    const item = q.shift();
+    const count = item.count || 2;
+    game.pendingWelfareMinimumChoices[item.playerId] = {
+      ...item,
+      needChoice: 'pickTwoResources',
+      count,
+      resume: 'welfareSetup',
+    };
+    const p = playerById(game, item.playerId);
+    if (p) names.push(p.name);
+  }
   game.phase = 'produce';
   game.awaitingProduceRoll = false;
-  const p = playerById(game, next.playerId);
+  game.currentPlayerId = null;
   pushLog(
     game,
-    `${p ? p.name : '?'} 请选择「${next.label}」的 ${count} 个资源`
+    `—— 低保户：${names.join('、')} 请选择「${label}」资源 ——`
   );
   return true;
+}
+
+function tryFinishWelfareMinimumConcurrent(game) {
+  const pending = game.pendingWelfareMinimumChoices || {};
+  if (Object.keys(pending).length > 0) return;
+  if (game.pendingEventChoice) return;
+  if (!game.roundProduceBegun) {
+    beginProduce(game);
+    game.roundProduceBegun = true;
+  }
+}
+
+/** @deprecated 兼容旧测试路径 */
+function tryStartNextWelfareMinimumChoice(game) {
+  return beginWelfareMinimumConcurrent(game);
 }
 
 function tryStartNextKeepOverflowChoice(game) {
@@ -991,7 +1032,8 @@ function tryStartNextKeepOverflowChoice(game) {
 }
 
 function maybeBeginProduceAfterSetup(game) {
-  if (tryStartNextWelfareMinimumChoice(game)) return;
+  if (beginWelfareMinimumConcurrent(game)) return;
+  if (Object.keys(game.pendingWelfareMinimumChoices || {}).length > 0) return;
   if (game.pendingEventChoice) return;
   beginProduce(game);
   game.roundProduceBegun = true;
@@ -1346,6 +1388,7 @@ function createGameState(room) {
     pendingIllegalBuild: null,
     pendingTrade: null,
     pendingWelfareMinimumQueue: [],
+    pendingWelfareMinimumChoices: {},
     pendingKeepOverflowQueue: [],
     pendingPrisonerDiscards: {},
     pendingMercenaryQueue: [],
@@ -1707,6 +1750,7 @@ function logSettleRoundMvp(game) {
 
 function beginSettleActPhase(game, scope) {
   const settleScope = scope || 'all';
+  syncAllDiscardPending(game);
   if (!playerNeedsSettleActForScope(game, settleScope)) {
     advancePostSettlePipeline(game);
     return;
@@ -1714,23 +1758,15 @@ function beginSettleActPhase(game, scope) {
   game.phase = 'settle_act';
   game.settleActScope = settleScope;
   game.settleActPassed = {};
-  const order = game.produceFinishOrder || [];
-  game.currentPlayerId =
-    order[0] ||
-    game.lastBuilderId ||
-    game.lastPlacerId ||
-    game.produceOrderStartId;
-  if (!game.currentPlayerId) {
-    advancePostSettlePipeline(game);
-    return;
-  }
+  game.currentPlayerId = null;
   pushLog(
     game,
     settleScope === 'card'
       ? '—— 弃牌阶段：处理超上限功能/建筑卡 ——'
-      : '—— 弃牌阶段：处理超上限资源 ——'
+      : settleScope === 'resource'
+        ? '—— 弃牌阶段：处理超上限资源 ——'
+        : '—— 弃牌阶段 ——'
   );
-  ensureSettleActPlayer(game);
 }
 
 function playerNeedsSettleActForScope(game, scope) {
@@ -1996,12 +2032,16 @@ function startSettle(game) {
           (t) => t.number !== num
         );
         claimedBy = { pid: p.id, name: p.name, count: ranked[0].count };
-        const hasBuilding = tiles.some((t) => deckKindOfTile(t) === 'building');
+        const needsBuildPlacement = tiles.some((t) => {
+          if (deckKindOfTile(t) !== 'building') return false;
+          const { number: _n, ...card } = t;
+          return !isInstantScoreBuilding(card);
+        });
         pushLog(
           game,
           `${p.name} 以强度 ${ranked[0].count} 取得功能/建筑格 ${num} 全部卡：` +
             tiles.map(tileLogLabel).join('、') +
-            (hasBuilding ? '（建筑需选择格子放置）' : '')
+            (needsBuildPlacement ? '（建筑需选择格子放置）' : '')
         );
       }
     } else if (barren && (tiles.length || Object.keys(before).length)) {
@@ -2066,6 +2106,9 @@ function startSettle(game) {
 
 function takeFunctionCard(game, player, tile) {
   const { number, ...card } = tile;
+  if (grantInstantScoreBuilding(game, player, card)) {
+    return;
+  }
   receiveFunctionCard(game, player, card);
 }
 
@@ -2078,24 +2121,48 @@ function receiveFunctionCard(game, player, card) {
   syncFuncHandPending(player);
 }
 
+function isInstantScoreBuilding(card) {
+  return Boolean(
+    card && (card.buildType === 'score1' || card.instantScore)
+  );
+}
+
+/** 学堂等：入手即 +1 胜利点并进弃牌堆，不占建筑格 */
+function grantInstantScoreBuilding(game, player, card) {
+  if (!isInstantScoreBuilding(card)) {
+    return false;
+  }
+  const pts = Math.max(1, Number(card.score) || 1);
+  player.bonusScore = (Number(player.bonusScore) || 0) + pts;
+  pushToDiscard(game, 'building', {
+    ...card,
+    faceDown: false,
+    slot: null,
+    built: false,
+    workers: 0,
+  });
+  const stepText =
+    `${player.name} 获得「${card.label || '学堂'}」：立刻 +${pts} 胜利点（置入弃牌堆）`;
+  pushLog(game, stepText);
+  pushPlayReveal(game, {
+    kind: 'building',
+    actorId: player.id,
+    actorName: player.name,
+    card: {
+      id: card.id,
+      label: card.label,
+      buildType: card.buildType,
+      score: pts,
+    },
+    stepText,
+  });
+  checkWin(game);
+  return true;
+}
+
 function takeBuildingCard(game, player, tile) {
   const { number, ...card } = tile;
-  // 学堂：入手即 +1 胜利点并进弃牌堆，不占建筑格
-  if (card.buildType === 'score1' || card.instantScore) {
-    const pts = Math.max(1, Number(card.score) || 1);
-    player.bonusScore = (Number(player.bonusScore) || 0) + pts;
-    pushToDiscard(game, 'building', {
-      ...card,
-      faceDown: false,
-      slot: null,
-      built: false,
-      workers: 0,
-    });
-    pushLog(
-      game,
-      `${player.name} 获得「${card.label || '学堂'}」：立刻 +${pts} 胜利点（置入弃牌堆）`
-    );
-    checkWin(game);
+  if (grantInstantScoreBuilding(game, player, card)) {
     return;
   }
   // 入手后对持有者明示；他人在 publicBuilding 中仍看不到未建造内容
@@ -2181,10 +2248,7 @@ function finishPendingEventChoice(game) {
     return;
   }
   if (choice.resume === 'welfareSetup') {
-    if (tryStartNextWelfareMinimumChoice(game)) return;
-    if (!game.roundProduceBegun) {
-      beginProduce(game);
-    }
+    tryFinishWelfareMinimumConcurrent(game);
     return;
   }
   if (choice.resume === 'keepOverflow') {
@@ -2220,10 +2284,13 @@ function actEventPickResource(game, player, payload) {
 }
 
 function actEventPickTwoResources(game, player, payload) {
-  const pending = game.pendingEventChoice;
+  const welfarePending =
+    game.pendingWelfareMinimumChoices &&
+    game.pendingWelfareMinimumChoices[player.id];
+  const pending = welfarePending || game.pendingEventChoice;
   if (
     !pending ||
-    pending.playerId !== player.id ||
+    (!welfarePending && pending.playerId !== player.id) ||
     pending.needChoice !== 'pickTwoResources'
   ) {
     return { ok: false, error: '当前无需选择资源' };
@@ -2255,7 +2322,12 @@ function actEventPickTwoResources(game, player, payload) {
         .map((d) => `${d.amount} ${RESOURCE_LABELS[d.resource]}`)
         .join('、')
   );
-  finishPendingEventChoice(game);
+  if (welfarePending) {
+    delete game.pendingWelfareMinimumChoices[player.id];
+    tryFinishWelfareMinimumConcurrent(game);
+  } else {
+    finishPendingEventChoice(game);
+  }
   return { ok: true };
 }
 
@@ -2429,8 +2501,13 @@ function actEventRecallDie(game, player, payload) {
   const number = Number(payload && payload.number);
   const exArea = pending.excludeArea || 'resource';
   const exNum = Number(pending.excludeNumber != null ? pending.excludeNumber : pending.number);
+  const justPlaced = Math.max(0, Number(pending.justPlacedCount) || 0);
   if (area === exArea && number === exNum) {
-    return { ok: false, error: '不可召回刚放到本格的骰子' };
+    const own =
+      Number(((game.board[area].workers[number] || {})[player.id]) || 0);
+    if (own <= justPlaced) {
+      return { ok: false, error: '不可召回刚放置的骰子' };
+    }
   }
   const dieKind =
     payload && typeof payload.enhanced === 'boolean' ? payload.enhanced : undefined;
@@ -2479,12 +2556,17 @@ function actEventTeleportFrom(game, player, payload) {
   if ((slotW[targetId] || 0) < 1) {
     return { ok: false, error: '该格没有可传送的骰子' };
   }
+  const dieKind =
+    payload && typeof payload.enhanced === 'boolean'
+      ? payload.enhanced
+      : undefined;
   game.pendingEventChoice = {
     ...pending,
     teleportStep: 'to',
     fromArea: area,
     fromNumber: number,
     fromTargetId: targetId,
+    fromDieKind: dieKind,
   };
   return { ok: true };
 }
@@ -2517,7 +2599,8 @@ function actEventTeleportTo(game, player, payload) {
     game,
     fromArea,
     fromNumber,
-    fromTargetId
+    fromTargetId,
+    pending.fromDieKind
   );
   if (!removed.ok) return removed;
   const placed = placeOneDieOnBoardSlot(
@@ -2801,9 +2884,6 @@ function actEventDiscard(game, player, payload) {
   }
   const left = Number((game.pendingPrisonerDiscards || {})[player.id]) || 0;
   if (left <= 0) return { ok: false, error: '你无需弃牌' };
-  if (game.currentPlayerId !== player.id) {
-    return { ok: false, error: '未轮到你弃牌' };
-  }
 
   // 无资源可弃：直接免除剩余（不足则全弃 / 无资源不用弃）
   if (sumRes(player.resources) <= 0) {
@@ -3153,10 +3233,20 @@ function applyAction(game, playerId, action) {
       }
       return actIllegalBuildPick(game, player, payload);
     }
+    if (type === 'cancelIllegalBuild') {
+      return actCancelIllegalBuild(game, player);
+    }
     return { ok: false, error: '等待目标玩家选择要拆除的建筑' };
   }
 
   // 派遣 / 结算后事件选择等（跨阶段，须先于 settle 阶段守卫）
+  if (game.pendingWelfareMinimumChoices && game.pendingWelfareMinimumChoices[playerId]) {
+    if (type === 'eventPickTwoResources') {
+      return actEventPickTwoResources(game, player, payload);
+    }
+    return { ok: false, error: '请先完成低保户资源选择' };
+  }
+
   if (game.pendingEventChoice) {
     if (game.pendingEventChoice.playerId !== playerId) {
       return { ok: false, error: '等待其他玩家完成事件选择' };
@@ -3262,20 +3352,13 @@ function applyAction(game, playerId, action) {
   }
 
   if (game.phase === 'settle_act') {
-    if (game.currentPlayerId !== playerId) {
-      return { ok: false, error: '还没轮到你' };
-    }
     if (type === 'pass') {
       if (playerNeedsSettleAct(player, game.settleActScope || 'all')) {
         return { ok: false, error: '请先处理弃牌后再跳过' };
       }
-      game.settleActPassed[playerId] = true;
-      const next = nextAlive(game, playerId);
-      game.currentPlayerId = next ? next.id : playerId;
-      ensureSettleActPlayer(game);
       return { ok: true };
     }
-    return { ok: false, error: '弃牌阶段：请处理超上限弃牌或跳过' };
+    return { ok: false, error: '弃牌阶段：请处理超上限弃牌' };
   }
 
   if (game.phase === 'wish_well') {
@@ -3357,7 +3440,9 @@ function actAllocateWishWell(game, player, payload = {}) {
     parts.push(`${RESOURCE_LABELS[r]}+${counts[r]}`);
   }
   player.pendingWishWellBonus = 0;
-  syncResourceHandPending(player, game);
+  if (game.phase === 'build') {
+    syncResourceHandPending(player, game);
+  }
   pushLog(
     game,
     `${player.name} 许愿井：${parts.join('、') || '无'}`
@@ -3728,10 +3813,7 @@ function actDiscardUnbuilt(game, player, payload) {
     }
     pushLog(game, msg);
   }
-  if (
-    game.phase === 'settle_act' &&
-    game.currentPlayerId === player.id
-  ) {
+  if (game.phase === 'settle_act') {
     maybeAdvanceAfterSettleActDiscard(game, player);
   }
   return { ok: true };
@@ -3758,10 +3840,7 @@ function actDiscardPendingBuild(game, player) {
       game,
     `${player.name} 弃置刚获得的建筑「${neu.label || '?'}」（入弃牌堆），保留现有建筑`
   );
-  if (
-    game.phase === 'settle_act' &&
-    game.currentPlayerId === player.id
-  ) {
+  if (game.phase === 'settle_act') {
     maybeAdvanceAfterSettleActDiscard(game, player);
   }
   return { ok: true };
@@ -3844,11 +3923,7 @@ function maybeAdvanceAfterSettleActDiscard(game, player) {
   const scope = game.settleActScope || 'all';
   if (game.phase !== 'settle_act') return;
   if (playerNeedsSettleAct(player, scope)) return;
-  if (game.currentPlayerId !== player.id) return;
-  game.settleActPassed[player.id] = true;
-  const next = nextAlive(game, player.id);
-  game.currentPlayerId = next ? next.id : player.id;
-  ensureSettleActPlayer(game);
+  tryFinishConcurrentDiscardPhase(game);
 }
 
 function maybeAdvanceAfterResourceDiscard(game, player) {
@@ -3871,10 +3946,7 @@ function actDiscardFunc(game, player, payload) {
   pushToDiscard(game, 'function', card);
   syncFuncHandPending(player);
   pushLog(game, `${player.name} 弃置功能卡「${card.label}」（入弃牌堆）`);
-  if (
-    game.phase === 'settle_act' &&
-    game.currentPlayerId === player.id
-  ) {
+  if (game.phase === 'settle_act') {
     maybeAdvanceAfterSettleActDiscard(game, player);
   }
   return { ok: true };
@@ -4629,6 +4701,17 @@ function useIllegalBuild(game, player, payload) {
   return { ok: true, awaitingPick: true };
 }
 
+function actCancelIllegalBuild(game, player) {
+  const pending = game.pendingIllegalBuild;
+  if (!pending) return { ok: false, error: '没有待处理的拆迁' };
+  if (player.id !== pending.actorId) {
+    return { ok: false, error: '仅发动者可取消拆迁' };
+  }
+  game.pendingIllegalBuild = null;
+  pushLog(game, `${player.name} 取消了「拆迁」`);
+  return { ok: true };
+}
+
 function actIllegalBuildPick(game, player, payload) {
   const pending = game.pendingIllegalBuild;
   if (!pending) return { ok: false, error: '没有待处理的拆迁' };
@@ -4653,11 +4736,19 @@ function actIllegalBuildPick(game, player, payload) {
   const card = actor.funcCards[cardIdx];
   const logLen = game.log.length;
 
+  const scorePts = b.built ? Math.max(0, Number(b.score) || 0) : 0;
+  const bankScore =
+    scorePts > 0 && b.buildType === 'score2';
+  if (bankScore) {
+    player.bonusScore = (Number(player.bonusScore) || 0) + scorePts;
+  }
   revertBuildingToUnbuilt(player, b);
   let stepText =
     `${player.name} 被 ${pending.actorName} 的「拆迁」拆除「${b.label}」，变为未建造`;
-  if (b.score) {
-    stepText += `，失去 +${b.score} 分（当前 ${playerScore(player)} 分）`;
+  if (bankScore) {
+    stepText += `，已获 +${scorePts} 分保留（当前 ${playerScore(player)} 分，可再次建造得分）`;
+  } else if (scorePts > 0) {
+    stepText += `，失去 +${scorePts} 分（当前 ${playerScore(player)} 分）`;
   }
   pushLog(game, stepText);
 
@@ -4930,6 +5021,9 @@ function useCaravan(game, player, _payload) {
 
 function giveSpecialDrawToPlayer(game, player, card) {
   if (deckKindOfTile(card) === 'building') {
+    if (grantInstantScoreBuilding(game, player, card)) {
+      return 'building-instant';
+    }
     const neu = {
         ...card,
       faceDown: false,
@@ -5071,6 +5165,10 @@ function actRedrawPick(game, player, payload) {
     pushToDiscard(game, 'special', dc);
   }
   const discardText = discardLabel(discardCards);
+  const keepDesc =
+    kind === 'building-instant'
+      ? `「${keep.label || '?'}」即时效果`
+      : `${kind === 'building' ? '建筑' : '功能'}「${keep.label || '?'}」`;
 
   if (pending.redrawCardId) {
     const redrawIdx = player.funcCards.findIndex(
@@ -5084,9 +5182,7 @@ function actRedrawPick(game, player, payload) {
     returnFuncToDiscard(game, redrawCard);
     pushLog(
       game,
-      `${player.name} 重抽：保留${kind === 'building' ? '建筑' : '功能'}「${
-        keep.label || '?'
-      }」，弃置${discardText}`
+      `${player.name} 重抽：保留${keepDesc}，弃置${discardText}`
     );
     pushLog(game, `${player.name} 发动功能「${redrawCard.label}」`);
     pushPlayReveal(game, {
@@ -5104,22 +5200,20 @@ function actRedrawPick(game, player, payload) {
   } else if (source === 'buyFunc') {
     pushLog(
       game,
-      `${player.name} 购买功能卡：保留${kind === 'building' ? '建筑' : '功能'}「${
-        keep.label || '?'
-      }」，弃置${discardText}`
+      `${player.name} 购买功能卡：保留${keepDesc}，弃置${discardText}`
     );
-    pushPlayReveal(game, {
-      kind: 'step',
-      actorId: player.id,
-      actorName: player.name,
-      stepText: pickActionLogText(game, logLen),
-    });
+    if (kind !== 'building-instant') {
+      pushPlayReveal(game, {
+        kind: 'step',
+        actorId: player.id,
+        actorName: player.name,
+        stepText: pickActionLogText(game, logLen),
+      });
+    }
   } else {
     pushLog(
       game,
-      `${player.name} 抽牌：保留${kind === 'building' ? '建筑' : '功能'}「${
-        keep.label || '?'
-      }」，弃置${discardText}`
+      `${player.name} 抽牌：保留${keepDesc}，弃置${discardText}`
     );
   }
 
@@ -5355,7 +5449,7 @@ function publicGameState(game, viewerId) {
       game.phase === 'settle' ? Number(game.settleAnimUntil) || 0 : 0,
     settleAnimPending: game.phase === 'settle',
     wishWellPending:
-      game.phase === 'wish_well'
+      game.phase === 'wish_well' || game.phase === 'settle_act'
         ? playersNeedingWishWell(game).map((p) => ({
             id: p.id,
             name: p.name,
@@ -5377,6 +5471,19 @@ function publicGameState(game, viewerId) {
               build: Boolean(p.pendingDiscardBuild),
               res: Boolean(p.pendingDiscardRes),
             }))
+        : [],
+    prisonerDiscardPending:
+      game.phase === 'event_discard'
+        ? Object.entries(game.pendingPrisonerDiscards || {})
+            .filter(([, n]) => (Number(n) || 0) > 0)
+            .map(([id, n]) => {
+              const p = playerById(game, id);
+              return {
+                id,
+                name: (p && p.name) || '?',
+                count: Number(n) || 0,
+              };
+            })
         : [],
     barrenMarkerNumber:
       game.barrenMarkerNumber != null ? Number(game.barrenMarkerNumber) : null,
@@ -5417,14 +5524,37 @@ function publicGameState(game, viewerId) {
         }
       : null,
     roundProduceBegun: Boolean(game.roundProduceBegun),
-    pendingEventChoice: game.pendingEventChoice
-      ? {
+    pendingEventChoice: (() => {
+      const welfare =
+        game.pendingWelfareMinimumChoices &&
+        viewerId &&
+        game.pendingWelfareMinimumChoices[viewerId];
+      if (welfare) {
+        return {
+          ...welfare,
+          playerId: viewerId,
+          forMe: true,
+        };
+      }
+      if (game.pendingEventChoice) {
+        return {
           ...game.pendingEventChoice,
           forMe:
             Boolean(viewerId) &&
             game.pendingEventChoice.playerId === viewerId,
-        }
-      : null,
+        };
+      }
+      return null;
+    })(),
+    welfareMinimumPending: Object.entries(
+      game.pendingWelfareMinimumChoices || {}
+    ).map(([id, ch]) => ({
+      id,
+      name: (playerById(game, id) || {}).name || '?',
+      count: ch.count || 2,
+      label: ch.label,
+      forMe: Boolean(viewerId) && viewerId === id,
+    })),
     pendingTrade: game.pendingTrade
       ? (() => {
           const from = playerById(game, game.pendingTrade.fromId);
@@ -5576,16 +5706,20 @@ function canPlayerAct(game, player) {
   ) {
     return true;
   }
-  if (
-    game.phase === 'settle_act' &&
-    (player.pendingDiscardFunc ||
-      player.pendingDiscardBuild ||
-      player.pendingDiscardRes)
-  ) {
-    return true;
+  if (game.phase === 'settle_act') {
+    return playerNeedsSettleAct(player, game.settleActScope || 'all');
   }
   if (game.phase === 'wish_well') {
     return (player.pendingWishWellBonus || 0) > 0;
+  }
+  if (game.phase === 'event_discard') {
+    return (Number((game.pendingPrisonerDiscards || {})[player.id]) || 0) > 0;
+  }
+  if (
+    game.pendingWelfareMinimumChoices &&
+    game.pendingWelfareMinimumChoices[player.id]
+  ) {
+    return true;
   }
   if (hasPendingPlacement(player)) return true;
   if (game.phase === 'init_roll') {
@@ -5621,20 +5755,17 @@ function getActingPlayerIds(game) {
     return [];
   }
   if (game.phase === 'settle_act') {
-    const discardPending = alivePlayers(game)
-    .filter(
-      (p) =>
-        p.pendingDiscardFunc ||
-        p.pendingDiscardBuild ||
+    return alivePlayers(game)
+      .filter(
+        (p) =>
+          p.pendingDiscardFunc ||
+          p.pendingDiscardBuild ||
           p.pendingDiscardRes
-    )
-    .map((p) => p.id);
-    if (discardPending.length) {
-      if (game.currentPlayerId && discardPending.includes(game.currentPlayerId)) {
-      return [game.currentPlayerId];
-    }
-      return [discardPending[0]];
-    }
+      )
+      .map((p) => p.id);
+  }
+  if (game.phase === 'wish_well') {
+    return playersNeedingWishWell(game).map((p) => p.id);
   }
   if (game.phase === 'build') {
     const placementPending = alivePlayers(game)
@@ -5647,8 +5778,8 @@ function getActingPlayerIds(game) {
       return [placementPending[0]];
     }
   }
-  if (game.phase === 'wish_well') {
-    return playersNeedingWishWell(game).map((p) => p.id);
+  if (Object.keys(game.pendingWelfareMinimumChoices || {}).length > 0) {
+    return Object.keys(game.pendingWelfareMinimumChoices);
   }
   if (game.pendingRedrawChoice && game.pendingRedrawChoice.playerId) {
     return [game.pendingRedrawChoice.playerId];
@@ -5661,7 +5792,9 @@ function getActingPlayerIds(game) {
     return cur && cur.playerId ? [cur.playerId] : [];
   }
   if (game.phase === 'event_discard') {
-    return game.currentPlayerId ? [game.currentPlayerId] : [];
+    return Object.keys(game.pendingPrisonerDiscards || {}).filter(
+      (id) => (Number(game.pendingPrisonerDiscards[id]) || 0) > 0
+    );
   }
   if (
     ['produce', 'settle_act', 'build', 'event_mercenary', 'event_discard'].includes(
@@ -5677,6 +5810,17 @@ function getActingPlayerIds(game) {
 function forceTimeout(game, playerId) {
   const p = playerById(game, playerId);
   if (!p || game.over) return { ok: false, error: '无法超时处理' };
+
+  if (game.pendingWelfareMinimumChoices && game.pendingWelfareMinimumChoices[playerId]) {
+    const count =
+      (game.pendingWelfareMinimumChoices[playerId] &&
+        game.pendingWelfareMinimumChoices[playerId].count) ||
+      2;
+    return applyAction(game, playerId, {
+      type: 'eventPickTwoResources',
+      payload: { amounts: { wood: count } },
+    });
+  }
 
   if (
     game.phase === 'settle_act' &&
@@ -5818,23 +5962,26 @@ function forceTimeout(game, playerId) {
       for (const area of ['resource', 'special']) {
         const workers = (game.board[area] && game.board[area].workers) || {};
         for (let num = 1; num <= 6; num++) {
-          if (area === exArea && num === exNum) continue;
           const w = workers[num] || {};
-          if ((w[playerId] || 0) > 0) {
-            const ab = game.board[area];
-            const physical = Number(w[playerId]) || 0;
-            const boosted = Math.min(
-              Number(
-                (ab.boosts && ab.boosts[num] && ab.boosts[num][playerId]) || 0
-              ),
-              physical
-            );
-            const enhanced = boosted > 0 && physical - boosted <= 0;
-            return applyAction(game, playerId, {
-              type: 'eventRecallDie',
-              payload: { area, number: num, enhanced },
-            });
+          const own = Number(w[playerId]) || 0;
+          if (own <= 0) continue;
+          if (area === exArea && num === exNum) {
+            const justPlaced = Math.max(0, Number(ch.justPlacedCount) || 0);
+            if (own <= justPlaced) continue;
           }
+          const ab = game.board[area];
+          const physical = own;
+          const boosted = Math.min(
+            Number(
+              (ab.boosts && ab.boosts[num] && ab.boosts[num][playerId]) || 0
+            ),
+            physical
+          );
+          const enhanced = boosted > 0 && physical - boosted <= 0;
+          return applyAction(game, playerId, {
+            type: 'eventRecallDie',
+            payload: { area, number: num, enhanced },
+          });
         }
       }
     }
@@ -5908,7 +6055,6 @@ function forceTimeout(game, playerId) {
 
   if (
     game.phase === 'event_discard' &&
-    game.currentPlayerId === playerId &&
     (Number((game.pendingPrisonerDiscards || {})[playerId]) || 0) > 0
   ) {
     const pick = RESOURCES.find((r) => (p.resources[r] || 0) > 0);
@@ -6017,20 +6163,28 @@ function onPlayerQuit(game, playerId) {
     return;
   }
 
+  if (game.phase === 'settle_act') {
+    p.pendingDiscardRes = false;
+    p.pendingDiscardFunc = false;
+    p.pendingDiscardBuild = null;
+    p.pendingWishWellBonus = 0;
+    tryFinishConcurrentDiscardPhase(game);
+  } else if (game.phase === 'wish_well') {
+    p.pendingWishWellBonus = 0;
+    tryFinishWishWellPhase(game);
+  }
+
+  if (game.pendingWelfareMinimumChoices && game.pendingWelfareMinimumChoices[playerId]) {
+    delete game.pendingWelfareMinimumChoices[playerId];
+    tryFinishWelfareMinimumConcurrent(game);
+  }
+
   if (game.currentPlayerId === playerId) {
     if (game.phase === 'produce') {
       advanceToNextProducer(game, false);
       if (game.phase === 'produce' && game.currentPlayerId) {
         prepareProduceTurn(game);
       }
-    } else if (game.phase === 'settle_act') {
-      game.settleActPassed[playerId] = true;
-      const next = nextAlive(game, playerId);
-      game.currentPlayerId = next ? next.id : null;
-      ensureSettleActPlayer(game);
-    } else if (game.phase === 'wish_well') {
-      p.pendingWishWellBonus = 0;
-      tryFinishWishWellPhase(game);
     } else if (game.phase === 'build') {
       game.buildPassed[playerId] = true;
       afterBuildAction(game, playerId, false);

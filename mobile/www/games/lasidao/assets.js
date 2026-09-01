@@ -83,7 +83,6 @@ window.LasidaoAssets = (function () {
     exile: 'gongnengka_quzhu.png',
     redraw: 'gongnengka_chongchou.png',
     banditRaid: 'gongnengka_qiangdaolaixi.png',
-    expand: 'gongnengka_kuorong.png',
     freeExpand: 'gongnengka_mianfeikuojian.png',
     welfareHouse: 'gongnengka_fulifang.png',
     caravan: 'gongnengka_shangduilailin.png',

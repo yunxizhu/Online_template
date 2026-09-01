@@ -122,7 +122,7 @@ function buildFunctionDeckRaw() {
   for (let i = 0; i < 4; i++) cards.push(makeFunc('redraw')); // 重抽
   for (let i = 0; i < 4; i++) cards.push(makeFunc('banditRaid')); // 强盗来袭
   for (let i = 0; i < 4; i++) cards.push(makeFunc('robbery')); // 抢劫
-  for (let i = 0; i < 2; i++) cards.push(makeFunc('illegalBuild')); // 拆迁
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('illegalBuild')); // 拆迁
 //  for (let i = 0; i < 2; i++) cards.push(makeFunc('freeExpand')); // 免费扩建
 //  for (let i = 0; i < 2; i++) cards.push(makeFunc('welfareHouse')); // 福利房
   for (let i = 0; i < 4; i++) cards.push(makeFunc('caravan')); // 商队来临
@@ -390,7 +390,7 @@ const ENVIRONMENT_CATALOG = [
     label: '召回',
     trigger: 'dispatch',
     count: 1,
-    desc: '派遣时：将场上除本次派遣目标格外、你自己的 1 枚骰子收回到手中；若没有其它可召回的骰子则跳过',
+    desc: '派遣时：将场上你自己的 1 枚骰子收回到手中（不可召回本次刚放置的骰子）；若没有可召回的骰子则跳过',
   },
   {
     envType: 'weiQiRescueZhao',
