@@ -223,15 +223,23 @@
   --las-panel-dice-pad-y: calc(0.14 * var(--las-rem));
   --las-panel-dice-head-h: calc(0.88 * var(--las-rem));
   --las-panel-dice-stage-gap: calc(0.06 * var(--las-rem));
-  --las-panel-dice-stage-h: calc(1.92 * var(--las-rem));
-  --las-panel-dice-actions-h: calc(
-    1.92 * var(--las-rem) * var(--las-dice-btn-scale)
-  );
-  --las-panel-dice-total-h: calc(
+  --las-panel-dice-stage-h: calc(2.24 * var(--las-rem));
+  --las-panel-dice-full-h: calc(
     var(--las-panel-dice-pad-y) * 2 + var(--las-panel-dice-head-h) +
       var(--las-panel-dice-stage-gap) + var(--las-panel-dice-stage-h)
   );
+  --las-panel-build-btn-h: calc(var(--las-panel-dice-full-h) * 2 / 3);
+  --las-panel-dice-actions-h: calc(
+    var(--las-panel-dice-stage-h) * var(--las-dice-btn-scale)
+  );
+  --las-panel-dice-total-h: var(--las-panel-dice-full-h);
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.las-player-grid:has(.las-pcell-dice.is-build-actions) {
+  --las-panel-dice-total-h: calc(
+    var(--las-panel-dice-pad-y) * 2 + var(--las-panel-build-btn-h)
+  );
 }
 
 .las-pcell-info {
@@ -586,8 +594,8 @@
   gap: 0;
   padding: 0;
   overflow: hidden;
-  --las-panel-die: calc(1.12 * var(--las-rem));
-  --las-panel-die-boosted: calc(1.48 * var(--las-rem));
+  --las-panel-die: calc(1.28 * var(--las-rem));
+  --las-panel-die-boosted: calc(1.68 * var(--las-rem));
   --las-panel-dice-pad-x: calc(0.32 * var(--las-rem));
   height: var(--las-panel-dice-total-h);
   min-height: var(--las-panel-dice-total-h);
@@ -700,8 +708,9 @@
 .las-pcell-dice .las-dice-wrap .las-dice-stage {
   grid-row: 2;
   grid-column: 1;
-  align-self: center;
-  justify-self: start;
+  align-self: stretch;
+  justify-self: stretch;
+  width: 100%;
   min-width: 0;
 }
 
@@ -710,6 +719,8 @@
   grid-column: 2;
   align-self: center;
   justify-self: end;
+  flex-wrap: nowrap;
+  gap: calc(0.28 * var(--las-rem));
 }
 
 #las-produce-actions[hidden] {
@@ -720,9 +731,6 @@
 
 /* 建造回合：骰子区仅保留居中的确认/跳过 */
 .las-pcell-dice.is-build-actions {
-  --las-panel-dice-total-h: calc(
-    var(--las-panel-dice-pad-y) * 2 + var(--las-panel-dice-actions-h)
-  );
   height: var(--las-panel-dice-total-h);
   min-height: var(--las-panel-dice-total-h);
   max-height: var(--las-panel-dice-total-h);
@@ -755,7 +763,24 @@
   align-self: center;
   justify-self: center;
   justify-content: center;
+  flex-direction: row-reverse;
+  gap: calc(0.42 * var(--las-rem));
   width: 100%;
+  min-height: var(--las-panel-build-btn-h);
+  padding: 0 calc(0.18 * var(--las-rem));
+  box-sizing: border-box;
+}
+
+.las-pcell-dice.is-build-actions #las-produce-actions > button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: var(--las-panel-build-btn-h);
+  height: var(--las-panel-build-btn-h);
+  font-size: calc(0.98 * var(--las-rem));
+  font-weight: 700;
+  padding: calc(0.18 * var(--las-rem)) calc(0.55 * var(--las-rem));
+  line-height: 1.15;
+  border-radius: calc(8px * var(--las-dice-btn-scale));
 }
 
 .las-pcell-dice .las-dice-head {
@@ -826,7 +851,8 @@
   min-height: var(--las-panel-die);
   max-width: var(--las-panel-die);
   max-height: var(--las-panel-die);
-  font-size: calc(0.68 * var(--las-rem));
+  font-size: calc(0.76 * var(--las-rem));
+  font-weight: 900;
   border-radius: 4px;
   border-width: 1.5px;
   flex: 0 0 var(--las-panel-die);
@@ -843,7 +869,8 @@
   max-width: var(--las-panel-die-boosted);
   max-height: var(--las-panel-die-boosted);
   flex: 0 0 var(--las-panel-die-boosted);
-  font-size: calc(0.82 * var(--las-rem));
+  font-size: calc(0.92 * var(--las-rem));
+  font-weight: 900;
   border-radius: 4px;
   border-width: 2px;
 }
@@ -875,7 +902,8 @@
 }
 
 .las-pcell-dice .las-die-mul {
-  font-size: calc(0.64 * var(--las-rem));
+  font-size: calc(0.72 * var(--las-rem));
+  font-weight: 900;
 }
 
 .las-pcell-dice .las-hint {
@@ -1784,6 +1812,10 @@
 }
 
 .las-slot-pick-player {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(0.28 * var(--las-rem));
   margin: 0 0 calc(0.35 * var(--las-rem));
   font-size: calc(0.88 * var(--las-rem));
   font-weight: 600;
@@ -1836,6 +1868,8 @@
 
 .las-slot-pick-popover button.las-exile-player {
   width: 100%;
+  min-width: 0;
+  justify-content: flex-start;
   padding: calc(0.32 * var(--las-rem)) calc(0.45 * var(--las-rem));
   font-size: calc(0.88 * var(--las-rem));
 }
@@ -1954,12 +1988,13 @@
   border-radius: 6px;
   overflow: hidden;
   container-type: size;
+  --las-slot-die-scale: 1;
 }
 
 .las-slot-overlay.is-dispatch-preview {
-  outline: 2px dashed rgba(232, 212, 139, 0.92);
+  outline: 2px dashed rgba(232, 212, 139, 0.96);
   outline-offset: -2px;
-  background: rgba(232, 212, 139, 0.12);
+  background: rgba(232, 212, 139, 0.2);
 }
 
 .las-slot-num-label {
@@ -1985,7 +2020,7 @@
 }
 
 .las-slot-overlay.is-dispatch-preview .las-slot-num-label {
-  opacity: 0.42;
+  opacity: 0.58;
 }
 
 .las-slot-strength-preview {
@@ -2014,7 +2049,7 @@
   bottom: auto;
   top: auto;
   width: fit-content;
-  max-width: calc(100% - calc(0.24 * var(--las-rem)));
+  max-width: 100%;
   min-width: 0;
   display: flex;
   flex-direction: row;
@@ -2022,7 +2057,7 @@
   align-items: center;
   justify-content: center;
   align-content: center;
-  gap: calc(0.36 * var(--las-rem));
+  gap: calc(0.36 * var(--las-rem) * var(--las-slot-die-scale, 1));
   z-index: 2;
   pointer-events: none;
   overflow: visible;
@@ -2036,7 +2071,7 @@
   top: 50%;
   transform: translate(-50%, -50%);
   width: fit-content;
-  max-width: calc(100% - calc(0.16 * var(--las-rem)));
+  max-width: 100%;
   min-width: 0;
   display: flex;
   flex-direction: row;
@@ -2044,7 +2079,7 @@
   align-items: center;
   justify-content: center;
   align-content: center;
-  gap: calc(0.22 * var(--las-rem));
+  gap: calc(0.22 * var(--las-rem) * var(--las-slot-die-scale, 1));
   z-index: 2;
   pointer-events: none;
   overflow: visible;
@@ -2078,72 +2113,79 @@
 }
 
 .las-slot-overlay .las-worker-row.is-compact {
-  gap: calc(0.22 * var(--las-rem));
-  padding: calc(0.1 * var(--las-rem)) calc(0.2 * var(--las-rem));
-  border-radius: 10px;
+  gap: calc(0.22 * var(--las-rem) * var(--las-slot-die-scale, 1));
+  padding:
+    calc(0.1 * var(--las-rem) * var(--las-slot-die-scale, 1))
+    calc(0.2 * var(--las-rem) * var(--las-slot-die-scale, 1));
+  border-radius: calc(10px * var(--las-slot-die-scale, 1));
   background: rgba(10, 14, 18, 0.72);
   backdrop-filter: blur(2px);
   flex: 0 0 auto;
 }
 
 .las-slot-overlay .las-worker-row.is-dispatch-preview-row {
-  opacity: 0.52;
-  background: rgba(10, 14, 18, 0.28);
-  border: 1px dashed rgba(232, 212, 139, 0.62);
-  box-shadow: 0 0 calc(0.35 * var(--las-rem)) rgba(232, 212, 139, 0.18);
+  opacity: 0.88;
+  background: rgba(10, 14, 18, 0.42);
+  border: 1px dashed rgba(232, 212, 139, 0.82);
+  box-shadow: 0 0 calc(0.35 * var(--las-rem)) rgba(232, 212, 139, 0.28);
 }
 
 .las-slot-overlay .las-worker-row.is-dispatch-preview-row .las-die {
   border-style: dashed;
+  opacity: 1;
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.16),
-    0 2px 0 rgba(0, 0, 0, 0.2),
-    0 4px 10px rgba(0, 0, 0, 0.28);
+    0 0 0 1px rgba(255, 255, 255, 0.28),
+    0 2px 0 rgba(0, 0, 0, 0.28),
+    0 4px 10px rgba(0, 0, 0, 0.38);
 }
 
 .las-slot-overlay .las-worker-row.is-dispatch-preview-row .las-worker-mul {
-  color: rgba(232, 212, 139, 0.72);
-  text-shadow: none;
+  color: rgba(255, 224, 138, 0.96);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
 }
 
 .las-slot-overlay .las-worker-mul {
-  font-size: calc(1.9 * var(--las-rem));
+  font-size: calc(1.9 * var(--las-rem) * var(--las-slot-die-scale, 1));
 }
 
 .las-personal-build-num .las-die.is-mini {
-  width: calc(1.5 * var(--las-rem));
-  height: calc(1.5 * var(--las-rem));
-  font-size: calc(0.86 * var(--las-rem));
-  border-radius: 3px;
-  border-width: 1.5px;
+  width: calc(1.5 * var(--las-rem) * var(--las-slot-die-scale, 1));
+  height: calc(1.5 * var(--las-rem) * var(--las-slot-die-scale, 1));
+  font-size: calc(0.86 * var(--las-rem) * var(--las-slot-die-scale, 1));
+  border-radius: calc(3px * var(--las-slot-die-scale, 1));
+  border-width: calc(1.5px * var(--las-slot-die-scale, 1));
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.45);
   flex: 0 0 auto;
 }
 
 .las-slot-overlay .las-die.is-mini {
-  width: calc(2.2 * var(--las-rem));
-  height: calc(2.2 * var(--las-rem));
-  font-size: calc(1.26 * var(--las-rem));
-  border-radius: 5px;
-  border-width: 2px;
+  width: calc(2.2 * var(--las-rem) * var(--las-slot-die-scale, 1));
+  height: calc(2.2 * var(--las-rem) * var(--las-slot-die-scale, 1));
+  font-size: calc(1.26 * var(--las-rem) * var(--las-slot-die-scale, 1));
+  border-radius: calc(5px * var(--las-slot-die-scale, 1));
+  border-width: calc(2px * var(--las-slot-die-scale, 1));
   box-shadow: 0 2px 0 rgba(0, 0, 0, 0.35), 0 4px 12px rgba(0, 0, 0, 0.45);
   flex: 0 0 auto;
 }
 
 .las-personal-build-num .las-die.is-mini.is-boosted {
-  width: calc(2.8 * var(--las-rem));
-  height: calc(2.8 * var(--las-rem));
-  font-size: calc(1.64 * var(--las-rem));
-  border-radius: 4px;
-  border-width: 2px;
+  width: calc(2.8 * var(--las-rem) * var(--las-slot-die-scale, 1));
+  height: calc(2.8 * var(--las-rem) * var(--las-slot-die-scale, 1));
+  font-size: calc(1.64 * var(--las-rem) * var(--las-slot-die-scale, 1));
+  border-radius: calc(4px * var(--las-slot-die-scale, 1));
+  border-width: calc(2px * var(--las-slot-die-scale, 1));
 }
 
 .las-slot-overlay .las-die.is-mini.is-boosted {
-  width: calc(3.8 * var(--las-rem));
-  height: calc(3.8 * var(--las-rem));
-  font-size: calc(2.2 * var(--las-rem));
-  border-radius: 7px;
-  border-width: 2.5px;
+  width: calc(3.8 * var(--las-rem) * var(--las-slot-die-scale, 1));
+  height: calc(3.8 * var(--las-rem) * var(--las-slot-die-scale, 1));
+  font-size: calc(2.2 * var(--las-rem) * var(--las-slot-die-scale, 1));
+  border-radius: calc(7px * var(--las-slot-die-scale, 1));
+  border-width: calc(2.5px * var(--las-slot-die-scale, 1));
+}
+
+.las-personal-build-num .las-worker-mul {
+  font-size: calc(1.15 * var(--las-rem) * var(--las-slot-die-scale, 1));
 }
 
 .las-slot-body {
@@ -2916,7 +2958,7 @@
   border-radius: 8px;
   border: 2px solid #6a7880;
   background: linear-gradient(145deg, #3a474f, #243038);
-  font-weight: 700;
+  font-weight: 900;
   font-size: calc(1.25 * var(--las-rem));
   color: #f2f5f7;
   cursor: default;
@@ -3098,6 +3140,8 @@
   color: #e8d48b;
   font-weight: 800;
   overflow: hidden;
+  container-type: size;
+  --las-slot-die-scale: 1;
 }
 
 .las-personal-build-num .las-worker-dice {
@@ -3290,7 +3334,7 @@
 .las-die-stack .las-die-mul {
   color: #e8d48b;
   font-size: calc(1.15 * var(--las-rem));
-  font-weight: 800;
+  font-weight: 900;
   line-height: 1;
   flex: 0 0 auto;
   user-select: none;
@@ -3302,6 +3346,7 @@
   height: calc(2.6 * var(--las-rem));
   border-radius: 8px;
   font-size: calc(1.25 * var(--las-rem));
+  font-weight: 900;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3311,7 +3356,7 @@
 .las-die-group .las-die-mul {
   color: #e8d48b;
   font-size: calc(1.15 * var(--las-rem));
-  font-weight: 800;
+  font-weight: 900;
   line-height: 1;
   flex: 0 0 auto;
   user-select: none;
@@ -3807,6 +3852,32 @@
 .las-robbery-dialog {
   max-width: 520px;
 }
+.las-illegal-build-dialog {
+  max-width: min(92vw, 720px);
+  width: min(92vw, 720px);
+}
+.las-illegal-build-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(0.55 * var(--las-rem));
+  justify-content: center;
+  width: 100%;
+}
+/* 弹窗内建筑卡需固定尺寸，否则 has-art 会塌成细线 */
+.las-illegal-build-cards .las-pboard-card,
+.las-illegal-build-cards .las-card {
+  flex: 0 0 auto;
+  width: var(--las-hand-card-w);
+  min-width: var(--las-hand-card-w);
+  height: var(--las-hand-card-h);
+  min-height: var(--las-hand-card-h);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.las-illegal-build-cards .las-pboard-card.is-selected,
+.las-illegal-build-cards .las-card.is-selected {
+  transform: translateY(-4px);
+  box-shadow: 0 0 0 2px #c9a227, 0 4px 10px rgba(201, 162, 39, 0.35);
+}
 .las-redraw-modal {
   --las-redraw-card-w: calc(var(--las-hand-card-w) * 2);
   --las-redraw-card-h: calc(var(--las-hand-card-h) * 2);
@@ -3888,6 +3959,32 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
 }
 .las-robbery-players button {
   min-width: 100px;
+}
+.las-robbery-players button.las-exile-player {
+  justify-content: flex-start;
+  gap: calc(0.3 * var(--las-rem));
+  min-width: 120px;
+}
+.las-robbery-players .las-exile-player-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.las-robbery-players .las-robbery-player-res {
+  flex: 0 0 auto;
+  min-width: calc(1.35 * var(--las-rem));
+  padding: calc(0.06 * var(--las-rem)) calc(0.28 * var(--las-rem));
+  border-radius: 999px;
+  font-size: calc(0.72 * var(--las-rem));
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: inherit;
 }
 .las-robbery-players button.is-disabled,
 .las-robbery-players button:disabled {
@@ -4293,7 +4390,7 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
   justify-content: center;
   width: 100%;
 }
-.las-exile-players button.las-exile-player {
+button.las-exile-player {
   min-width: 90px;
   display: inline-flex;
   align-items: center;
@@ -4306,41 +4403,41 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
   cursor: pointer;
   transition: transform 0.12s, box-shadow 0.12s, filter 0.12s;
 }
-.las-exile-players button.las-exile-player:hover {
+button.las-exile-player:hover:not(:disabled) {
   transform: translateY(-1px);
   filter: brightness(1.06);
 }
-.las-exile-players button.las-exile-player.color-red {
+button.las-exile-player.color-red {
   border-color: #f5a29a;
   background: linear-gradient(145deg, rgba(232, 90, 79, 0.42), rgba(183, 28, 28, 0.28));
   color: #fff8f6;
   box-shadow: 0 2px 8px rgba(183, 28, 28, 0.28);
 }
-.las-exile-players button.las-exile-player.color-yellow {
+button.las-exile-player.color-yellow {
   border-color: #f5e29a;
   background: linear-gradient(145deg, rgba(240, 210, 74, 0.42), rgba(201, 162, 39, 0.28));
   color: #2a2208;
   box-shadow: 0 2px 8px rgba(201, 162, 39, 0.28);
 }
-.las-exile-players button.las-exile-player.color-blue {
+button.las-exile-player.color-blue {
   border-color: #9ec5f5;
   background: linear-gradient(145deg, rgba(79, 143, 232, 0.42), rgba(28, 79, 183, 0.28));
   color: #f6f9ff;
   box-shadow: 0 2px 8px rgba(28, 79, 183, 0.28);
 }
-.las-exile-players button.las-exile-player.color-green {
+button.las-exile-player.color-green {
   border-color: #9ef5b8;
   background: linear-gradient(145deg, rgba(78, 207, 120, 0.42), rgba(28, 138, 62, 0.28));
   color: #f4fff8;
   box-shadow: 0 2px 8px rgba(28, 138, 62, 0.28);
 }
-.las-exile-players button.las-exile-player.color-pink {
+button.las-exile-player.color-pink {
   border-color: #f5b0d4;
   background: linear-gradient(145deg, rgba(239, 106, 173, 0.42), rgba(194, 24, 91, 0.28));
   color: #fff6fb;
   box-shadow: 0 2px 8px rgba(194, 24, 91, 0.28);
 }
-.las-exile-players button.las-exile-player.color-neutral {
+button.las-exile-player.color-neutral {
   border-color: #9a9a9a;
   background: linear-gradient(145deg, rgba(106, 106, 106, 0.42), rgba(46, 46, 46, 0.28));
   color: #f0f0f0;
@@ -5644,8 +5741,8 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
 }
 
 .las-pboard-slot.is-stack {
-  --stack-step-x: calc(0.42 * var(--las-rem));
-  --stack-step-y: calc(0.48 * var(--las-rem));
+  --stack-step-x: calc(0.08 * var(--las-rem));
+  --stack-step-y: calc(0.1 * var(--las-rem));
   width: calc(
     var(--las-card-w) + (var(--stack-n, 1) - 1) * var(--stack-step-x)
   );
@@ -5706,20 +5803,40 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
   box-shadow: inset 0 0 0 1px rgba(201, 162, 39, 0.45);
 }
 
-.las-pboard-stack-badge {
+.las-pboard-stack-badges {
   position: absolute;
-  top: calc(0.15 * var(--las-rem));
-  right: calc(0.15 * var(--las-rem));
+  top: calc(0.08 * var(--las-rem));
+  right: calc(0.08 * var(--las-rem));
   z-index: 20;
-  font-size: calc(0.68 * var(--las-rem));
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: calc(0.12 * var(--las-rem));
+  pointer-events: none;
+}
+
+.las-pboard-stack-badge {
+  font-size: calc(0.62 * var(--las-rem));
   font-weight: 700;
   line-height: 1;
-  padding: calc(0.12 * var(--las-rem)) calc(0.28 * var(--las-rem));
-  border: 1px solid rgba(80, 60, 30, 0.4);
+  min-width: calc(0.95 * var(--las-rem));
+  padding: calc(0.1 * var(--las-rem)) calc(0.22 * var(--las-rem));
   border-radius: 3px;
-  background: rgba(255, 248, 230, 0.96);
-  color: #4a3a22;
+  text-align: center;
+  box-sizing: border-box;
   pointer-events: none;
+}
+
+.las-pboard-stack-badge.is-built {
+  border: 1px solid rgba(30, 90, 50, 0.45);
+  background: rgba(52, 168, 96, 0.95);
+  color: #f4fff8;
+}
+
+.las-pboard-stack-badge.is-unbuilt {
+  border: 1px solid rgba(60, 70, 78, 0.5);
+  background: rgba(120, 132, 142, 0.95);
+  color: #f2f5f7;
 }
 
 .las-pboard-slot.is-drop {
@@ -6277,7 +6394,21 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
   display: none !important;
 }
 
-.las-modal-vis-toggle[aria-pressed='true'] {
+.las-modal-vis-toggle[aria-pressed='true'],
+.las-modal-vis-toggle.is-blink {
   color: #9ad0ff;
   border-color: #6aa8d8;
+  animation: las-modal-vis-toggle-blink 1s ease-in-out infinite;
+}
+
+@keyframes las-modal-vis-toggle-blink {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(106, 168, 216, 0.35);
+  }
+  50% {
+    opacity: 0.28;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(106, 168, 216, 0.1);
+  }
 }

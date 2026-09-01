@@ -21,6 +21,15 @@
 
 * {
   box-sizing: border-box;
+  /* 隐藏滚动条外观，滚轮/触控滑动仍可用 */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 body {

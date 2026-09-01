@@ -291,6 +291,15 @@ function syncResourceHandPending(player, game) {
     player.pendingDiscardRes = false;
     return;
   }
+  // 个人产出后（许愿井/囚徒弃牌等）至建造前：不因资源超上限强制弃牌
+  if (
+    game &&
+    game.personalProduceApplied &&
+    game.phase !== 'settle_act'
+  ) {
+    player.pendingDiscardRes = false;
+    return;
+  }
   if (player.skipSettleResourceDiscard) {
     player.pendingDiscardRes = false;
     return;
@@ -449,7 +458,14 @@ function advancePostSettlePipeline(game) {
 
   syncAllDiscardPending(game);
 
-  if (anyoneNeedsDiscard(game)) {
+  // 个人产出前：资源/功能/建筑超上限 → 弃牌阶段
+  // 个人产出后：不再因资源超上限回到弃牌阶段（规则：个人产出不检查上限）
+  if (!game.personalProduceApplied) {
+    if (anyoneNeedsDiscard(game)) {
+      beginConcurrentDiscardPhase(game);
+      return;
+    }
+  } else if (anyoneNeedsCardDiscard(game)) {
     beginConcurrentDiscardPhase(game);
     return;
   }
@@ -1354,6 +1370,8 @@ function createGameState(room) {
     caravanPending: false, // 商队来临：本建造回合结束前特殊兑换率
     tempVillagers: 0, // 本轮生产可用的临时村民（生产结束后清零）
     bonusScore: 0, // 事件等额外胜利点
+    /** 同类型建成 3 座后获得的成就 key（拆迁导致不足 3 座时会收回） */
+    earnedStackAchievements: [],
     resources: startRes(),
     score: 0,
     funcCards: [],
@@ -2386,6 +2404,33 @@ function slotPlayerDieCounts(areaBoard, number, targetId) {
   return { physical, normal: physical - enhanced, enhanced };
 }
 
+/** 可召回的骰种类：派遣目标格会扣除刚放置的普通/强化数量 */
+function recallableDieCountsForPending(game, area, number, playerId, pending) {
+  const ab = game.board[area];
+  const counts = slotPlayerDieCounts(ab, number, playerId);
+  const exArea = (pending && pending.excludeArea) || 'resource';
+  const exNum = Number(
+    pending &&
+      (pending.excludeNumber != null ? pending.excludeNumber : pending.number)
+  );
+  if (!(area === exArea && number === exNum)) {
+    return {
+      normal: counts.normal,
+      enhanced: counts.enhanced,
+      total: counts.physical,
+    };
+  }
+  const justPlaced = Math.max(0, Number(pending && pending.justPlacedCount) || 0);
+  const justBoosted = Math.min(
+    justPlaced,
+    Math.max(0, Number(pending && pending.justPlacedEnhanced) || 0)
+  );
+  const justNormal = Math.max(0, justPlaced - justBoosted);
+  const normal = Math.max(0, counts.normal - justNormal);
+  const enhanced = Math.max(0, counts.enhanced - justBoosted);
+  return { normal, enhanced, total: normal + enhanced };
+}
+
 function removeOneDieFromBoardSlot(game, area, number, targetId, dieKind) {
   if (!BOARD_AREAS.includes(area)) {
     return { ok: false, error: '请选择资源/功能/建筑区' };
@@ -2511,18 +2556,37 @@ function actEventRecallDie(game, player, payload) {
   }
   const area = payload && payload.area;
   const number = Number(payload && payload.number);
-  const exArea = pending.excludeArea || 'resource';
-  const exNum = Number(pending.excludeNumber != null ? pending.excludeNumber : pending.number);
-  const justPlaced = Math.max(0, Number(pending.justPlacedCount) || 0);
-  if (area === exArea && number === exNum) {
-    const own =
-      Number(((game.board[area].workers[number] || {})[player.id]) || 0);
-    if (own <= justPlaced) {
-      return { ok: false, error: '不可召回刚放置的骰子' };
-    }
+  if (!BOARD_AREAS.includes(area)) {
+    return { ok: false, error: '请选择资源/功能/建筑区' };
   }
-  const dieKind =
+  if (!Number.isInteger(number) || number < 1 || number > 6) {
+    return { ok: false, error: '数字格无效' };
+  }
+  const recallable = recallableDieCountsForPending(
+    game,
+    area,
+    number,
+    player.id,
+    pending
+  );
+  if (recallable.total <= 0) {
+    return { ok: false, error: '不可召回刚放置的骰子' };
+  }
+  let dieKind =
     payload && typeof payload.enhanced === 'boolean' ? payload.enhanced : undefined;
+  if (dieKind === true) {
+    if (recallable.enhanced < 1) {
+      return { ok: false, error: '该格没有可召回的强化骰' };
+    }
+  } else if (dieKind === false) {
+    if (recallable.normal < 1) {
+      return { ok: false, error: '该格没有可召回的普通骰' };
+    }
+  } else if (recallable.normal > 0 && recallable.enhanced > 0) {
+    return { ok: false, error: '请选择普通骰或强化骰' };
+  } else {
+    dieKind = recallable.enhanced > 0;
+  }
   const recalled = recallOneDieFromSlot(game, player, area, number, dieKind);
   if (!recalled.ok) return recalled;
   pushProduceFx(game, {
@@ -2532,9 +2596,9 @@ function actEventRecallDie(game, player, payload) {
     number,
     face: recalled.face,
     enhanced: recalled.wasEnhanced,
-        });
-        pushLog(
-          game,
+  });
+  pushLog(
+    game,
     `${player.name}「${pending.label}」：从${AREA_LABELS[area]}区 ${number} 号格召回 1 枚骰子` +
       (recalled.wasEnhanced ? '（强化）' : '')
   );
@@ -2655,6 +2719,7 @@ function actEventTeleportTo(game, player, payload) {
     area: toArea,
     number: toNumber,
     count: 1,
+    boostAdd: removed.wasEnhanced ? 1 : 0,
     pushLog,
     syncResourceHandPending,
   });
@@ -2831,6 +2896,7 @@ function actMercenaryPlace(game, player, payload) {
       area,
       number: face,
       count: 1,
+      boostAdd: 0,
       pushLog,
       syncResourceHandPending,
     });
@@ -2901,6 +2967,37 @@ function actEventDiscard(game, player, payload) {
   if (sumRes(player.resources) <= 0) {
     delete game.pendingPrisonerDiscards[player.id];
     pushLog(game, `${player.name} 无资源可弃，跳过囚徒困境弃牌`);
+    ensurePrisonerDiscardPlayer(game);
+    return { ok: true };
+  }
+
+  const need = Math.min(left, sumRes(player.resources));
+  const amounts = payload && payload.amounts;
+  if (amounts && typeof amounts === 'object') {
+    let total = 0;
+    const take = {};
+    for (const r of RESOURCES) {
+      const n = Math.max(0, Math.floor(Number(amounts[r]) || 0));
+      if (n > (player.resources[r] || 0)) {
+        return { ok: false, error: '该资源不足' };
+      }
+      take[r] = n;
+      total += n;
+    }
+    if (total !== need) {
+      return { ok: false, error: `请弃置 ${need} 张资源` };
+    }
+    const parts = [];
+    for (const r of RESOURCES) {
+      if (!take[r]) continue;
+      player.resources[r] -= take[r];
+      parts.push(`${take[r]} ${RESOURCE_LABELS[r]}`);
+    }
+    pushLog(
+      game,
+      `${player.name} 囚徒困境弃置 ${parts.join('、')}`
+    );
+    delete game.pendingPrisonerDiscards[player.id];
     ensurePrisonerDiscardPlayer(game);
     return { ok: true };
   }
@@ -3574,6 +3671,7 @@ function actPlaceDice(game, player, payload) {
     area,
     number: face,
     count,
+    boostAdd,
     pushLog,
     syncResourceHandPending,
   });
@@ -3707,7 +3805,9 @@ function actConstruct(game, player, payload) {
     (b.score ? `（+${b.score} 分）` : '');
   const stackKey = buildingStackKey(b);
   if (countBuiltByStackKey(player, stackKey) === STACK_ACHIEVEMENT_NEED) {
-    stepText += `，获得成就「${stackAchievementLabel(player, stackKey)}」（+${STACK_ACHIEVEMENT_SCORE} 分）`;
+    if (grantStackAchievement(player, stackKey)) {
+      stepText += `，获得成就「${stackAchievementLabel(player, stackKey)}」（+${STACK_ACHIEVEMENT_SCORE} 分）`;
+    }
   }
   pushLog(game, stepText);
   pushPlayReveal(game, {
@@ -3994,6 +4094,22 @@ function countBuiltByStackKey(player, key) {
   ).length;
 }
 
+function ensureEarnedStackAchievements(player) {
+  if (!player) return [];
+  if (!Array.isArray(player.earnedStackAchievements)) {
+    player.earnedStackAchievements = [];
+  }
+  const live = stackAchievementKeys(player);
+  player.earnedStackAchievements = live.slice();
+  return player.earnedStackAchievements;
+}
+
+/** @returns {boolean} 是否为新获得 */
+function grantStackAchievement(player, key) {
+  if (!player || !key) return false;
+  return countBuiltByStackKey(player, key) >= STACK_ACHIEVEMENT_NEED;
+}
+
 function stackAchievementCounts(player) {
   const counts = {};
   for (const b of player.buildings || []) {
@@ -4006,7 +4122,9 @@ function stackAchievementCounts(player) {
 
 function stackAchievementKeys(player) {
   const counts = stackAchievementCounts(player);
-  return Object.keys(counts).filter((k) => counts[k] >= STACK_ACHIEVEMENT_NEED);
+  return Object.keys(counts).filter(
+    (key) => counts[key] >= STACK_ACHIEVEMENT_NEED
+  );
 }
 
 function stackAchievementScore(player) {
@@ -4030,14 +4148,12 @@ function stackAchievementLabel(player, key) {
     const resource = key.split(':')[1];
     if (resource) return produceManagerTitle(resource);
   }
-  const b = (player.buildings || []).find(
-    (x) => x.built && buildingStackKey(x) === key
-  );
+  const b = (player.buildings || []).find((x) => buildingStackKey(x) === key);
   return b ? `${b.label}×3` : key;
 }
 
 function hasCommerceTycoon(player) {
-  return countBuiltByStackKey(player, 'exchange') >= STACK_ACHIEVEMENT_NEED;
+  return stackAchievementKeys(player).includes('exchange');
 }
 
 function commerceTycoonScore(player) {
@@ -4749,19 +4865,24 @@ function actIllegalBuildPick(game, player, payload) {
   const logLen = game.log.length;
 
   const scorePts = b.built ? Math.max(0, Number(b.score) || 0) : 0;
-  const bankScore =
-    scorePts > 0 && b.buildType === 'score2';
-  if (bankScore) {
-    player.bonusScore = (Number(player.bonusScore) || 0) + scorePts;
-  }
+  const stackKey = buildingStackKey(b);
+  const hadStackTitle =
+    stackKey && stackAchievementKeys(player).includes(stackKey);
   revertBuildingToUnbuilt(player, b);
+  ensureEarnedStackAchievements(player);
+  const lostStackTitle =
+    hadStackTitle &&
+    stackKey &&
+    !stackAchievementKeys(player).includes(stackKey);
   let stepText =
     `${player.name} 被 ${pending.actorName} 的「拆迁」拆除「${b.label}」，变为未建造`;
-  if (bankScore) {
-    stepText += `，已获 +${scorePts} 分保留（当前 ${playerScore(player)} 分，可再次建造得分）`;
-  } else if (scorePts > 0) {
-    stepText += `，失去 +${scorePts} 分（当前 ${playerScore(player)} 分）`;
+  if (scorePts > 0) {
+    stepText += `，失去 +${scorePts} 分`;
   }
+  if (lostStackTitle) {
+    stepText += `，失去成就「${stackAchievementLabel(player, stackKey)}」（-${STACK_ACHIEVEMENT_SCORE} 分）`;
+  }
+  stepText += `（当前 ${playerScore(player)} 分）`;
   pushLog(game, stepText);
 
   actor.funcCards.splice(cardIdx, 1);
@@ -5967,29 +6088,23 @@ function forceTimeout(game, playerId) {
     }
     if (need === 'recallDie') {
       const ch = game.pendingEventChoice;
-      const exArea = ch.excludeArea || 'resource';
-      const exNum = Number(
-        ch.excludeNumber != null ? ch.excludeNumber : ch.number
-      );
       for (const area of ['resource', 'special']) {
         const workers = (game.board[area] && game.board[area].workers) || {};
         for (let num = 1; num <= 6; num++) {
-          const w = workers[num] || {};
-          const own = Number(w[playerId]) || 0;
-          if (own <= 0) continue;
-          if (area === exArea && num === exNum) {
-            const justPlaced = Math.max(0, Number(ch.justPlacedCount) || 0);
-            if (own <= justPlaced) continue;
-          }
-          const ab = game.board[area];
-          const physical = own;
-          const boosted = Math.min(
-            Number(
-              (ab.boosts && ab.boosts[num] && ab.boosts[num][playerId]) || 0
-            ),
-            physical
+          const recallable = recallableDieCountsForPending(
+            game,
+            area,
+            num,
+            playerId,
+            ch
           );
-          const enhanced = boosted > 0 && physical - boosted <= 0;
+          if (recallable.total <= 0) continue;
+          const enhanced =
+            recallable.enhanced > 0 && recallable.normal <= 0
+              ? true
+              : recallable.normal > 0 && recallable.enhanced <= 0
+                ? false
+                : recallable.enhanced > 0;
           return applyAction(game, playerId, {
             type: 'eventRecallDie',
             payload: { area, number: num, enhanced },

@@ -76,9 +76,8 @@
               <div id="las-dice-groups" class="las-dice-groups" hidden></div>
             </div>
             <div class="row las-actions las-side-actions" id="las-produce-actions">
-              <button id="btn-las-confirm" type="button" hidden data-i18n="lasidao.confirmDispatch">确认派遣</button>
-              <button id="btn-las-remote-dice-post" type="button" class="secondary" hidden data-i18n="lasidao.useRemoteDice">使用遥控骰子</button>
               <button id="btn-las-void" type="button" class="secondary" data-i18n="lasidao.produceSkip">跳过</button>
+              <button id="btn-las-confirm" type="button" hidden data-i18n="lasidao.confirmDispatch">确认派遣</button>
             </div>
           </div>
           </div>
@@ -265,14 +264,16 @@
     </div>
   </div>
 
-  <div id="las-illegal-build-modal" class="modal las-robbery-modal" hidden>
+  <div id="las-illegal-build-modal" class="modal las-robbery-modal las-illegal-build-modal" hidden>
     <div class="modal-backdrop" id="las-illegal-build-backdrop"></div>
-    <div class="modal-dialog panel las-robbery-dialog" role="dialog" aria-modal="true" aria-labelledby="las-illegal-build-title">
+    <div class="modal-dialog panel las-robbery-dialog las-illegal-build-dialog" role="dialog" aria-modal="true" aria-labelledby="las-illegal-build-title">
       <div class="las-robbery-head">
         <h3 id="las-illegal-build-title"></h3>
+        <p id="las-illegal-build-hint" class="muted las-hint" hidden></p>
       </div>
       <div id="las-illegal-build-body" class="las-robbery-body"></div>
       <div class="las-robbery-foot row las-actions">
+        <button id="btn-las-illegal-build-confirm" type="button" data-i18n="lasidao.illegalBuildConfirm" hidden disabled>确认拆迁</button>
         <button id="btn-las-illegal-build-cancel" type="button" class="secondary" data-i18n="lasidao.cancel">取消</button>
       </div>
     </div>
@@ -291,9 +292,9 @@
           <span id="las-redraw-top-label"></span>
         </div>
       </div>
-      <div class="las-redraw-foot row las-actions">
-        <button id="btn-las-redraw-confirm" type="button" data-i18n="lasidao.redrawConfirmDraw">确认抽取</button>
-        <button id="btn-las-redraw-cancel" type="button" class="secondary" data-i18n="lasidao.cancel">取消</button>
+      <div class="las-redraw-foot row las-actions" hidden>
+        <button id="btn-las-redraw-confirm" type="button" data-i18n="lasidao.redrawConfirmDraw" hidden>确认抽取</button>
+        <button id="btn-las-redraw-cancel" type="button" class="secondary" data-i18n="lasidao.cancel" hidden>取消</button>
       </div>
     </div>
   </div>
@@ -333,6 +334,7 @@
     <div class="modal-backdrop" id="las-settle-discard-backdrop"></div>
     <div class="modal-dialog panel las-harvest-dialog las-settle-discard-dialog" role="dialog" aria-modal="true" aria-labelledby="las-settle-discard-title">
       <div class="las-harvest-head">
+        <p id="las-settle-discard-source" class="las-harvest-source muted las-hint" hidden></p>
         <h3 id="las-settle-discard-title"></h3>
         <p id="las-settle-discard-total" class="muted las-hint"></p>
         <p id="las-settle-discard-hint" class="muted las-hint"></p>

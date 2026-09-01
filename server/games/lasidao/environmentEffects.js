@@ -429,6 +429,10 @@ function applyEnvironmentOnDispatch(game, ctx) {
 
     case 'recall': {
       const justPlaced = Math.max(1, Number(ctx.count) || 1);
+      const justBoosted = Math.min(
+        justPlaced,
+        Math.max(0, Number(ctx.boostAdd) || 0)
+      );
       const recallable = countRecallableOwnDice(
         game,
         player.id,
@@ -454,6 +458,7 @@ function applyEnvironmentOnDispatch(game, ctx) {
         excludeArea: 'resource',
         excludeNumber: num,
         justPlacedCount: justPlaced,
+        justPlacedEnhanced: justBoosted,
       };
     }
 

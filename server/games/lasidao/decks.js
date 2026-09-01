@@ -390,7 +390,7 @@ const ENVIRONMENT_CATALOG = [
     label: '召回',
     trigger: 'dispatch',
     count: 1,
-    desc: '派遣时：将场上你自己的 1 枚骰子收回到手中（不可召回本次刚放置的骰子）；若没有可召回的骰子则跳过',
+    desc: '派遣时：将场上你自己的 1 枚骰子收回到手中（不可召回本次刚放置的骰子；本格有旧骰时可召回旧骰）；若没有可召回的则跳过',
   },
   {
     envType: 'weiQiRescueZhao',

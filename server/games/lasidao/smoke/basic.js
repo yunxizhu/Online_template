@@ -1855,7 +1855,7 @@ console.log('— demolition unbuilds score building —');
     }),
     '目标选择建筑'
   );
-  assert.strictEqual(scoreOf(victim), 2, '宫殿拆迁后已获分数应保留');
+  assert.strictEqual(scoreOf(victim), 0, '宫殿拆迁后应失去已获分数');
   const pal = victim.buildings.find((b) => b.id === 'pal_v');
   assert.ok(pal && !pal.built, '宫殿变为未建造');
   victim.resources = { wood: 9, stone: 9, food: 9, iron: 9 };
@@ -1868,9 +1868,9 @@ console.log('— demolition unbuilds score building —');
     '宫殿应可再次建造'
   );
   assert.ok(pal.built, '宫殿应已再次建造');
-  assert.strictEqual(scoreOf(victim), 4, '再次建造宫殿应再 +2 分');
+  assert.strictEqual(scoreOf(victim), 2, '再次建造宫殿应再 +2 分');
   assert.ok(!actor.funcCards.some((c) => c.id === 'ib_card'), '拆迁卡已打出');
-  console.log('✓ demolition keeps palace score and allows rebuild');
+  console.log('✓ demolition removes palace score and allows rebuild');
 }
 
 {
@@ -3051,6 +3051,28 @@ console.log('— prisoner discard after personal produce —');
   console.log('✓ prisoner discard after personal produce');
 }
 
+console.log('— wish well overcap skips second resource discard —');
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p = g.players[0];
+  p.resources = { wood: 12, stone: 0, food: 0, iron: 0 };
+  g.phase = 'wish_well';
+  g.personalProduceApplied = true;
+  g.produceFinishOrder = [p.id, g.players[1].id];
+  p.pendingWishWellBonus = 3;
+  ok(
+    applyAction(g, p.id, {
+      type: 'allocateWishWell',
+      payload: { alloc: { wood: 3, stone: 0, food: 0, iron: 0 } },
+    })
+  );
+  assert.strictEqual(p.resources.wood, 15, '许愿井 +3 木');
+  assert.strictEqual(g.phase, 'build', '许愿井后超上限不应再进弃牌阶段');
+  assert.ok(!p.pendingDiscardRes, '个人产出+许愿井后不应标记待弃资源');
+  console.log('✓ wish well overcap skips second resource discard');
+}
+
 console.log('— prisoner discard skip when no/short resources —');
 {
   const g = createGameState(room(2));
@@ -3506,8 +3528,9 @@ console.log('— event recall die —');
   assert.ok(!g.pendingEventChoice, '仅本格有刚放骰子时应跳过召回');
   assert.strictEqual((g.board.resource.workers[4] || {}).p0 || 0, 1, '刚放骰子应留在本格');
 
-  g.board.resource.workers[1] = { p0: 1 };
-  p0.dispatched = 2;
+  // 本格有旧普通骰 + 再放 1 普通：可从本格召回旧骰，留下刚放的
+  g.board.resource.workers[4] = { p0: 1 };
+  p0.dispatched = 1;
   g.dice = { p0: [4], p1: [] };
   g.diceBoosted = { p0: [false], p1: [] };
   g.phase = 'produce';
@@ -3517,16 +3540,66 @@ console.log('— event recall die —');
   assert.ok(g.pendingEventChoice && g.pendingEventChoice.needChoice === 'recallDie');
   assert.strictEqual(g.pendingEventChoice.excludeNumber, 4);
   assert.strictEqual(g.pendingEventChoice.justPlacedCount, 1);
-  const onlyJustPlaced = applyAction(g, 'p0', {
-    type: 'eventRecallDie',
-    payload: { area: 'resource', number: 4 },
-  });
-  assert.ok(onlyJustPlaced.ok, '本格有旧骰子时应可召回 1 枚');
+  assert.strictEqual(g.pendingEventChoice.justPlacedEnhanced, 0);
+  ok(
+    applyAction(g, 'p0', {
+      type: 'eventRecallDie',
+      payload: { area: 'resource', number: 4, enhanced: false },
+    })
+  );
   assert.ok(!g.pendingEventChoice);
   assert.strictEqual((g.board.resource.workers[4] || {}).p0 || 0, 1, '刚放置的骰子应留在本格');
-  assert.strictEqual((g.board.resource.workers[1] || {}).p0 || 0, 1, '其它格不受影响');
   assert.ok(g.dice.p0.includes(4), '召回的骰面应为 4 号格');
-  assert.strictEqual(p0.dispatched, 2, '召回后已派遣数应减 1');
+  assert.strictEqual(p0.dispatched, 1, '召回后已派遣数应减 1');
+
+  // 本格旧普通 + 刚放强化：不可选强化（刚放），只可召回普通
+  g.board.resource.workers[4] = { p0: 1 };
+  if (!g.board.resource.boosts) g.board.resource.boosts = {};
+  g.board.resource.boosts[4] = {};
+  p0.dispatched = 1;
+  g.dice = { p0: [4], p1: [] };
+  g.diceBoosted = { p0: [true], p1: [] };
+  g.phase = 'produce';
+  g.currentPlayerId = 'p0';
+  g.awaitingProduceRoll = false;
+  ok(applyAction(g, 'p0', { type: 'placeDice', payload: { face: 4, area: 'resource' } }));
+  assert.ok(g.pendingEventChoice && g.pendingEventChoice.needChoice === 'recallDie');
+  assert.strictEqual(g.pendingEventChoice.justPlacedEnhanced, 1);
+  assert.strictEqual((g.board.resource.boosts[4] || {}).p0 || 0, 1, '刚放强化应在本格');
+  const banJustBoost = applyAction(g, 'p0', {
+    type: 'eventRecallDie',
+    payload: { area: 'resource', number: 4, enhanced: true },
+  });
+  assert.ok(!banJustBoost.ok, '不可召回刚放置的强化骰');
+  ok(
+    applyAction(g, 'p0', {
+      type: 'eventRecallDie',
+      payload: { area: 'resource', number: 4, enhanced: false },
+    })
+  );
+  assert.strictEqual((g.board.resource.workers[4] || {}).p0 || 0, 1);
+  assert.strictEqual((g.board.resource.boosts[4] || {}).p0 || 0, 1, '刚放强化应仍在');
+
+  // 其它格有旧骰：也可召回其它格
+  g.board.resource.workers[4] = { p0: 1 };
+  g.board.resource.boosts[4] = {};
+  g.board.resource.workers[1] = { p0: 1 };
+  p0.dispatched = 2;
+  g.dice = { p0: [4], p1: [] };
+  g.diceBoosted = { p0: [false], p1: [] };
+  g.phase = 'produce';
+  g.currentPlayerId = 'p0';
+  g.awaitingProduceRoll = false;
+  ok(applyAction(g, 'p0', { type: 'placeDice', payload: { face: 4, area: 'resource' } }));
+  assert.ok(g.pendingEventChoice && g.pendingEventChoice.needChoice === 'recallDie');
+  ok(
+    applyAction(g, 'p0', {
+      type: 'eventRecallDie',
+      payload: { area: 'resource', number: 1 },
+    })
+  );
+  assert.strictEqual((g.board.resource.workers[1] || {}).p0 || 0, 0);
+  assert.strictEqual((g.board.resource.workers[4] || {}).p0 || 0, 2);
 
   g.board.resource.workers[3] = { [p0.id]: 2 };
   if (!g.board.resource.boosts) g.board.resource.boosts = {};
@@ -3538,6 +3611,7 @@ console.log('— event recall die —');
     excludeArea: 'resource',
     excludeNumber: 4,
     justPlacedCount: 1,
+    justPlacedEnhanced: 0,
   };
   const needPick = applyAction(g, p0.id, {
     type: 'eventRecallDie',
@@ -5149,11 +5223,86 @@ console.log('— stack achievement: 3 same buildings +2 VP each —');
   const mePub = publicGameState(g, p.id).players.find((x) => x.id === p.id);
   assert.ok(mePub.commerceTycoon);
   assert.ok((mePub.titles || []).some((t) => t.id === 'commerceTycoon'));
-  // 弃掉一座后失去成就分
+  // 弃掉一座后成就分与称号收回
   const built = p.buildings.find((b) => b.built);
   p.buildings = p.buildings.filter((b) => b.id !== built.id);
-  assert.strictEqual(scoreOf(p), base, '不足三座时失去成就分');
+  assert.strictEqual(scoreOf(p), base, '不足三座时成就分应收回');
+  assert.ok(
+    !(publicGameState(g, p.id).players.find((x) => x.id === p.id).titles || []).some(
+      (t) => t.id === 'commerceTycoon'
+    ),
+    '不足三座时称号应消失'
+  );
   console.log('✓ third market stack achievement +2 VP');
+}
+
+console.log('— stack achievement revoked by demolition —');
+{
+  const { playerScore: scoreOf } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const actor = g.players[0];
+  const victim = g.players[1];
+  g.phase = 'build';
+  g.currentPlayerId = actor.id;
+  g.buildPassed = {};
+  g.produceFinishOrder = [actor.id, victim.id];
+  for (let i = 0; i < 3; i++) {
+    victim.buildings.push({
+      id: 'ex_ib_' + i,
+      kind: 'building',
+      buildType: 'exchange',
+      label: '集市',
+      cost: {},
+      produce: 0,
+      score: 0,
+      needsWorker: false,
+      functionalOnly: true,
+      built: true,
+      workers: 0,
+      slot: 1,
+      faceDown: false,
+    });
+  }
+  // 触发补记已获成就（或等同建成 3 座）
+  assert.strictEqual(scoreOf(victim), 2, '三座集市成就分');
+  assert.ok(
+    (publicGameState(g, victim.id).players.find((x) => x.id === victim.id)
+      .titles || []).some((t) => t.id === 'commerceTycoon')
+  );
+  actor.funcCards.push({
+    id: 'ib_title',
+    funcType: 'illegalBuild',
+    label: '拆迁',
+    kind: 'function',
+  });
+  ok(
+    applyAction(g, actor.id, {
+      type: 'useFunc',
+      payload: { cardId: 'ib_title', targetId: victim.id },
+    })
+  );
+  ok(
+    applyAction(g, victim.id, {
+      type: 'illegalBuildPick',
+      payload: { buildingId: 'ex_ib_0' },
+    })
+  );
+  assert.strictEqual(
+    victim.buildings.filter((b) => b.built && b.buildType === 'exchange').length,
+    2,
+    '拆迁后剩两座已建集市'
+  );
+  assert.strictEqual(scoreOf(victim), 0, '拆迁后成就分应收回');
+  const vPub = publicGameState(g, victim.id).players.find(
+    (x) => x.id === victim.id
+  );
+  assert.ok(
+    !(vPub.titles || []).some((t) => t.id === 'commerceTycoon'),
+    '拆迁后称号应消失'
+  );
+  assert.ok(!vPub.commerceTycoon, '拆迁后 commerceTycoon 应为假');
+  console.log('✓ stack achievement revoked by demolition');
 }
 
 console.log('— stack achievement: 3 wish wells +2 VP —');

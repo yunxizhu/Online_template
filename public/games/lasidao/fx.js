@@ -59,10 +59,14 @@ window.LasidaoFx = (function () {
     return Math.max(1, Math.round(Number(ms) / SETTLE_SPEED));
   }
 
+  function throwIfSettleAborted(gen) {
+    if (gen !== settleGen) throw settleAbortError();
+  }
+
   async function settleSleep(ms) {
     const gen = settleGen;
     await sleep(settleMs(ms));
-    if (gen !== settleGen) throw settleAbortError();
+    throwIfSettleAborted(gen);
   }
 
   function abortSettle() {
@@ -192,11 +196,21 @@ window.LasidaoFx = (function () {
 
   function flyToPoint(el, from, to, ms, opts) {
     opts = opts || {};
-    return new Promise((resolve) => {
+    const gen = settleGen;
+    return new Promise((resolve, reject) => {
+      const failIfAborted = () => {
+        if (gen !== settleGen) {
+          if (el && el.parentNode) el.parentNode.removeChild(el);
+          reject(settleAbortError());
+          return true;
+        }
+        return false;
+      };
       if (!el) {
         resolve();
         return;
       }
+      if (failIfAborted()) return;
       if (!from || !to) {
         if (opts.keep !== true && el.parentNode) el.remove();
         resolve();
@@ -218,6 +232,7 @@ window.LasidaoFx = (function () {
         .join(',');
       void el.offsetWidth;
       requestAnimationFrame(() => {
+        if (failIfAborted()) return;
         el.style.left = to.x + 'px';
         el.style.top = to.y + 'px';
         if (fade) {
@@ -226,6 +241,7 @@ window.LasidaoFx = (function () {
         }
       });
       setTimeout(() => {
+        if (failIfAborted()) return;
         if (opts.keep !== true && el && el.parentNode) {
           el.parentNode.removeChild(el);
         }
@@ -357,6 +373,8 @@ window.LasidaoFx = (function () {
   }
 
   async function flySettleCard(layer, tile, areaKey, fromEl, toEl, opts) {
+    const gen = settleGen;
+    throwIfSettleAborted(gen);
     if (!layer || !tile || !toEl) return;
     const srcEl = tileEl(tile.id) || fromEl;
     const from = rectCenter(srcEl) || rectCenter(fromEl);
@@ -392,6 +410,7 @@ window.LasidaoFx = (function () {
     const flyMs =
       opts && opts.ms != null ? opts.ms : settleMs(1000);
     await flyTo(fly, toEl, flyMs);
+    throwIfSettleAborted(gen);
     if (fly.parentNode) fly.remove();
   }
 
@@ -655,6 +674,8 @@ window.LasidaoFx = (function () {
   }
 
   async function playSlot(game, slot) {
+    const gen = settleGen;
+    throwIfSettleAborted(gen);
     const layer = ensureLayer();
     const boardSlot = slotEl(slot.area, slot.number);
     if (!layer || !boardSlot) return;
@@ -862,6 +883,7 @@ window.LasidaoFx = (function () {
   async function playSettle(game) {
     const report = game && game.lastSettle;
     if (!report) return;
+    const gen = settleGen;
     const layer = ensureLayer();
     if (!layer) return;
     clearLayer();
@@ -885,15 +907,18 @@ window.LasidaoFx = (function () {
     await settleSleep(600);
 
     for (let si = 0; si < slots.length; si++) {
+      throwIfSettleAborted(gen);
       await playSlot(game, slots[si]);
       if (si < slots.length - 1) {
         await settleSleep(500);
       }
     }
 
+    throwIfSettleAborted(gen);
     if ((report.buildings || []).length) {
       setBanner(t('lasidao.fx.buildingProduce'));
       for (const b of report.buildings) {
+        throwIfSettleAborted(gen);
         const produceLine = `${b.name} 的${b.label}产出 ${b.amount} ${resLabel(b.resource) || b.resource || ''}`;
         pushGameLog(produceLine);
         const target = playerEl(b.pid);
@@ -913,6 +938,7 @@ window.LasidaoFx = (function () {
       }
     }
 
+    throwIfSettleAborted(gen);
     if (report.mvp) {
       setBanner(
         t('lasidao.fx.mvp', {
@@ -938,6 +964,8 @@ window.LasidaoFx = (function () {
 
   /** 结算后：场上未取走的卡飞回对应弃牌堆 */
   async function playRecycleBoard(game) {
+    const gen = settleGen;
+    throwIfSettleAborted(gen);
     const layer = ensureLayer();
     if (!layer) return;
 
@@ -963,6 +991,7 @@ window.LasidaoFx = (function () {
 
     const jobs = [];
     for (let i = 0; i < tileNodes.length; i++) {
+      throwIfSettleAborted(gen);
       const el = tileNodes[i];
       const discardKind = el.classList.contains('environment')
         ? 'environment'
@@ -1023,7 +1052,13 @@ window.LasidaoFx = (function () {
       );
     }
 
-    await Promise.all(jobs);
+    try {
+      await Promise.all(jobs);
+    } catch (err) {
+      if (!isSettleAbort(err)) throw err;
+      clearLayer();
+      throw err;
+    }
     await settleSleep(200);
     setBanner('');
     clearLayer();
