@@ -54,6 +54,10 @@ const MAX_BUILDINGS = 3;
 const MAX_RESOURCE_HAND = 12;
 /** 每位玩家最多拥有的强化骰数量 */
 const MAX_ENHANCED_DICE = 3;
+/** 开局每位玩家自带的强化骰数量 */
+const START_ENHANCED_DICE = 1;
+/** 强化骰结算效力（普通骰为 1） */
+const ENHANCED_DIE_STRENGTH = 1.5;
 /** 重抽 / 购买功能卡：从合堆顶抽几张再选 1 保留 */
 const SPECIAL_DRAW_PICK_COUNT = 3;
 /** 征召：下一轮生产临时村民数量 */
@@ -66,9 +70,18 @@ const ENVIRONMENT_DECK_SIZE = environmentDeckSize();
 const ENVIRONMENT_SLOT_NUMBERS = [1, 2, 3, 4, 5, 6];
 const ENVIRONMENT_DRAW_PER_ROUND = ENVIRONMENT_SLOT_NUMBERS.length;
 
+/** 功能/建筑合区：数字格 n 于第几轮解锁（1–2 号第 1 轮，之后每 2 轮 +1 格） */
+function specialSlotUnlockRound(num) {
+  const slot = Number(num) || 1;
+  if (slot <= 2) return 1;
+  return 2 * (slot - 2) + 1;
+}
+
 function areaOpenSlotCount(areaKey, round) {
-  const n = Math.max(0, (round || 1) - 1);
-  if (areaKey === 'special') return Math.min(6, 2 + n);
+  const r = Math.max(1, Number(round) || 1);
+  if (areaKey === 'special') {
+    return Math.min(6, 2 + Math.floor((r - 1) / 2));
+  }
   return 6;
 }
 
@@ -766,7 +779,7 @@ function playerScore(p) {
     if (b.built && b.score) s += b.score;
   }
   s += Number(p.bonusScore) || 0;
-  s += commerceTycoonScore(p);
+  s += stackAchievementScore(p);
   return s;
 }
 
@@ -1009,7 +1022,7 @@ function drawEnvironmentBoard(game) {
 function setupBoard(game) {
   const n = Math.max(0, game.round - 1);
   const resCount = Math.min(MAX_RESOURCE_BOARD_TILES, 6 + n);
-  const specialCount = Math.min(6, 2 + n);
+  const specialCount = areaOpenSlotCount('special', game.round);
 
   game.board = emptyBoard();
   game.board.resource.tiles = drawToArea(game, 'resource', resCount);
@@ -1097,8 +1110,8 @@ function recycleBoard(game) {
 // ─── 拉斯维加斯式抵消 ───────────────────────────────────
 
 /**
- * 结算强度：普通骰 +1，强化骰 +2（= 骰数 + 强化数）
- * 输入 area 某数字格的 workers / boosts
+ * 结算强度（半单位整数，÷2 为实际效力）：
+ * 普通骰 = 2（1.0），强化骰 = 3（1.5）
  */
 function slotStrengthMap(workers, boosts) {
   const out = {};
@@ -1106,7 +1119,7 @@ function slotStrengthMap(workers, boosts) {
     const n = Number(c) || 0;
     if (n <= 0) continue;
     const b = Math.min(Math.max(0, Number(boosts && boosts[pid]) || 0), n);
-    out[pid] = n + b;
+    out[pid] = n * 2 + b;
   }
   return out;
 }
@@ -1286,7 +1299,7 @@ function createGameState(room) {
     houseScore: 0, // 常驻建造房子获得的胜利点（与房子容量分开）
     dispatched: 0,
     voided: 0,
-    enhancedDice: 0, // 已强化的村民/骰子数（永久，上限 MAX_ENHANCED_DICE，且不超过村民数）
+    enhancedDice: START_ENHANCED_DICE, // 已强化的村民/骰子数（永久，上限 MAX_ENHANCED_DICE，且不超过村民数）
     enhancedPlaced: 0, // 本轮已派出的强化骰数
     recruitPending: 0, // 下一轮生产开始时生效的临时村民数
     welfareHouses: 0, // 福利房提供容量但不计分
@@ -1330,6 +1343,7 @@ function createGameState(room) {
     barrenMarkerOwnerId: null,
     pendingEventChoice: null,
     pendingRedrawChoice: null,
+    pendingIllegalBuild: null,
     pendingTrade: null,
     pendingWelfareMinimumQueue: [],
     pendingKeepOverflowQueue: [],
@@ -1799,7 +1813,7 @@ function startSettle(game) {
     p.pendingWishWellBonus = 0;
   }
 
-  // 资源区：按数字格汇总派遣强度（强化骰计 2），最多者拿大份，第二拿小份
+  // 资源区：按数字格汇总派遣强度（强化骰计 1.5），最多者拿大份，第二拿小份
   const skipSecondShare = new Set();
   for (let num = 1; num <= 6; num++) {
     const workers = game.board.resource.workers[num] || {};
@@ -2277,7 +2291,18 @@ function actEventMoveBarrenMarker(game, player, payload) {
   return { ok: true };
 }
 
-function removeOneDieFromBoardSlot(game, area, number, targetId) {
+function slotPlayerDieCounts(areaBoard, number, targetId) {
+  const slotW = (areaBoard.workers && areaBoard.workers[number]) || {};
+  const physical = Number(slotW[targetId]) || 0;
+  if (physical <= 0) {
+    return { physical: 0, normal: 0, enhanced: 0 };
+  }
+  const slotB = (areaBoard.boosts && areaBoard.boosts[number]) || {};
+  const enhanced = Math.min(Math.max(0, Number(slotB[targetId]) || 0), physical);
+  return { physical, normal: physical - enhanced, enhanced };
+}
+
+function removeOneDieFromBoardSlot(game, area, number, targetId, dieKind) {
   if (!BOARD_AREAS.includes(area)) {
     return { ok: false, error: '请选择资源/功能/建筑区' };
   }
@@ -2290,40 +2315,47 @@ function removeOneDieFromBoardSlot(game, area, number, targetId) {
     return { ok: false, error: '该格没有可移动的骰子' };
   }
 
-  let wasEnhanced = false;
-  if (targetId !== NEUTRAL_WORKER_ID) {
-    const slotB = (areaBoard.boosts && areaBoard.boosts[number]) || {};
-    const physical = slotW[targetId];
-    const boosted = Math.min(Number(slotB[targetId]) || 0, physical);
-    const normal = physical - boosted;
-    if (normal > 0) {
-      slotW[targetId] -= 1;
-    } else {
-      slotW[targetId] -= 1;
-      wasEnhanced = true;
-      if (areaBoard.boosts && areaBoard.boosts[number]) {
-        areaBoard.boosts[number][targetId] = Math.max(0, boosted - 1);
-        if (areaBoard.boosts[number][targetId] <= 0) {
-          delete areaBoard.boosts[number][targetId];
-        }
-      }
-    }
-    if (slotW[targetId] <= 0) delete slotW[targetId];
-    if (wasEnhanced) {
-      const owner = playerById(game, targetId);
-      if (owner) {
-        owner.enhancedPlaced = Math.max(
-          0,
-          (Number(owner.enhancedPlaced) || 0) - 1
-        );
-      }
-    }
-  } else {
+  if (targetId === NEUTRAL_WORKER_ID) {
     slotW[targetId] -= 1;
     if (slotW[targetId] <= 0) delete slotW[targetId];
+    return { ok: true, wasEnhanced: false };
   }
 
-  return { ok: true, wasEnhanced };
+  const counts = slotPlayerDieCounts(areaBoard, number, targetId);
+  let removeEnhanced = false;
+  if (dieKind === true || dieKind === 'enhanced') {
+    if (counts.enhanced < 1) {
+      return { ok: false, error: '该格没有强化骰' };
+    }
+    removeEnhanced = true;
+  } else if (dieKind === false || dieKind === 'normal') {
+    if (counts.normal < 1) {
+      return { ok: false, error: '该格没有普通骰' };
+    }
+    removeEnhanced = false;
+  } else if (counts.normal > 0 && counts.enhanced > 0) {
+    return { ok: false, error: '请选择普通骰或强化骰' };
+  } else {
+    removeEnhanced = counts.enhanced > 0;
+  }
+
+  slotW[targetId] -= 1;
+  if (removeEnhanced) {
+    if (!areaBoard.boosts) areaBoard.boosts = emptySlotWorkers();
+    const slotB = areaBoard.boosts[number] || (areaBoard.boosts[number] = {});
+    slotB[targetId] = Math.max(0, (Number(slotB[targetId]) || 0) - 1);
+    if (slotB[targetId] <= 0) delete slotB[targetId];
+    const owner = playerById(game, targetId);
+    if (owner) {
+      owner.enhancedPlaced = Math.max(
+        0,
+        (Number(owner.enhancedPlaced) || 0) - 1
+      );
+    }
+  }
+  if (slotW[targetId] <= 0) delete slotW[targetId];
+
+  return { ok: true, wasEnhanced: removeEnhanced };
 }
 
 function placeOneDieOnBoardSlot(game, area, number, targetId, wasEnhanced) {
@@ -2361,9 +2393,9 @@ function teleportWorkerLabel(game, targetId) {
   return p ? p.name : String(targetId);
 }
 
-function recallOneDieFromSlot(game, player, area, number) {
+function recallOneDieFromSlot(game, player, area, number, dieKind) {
   const pid = player.id;
-  const removed = removeOneDieFromBoardSlot(game, area, number, pid);
+  const removed = removeOneDieFromBoardSlot(game, area, number, pid, dieKind);
   if (!removed.ok) {
     if (removed.error === '该格没有可移动的骰子') {
       return { ok: false, error: '你在该格没有骰子' };
@@ -2380,12 +2412,6 @@ function recallOneDieFromSlot(game, player, area, number) {
   game.diceBoosted[pid].push(wasEnhanced);
 
   player.dispatched = Math.max(0, (Number(player.dispatched) || 0) - 1);
-  if (wasEnhanced) {
-    player.enhancedPlaced = Math.max(
-      0,
-      (Number(player.enhancedPlaced) || 0) - 1
-    );
-  }
 
   return { ok: true, face, wasEnhanced };
 }
@@ -2406,7 +2432,9 @@ function actEventRecallDie(game, player, payload) {
   if (area === exArea && number === exNum) {
     return { ok: false, error: '不可召回刚放到本格的骰子' };
   }
-  const recalled = recallOneDieFromSlot(game, player, area, number);
+  const dieKind =
+    payload && typeof payload.enhanced === 'boolean' ? payload.enhanced : undefined;
+  const recalled = recallOneDieFromSlot(game, player, area, number, dieKind);
   if (!recalled.ok) return recalled;
   pushProduceFx(game, {
     type: 'recall',
@@ -3118,6 +3146,16 @@ function applyAction(game, playerId, action) {
     return { ok: false, error: '请先完成重抽选择' };
   }
 
+  if (game.pendingIllegalBuild) {
+    if (type === 'illegalBuildPick') {
+      if (playerId !== game.pendingIllegalBuild.targetId) {
+        return { ok: false, error: '请由目标玩家选择要拆除的建筑' };
+      }
+      return actIllegalBuildPick(game, player, payload);
+    }
+    return { ok: false, error: '等待目标玩家选择要拆除的建筑' };
+  }
+
   // 派遣 / 结算后事件选择等（跨阶段，须先于 settle 阶段守卫）
   if (game.pendingEventChoice) {
     if (game.pendingEventChoice.playerId !== playerId) {
@@ -3570,8 +3608,9 @@ function actConstruct(game, player, payload) {
   let stepText =
     `${player.name} 建造了「${b.label}」` +
     (b.score ? `（+${b.score} 分）` : '');
-  if (b.buildType === 'exchange' && countBuiltExchanges(player) === EXCHANGE_TITLE_NEED) {
-    stepText += `，获得称号「${EXCHANGE_TITLE_LABEL}」（+${EXCHANGE_TITLE_SCORE} 分）`;
+  const stackKey = buildingStackKey(b);
+  if (countBuiltByStackKey(player, stackKey) === STACK_ACHIEVEMENT_NEED) {
+    stepText += `，获得成就「${stackAchievementLabel(player, stackKey)}」（+${STACK_ACHIEVEMENT_SCORE} 分）`;
   }
   pushLog(game, stepText);
   pushPlayReveal(game, {
@@ -3847,32 +3886,87 @@ function countBuiltExchanges(player) {
   ).length;
 }
 
-/** 集市兑换比例最多按 2 座计算（第 3 座起改为称号/加分） */
+/** 集市兑换比例最多按 2 座计算（第 3 座起不再提升兑换，仅计成就加分） */
 const MAX_EXCHANGE_EFFECT = 2;
-/** 建成第 3 座集市：称号「商业巨擎」+2 胜利点 */
-const EXCHANGE_TITLE_NEED = 3;
-const EXCHANGE_TITLE_SCORE = 2;
+/** 同类型建筑建成第 3 座：每种类型 +2 胜利点 */
+const STACK_ACHIEVEMENT_NEED = 3;
+const STACK_ACHIEVEMENT_SCORE = 2;
+/** @deprecated 兼容旧导出/测试 */
+const EXCHANGE_TITLE_NEED = STACK_ACHIEVEMENT_NEED;
+const EXCHANGE_TITLE_SCORE = STACK_ACHIEVEMENT_SCORE;
 const EXCHANGE_TITLE_ID = 'commerceTycoon';
 const EXCHANGE_TITLE_LABEL = '商业巨擎';
+const WISH_WELL_TITLE_ID = 'lampSpirit';
+const WISH_WELL_TITLE_LABEL = '灯灵本灵';
+
+function produceManagerTitle(resource) {
+  const name = RESOURCE_LABELS[resource] || resource;
+  return `${name}管理者`;
+}
+
+function countBuiltByStackKey(player, key) {
+  return (player.buildings || []).filter(
+    (b) => b.built && buildingStackKey(b) === key
+  ).length;
+}
+
+function stackAchievementCounts(player) {
+  const counts = {};
+  for (const b of player.buildings || []) {
+    if (!b.built) continue;
+    const key = buildingStackKey(b);
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  return counts;
+}
+
+function stackAchievementKeys(player) {
+  const counts = stackAchievementCounts(player);
+  return Object.keys(counts).filter((k) => counts[k] >= STACK_ACHIEVEMENT_NEED);
+}
+
+function stackAchievementScore(player) {
+  return stackAchievementKeys(player).length * STACK_ACHIEVEMENT_SCORE;
+}
+
+function stackAchievementTitleId(key) {
+  if (key === 'exchange') return EXCHANGE_TITLE_ID;
+  if (key === 'wishWell') return WISH_WELL_TITLE_ID;
+  if (key.startsWith('produce:')) {
+    const resource = key.split(':')[1];
+    return resource ? `produceManager:${resource}` : `stack3:${key}`;
+  }
+  return `stack3:${key}`;
+}
+
+function stackAchievementLabel(player, key) {
+  if (key === 'exchange') return EXCHANGE_TITLE_LABEL;
+  if (key === 'wishWell') return WISH_WELL_TITLE_LABEL;
+  if (key.startsWith('produce:')) {
+    const resource = key.split(':')[1];
+    if (resource) return produceManagerTitle(resource);
+  }
+  const b = (player.buildings || []).find(
+    (x) => x.built && buildingStackKey(x) === key
+  );
+  return b ? `${b.label}×3` : key;
+}
 
 function hasCommerceTycoon(player) {
-  return countBuiltExchanges(player) >= EXCHANGE_TITLE_NEED;
+  return countBuiltByStackKey(player, 'exchange') >= STACK_ACHIEVEMENT_NEED;
 }
 
 function commerceTycoonScore(player) {
-  return hasCommerceTycoon(player) ? EXCHANGE_TITLE_SCORE : 0;
+  return hasCommerceTycoon(player) ? STACK_ACHIEVEMENT_SCORE : 0;
 }
 
 function playerTitles(player) {
-  const titles = [];
-  if (hasCommerceTycoon(player)) {
-    titles.push({
-      id: EXCHANGE_TITLE_ID,
-      label: EXCHANGE_TITLE_LABEL,
-      score: EXCHANGE_TITLE_SCORE,
-    });
-  }
-  return titles;
+  return stackAchievementKeys(player).map((key) => ({
+    id: stackAchievementTitleId(key),
+    stackKey: key,
+    label: stackAchievementLabel(player, key),
+    score: STACK_ACHIEVEMENT_SCORE,
+  }));
 }
 
 function effectiveExchangeCount(player) {
@@ -3903,7 +3997,7 @@ function caravanExchangeActive(game, player) {
 /** 当前玩家兑换所需同类资源数（含商队来临） */
 function effectiveExchangeCost(player, game) {
   if (caravanExchangeActive(game, player)) {
-    return countBuiltExchanges(player) > 0 ? 1 : 2;
+    return 1;
   }
   return exchangeCostN(effectiveExchangeCount(player));
 }
@@ -4060,7 +4154,7 @@ function actExchange(game, player, payload) {
     player.resources[from] -= totalNeed;
     player.resources[to] = (player.resources[to] || 0) + count;
     const sourceLabel = caravan
-      ? `商队来临（${need}换1${built > 0 ? '，已建集市' : ''}）`
+      ? '商队来临（1换1）'
       : exCount > 0
         ? built > exCount
           ? `用集市（建成 ${built} 座，生效 ${exCount} 座，${need}换1）`
@@ -4141,7 +4235,7 @@ function actExchange(game, player, payload) {
   }
 
   const sourceLabel = caravan
-    ? `商队来临（${need}换1${built > 0 ? '，已建集市' : ''}）`
+    ? '商队来临（1换1）'
     : exCount > 0
       ? built > exCount
         ? `用集市（建成 ${built} 座，生效 ${exCount} 座，${need}换1）`
@@ -4171,7 +4265,7 @@ function actUseFunc(game, player, payload) {
 
   // 时机校验
   const produceOnly = ['remoteDice', 'exile', 'banditRaid'];
-  const buildOnly = ['harvest', 'robbery', 'redraw', 'expand', 'enhance', 'recruit', 'freeExpand', 'welfareHouse', 'caravan'];
+  const buildOnly = ['harvest', 'robbery', 'illegalBuild', 'redraw', 'expand', 'enhance', 'recruit', 'freeExpand', 'welfareHouse', 'caravan'];
 
   if (produceOnly.includes(ft)) {
     if (game.phase !== 'produce') {
@@ -4212,6 +4306,12 @@ function actUseFunc(game, player, payload) {
   else if (ft === 'welfareHouse') result = useWelfareHouse(game, player, payload);
   else if (ft === 'caravan') result = useCaravan(game, player, payload);
   else if (ft === 'robbery') result = useRobbery(game, player, payload);
+  else if (ft === 'illegalBuild') {
+    if (!hasIllegalBuildTarget(game)) {
+      return { ok: false, error: '没有玩家持有已建造的建筑' };
+    }
+    result = useIllegalBuild(game, player, { ...payload, cardId });
+  }
   else return { ok: false, error: '未知功能' };
 
   if (!result.ok) return result;
@@ -4363,7 +4463,9 @@ function useExile(game, player, payload) {
     return { ok: false, error: '该玩家在此数字格没有村民' };
   }
 
-  const removed = removeOneDieFromBoardSlot(game, area, number, targetId);
+  const dieKind =
+    payload && typeof payload.enhanced === 'boolean' ? payload.enhanced : undefined;
+  const removed = removeOneDieFromBoardSlot(game, area, number, targetId, dieKind);
   if (!removed.ok) {
     return { ok: false, error: removed.error };
   }
@@ -4482,6 +4584,105 @@ function normalizeRobberyTargets(payload) {
     return payload.targets.map(String);
   }
   return null;
+}
+
+function countBuiltBuildings(player) {
+  return (player.buildings || []).filter((b) => b.built).length;
+}
+
+function hasIllegalBuildTarget(game) {
+  return alivePlayers(game).some((p) => countBuiltBuildings(p) > 0);
+}
+
+function revertBuildingToUnbuilt(player, b) {
+  if ((b.workers || 0) > 0) {
+    player.dispatched = Math.max(0, (player.dispatched || 0) - b.workers);
+    b.workers = 0;
+  }
+  b.built = false;
+  b.faceDown = false;
+}
+
+function useIllegalBuild(game, player, payload) {
+  const targetId = payload.targetId || payload.target;
+  const target = playerById(game, targetId);
+  if (!target || target.left) {
+    return { ok: false, error: '目标玩家无效' };
+  }
+  if (!countBuiltBuildings(target)) {
+    return { ok: false, error: `${target.name} 没有已建造的建筑` };
+  }
+  if (game.pendingIllegalBuild) {
+    return { ok: false, error: '请先完成待处理的拆迁' };
+  }
+  game.pendingIllegalBuild = {
+    actorId: player.id,
+    actorName: player.name,
+    targetId: target.id,
+    targetName: target.name,
+    cardId: payload.cardId,
+  };
+  pushLog(
+    game,
+    `${player.name} 发动「拆迁」：请 ${target.name} 选择一座已建建筑变为未建造`
+  );
+  return { ok: true, awaitingPick: true };
+}
+
+function actIllegalBuildPick(game, player, payload) {
+  const pending = game.pendingIllegalBuild;
+  if (!pending) return { ok: false, error: '没有待处理的拆迁' };
+  if (player.id !== pending.targetId) {
+    return { ok: false, error: '请由目标玩家选择建筑' };
+  }
+  const buildingId = payload.buildingId;
+  const b = findPersonalBuilding(player, buildingId);
+  if (!b || !b.built) {
+    return { ok: false, error: '请选择一座已建造的建筑' };
+  }
+  const actor = playerById(game, pending.actorId);
+  if (!actor || actor.left) {
+    game.pendingIllegalBuild = null;
+    return { ok: false, error: '发动者无效' };
+  }
+  const cardIdx = actor.funcCards.findIndex((c) => c.id === pending.cardId);
+  if (cardIdx < 0) {
+    game.pendingIllegalBuild = null;
+    return { ok: false, error: '功能卡已失效' };
+  }
+  const card = actor.funcCards[cardIdx];
+  const logLen = game.log.length;
+
+  revertBuildingToUnbuilt(player, b);
+  let stepText =
+    `${player.name} 被 ${pending.actorName} 的「拆迁」拆除「${b.label}」，变为未建造`;
+  if (b.score) {
+    stepText += `，失去 +${b.score} 分（当前 ${playerScore(player)} 分）`;
+  }
+  pushLog(game, stepText);
+
+  actor.funcCards.splice(cardIdx, 1);
+  returnFuncToDiscard(game, card);
+  pushPlayReveal(game, {
+    kind: 'function',
+    actorId: actor.id,
+    actorName: actor.name,
+    card: {
+      id: card.id,
+      label: card.label,
+      funcType: 'illegalBuild',
+    },
+    stepText: pickActionLogText(game, logLen) || stepText,
+  });
+
+  game.pendingIllegalBuild = null;
+
+  if (checkWin(game)) return { ok: true };
+
+  if (game.phase === 'build' && game.currentPlayerId === pending.actorId) {
+    afterBuildAction(game, pending.actorId, true);
+  }
+  return { ok: true };
 }
 
 function useRobbery(game, player, payload) {
@@ -4710,17 +4911,20 @@ function useWelfareHouse(game, player, _payload) {
   return { ok: true };
 }
 
-/** 商队来临：建造阶段使用；本回合结束前可按 2:1（有集市则 1:1）兑换 */
+/** 商队来临：建造阶段使用；本回合结束前可按 1:1 兑换；已建集市则 +1 胜利点 */
 function useCaravan(game, player, _payload) {
   if (player.caravanPending) {
     return { ok: false, error: '商队效果已生效' };
   }
   player.caravanPending = true;
-  const need = countBuiltExchanges(player) > 0 ? 1 : 2;
-  pushLog(
-    game,
-    `${player.name} 发动商队来临：本回合结束前可按 ${need}换1 兑换资源`
-  );
+  const hasMarket = countBuiltExchanges(player) > 0;
+  let logMsg = `${player.name} 发动商队来临：本回合结束前可按 1换1 兑换资源`;
+  if (hasMarket) {
+    player.bonusScore = (Number(player.bonusScore) || 0) + 1;
+    logMsg += `，已建集市 +1 分（当前 ${playerScore(player)} 分）`;
+    checkWin(game);
+  }
+  pushLog(game, logMsg);
   return { ok: true };
 }
 
@@ -5198,6 +5402,20 @@ function publicGameState(game, viewerId) {
               : null,
         }
       : null,
+    pendingIllegalBuild: game.pendingIllegalBuild
+      ? {
+          actorId: game.pendingIllegalBuild.actorId,
+          actorName: game.pendingIllegalBuild.actorName,
+          targetId: game.pendingIllegalBuild.targetId,
+          targetName: game.pendingIllegalBuild.targetName,
+          forMe:
+            Boolean(viewerId) &&
+            game.pendingIllegalBuild.targetId === viewerId,
+          isActor:
+            Boolean(viewerId) &&
+            game.pendingIllegalBuild.actorId === viewerId,
+        }
+      : null,
     roundProduceBegun: Boolean(game.roundProduceBegun),
     pendingEventChoice: game.pendingEventChoice
       ? {
@@ -5275,6 +5493,7 @@ function publicGameState(game, viewerId) {
         roundExpanded: Boolean(p.roundExpanded),
         funcCount: p.funcCards.length,
         stealableCount: stealableHandCount(p),
+        builtBuildingCount: countBuiltBuildings(p),
         // 功能手牌仅本人可见；他人只看数量（始终暗置）
         funcCards: isMe
           ? p.funcCards.map((c) => ({
@@ -5352,6 +5571,12 @@ function canPlayerAct(game, player) {
     return game.pendingTrade.toId === player.id;
   }
   if (
+    game.pendingIllegalBuild &&
+    game.pendingIllegalBuild.targetId === player.id
+  ) {
+    return true;
+  }
+  if (
     game.phase === 'settle_act' &&
     (player.pendingDiscardFunc ||
       player.pendingDiscardBuild ||
@@ -5380,6 +5605,9 @@ function getActingPlayerIds(game) {
   if (!game || game.over) return [];
   if (game.pendingTrade && game.pendingTrade.toId) {
     return [game.pendingTrade.toId];
+  }
+  if (game.pendingIllegalBuild && game.pendingIllegalBuild.targetId) {
+    return [game.pendingIllegalBuild.targetId];
   }
   if (game.phase === 'init_roll') {
     return alivePlayers(game)
@@ -5531,6 +5759,19 @@ function forceTimeout(game, playerId) {
     }
   }
 
+  if (
+    game.pendingIllegalBuild &&
+    game.pendingIllegalBuild.targetId === playerId
+  ) {
+    const built = (p.buildings || []).find((b) => b.built);
+    if (built) {
+      return applyAction(game, playerId, {
+        type: 'illegalBuildPick',
+        payload: { buildingId: built.id },
+      });
+    }
+  }
+
   if (game.pendingTrade && game.pendingTrade.toId === playerId) {
     return applyAction(game, playerId, { type: 'rejectTrade', payload: {} });
   }
@@ -5580,9 +5821,18 @@ function forceTimeout(game, playerId) {
           if (area === exArea && num === exNum) continue;
           const w = workers[num] || {};
           if ((w[playerId] || 0) > 0) {
+            const ab = game.board[area];
+            const physical = Number(w[playerId]) || 0;
+            const boosted = Math.min(
+              Number(
+                (ab.boosts && ab.boosts[num] && ab.boosts[num][playerId]) || 0
+              ),
+              physical
+            );
+            const enhanced = boosted > 0 && physical - boosted <= 0;
             return applyAction(game, playerId, {
               type: 'eventRecallDie',
-              payload: { area, number: num },
+              payload: { area, number: num, enhanced },
             });
           }
         }
@@ -5802,6 +6052,8 @@ module.exports = {
   SETTLE_ANIM_MAX_MS,
   // 测试导出
   cancelEqualCounts,
+  slotStrengthMap,
+  slotPlayerDieCounts,
   playerScore,
   exchangeCostN,
   effectiveExchangeCost,
@@ -5809,6 +6061,11 @@ module.exports = {
   countBuiltExchanges,
   effectiveExchangeCount,
   MAX_EXCHANGE_EFFECT,
+  STACK_ACHIEVEMENT_NEED,
+  STACK_ACHIEVEMENT_SCORE,
+  countBuiltByStackKey,
+  stackAchievementKeys,
+  stackAchievementScore,
   EXCHANGE_TITLE_NEED,
   EXCHANGE_TITLE_SCORE,
   EXCHANGE_TITLE_ID,
@@ -5825,6 +6082,8 @@ module.exports = {
   ENVIRONMENT_SLOT_NUMBERS,
   MAX_RESOURCE_HAND,
   MAX_ENHANCED_DICE,
+  START_ENHANCED_DICE,
+  ENHANCED_DIE_STRENGTH,
   RECRUIT_TEMP_VILLAGERS,
   EXPAND_RESOURCE_BONUS,
   maxResourceHandFor,
@@ -5840,7 +6099,11 @@ module.exports = {
   nextFreeBuildSlot,
   freeHousesFor,
   stealableHandCount,
+  countBuiltBuildings,
+  hasIllegalBuildTarget,
   idleVillagers,
+  areaOpenSlotCount,
+  specialSlotUnlockRound,
   beginProduce,
   startSettle,
   tryEnterPreSettleMercenaryOrSettle,

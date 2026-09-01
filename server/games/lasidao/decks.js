@@ -22,6 +22,7 @@ const FUNC_TYPES = {
   welfareHouse: '福利房',
   caravan: '商队来临',
   robbery: '抢劫',
+  illegalBuild: '拆迁',
   enhance: '强化',
   recruit: '征召',
 };
@@ -115,17 +116,18 @@ function makeFunc(type, extra = {}) {
 /** 功能板块卡堆（未洗，供合堆组装） */
 function buildFunctionDeckRaw() {
   const cards = [];
-  for (let i = 0; i < 5; i++) cards.push(makeFunc('harvest')); // 丰收
-  for (let i = 0; i < 3; i++) cards.push(makeFunc('remoteDice')); // 遥控骰子
-  for (let i = 0; i < 5; i++) cards.push(makeFunc('exile')); // 驱逐
-  for (let i = 0; i < 3; i++) cards.push(makeFunc('redraw')); // 重抽
-  for (let i = 0; i < 5; i++) cards.push(makeFunc('banditRaid')); // 强盗来袭
-  for (let i = 0; i < 5; i++) cards.push(makeFunc('robbery')); // 抢劫
-  for (let i = 0; i < 3; i++) cards.push(makeFunc('freeExpand')); // 免费扩建
-  for (let i = 0; i < 3; i++) cards.push(makeFunc('welfareHouse')); // 福利房
-  for (let i = 0; i < 2; i++) cards.push(makeFunc('caravan')); // 商队来临
-  for (let i = 0; i < 2; i++) cards.push(makeFunc('enhance')); // 强化
-  for (let i = 0; i < 5; i++) cards.push(makeFunc('recruit')); // 征召
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('harvest')); // 丰收
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('remoteDice')); // 遥控骰子
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('exile')); // 驱逐
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('redraw')); // 重抽
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('banditRaid')); // 强盗来袭
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('robbery')); // 抢劫
+  for (let i = 0; i < 2; i++) cards.push(makeFunc('illegalBuild')); // 拆迁
+//  for (let i = 0; i < 2; i++) cards.push(makeFunc('freeExpand')); // 免费扩建
+//  for (let i = 0; i < 2; i++) cards.push(makeFunc('welfareHouse')); // 福利房
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('caravan')); // 商队来临
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('enhance')); // 强化
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('recruit')); // 征召
   return cards;
 }
 
@@ -275,8 +277,8 @@ function buildBuildingDeckRaw() {
     cards.push(makeProduceBuild(res, false));
     cards.push(makeProduceBuild(res, false));
     cards.push(makeProduceBuild(res, false));
-    cards.push(makeProduceBuild(res, false));
   }
+  cards.push(makeProduceBuild('iron', false));
   cards.push(makeProduceBuild('iron', false));
   cards.push(makeProduceBuild('iron', false));
   cards.push(makeProduceBuild('iron', false));
@@ -284,7 +286,7 @@ function buildBuildingDeckRaw() {
   for (let i = 0; i < 4; i++) cards.push(makeScore2());
   for (let i = 0; i < 6; i++) cards.push(makeScore1());
   for (let i = 0; i < 5; i++) cards.push(makeExchange());
-  for (let i = 0; i < 4; i++) cards.push(makeWishWell());
+  for (let i = 0; i < 5; i++) cards.push(makeWishWell());
   //for (let i = 0; i < 2; i++) cards.push(makeMixer());
   for (let i = 0; i < 2; i++) cards.push(makeEternalThrone());
   return cards;

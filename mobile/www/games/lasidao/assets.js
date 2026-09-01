@@ -88,6 +88,7 @@ window.LasidaoAssets = (function () {
     welfareHouse: 'gongnengka_fulifang.png',
     caravan: 'gongnengka_shangduilailin.png',
     robbery: 'gongnengka_qiangjie.png',
+    illegalBuild: 'gongnengka_chaiqian.png',
     enhance: 'gongnengka_qianghua.png',
     recruit: 'gongnengka_zhengzhao.png',
   };

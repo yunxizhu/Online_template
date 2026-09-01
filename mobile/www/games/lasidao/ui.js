@@ -176,12 +176,14 @@ window.LasidaoUi = (function () {
     welfareHouse: 'lasidao.func.welfareHouse',
     caravan: 'lasidao.func.caravan',
     robbery: 'lasidao.func.robbery',
+    illegalBuild: 'lasidao.func.illegalBuild',
   };
 
   const PRODUCE_FUNC = new Set(['remoteDice', 'exile', 'banditRaid']);
   const BUILD_FUNC = new Set([
     'harvest',
     'robbery',
+    'illegalBuild',
     'redraw',
     'expand',
     'freeExpand',
@@ -215,6 +217,11 @@ window.LasidaoUi = (function () {
         const vil = Number(me && me.villagers) || 0;
         const maxEnh = Number(game && game.maxEnhancedDice) || 3;
         if (enh >= Math.min(vil, maxEnh)) return false;
+      }
+      if (funcType === 'illegalBuild') {
+        return (game.players || []).some(
+          (p) => !p.left && countBuiltBuildingsUi(p) > 0
+        );
       }
       return BUILD_FUNC.has(funcType);
     }
@@ -299,6 +306,7 @@ window.LasidaoUi = (function () {
   /** @type {[string|null, string|null]} */
   let robberyTargets = [null, null];
   let robberyPickStep = 0;
+  let illegalBuildCardId = null;
   let redrawCardId = null;
 
   let voidSkipMode = 'burn';
@@ -2032,6 +2040,17 @@ window.LasidaoUi = (function () {
     return el;
   }
 
+  function workerSlotStrength(count, boosted) {
+    const n = Number(count) || 0;
+    const b = Math.min(Math.max(0, Number(boosted) || 0), n);
+    return (n * 2 + b) / 2;
+  }
+
+  function formatWorkerStrength(count, boosted) {
+    const s = workerSlotStrength(count, boosted);
+    return Number.isInteger(s) ? String(s) : s.toFixed(1);
+  }
+
   function appendWorkerDice(container, face, workers, players, game, opts) {
     opts = opts || {};
     const boosts = opts.boosts || {};
@@ -2054,8 +2073,7 @@ window.LasidaoUi = (function () {
       const color = playerDieColor(players, pid, game);
       const count = Math.min(Number(n) || 0, 24);
       const boosted = Math.min(Number(boosts[pid]) || 0, count);
-      // 派遣到格子上：强化骰换算为效力（每枚强化 +1），统一用普通尺寸显示
-      const strength = Math.min(count + boosted, 48);
+      const strength = workerSlotStrength(count, boosted);
       if (strength <= 0) continue;
 
       const row = document.createElement('div');
@@ -2064,19 +2082,19 @@ window.LasidaoUi = (function () {
       row.appendChild(makeDieEl(face, 'is-mini is-placed', color));
       const mul = document.createElement('span');
       mul.className = 'las-worker-mul';
-      mul.textContent = '\u00d7' + strength;
+      mul.textContent = '\u00d7' + formatWorkerStrength(count, boosted);
       if (boosted > 0) {
         mul.title = t('lasidao.workerBoostHint', {
           count,
           boost: boosted,
-          strength,
+          strength: formatWorkerStrength(count, boosted),
         });
       }
       row.appendChild(mul);
       row.title =
         workerName(pid, players, game) +
         ' \u00d7' +
-        strength +
+        formatWorkerStrength(count, boosted) +
         (boosted > 0
           ? ' (' + t('lasidao.boostMul', { n: boosted }) + ')'
           : '');
@@ -2092,8 +2110,11 @@ window.LasidaoUi = (function () {
       if (!n) continue;
       const count = Number(n) || 0;
       const boosted = Math.min(Number(boosts && boosts[pid]) || 0, count);
-      const strength = count + boosted;
-      parts.push(workerName(pid, players, game) + 'x' + strength);
+      parts.push(
+        workerName(pid, players, game) +
+          'x' +
+          formatWorkerStrength(count, boosted)
+      );
     }
     return parts.length ? parts.join(' ') : '';
   }
@@ -2208,6 +2229,13 @@ window.LasidaoUi = (function () {
     return game.currentPlayerId && meId && game.currentPlayerId === meId;
   }
 
+  function countBuiltBuildingsUi(player) {
+    if (!player) return 0;
+    const n = Number(player.builtBuildingCount);
+    if (Number.isFinite(n) && n >= 0) return n;
+    return (player.buildings || []).filter((b) => b.built).length;
+  }
+
   function formatPendingNames(list, meId) {
     return (list || [])
       .filter((p) => p && p.id && p.id !== meId)
@@ -2228,6 +2256,21 @@ window.LasidaoUi = (function () {
             {}).name ||
           '?';
         text = t('lasidao.statusAwaitTrade', { name: decider });
+      } else if (game.pendingIllegalBuild) {
+        const pending = game.pendingIllegalBuild;
+        if (pending.forMe) {
+          text = t('lasidao.illegalBuildPickBuilding', {
+            actor: pending.actorName || '?',
+          });
+        } else if (pending.isActor) {
+          text = t('lasidao.illegalBuildAwaitTarget', {
+            name: pending.targetName || '?',
+          });
+        } else {
+          text = t('lasidao.illegalBuildAwaitOther', {
+            target: pending.targetName || '?',
+          });
+        }
       } else if (game.phase === 'settle_act') {
         const me = mePlayer(game, meId);
         const myPending = Boolean(
@@ -3653,9 +3696,12 @@ window.LasidaoUi = (function () {
     return idx * 6 + num - 5;
   }
 
-  /** 功能/建筑合区 num 格于第几轮解锁（开局 2 格，逐轮 +1） */
+  /** 功能/建筑合区 num 格于第几轮解锁（1–2 号第 1 轮，之后每 2 轮 +1 格） */
   function slotUnlockRound(areaKey, num) {
-    if (areaKey === 'special') return Math.max(1, num - 1);
+    if (areaKey === 'special') {
+      if (num <= 2) return 1;
+      return 2 * (num - 2) + 1;
+    }
     return null;
   }
 
@@ -3778,8 +3824,10 @@ window.LasidaoUi = (function () {
 
   /** 合区本轮开放格数 1~6 */
   function areaOpenSlotCount(areaKey, round) {
-    const n = Math.max(0, (round || 1) - 1);
-    if (areaKey === 'special') return Math.min(6, 2 + n);
+    const r = Math.max(1, Number(round) || 1);
+    if (areaKey === 'special') {
+      return Math.min(6, 2 + Math.floor((r - 1) / 2));
+    }
     return 6;
   }
 
@@ -6375,6 +6423,14 @@ window.LasidaoUi = (function () {
       setRobberyModalOpen(true);
       renderRobberyModal(game, card);
       selectedFuncId = null;
+    } else if (card.funcType === 'illegalBuild') {
+      if (!(game.players || []).some((p) => !p.left && countBuiltBuildingsUi(p) > 0)) {
+        return;
+      }
+      illegalBuildCardId = card.id;
+      setIllegalBuildModalOpen(true);
+      renderIllegalBuildModal(game, card, 'target');
+      selectedFuncId = null;
     } else {
       netRef.sendAction('useFunc', { cardId: card.id });
       selectedFuncId = null;
@@ -6485,24 +6541,22 @@ window.LasidaoUi = (function () {
 
   function appendPlayerTitleBadges(parent, player) {
     if (!parent || !player) return;
-    const raw = Array.isArray(player.titles) ? player.titles : [];
-    const titles =
-      raw.length > 0
-        ? raw
-        : player.commerceTycoon
-          ? [
-              {
-                id: 'commerceTycoon',
-                label: t('lasidao.titleCommerceTycoon'),
-              },
-            ]
-          : [];
+    const titles = Array.isArray(player.titles) ? player.titles : [];
     for (const title of titles) {
       const badge = document.createElement('span');
       badge.className = 'las-player-title';
       badge.dataset.titleId = title.id || '';
       badge.textContent = title.label || t('lasidao.titleCommerceTycoon');
-      badge.title = t('lasidao.titleCommerceTycoonTip');
+      if (title.id === 'commerceTycoon' || title.stackKey === 'exchange') {
+        badge.title = t('lasidao.titleCommerceTycoonTip');
+      } else if (title.id === 'lampSpirit' || title.stackKey === 'wishWell') {
+        badge.title = t('lasidao.titleLampSpiritTip');
+      } else {
+        badge.title = t('lasidao.stackAchievementTip', {
+          need: 3,
+          score: title.score || 2,
+        });
+      }
       parent.appendChild(badge);
     }
   }
@@ -6555,7 +6609,7 @@ window.LasidaoUi = (function () {
   function canProposePlayerTrade(game, meId, targetId) {
     if (!game || !meId || !targetId || meId === targetId) return false;
     if (game.over) return false;
-    if (game.pendingTrade || game.pendingEventChoice || game.pendingRedrawChoice) {
+    if (game.pendingTrade || game.pendingEventChoice || game.pendingRedrawChoice || game.pendingIllegalBuild) {
       return false;
     }
     if (game.phase !== 'produce' && game.phase !== 'build') return false;
@@ -7888,6 +7942,7 @@ window.LasidaoUi = (function () {
     syncSettleDiscardModal(game, meId);
     syncEventUi(game, meId);
     syncRedrawUi(game, meId);
+    syncIllegalBuildUi(game, meId);
     syncTradeModals(game, meId);
 
     maybePlaySettle(game);
@@ -9393,6 +9448,99 @@ window.LasidaoUi = (function () {
     } else if (window.I18n && window.I18n.applyDom) {
       window.I18n.applyDom(modal);
     }
+  }
+
+  function setIllegalBuildModalOpen(open) {
+    const modal = $('las-illegal-build-modal');
+    if (!modal) return;
+    modal.hidden = !open;
+    if (!open) {
+      illegalBuildCardId = null;
+    } else if (window.I18n && window.I18n.applyDom) {
+      window.I18n.applyDom(modal);
+    }
+  }
+
+  function syncIllegalBuildUi(game, meId) {
+    if (game && game.pendingIllegalBuild && game.pendingIllegalBuild.forMe) {
+      setIllegalBuildModalOpen(true);
+      renderIllegalBuildModal(game, null, 'building');
+    }
+  }
+
+  function renderIllegalBuildModal(game, card, mode) {
+    const title = $('las-illegal-build-title');
+    const body = $('las-illegal-build-body');
+    if (!title || !body) return;
+    body.innerHTML = '';
+
+    if (mode === 'building') {
+      title.textContent = t('lasidao.illegalBuildPickBuildingTitle');
+      const me = mePlayer(game, lastMeId);
+      const built = (me && me.buildings ? me.buildings : []).filter(
+        (b) => b.built
+      );
+      if (!built.length) {
+        const empty = document.createElement('p');
+        empty.className = 'muted';
+        empty.textContent = t('lasidao.illegalBuildNoBuilt');
+        body.appendChild(empty);
+        return;
+      }
+      const grid = document.createElement('div');
+      grid.className = 'las-robbery-players';
+      for (const b of built) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'las-card build';
+        if (!decorateHandCardArt(btn, b, 'building')) {
+          btn.textContent = b.label || '?';
+        }
+        if (b.score) {
+          btn.title = t('lasidao.illegalBuildScoreLoss', { score: b.score });
+        }
+        btn.onclick = () => {
+          if (!netRef) return;
+          netRef.sendAction('illegalBuildPick', { buildingId: b.id });
+          selectedBuildingId = null;
+          setIllegalBuildModalOpen(false);
+        };
+        grid.appendChild(btn);
+      }
+      body.appendChild(grid);
+      return;
+    }
+
+    title.textContent = t('lasidao.illegalBuildPickTarget');
+    const players = (game && game.players) || [];
+    const eligible = players.filter(
+      (p) => !p.left && countBuiltBuildingsUi(p) > 0
+    );
+    if (!eligible.length) {
+      const empty = document.createElement('p');
+      empty.className = 'muted';
+      empty.textContent = t('lasidao.illegalBuildNoTarget');
+      body.appendChild(empty);
+      return;
+    }
+    const wrap = document.createElement('div');
+    wrap.className = 'las-robbery-players';
+    for (const p of eligible) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = p.name || '?';
+      btn.onclick = () => {
+        if (!netRef || !illegalBuildCardId) return;
+        netRef.sendAction('useFunc', {
+          cardId: illegalBuildCardId,
+          targetId: p.id,
+        });
+        selectedFuncId = null;
+        setIllegalBuildModalOpen(false);
+      };
+      wrap.appendChild(btn);
+    }
+    body.appendChild(wrap);
   }
 
   function updateSpecialDeckTopArt(game) {
@@ -11009,6 +11157,11 @@ window.LasidaoUi = (function () {
         selectedFuncId = null;
         setRobberyModalOpen(false);
       };
+    }
+
+    const ibCancel = $('btn-las-illegal-build-cancel');
+    if (ibCancel) {
+      ibCancel.onclick = () => setIllegalBuildModalOpen(false);
     }
 
     // Redraw modal bindings

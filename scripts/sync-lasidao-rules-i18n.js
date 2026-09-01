@@ -73,7 +73,7 @@ function buildEventHtml(lang) {
 
 const zhFlow =
   '<p><strong>第一轮：</strong>投骰子决定先手。</p>' +
-  '<p><strong>准备阶段：</strong>发牌到对应板块上（资源区每轮 <code>6+n</code> 张、合区 <code>2+n</code> 张，<code>n=轮次−1</code>；依次填入 1→6 号格并回绕）。</p>' +
+  '<p><strong>准备阶段：</strong>发牌到对应板块上（资源区每轮 <code>6+n</code> 张，<code>n=轮次−1</code>；合区开局开放 1–2 号格，第 3 轮起每 2 轮解锁下一格，发牌张数等于已解锁格数；依次填入 1→6 号格并回绕）。</p>' +
   '<p><strong>生产阶段：</strong>由上一轮第一个完成生产的玩家开始：投骰子，放置同一点数的所有骰子或跳过，然后轮到下一位，循环直到所有玩家都用完骰子。</p>' +
   '<ul><li>跳过放置：可<strong>爆掉 1 枚骰子</strong>并任选获得 1 个资源；或<strong>支付 2 张资源</strong>跳过（不爆骰）。</li><li>骰子用完的玩家自动略过。</li></ul>' +
   '<p><strong>生产结算：</strong>同格同数量的骰子相互抵消下场，再按第一名、第二名分发资源/卡牌；雇佣军等「生产判定前」效果在全员放置完毕、正式结算前处理。</p>' +
@@ -84,7 +84,7 @@ const zhFlow =
 
 const enFlow =
   '<p><strong>Round 1:</strong> Roll dice to decide who goes first.</p>' +
-  '<p><strong>Setup:</strong> Deal onto board slots (resource area <code>6+n</code>, merged area <code>2+n</code>, <code>n = round − 1</code>; fill slots 1→6 and wrap).</p>' +
+  '<p><strong>Setup:</strong> Deal onto board slots (resource area <code>6+n</code>, <code>n = round − 1</code>; merged area opens slots 1–2 in round 1, then one new slot every 2 rounds from round 3; deal count = open slots; fill slots 1→6 and wrap).</p>' +
   '<p><strong>Production:</strong> Starts with last round\'s first finisher. Roll, place all dice of one face or skip, then next player, until everyone has used all dice.</p>' +
   '<ul><li>Skip: <strong>burn 1 die</strong> and take any 1 resource; or <strong>pay 2 resources</strong> to skip without burning a die.</li><li>Players with no dice left are skipped automatically.</li></ul>' +
   '<p><strong>Production settle:</strong> Equal-count dice cancel and leave; award 1st/2nd shares. Pre-resolve effects (e.g. Mercenaries) happen after all dice are placed, before formal settle.</p>' +
@@ -134,14 +134,15 @@ const zhFunc =
   '<dt data-las-card="func:harvest">丰收（5）</dt><dd>建造阶段：任选获得 3 个资源（可重复）。</dd>' +
   '<dt data-las-card="func:remoteDice">遥控骰子（2）</dt><dd>生产阶段、轮到你时可用（投掷前后均可）：本回合可指定任意点数派遣。</dd>' +
   '<dt data-las-card="func:exile">驱逐（5）</dt><dd>生产阶段、轮到你时：将目标玩家在某数字格的 1 枚骰子移到另一有板块的数字格。</dd>' +
-  '<dt data-las-card="func:enhance">强化（2）</dt><dd>建造阶段：强化 1 枚未强化过的骰子（最多 3 枚；达上限则无法发动）。强化骰结算时计为 2（普通骰计 1）。</dd>' +
+  '<dt data-las-card="func:enhance">强化（2）</dt><dd>建造阶段：强化 1 枚未强化过的骰子（最多 3 枚；达上限则无法发动）。强化骰结算时计为 1.5（普通骰计 1）。开局自带 1 枚强化骰。</dd>' +
   '<dt data-las-card="func:recruit">征召（5）</dt><dd>建造阶段：下一轮生产阶段临时村民 +2，可参与投骰与派遣；该生产阶段结束后消失。</dd>' +
   '<dt data-las-card="func:redraw">重抽（3）</dt><dd>建造阶段：从功能/建筑合堆顶抽 3 张，选 1 保留，其余弃入弃牌堆；合堆不足时洗混弃牌堆合并后再抽。保留后超出手牌上限须先弃置。</dd>' +
   '<dt data-las-card="func:banditRaid">强盗来袭（5）</dt><dd>生产阶段、轮到你时：在任意板块任意数字格放置 2 枚中立骰；参与抵消并占用名次，不领取收益。</dd>' +
   '<dt data-las-card="func:freeExpand">免费扩建（3）</dt><dd>建造阶段：立即扩建一格（建筑格 / 功能卡格 / 资源卡位），不消耗资源。</dd>' +
   '<dt data-las-card="func:welfareHouse">福利房（3）</dt><dd>建造阶段：获得 1 间免费房子（可繁殖村民，但不加分）。</dd>' +
-  '<dt data-las-card="func:caravan">商队来临（2）</dt><dd>建造阶段：本回合结束前可按 2:1 兑换资源（已建集市则 1:1）。</dd>' +
+  '<dt data-las-card="func:caravan">商队来临（2）</dt><dd>建造阶段：本回合结束前可按 1:1 兑换资源；若已建集市则额外 +1 胜利点。</dd>' +
   '<dt data-las-card="func:robbery">抢劫（5）</dt><dd>建造阶段：选择两名玩家（可为同一人），各从其手牌中随机夺取 1 张（资源 / 功能卡 / 未建建筑）。</dd>' +
+  '<dt data-las-card="func:illegalBuild">拆迁（2）</dt><dd>仅建造阶段：选择一名已有已建建筑的玩家，由其选择一座已建建筑变为未建造；若为分数建筑，对应分数立即消失。</dd>' +
   '</dl>';
 
 const enFunc =
@@ -149,14 +150,15 @@ const enFunc =
   '<dt data-las-card="func:harvest">Harvest (5)</dt><dd>Build: gain any 3 resources (duplicates OK).</dd>' +
   '<dt data-las-card="func:remoteDice">Remote Dice (2)</dt><dd>Your produce turn (before or after rolling): choose any faces.</dd>' +
   '<dt data-las-card="func:exile">Exile (5)</dt><dd>Your produce turn: move 1 villager of a target from a number slot to another slot with tiles.</dd>' +
-  '<dt data-las-card="func:enhance">Enhance (2)</dt><dd>Build: enhance 1 unenhanced die (max 3). Counts as 2 in settle.</dd>' +
+  '<dt data-las-card="func:enhance">Enhance (2)</dt><dd>Build: enhance 1 unenhanced die (max 3). Enhanced dice count as 1.5 in settle (normal = 1). Each player starts with 1 enhanced die.</dd>' +
   '<dt data-las-card="func:recruit">Recruit (5)</dt><dd>Build: next produce +2 temp villagers; gone after that produce.</dd>' +
   '<dt data-las-card="func:redraw">Redraw (3)</dt><dd>Build: draw 3 from merged deck top, keep 1; reshuffle discard if needed. Discard if over hand cap after keeping.</dd>' +
   '<dt data-las-card="func:banditRaid">Bandit Raid (5)</dt><dd>Your produce turn: place 2 neutrals on any number slot.</dd>' +
   '<dt data-las-card="func:freeExpand">Free Expand (3)</dt><dd>Build: expand one slot immediately (building / function / resource), no cost.</dd>' +
   '<dt data-las-card="func:welfareHouse">Welfare House (3)</dt><dd>Build: gain 1 free house (breeding only, no VP).</dd>' +
-  '<dt data-las-card="func:caravan">Caravan (2)</dt><dd>Build: until your turn ends, trade 2:1 (1:1 if you built a Market).</dd>' +
+  '<dt data-las-card="func:caravan">Caravan (2)</dt><dd>Build: until your turn ends, trade at 1:1; +1 VP if you already built a Market.</dd>' +
   '<dt data-las-card="func:robbery">Robbery (5)</dt><dd>Build: pick two players (can be the same); randomly steal 1 hand card from each.</dd>' +
+  '<dt data-las-card="func:illegalBuild">Demolition (2)</dt><dd>Build phase only: pick a player with at least one built building; they choose one to revert to unbuilt; VP buildings lose their score.</dd>' +
   '</dl>';
 
 const zhBuild =
@@ -165,9 +167,9 @@ const zhBuild =
   '<dt data-las-cards="build:wood:poor build:stone:poor build:food:poor build:iron:poor">资源建筑·贫</dt><dd>木/石/小麦（各 3）：贫档造价见卡面，产出 1。铁（3）：1 木 1 石 1 铁，产出 1 铁。建成后每轮个人产出阶段自动产出，无需工人。</dd>' +
   '<dt data-las-card="build:score2">宫殿（+2）（4）</dt><dd>造价 3 木 3 石 3 小麦 2 铁。建成即 +2 分，无需工人。被弃置的宫殿不再计分。</dd>' +
   '<dt data-las-card="build:score1">学堂（+1）（7）</dt><dd>入手即 +1 胜利点并置入弃牌堆，无需建造、不占建筑格。</dd>' +
-  '<dt data-las-card="build:exchange">集市（5）</dt><dd>造价 1 木 1 石 1 小麦。建成后提升兑换比例（默认银行 3:1，1 座→2:1，≥2 座→1:1；兑换最多计 2 座）。第 3 座获得称号「商业巨擎」并 +2 胜利点（建成集市不足 3 座时失去）。相同建筑可叠放同一建筑格。</dd>' +
+  '<dt data-las-card="build:exchange">集市（5）</dt><dd>造价 1 木 1 石 1 小麦。建成后提升兑换比例（默认银行 3:1，1 座→2:1，≥2 座→1:1；兑换最多计 2 座）。相同建筑可叠放同一建筑格。</dd>' +
   '<dt data-las-card="build:wishWell">许愿井（3）</dt><dd>造价 1 木 1 石 1 小麦 1 铁。每建成一座：个人产出阶段可选任意 1 种资源 +1（多座可叠或分配）。无需工人。</dd>' +
-  '</dl>';
+  '</dl><p>任意同类型建筑建成 3 座：额外 +2 胜利点（例：3 座集市→「商业巨擎」；3 座许愿井→「灯灵本灵」；3 座同资源工坊→「××管理者」）。</p>';
 
 const enBuild =
   '<dl class="las-rules-dl">' +
@@ -175,9 +177,9 @@ const enBuild =
   '<dt data-las-cards="build:wood:poor build:stone:poor build:food:poor build:iron:poor">Resource building · Poor</dt><dd>Wood/Stone/Wheat×3: poor costs on card, produce 1. Iron×3: 1W 1S 1I → 1 iron. Auto-produce in personal production step.</dd>' +
   '<dt data-las-card="build:score2">Palace (+2) (4)</dt><dd>Cost 3W 3S 3 wheat 2I. +2 when built.</dd>' +
   '<dt data-las-card="build:score1">School (+1) (3)</dt><dd>Cost 1W 1S 1 wheat 1I. +1 when built.</dd>' +
-  '<dt data-las-card="build:exchange">Market (5)</dt><dd>Cost 1W 1S 1 wheat. Trade rate: default bank 3:1, 1→2:1, ≥2→1:1 (rate counts at most 2). 3rd market grants title Commerce Tycoon and +2 VP (lost if built markets fall below 3). Same-type buildings may stack.</dd>' +
+  '<dt data-las-card="build:exchange">Market (5)</dt><dd>Cost 1W 1S 1 wheat. Trade rate: default bank 3:1, 1→2:1, ≥2→1:1 (rate counts at most 2). Same-type buildings may stack.</dd>' +
   '<dt data-las-card="build:wishWell">Wish Well (3)</dt><dd>Cost 1W 1S 1 wheat 1I. Personal production: +1 any resource per well.</dd>' +
-  '</dl>';
+  '</dl><p>Build 3 of the same type: +2 VP each (e.g. 3 markets→Commerce Tycoon; 3 wish wells→Lamp Spirit; 3 same workshops→×× Manager).</p>';
 
 function apply(lang, flow, permanent, func, build, resource) {
   const p = path.join(ROOT, 'public/i18n', `${lang}.json`);

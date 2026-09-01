@@ -138,10 +138,22 @@ function drainNonProduce(game) {
           if (picked) break;
         }
         if (!picked) break;
+        const ab = game.board[picked.area];
+        const wSlot = (ab.workers[picked.number] || {})[pid] || 0;
+        const boosted = Math.min(
+          Number(
+            (ab.boosts &&
+              ab.boosts[picked.number] &&
+              ab.boosts[picked.number][pid]) ||
+              0
+          ),
+          wSlot
+        );
+        const enhanced = boosted > 0 && wSlot - boosted <= 0;
         ok(
           applyAction(game, pid, {
             type: 'eventRecallDie',
-            payload: picked,
+            payload: { ...picked, enhanced },
           })
         );
       } else if (ch.needChoice === 'gatherNeutrals') {
@@ -353,6 +365,7 @@ assert.ok(!game.board.building);
 assert.ok(game.players.every((p) => p.villagers === 3));
 assert.ok(game.players.every((p) => p.houses === 2));
 assert.ok(game.players.every((p) => (p.houseScore || 0) === 0));
+assert.ok(game.players.every((p) => p.enhancedDice === 1));
 assert.ok(game.players.every((p) => p.resources.food === 0));
 assert.ok(
   game.players.every(
@@ -795,14 +808,32 @@ assert.strictEqual(mod.maxPlayers, 5);
 
 if (game.round >= 2) {
   const n = game.round - 1;
+  const { areaOpenSlotCount } = require('../engine');
   assert.strictEqual(
     game.board.resource.tiles.length,
     Math.min(15, 6 + n)
   );
   assert.strictEqual(
     game.board.special.tiles.length,
-    Math.min(6, 2 + n)
+    areaOpenSlotCount('special', game.round)
   );
+}
+
+console.log('— special area unlock every 2 rounds —');
+{
+  const { areaOpenSlotCount, specialSlotUnlockRound } = require('../engine');
+  assert.strictEqual(specialSlotUnlockRound(1), 1);
+  assert.strictEqual(specialSlotUnlockRound(2), 1);
+  assert.strictEqual(specialSlotUnlockRound(3), 3);
+  assert.strictEqual(specialSlotUnlockRound(4), 5);
+  assert.strictEqual(specialSlotUnlockRound(5), 7);
+  assert.strictEqual(specialSlotUnlockRound(6), 9);
+  assert.strictEqual(areaOpenSlotCount('special', 1), 2);
+  assert.strictEqual(areaOpenSlotCount('special', 2), 2);
+  assert.strictEqual(areaOpenSlotCount('special', 3), 3);
+  assert.strictEqual(areaOpenSlotCount('special', 5), 4);
+  assert.strictEqual(areaOpenSlotCount('special', 9), 6);
+  console.log('✓ special area unlock schedule');
 }
 
 assert.ok(Array.isArray(getActingPlayerIds(game)));
@@ -1460,14 +1491,15 @@ console.log('— caravan card —');
     })
   );
   assert.strictEqual(p.caravanPending, true);
-  assert.strictEqual(effectiveExchangeCost(p, g), 2, '无集市应为 2:1');
+  assert.strictEqual(p.bonusScore, 0, '无集市不应加分');
+  assert.strictEqual(effectiveExchangeCost(p, g), 1, '商队期间恒为 1:1');
   ok(
     applyAction(g, 'p0', {
       type: 'exchange',
       payload: { from: 'wood', to: 'food' },
     })
   );
-  assert.strictEqual(p.resources.wood, 2);
+  assert.strictEqual(p.resources.wood, 3);
   assert.strictEqual(p.resources.food, 1);
 
   p.buildings.push({
@@ -1479,7 +1511,7 @@ console.log('— caravan card —');
     workers: 0,
     cost: {},
   });
-  assert.strictEqual(effectiveExchangeCost(p, g), 1, '有集市应为 1:1');
+  assert.strictEqual(effectiveExchangeCost(p, g), 1, '商队期间仍为 1:1');
   p.resources.wood = 1;
   ok(
     applyAction(g, 'p0', {
@@ -1493,6 +1525,40 @@ console.log('— caravan card —');
   ok(applyAction(g, 'p0', { type: 'pass' }));
   assert.strictEqual(p.caravanPending, false, '回合结束应清除商队效果');
   console.log('✓ caravan card');
+}
+{
+  const { playerScore } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p = g.players[0];
+  p.buildings.push({
+    id: 'ex_bonus',
+    buildType: 'exchange',
+    label: '集市',
+    slot: 'none',
+    built: true,
+    workers: 0,
+    cost: {},
+  });
+  p.funcCards.push({
+    id: 'fn_caravan2',
+    kind: 'function',
+    funcType: 'caravan',
+    label: '商队来临',
+  });
+  g.phase = 'build';
+  g.currentPlayerId = 'p0';
+  g.buildPassed = {};
+  const scoreBefore = playerScore(p);
+  ok(
+    applyAction(g, 'p0', {
+      type: 'useFunc',
+      payload: { cardId: 'fn_caravan2' },
+    })
+  );
+  assert.strictEqual(p.bonusScore, 1, '已建集市应 +1 分');
+  assert.strictEqual(playerScore(p), scoreBefore + 1);
+  console.log('✓ caravan market bonus');
 }
 
 {
@@ -1570,6 +1636,101 @@ console.log('— caravan card —');
   assert.ok(!fail.ok, '无手牌目标不可抢劫');
   assert.ok(/手牌/.test(fail.error || ''), fail.error);
   console.log('✓ robbery rejects empty hand');
+}
+
+console.log('— demolition unbuilds score building —');
+{
+  const { playerScore: scoreOf } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const actor = g.players[0];
+  const victim = g.players[1];
+  g.phase = 'build';
+  g.currentPlayerId = actor.id;
+  g.buildPassed = {};
+  actor.funcCards.push({
+    id: 'ib_card',
+    funcType: 'illegalBuild',
+    label: '拆迁',
+    kind: 'function',
+  });
+  victim.buildings.push({
+    id: 'pal_v',
+    kind: 'building',
+    buildType: 'score2',
+    label: '宫殿',
+    cost: {},
+    score: 2,
+    built: true,
+    slot: 1,
+    workers: 0,
+    faceDown: false,
+  });
+  assert.strictEqual(scoreOf(victim), 2);
+  ok(
+    applyAction(g, actor.id, {
+      type: 'useFunc',
+      payload: { cardId: 'ib_card', targetId: victim.id },
+    }),
+    '拆迁选择目标'
+  );
+  assert.ok(g.pendingIllegalBuild);
+  ok(
+    applyAction(g, victim.id, {
+      type: 'illegalBuildPick',
+      payload: { buildingId: 'pal_v' },
+    }),
+    '目标选择建筑'
+  );
+  assert.strictEqual(scoreOf(victim), 0);
+  const pal = victim.buildings.find((b) => b.id === 'pal_v');
+  assert.ok(pal && !pal.built, '宫殿变为未建造');
+  assert.ok(!actor.funcCards.some((c) => c.id === 'ib_card'), '拆迁卡已打出');
+  console.log('✓ demolition removes score from unbuilt palace');
+}
+
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const actor = g.players[0];
+  const victim = g.players[1];
+  victim.buildings = [];
+  actor.funcCards.push({
+    id: 'ib_fail',
+    funcType: 'illegalBuild',
+    label: '拆迁',
+    kind: 'function',
+  });
+  g.phase = 'build';
+  g.currentPlayerId = actor.id;
+  const fail = applyAction(g, actor.id, {
+    type: 'useFunc',
+    payload: { cardId: 'ib_fail', targetId: victim.id },
+  });
+  assert.ok(!fail.ok, '无已建建筑不可拆迁');
+  assert.ok(/已建/.test(fail.error || ''), fail.error);
+  console.log('✓ demolition rejects target without built buildings');
+}
+
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const actor = g.players[0];
+  actor.funcCards.push({
+    id: 'ib_prod',
+    funcType: 'illegalBuild',
+    label: '拆迁',
+    kind: 'function',
+  });
+  g.phase = 'produce';
+  g.currentPlayerId = actor.id;
+  const fail = applyAction(g, actor.id, {
+    type: 'useFunc',
+    payload: { cardId: 'ib_prod', targetId: g.players[1].id },
+  });
+  assert.ok(!fail.ok, '生产阶段不可发动拆迁');
+  assert.ok(/建造阶段/.test(fail.error || ''), fail.error);
+  console.log('✓ demolition only usable in build phase');
 }
 
 function drainSettleAnim(g) {
@@ -2170,12 +2331,15 @@ console.log('— build phase ignores resource overcap —');
   console.log('✓ build phase ignores resource overcap');
 }
 
-console.log('— enhance die counts as 2 in settle —');
+console.log('— enhance die counts as 1.5 in settle —');
 {
+  const { effectiveExchangeCost, slotStrengthMap, cancelEqualCounts: cec } =
+    require('../engine');
   const g = createGameState(room(2));
   finishInit(g);
   const p0 = g.players[0];
   const p1 = g.players[1];
+  assert.strictEqual(p0.enhancedDice, 1, '开局自带 1 枚强化骰');
   p0.funcCards.push({
     id: 'fn_enhance',
     kind: 'function',
@@ -2186,7 +2350,7 @@ console.log('— enhance die counts as 2 in settle —');
   g.currentPlayerId = p0.id;
   g.buildPassed = {};
   ok(applyAction(g, p0.id, { type: 'useFunc', payload: { cardId: 'fn_enhance' } }));
-  assert.strictEqual(p0.enhancedDice, 1, '应强化 1 枚');
+  assert.strictEqual(p0.enhancedDice, 2, '应再强化 1 枚');
   // 达强化上限后再发动应失败
   p0.enhancedDice = 3;
   p0.funcCards.push({
@@ -2205,34 +2369,18 @@ console.log('— enhance die counts as 2 in settle —');
     '错误应提示强化上限'
   );
 
-  // 强度：1 强化骰 vs 1 普通 → 2 vs 1，强化方胜
+  // 强度：1 强化骰 vs 1 普通 → 1.5 vs 1，强化方胜
   p0.enhancedDice = 1;
   p0.enhancedPlaced = 0;
   g.phase = 'produce';
   g.board.resource.workers[1] = { p0: 1, p1: 1 };
   g.board.resource.boosts = { 1: { p0: 1 }, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
-  g.board.resource.tiles = g.board.resource.tiles.filter((t) => t.number === 1);
-  if (!g.board.resource.tiles.length) {
-    g.board.resource.tiles = [
-      {
-        id: 'r1',
-        kind: 'resource',
-        resource: 'wood',
-        large: 3,
-        small: 1,
-        number: 1,
-        label: '木',
-      },
-    ];
-  }
-  p0.dispatched = p0.villagers;
-  p1.dispatched = p1.villagers;
-  p0.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
-  p1.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
-  // 推进结算：无空闲 → startSettle
-  const { cancelEqualCounts: cec } = require('../engine');
-  const strength = { p0: 2, p1: 1 };
-  assert.deepStrictEqual(cec(strength), { p0: 2, p1: 1 });
+  const strength = slotStrengthMap(
+    g.board.resource.workers[1],
+    g.board.resource.boosts[1]
+  );
+  assert.deepStrictEqual(strength, { p0: 3, p1: 2 }, '1.5 vs 1.0（半单位）');
+  assert.deepStrictEqual(cec(strength), { p0: 3, p1: 2 });
 }
 
 console.log('— houses gate breed —');
@@ -3125,6 +3273,31 @@ console.log('— event recall die —');
   assert.strictEqual((g.board.resource.workers[4] || {}).p0 || 0, 2);
   assert.ok(g.dice.p0.includes(1), '召回的骰子应回到手中');
   assert.strictEqual(p0.dispatched, 2, '召回后已派遣数应减 1');
+
+  g.board.resource.workers[3] = { p0: 2 };
+  if (!g.board.resource.boosts) g.board.resource.boosts = {};
+  g.board.resource.boosts[3] = { p0: 1 };
+  g.pendingEventChoice = {
+    playerId: 'p0',
+    needChoice: 'recallDie',
+    label: '召回',
+    excludeArea: 'resource',
+    excludeNumber: 4,
+  };
+  const needPick = applyAction(g, 'p0', {
+    type: 'eventRecallDie',
+    payload: { area: 'resource', number: 3 },
+  });
+  assert.ok(!needPick.ok, '同格两种骰子须指定类型');
+  ok(
+    applyAction(g, 'p0', {
+      type: 'eventRecallDie',
+      payload: { area: 'resource', number: 3, enhanced: true },
+    })
+  );
+  assert.strictEqual(g.board.resource.workers[3].p0, 1);
+  assert.strictEqual((g.board.resource.boosts[3] || {}).p0 || 0, 0);
+  assert.ok(g.diceBoosted.p0.includes(true), '召回的应为强化骰');
 
   const g2 = createGameState(room(2));
   finishInit(g2);
@@ -4370,7 +4543,84 @@ console.log('— exile moves die between slots —');
   console.log('✓ exile moves die between slots');
 }
 
-console.log('— third market grants Commerce Tycoon +2 VP —');
+console.log('— exile picks enhanced die —');
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p0 = g.players[0];
+  const p1 = g.players[1];
+  g.phase = 'produce';
+  g.currentPlayerId = p0.id;
+  g.awaitingProduceRoll = false;
+  g.dice = { [p0.id]: [1], [p1.id]: [] };
+  p0.funcCards.push({
+    id: 'fn_exile2',
+    kind: 'function',
+    funcType: 'exile',
+    label: '驱逐',
+  });
+  if (!g.board.resource.tiles.some((t) => t.number === 2)) {
+    g.board.resource.tiles.push({
+      id: 'res_ex_2b',
+      kind: 'resource',
+      resource: 'wood',
+      large: 2,
+      small: 1,
+      number: 2,
+      label: '木头',
+    });
+  }
+  if (!g.board.resource.tiles.some((t) => t.number === 5)) {
+    g.board.resource.tiles.push({
+      id: 'res_ex_5b',
+      kind: 'resource',
+      resource: 'stone',
+      large: 2,
+      small: 1,
+      number: 5,
+      label: '石头',
+    });
+  }
+  g.board.resource.workers[2] = { [p1.id]: 2 };
+  if (!g.board.resource.boosts) g.board.resource.boosts = {};
+  g.board.resource.boosts[2] = { [p1.id]: 1 };
+  p1.dispatched = 2;
+  p1.enhancedPlaced = 1;
+  const needPick = applyAction(g, p0.id, {
+    type: 'useFunc',
+    payload: {
+      cardId: 'fn_exile2',
+      targetId: p1.id,
+      area: 'resource',
+      number: 2,
+      toArea: 'resource',
+      toNumber: 5,
+    },
+  });
+  assert.ok(!needPick.ok, '同格两种骰子须指定类型');
+  ok(
+    applyAction(g, p0.id, {
+      type: 'useFunc',
+      payload: {
+        cardId: 'fn_exile2',
+        targetId: p1.id,
+        area: 'resource',
+        number: 2,
+        toArea: 'resource',
+        toNumber: 5,
+        enhanced: true,
+      },
+    })
+  );
+  assert.strictEqual((g.board.resource.workers[2] || {})[p1.id], 1);
+  assert.strictEqual((g.board.resource.boosts[2] || {})[p1.id], 0);
+  assert.strictEqual((g.board.resource.workers[5] || {})[p1.id], 1);
+  assert.strictEqual((g.board.resource.boosts[5] || {})[p1.id], 1);
+  assert.strictEqual(p1.enhancedPlaced, 1, '移走强化骰后 enhancedPlaced 不变');
+  console.log('✓ exile picks enhanced die');
+}
+
+console.log('— stack achievement: 3 same buildings +2 VP each —');
 {
   const { playerScore: scoreOf } = require('../engine');
   const g = createGameState(room(2));
@@ -4411,7 +4661,7 @@ console.log('— third market grants Commerce Tycoon +2 VP —');
       payload: { buildingId: 'ex_t_1' },
     })
   );
-  assert.strictEqual(scoreOf(p), base, '两座集市不加称号分');
+  assert.strictEqual(scoreOf(p), base, '两座集市不加成就分');
   assert.ok(!publicGameState(g, p.id).players.find((x) => x.id === p.id).commerceTycoon);
   ok(
     applyAction(g, p.id, {
@@ -4423,11 +4673,120 @@ console.log('— third market grants Commerce Tycoon +2 VP —');
   const mePub = publicGameState(g, p.id).players.find((x) => x.id === p.id);
   assert.ok(mePub.commerceTycoon);
   assert.ok((mePub.titles || []).some((t) => t.id === 'commerceTycoon'));
-  // 弃掉一座后失去称号分
+  // 弃掉一座后失去成就分
   const built = p.buildings.find((b) => b.built);
   p.buildings = p.buildings.filter((b) => b.id !== built.id);
-  assert.strictEqual(scoreOf(p), base, '不足三座时失去称号分');
-  console.log('✓ third market grants Commerce Tycoon +2 VP');
+  assert.strictEqual(scoreOf(p), base, '不足三座时失去成就分');
+  console.log('✓ third market stack achievement +2 VP');
+}
+
+console.log('— stack achievement: 3 wish wells +2 VP —');
+{
+  const { playerScore: scoreOf } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p = g.players[0];
+  g.phase = 'build';
+  g.currentPlayerId = p.id;
+  g.buildPassed = {};
+  g.produceFinishOrder = [p.id, g.players[1].id];
+  p.resources = { wood: 10, stone: 10, food: 10, iron: 10 };
+  for (let i = 0; i < 3; i++) {
+    p.buildings.push({
+      id: 'ww_t_' + i,
+      kind: 'building',
+      buildType: 'wishWell',
+      label: '许愿井',
+      cost: { wood: 1, stone: 1, food: 1, iron: 1 },
+      produce: 0,
+      score: 0,
+      needsWorker: false,
+      functionalOnly: true,
+      built: false,
+      workers: 0,
+      slot: 2,
+      faceDown: false,
+    });
+  }
+  const base = scoreOf(p);
+  ok(
+    applyAction(g, p.id, {
+      type: 'construct',
+      payload: { buildingId: 'ww_t_0' },
+    })
+  );
+  ok(
+    applyAction(g, p.id, {
+      type: 'construct',
+      payload: { buildingId: 'ww_t_1' },
+    })
+  );
+  assert.strictEqual(scoreOf(p), base, '两座许愿井不加成就分');
+  ok(
+    applyAction(g, p.id, {
+      type: 'construct',
+      payload: { buildingId: 'ww_t_2' },
+    })
+  );
+  assert.strictEqual(scoreOf(p), base + 2, '第三座许愿井 +2 分');
+  const mePub = publicGameState(g, p.id).players.find((x) => x.id === p.id);
+  assert.ok((mePub.titles || []).some((t) => t.label === '灯灵本灵'));
+  console.log('✓ third wish well stack achievement +2 VP');
+}
+
+console.log('— stack achievement: 3 food workshops → 小麦管理者 —');
+{
+  const { playerScore: scoreOf } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p = g.players[0];
+  g.phase = 'build';
+  g.currentPlayerId = p.id;
+  g.buildPassed = {};
+  g.produceFinishOrder = [p.id, g.players[1].id];
+  p.resources = { wood: 10, stone: 10, food: 10, iron: 10 };
+  for (let i = 0; i < 3; i++) {
+    p.buildings.push({
+      id: 'fd_t_' + i,
+      kind: 'building',
+      buildType: 'produce',
+      resource: 'food',
+      rich: false,
+      label: '小麦建筑·贫',
+      cost: { wood: 1, stone: 1 },
+      produce: 1,
+      score: 0,
+      needsWorker: true,
+      functionalOnly: false,
+      built: false,
+      workers: 0,
+      slot: 3,
+      faceDown: false,
+    });
+  }
+  const base = scoreOf(p);
+  ok(
+    applyAction(g, p.id, {
+      type: 'construct',
+      payload: { buildingId: 'fd_t_0' },
+    })
+  );
+  ok(
+    applyAction(g, p.id, {
+      type: 'construct',
+      payload: { buildingId: 'fd_t_1' },
+    })
+  );
+  ok(
+    applyAction(g, p.id, {
+      type: 'construct',
+      payload: { buildingId: 'fd_t_2' },
+    })
+  );
+  assert.strictEqual(scoreOf(p), base + 2, '第三座小麦工坊 +2 分');
+  const mePub = publicGameState(g, p.id).players.find((x) => x.id === p.id);
+  assert.ok((mePub.titles || []).some((t) => t.label === '小麦管理者'));
+  console.log('✓ third food workshop stack achievement → 小麦管理者');
 }
 
 console.log('全部通过');
