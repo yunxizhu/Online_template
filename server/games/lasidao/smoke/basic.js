@@ -3733,6 +3733,51 @@ console.log('— event teleport die —');
     '未成为最大者不应触发传送'
   );
 
+  const { becameStrictSlotLeader } = require('../environmentEffects');
+  assert.strictEqual(
+    becameStrictSlotLeader({ __neutral__: 1, p0: 1 }, 'p0', 1),
+    false,
+    '与中立骰并列时不应视为成为最大者'
+  );
+  assert.strictEqual(
+    becameStrictSlotLeader({ __neutral__: 1, p0: 2 }, 'p0', 1),
+    true,
+    '超过中立骰数应视为成为最大者'
+  );
+
+  const g4 = createGameState(room(2));
+  finishInit(g4);
+  g4.board.resource.environments[5] = {
+    id: 'env_tp4',
+    kind: 'environment',
+    label: '传送',
+    envType: 'teleport',
+    trigger: 'dispatch',
+    number: 5,
+  };
+  if (!g4.board.resource.tiles.some((t) => t.number === 5)) {
+    g4.board.resource.tiles.push({
+      id: 'res_tp5c',
+      kind: 'resource',
+      resource: 'stone',
+      large: 2,
+      small: 1,
+      number: 5,
+      label: '石头·贫',
+    });
+  }
+  g4.board.resource.workers[5] = { __neutral__: 1 };
+  g4.phase = 'produce';
+  g4.currentPlayerId = 'p0';
+  g4.awaitingProduceRoll = false;
+  g4.dice = { p0: [5], p1: [] };
+  g4.diceBoosted = { p0: [false], p1: [] };
+  ok(applyAction(g4, 'p0', { type: 'placeDice', payload: { face: 5, area: 'resource' } }));
+  assert.ok(
+    !g4.pendingEventChoice || g4.pendingEventChoice.needChoice !== 'teleportDie',
+    '未超过中立骰时不应触发传送'
+  );
+
   console.log('✓ event teleport die');
 }
 

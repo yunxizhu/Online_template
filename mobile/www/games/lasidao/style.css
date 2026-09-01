@@ -126,25 +126,71 @@
   margin: 0 auto;
 }
 
-.las-status-line {
-  margin: 0;
-  font-size: calc(0.88 * var(--las-rem));
-  line-height: 1.45;
-  max-width: calc(14 * var(--las-rem));
-  min-height: calc(2.9 * var(--las-rem));
-  text-align: center;
+.las-status-slot {
+  position: relative;
+  width: 100%;
   flex: 0 0 auto;
+  --las-status-block-h: calc(2.9 * var(--las-rem));
+  --las-status-gap: calc(0.25 * var(--las-rem));
+  --las-skip-btn-h: calc(1.65 * var(--las-rem));
 }
 
-.las-status-line[hidden] {
+.las-status-slot:not(:has(:not([hidden]))) {
   display: none;
 }
 
+.las-status-slot:has(.las-skip-settle-btn:not([hidden])) {
+  min-height: calc(
+    var(--las-status-block-h) + var(--las-status-gap) + var(--las-skip-btn-h)
+  );
+}
+
+.las-status-slot:has(.las-status-line:not([hidden])):not(
+    :has(.las-skip-settle-btn:not([hidden]))
+  ) {
+  min-height: var(--las-status-block-h);
+}
+
+.las-status-line {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  font-size: calc(0.88 * var(--las-rem));
+  line-height: 1.45;
+  width: 100%;
+  max-width: calc(14 * var(--las-rem));
+  min-height: var(--las-status-block-h);
+  text-align: center;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+}
+
+.las-status-slot .las-status-line[hidden] {
+  display: block !important;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.las-status-slot:has(.las-status-line:not([hidden])):not(
+    :has(.las-skip-settle-btn:not([hidden]))
+  )
+  .las-status-line {
+  position: static;
+  transform: none;
+  left: auto;
+}
+
 .las-skip-settle-btn {
+  position: absolute;
+  top: calc(var(--las-status-block-h) + var(--las-status-gap));
+  left: 50%;
+  transform: translateX(-50%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin: calc(0.25 * var(--las-rem)) auto 0;
+  margin: 0;
   padding: calc(0.28 * var(--las-rem)) calc(0.7 * var(--las-rem));
   font-size: calc(0.82 * var(--las-rem));
   line-height: 1.2;
@@ -3761,8 +3807,48 @@
 .las-robbery-dialog {
   max-width: 520px;
 }
-.las-redraw-dialog {
-  max-width: min(98vw, 960px);
+.las-redraw-modal {
+  --las-redraw-card-w: calc(var(--las-hand-card-w) * 2);
+  --las-redraw-card-h: calc(var(--las-hand-card-h) * 2);
+  --las-redraw-deck-gap: calc(2 * var(--las-rem));
+}
+
+.las-redraw-modal .modal-dialog,
+.modal-dialog.las-redraw-dialog {
+  width: min(
+    98vw,
+    calc(
+      var(--las-redraw-card-w) * 3 + var(--las-redraw-deck-gap) * 2 +
+        4 * var(--las-rem)
+    )
+  );
+  max-width: min(
+    98vw,
+    calc(
+      var(--las-redraw-card-w) * 3 + var(--las-redraw-deck-gap) * 2 +
+        4 * var(--las-rem)
+    )
+  );
+  max-height: min(96vh, calc(var(--las-redraw-card-h) + 11 * var(--las-rem)));
+  padding: calc(0.85 * var(--las-rem)) calc(1 * var(--las-rem));
+  box-sizing: border-box;
+}
+
+body.is-mobile-chat .las-redraw-modal .modal-dialog {
+  width: min(
+    98vw,
+    calc(
+      var(--las-redraw-card-w) * 3 + var(--las-redraw-deck-gap) * 2 +
+        4 * var(--las-rem)
+    )
+  );
+  max-width: min(
+    98vw,
+    calc(
+      var(--las-redraw-card-w) * 3 + var(--las-redraw-deck-gap) * 2 +
+        4 * var(--las-rem)
+    )
+  );
 }
 .las-robbery-head,
 .las-redraw-head {
@@ -3779,8 +3865,13 @@
   display: flex;
   flex-direction: column;
   gap: calc(0.75 * var(--las-rem));
-  min-height: 140px;
   align-items: center;
+}
+.las-robbery-body {
+  min-height: 140px;
+}
+.las-redraw-body {
+  min-height: calc(var(--las-redraw-card-h) + 2 * var(--las-rem));
 }
 .las-robbery-foot,
 .las-redraw-foot {
@@ -3837,20 +3928,24 @@
 }
 .las-redraw-decks {
   display: flex;
+  flex-wrap: nowrap;
   justify-content: center;
-  gap: calc(2 * var(--las-rem));
+  gap: var(--las-redraw-deck-gap);
   width: 100%;
+  padding: calc(0.5 * var(--las-rem)) 0;
+  box-sizing: border-box;
 }
 .las-redraw-preview {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: calc(0.5 * var(--las-rem));
+  gap: calc(0.55 * var(--las-rem));
   width: 100%;
+  min-height: calc(var(--las-redraw-card-h) + 1 * var(--las-rem));
 }
 .las-redraw-preview .las-redraw-deck-back {
-  width: 90px;
-  height: 120px;
+  width: var(--las-redraw-card-w);
+  height: var(--las-redraw-card-h);
 }
 .las-redraw-deck {
   display: flex;
@@ -3860,8 +3955,8 @@
   cursor: pointer;
 }
 .las-redraw-deck-back {
-  width: 90px;
-  height: 120px;
+  width: var(--las-redraw-card-w);
+  height: var(--las-redraw-card-h);
   border-radius: 8px;
   background-size: cover;
   background-position: center;
@@ -3879,10 +3974,11 @@
   color: #d4e0ea;
 }
 .las-redraw-decks .las-card {
-  width: var(--las-hand-card-w);
-  height: var(--las-hand-card-h);
-  min-width: var(--las-hand-card-w);
-  min-height: var(--las-hand-card-h);
+  width: var(--las-redraw-card-w);
+  height: var(--las-redraw-card-h);
+  min-width: var(--las-redraw-card-w);
+  min-height: var(--las-redraw-card-h);
+  flex: 0 0 var(--las-redraw-card-w);
   cursor: pointer;
   transition: transform 0.15s, border-color 0.15s;
   box-shadow: 0 2px 6px rgba(0,0,0,0.35);
@@ -4444,10 +4540,12 @@
 
 .las-play-reveal {
   position: fixed;
-  left: 50%;
+  --play-reveal-left: 50%;
+  --play-reveal-anchor-x: -50%;
+  left: var(--play-reveal-left);
   top: 50%;
   z-index: 125;
-  transform: translate(-50%, calc(-50% - 12px)) scale(0.96);
+  transform: translate(var(--play-reveal-anchor-x), calc(-50% - 12px)) scale(0.96);
   opacity: 0;
   pointer-events: none;
   padding: calc(1 * var(--las-rem)) calc(1.5 * var(--las-rem));
@@ -4465,19 +4563,20 @@
   text-align: center;
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
   max-width: min(92vw, calc(28 * var(--las-rem)));
+  --play-reveal-fade: 0.5s;
   transition:
-    opacity 0.28s ease,
-    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+    opacity var(--play-reveal-fade) ease,
+    transform var(--play-reveal-fade) cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .las-play-reveal.is-in {
   opacity: 1;
-  transform: translate(-50%, -50%) scale(1);
+  transform: translate(var(--play-reveal-anchor-x), -50%) scale(1);
 }
 
 .las-play-reveal.is-out {
   opacity: 0;
-  transform: translate(-50%, calc(-50% - 10px)) scale(0.98);
+  transform: translate(var(--play-reveal-anchor-x), calc(-50% - 10px)) scale(0.98);
 }
 
 .las-play-reveal[hidden] {
@@ -4485,11 +4584,14 @@
 }
 
 .las-play-reveal.has-card {
+  --play-reveal-left: 33.33%;
+  --play-reveal-anchor-x: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
+  text-align: left;
   gap: calc(0.65 * var(--las-rem));
-  max-width: min(96vw, calc(32 * var(--las-rem)));
+  max-width: min(64vw, calc(21.33 * var(--las-rem)));
   padding: calc(0.75 * var(--las-rem)) calc(0.9 * var(--las-rem));
 }
 
@@ -4499,11 +4601,17 @@
 }
 
 .las-play-reveal-card {
-  /* 与悬停大图同级，不再用手牌缩略尺寸 */
-  width: min(86vw, calc(29 * var(--las-rem)));
-  min-width: min(86vw, calc(29 * var(--las-rem)));
-  height: min(calc(86vw * 800 / 600), calc(29 * var(--las-rem) * 800 / 600));
-  min-height: min(calc(86vw * 800 / 600), calc(29 * var(--las-rem) * 800 / 600));
+  /* 他人用牌展示：约为悬停大图的 2/3 */
+  width: min(calc(86vw * 2 / 3), calc(29 * var(--las-rem) * 2 / 3));
+  min-width: min(calc(86vw * 2 / 3), calc(29 * var(--las-rem) * 2 / 3));
+  height: min(
+    calc(86vw * 800 / 600 * 2 / 3),
+    calc(29 * var(--las-rem) * 800 / 600 * 2 / 3)
+  );
+  min-height: min(
+    calc(86vw * 800 / 600 * 2 / 3),
+    calc(29 * var(--las-rem) * 800 / 600 * 2 / 3)
+  );
   border-radius: 8px;
   background-size: cover;
   background-position: center;
@@ -5123,7 +5231,8 @@
   outline: 1px solid rgba(232, 212, 139, 0.55);
 }
 
-.las-pboard.is-discard-pending {
+.las-pboard.is-discard-pending,
+.las-pboard.is-phase-pending {
   outline: 1px solid rgba(224, 140, 90, 0.7);
   box-shadow: 0 0 0 1px rgba(224, 140, 90, 0.25);
 }

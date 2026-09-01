@@ -322,6 +322,8 @@ window.LasidaoUi = (function () {
   let lastGame = null;
   let lastMeId = null;
   let lastRenderOpts = null;
+  /** 重抽/购卡：待选牌玩家 id，选牌结束后补刷功能/建造格 */
+  let pendingRedrawTrackId = null;
   const AUTO_PRODUCE_ROLL_MS = 1500;
   let autoProduceRollTimer = null;
   let autoProduceRollKey = null;
@@ -438,8 +440,9 @@ window.LasidaoUi = (function () {
   let turnToastArmed = true;
   let turnToastTimer = null;
   let turnToastSnap = null;
-  const PLAY_REVEAL_MS = 2500;
-  const PLAY_REVEAL_FADE_MS = 280;
+  const PLAY_REVEAL_FADE_IN_MS = 500;
+  const PLAY_REVEAL_HOLD_MS = 1500;
+  const PLAY_REVEAL_FADE_OUT_MS = 500;
   let lastShownPlayRevealId = null;
   let playRevealTimer = null;
   let lasScaleBound = false;
@@ -724,6 +727,12 @@ window.LasidaoUi = (function () {
     return div;
   }
 
+  function shouldShowPlayRevealForViewer(reveal, meId) {
+    if (!reveal || !reveal.id) return false;
+    if (reveal.actorId && meId && reveal.actorId === meId) return false;
+    return true;
+  }
+
   function hidePlayReveal(immediate) {
     const el = $('las-play-reveal');
     if (!el) return;
@@ -744,7 +753,7 @@ window.LasidaoUi = (function () {
       el.classList.remove('is-out', 'has-card');
       el.innerHTML = '';
       playRevealTimer = null;
-    }, PLAY_REVEAL_FADE_MS);
+    }, PLAY_REVEAL_FADE_OUT_MS);
   }
 
   function formatPlayRevealText(reveal) {
@@ -775,8 +784,8 @@ window.LasidaoUi = (function () {
     return div;
   }
 
-  function showPlayReveal(reveal) {
-    if (!reveal || !reveal.id) return false;
+  function showPlayReveal(reveal, meId) {
+    if (!shouldShowPlayRevealForViewer(reveal, meId)) return false;
     if (reveal.id === lastShownPlayRevealId) return false;
     const text = formatPlayRevealText(reveal);
     if (!text) return false;
@@ -793,7 +802,7 @@ window.LasidaoUi = (function () {
     const hasCard =
       (reveal.kind === 'building' || reveal.kind === 'function') && reveal.card;
 
-    el.classList.remove('is-out', 'has-card');
+    el.classList.remove('is-in', 'is-out', 'has-card');
     el.innerHTML = '';
 
     const txt = document.createElement('div');
@@ -809,22 +818,29 @@ window.LasidaoUi = (function () {
 
     el.hidden = false;
     void el.offsetWidth;
-    el.classList.add('is-in');
-    playRevealTimer = setTimeout(() => hidePlayReveal(false), PLAY_REVEAL_MS);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        el.classList.add('is-in');
+      });
+    });
+    playRevealTimer = setTimeout(
+      () => hidePlayReveal(false),
+      PLAY_REVEAL_FADE_IN_MS + PLAY_REVEAL_HOLD_MS
+    );
     return true;
   }
 
-  function maybeShowPlayRevealFromState(game, prev) {
+  function maybeShowPlayRevealFromState(game, prev, meId) {
     if (!game || !prev) return false;
     const reveal = game.lastPlayReveal;
     if (!reveal || !reveal.id) return false;
     if (reveal.id === prev.lastPlayRevealId) return false;
-    return showPlayReveal(reveal);
+    return showPlayReveal(reveal, meId);
   }
 
   function onPlayReveal(data) {
     const reveal = data && data.reveal;
-    showPlayReveal(reveal);
+    showPlayReveal(reveal, lastMeId);
   }
 
   function logEntryText(entry) {
@@ -1242,7 +1258,7 @@ window.LasidaoUi = (function () {
     const prev = turnToastSnap;
     turnToastSnap = cur;
 
-    maybeShowPlayRevealFromState(game, prev);
+    maybeShowPlayRevealFromState(game, prev, meId);
 
     const showedEvent = maybeShowEventToasts(game, meId, prev, cur);
     const showedOther = maybeShowOtherPlayerToasts(game, meId, prev, cur);
@@ -2169,11 +2185,17 @@ window.LasidaoUi = (function () {
     return Number.isInteger(s) ? String(s) : s.toFixed(1);
   }
 
+  function slotHasWorkers(workers) {
+    return Object.values(workers || {}).some((n) => (Number(n) || 0) > 0);
+  }
+
   function appendWorkerDice(container, face, workers, players, game, opts) {
     opts = opts || {};
     const boosts = opts.boosts || {};
     const entries = Object.entries(workers || {}).filter(([, n]) => n > 0);
-    if (!entries.length) return null;
+    if (!entries.length) {
+      return null;
+    }
     const nid = (game && game.neutralWorkerId) || '__neutral__';
     entries.sort((a, b) => {
       if (a[0] === nid) return 1;
@@ -2187,9 +2209,6 @@ window.LasidaoUi = (function () {
     const wrap = document.createElement('div');
     wrap.className =
       'las-workers las-worker-dice' + (opts.overlay ? ' is-overlay' : '');
-    if (!entries.length && !(opts.previewAdd && opts.previewAdd.count > 0)) {
-      return null;
-    }
     for (const [pid, n] of entries) {
       const color = playerDieColor(players, pid, game);
       const count = Math.min(Number(n) || 0, 24);
@@ -2233,7 +2252,8 @@ window.LasidaoUi = (function () {
     if (
       previewAdd &&
       previewAdd.pid &&
-      (Number(previewAdd.count) || 0) > 0
+      (Number(previewAdd.count) || 0) > 0 &&
+      entries.length > 0
     ) {
       const pid = previewAdd.pid;
       const count = Math.min(Number(previewAdd.count) || 0, 24);
@@ -2437,6 +2457,151 @@ window.LasidaoUi = (function () {
       .join('、');
   }
 
+  /** 并行阶段：列出全部尚未完成的玩家（含本人） */
+  function formatAllPendingNames(list) {
+    return (list || [])
+      .filter((p) => p && p.id)
+      .map((p) => p.name || '?')
+      .filter(Boolean)
+      .join('、');
+  }
+
+  /** 并行阶段：该玩家是否仍待操作（全员可见的待处理框） */
+  function isPlayerParallelPhasePending(game, p, meId) {
+    if (!game || !p || p.left) return false;
+    // 本人待处理框由弹窗承担，不在面板上重复描边
+    if (meId && p.id === meId) return false;
+    if (game.phase === 'settle_act') {
+      return Boolean(
+        p.needsDiscardFunc || p.needsDiscardBuild || p.needsDiscardRes
+      );
+    }
+    if (game.phase === 'wish_well') {
+      return (game.wishWellPending || []).some((x) => x.id === p.id);
+    }
+    if (game.phase === 'event_discard') {
+      return (game.prisonerDiscardPending || []).some((x) => x.id === p.id);
+    }
+    if ((game.welfareMinimumPending || []).length) {
+      return (game.welfareMinimumPending || []).some((x) => x.id === p.id);
+    }
+    return false;
+  }
+
+  function syncPlayerPhasePendingFrames(game, meId) {
+    document.querySelectorAll('.las-pboard[data-pid]').forEach((el) => {
+      const pid = el.dataset.pid;
+      const p = (game.players || []).find((x) => x.id === pid);
+      el.classList.toggle(
+        'is-phase-pending',
+        Boolean(p && isPlayerParallelPhasePending(game, p, meId))
+      );
+    });
+  }
+
+  function awaitEventStatus(name, eventLabel) {
+    if (!name || !eventLabel) return '';
+    return t('lasidao.statusAwaitEvent', { name, event: eventLabel });
+  }
+
+  function selfEventChoiceStatus(choice) {
+    if (!choice) return '';
+    const name = choice.label || t('lasidao.environmentSlot');
+    const need = Math.max(1, Number(choice.count) || 2);
+    switch (choice.needChoice) {
+      case 'pickResource':
+        return t('lasidao.statusEventPickResource', { name });
+      case 'pickTwoResources':
+        if (choice.resume === 'keepOverflow') {
+          return t('lasidao.statusEventKeepOverflow', { need });
+        }
+        return t('lasidao.statusEventPickTwoResources', { name, need });
+      case 'moveBarrenMarker':
+        return t('lasidao.statusEventMoveBarren', { name });
+      case 'moveNeutral':
+        return t('lasidao.statusEventMoveNeutral', { name });
+      case 'recallDie':
+        return t('lasidao.statusEventRecall', { name });
+      case 'teleportDie':
+        if (choice.teleportStep === 'to') {
+          return t('lasidao.statusEventTeleportTo', { name });
+        }
+        return t('lasidao.statusEventTeleportFrom', { name });
+      case 'gatherNeutrals':
+        return t('lasidao.statusEventGatherNeutrals', { name });
+      default:
+        return t('lasidao.statusEventChoice', { name });
+    }
+  }
+
+  function isBlockingEventStatus(game) {
+    if (!game) return false;
+    if (game.pendingEventChoice && game.pendingEventChoice.playerId) return true;
+    if (
+      Array.isArray(game.welfareMinimumPending) &&
+      game.welfareMinimumPending.length
+    ) {
+      return true;
+    }
+    if (game.phase === 'event_mercenary' && game.mercenary) return true;
+    if (game.phase === 'event_discard') return true;
+    if (game.phase === 'wish_well') return true;
+    return false;
+  }
+
+  function resolveEventWaitStatus(game, meId) {
+    const welfarePending = Array.isArray(game.welfareMinimumPending)
+      ? game.welfareMinimumPending
+      : [];
+    if (welfarePending.length) {
+      const names = formatAllPendingNames(welfarePending);
+      const eventLabel =
+        (welfarePending[0] && welfarePending[0].label) ||
+        t('lasidao.environmentSlot');
+      return awaitEventStatus(names, eventLabel);
+    }
+
+    const choice = game.pendingEventChoice;
+    if (choice && choice.playerId) {
+      const isSelf = Boolean(choice.forMe || choice.playerId === meId);
+      if (isSelf) {
+        return selfEventChoiceStatus(choice);
+      }
+      if (choice.playerId !== meId) {
+        return awaitEventStatus(
+          otherPlayerName(game, choice.playerId),
+          choice.label || t('lasidao.environmentSlot')
+        );
+      }
+    }
+
+    if (game.phase === 'event_mercenary' && game.mercenary) {
+      const merc = game.mercenary;
+      if (merc.forMe) {
+        return t('lasidao.statusEventMercenary');
+      }
+      const q0 = (merc.queue && merc.queue[0]) || {};
+      if (q0.playerId && q0.playerId !== meId) {
+        return awaitEventStatus(
+          otherPlayerName(game, q0.playerId),
+          q0.label || t('lasidao.eventMercenaryTitle')
+        );
+      }
+    }
+
+    if (game.phase === 'event_discard') {
+      const pending = Array.isArray(game.prisonerDiscardPending)
+        ? game.prisonerDiscardPending
+        : [];
+      const names = formatAllPendingNames(pending);
+      if (names) {
+        return awaitEventStatus(names, t('lasidao.eventPrisonerTitle'));
+      }
+    }
+
+    return '';
+  }
+
   function renderLasStatus(game, meId) {
     const status = $('las-status');
     if (!status) return;
@@ -2467,48 +2632,24 @@ window.LasidaoUi = (function () {
             target: pending.targetName || '?',
           });
         }
-      } else if (game.phase === 'settle_act') {
-        const me = mePlayer(game, meId);
-        const myDiscardPending = Boolean(
-          me &&
-            (me.pendingDiscardFunc ||
-              me.pendingDiscardBuild ||
-              me.pendingDiscardRes)
-        );
-        if (!myDiscardPending) {
-          const discardPending = Array.isArray(game.settleDiscardPending)
-            ? game.settleDiscardPending
-            : [];
-          const names = formatPendingNames(discardPending, meId);
-          if (names) {
-            text = t('lasidao.statusAwaitDiscard', { names });
-          }
-        }
-      } else if (game.phase === 'wish_well') {
-        const pending = Array.isArray(game.wishWellPending)
-          ? game.wishWellPending
-          : [];
-        const myPending = pending.some((p) => p.id === meId);
-        if (!myPending) {
-          const names = formatPendingNames(pending, meId);
-          if (names) {
-            text = t('lasidao.statusAwaitWishWell', { names });
-          }
-        }
-      } else if (game.phase === 'event_discard') {
-        const myN = Number(game.pendingPrisonerDiscard) || 0;
-        if (myN <= 0) {
-          const pending = Array.isArray(game.prisonerDiscardPending)
-            ? game.prisonerDiscardPending
-            : [];
-          const names = formatPendingNames(pending, meId);
-          if (names) {
-            text = t('lasidao.statusAwaitDiscard', { names });
-          }
-        }
-      } else if (game.phase === 'settle') {
+      }
+
+      if (!text) {
+        const eventWait = resolveEventWaitStatus(game, meId);
+        if (eventWait) text = eventWait;
+      }
+
+      if (!text && game.phase === 'settle_act') {
+        text = settleDiscardStatusText(game, meId);
+      } else if (!text && game.phase === 'wish_well') {
+        text = wishWellStatusText(game, meId);
+      } else if (!text && game.phase === 'settle' && !isBlockingEventStatus(game)) {
         text = t('lasidao.statusSettle');
-      } else if (!isMyTurn(game, meId)) {
+      } else if (
+        !text &&
+        !isMyTurn(game, meId) &&
+        !isBlockingEventStatus(game)
+      ) {
         const cur = (game.players || []).find(
           (p) => p.id === game.currentPlayerId
         );
@@ -3198,6 +3339,10 @@ window.LasidaoUi = (function () {
     const overlayEl = slot.querySelector('.las-slot-overlay');
     if (overlayEl) overlayEl.classList.remove('is-dispatch-preview');
 
+    const hasDice =
+      lastGame &&
+      slotHasWorkers(readSlotWorkersBoosts(lastGame, areaKey, num).workers);
+
     const dispatchPicked =
       selectedTarget &&
       selectedTarget.type === 'area' &&
@@ -3207,7 +3352,7 @@ window.LasidaoUi = (function () {
 
     if (dispatchPicked) {
       slot.classList.add('is-dispatch-picked');
-      if (overlayEl) overlayEl.classList.add('is-dispatch-preview');
+      if (overlayEl && hasDice) overlayEl.classList.add('is-dispatch-preview');
       return;
     }
 
@@ -3310,6 +3455,8 @@ window.LasidaoUi = (function () {
     if (!overlayEl) return;
 
     const slotData = readSlotWorkersBoosts(lastGame, area, number);
+    if (!slotHasWorkers(slotData.workers)) return;
+
     replaceSlotOverlayDice(
       overlayEl,
       number,
@@ -4458,8 +4605,17 @@ window.LasidaoUi = (function () {
   function mustRenderHandsNow(game, meId) {
     const me = mePlayer(game, meId);
     if (!me) return false;
+    if (
+      game.pendingRedrawChoice &&
+      game.pendingRedrawChoice.playerId === meId
+    ) {
+      return true;
+    }
+    if (pendingRedrawTrackId && pendingRedrawTrackId === meId) {
+      return true;
+    }
     if (game.phase === 'build' && isMyTurn(game, meId)) {
-      if (me.pendingDiscardFunc || me.pendingDiscardBuild) return true;
+      return true;
     }
     if (game.phase === 'settle_act') {
       if (me.pendingDiscardFunc || me.pendingDiscardBuild || me.pendingDiscardRes) {
@@ -4952,12 +5108,24 @@ window.LasidaoUi = (function () {
       p.needsDiscardFunc ? 1 : 0,
       p.needsDiscardBuild ? 1 : 0,
       p.needsDiscardRes ? 1 : 0,
+      (game.wishWellPending || []).some((w) => w.id === p.id) ? 1 : 0,
+      (game.prisonerDiscardPending || []).some((w) => w.id === p.id) ? 1 : 0,
+      meId && p.id === meId ? Number(p.pendingWishWellBonus) || 0 : 0,
+      meId && p.id === meId ? Number(game.pendingPrisonerDiscard) || 0 : 0,
+      (game.welfareMinimumPending || []).some((w) => w.id === p.id) ? 1 : 0,
       game.phase,
       selectedBuildingId || '',
       selectedFuncId || '',
       selectedPermanent || '',
       game.pendingTrade
         ? `${game.pendingTrade.fromId}:${game.pendingTrade.toId}`
+        : '',
+      game.pendingRedrawChoice &&
+      game.pendingRedrawChoice.playerId === p.id
+        ? 'redraw:' +
+          (game.pendingRedrawChoice.options || [])
+            .map((o) => o.id)
+            .join(',')
         : '',
       p.commerceTycoon ? 1 : 0,
       (p.titles || []).map((x) => x.id || x).join(','),
@@ -6694,7 +6862,6 @@ window.LasidaoUi = (function () {
   }
 
   function settleDiscardStatusText(game, meId) {
-    const me = mePlayer(game, meId);
     const pending = Array.isArray(game.settleDiscardPending)
       ? game.settleDiscardPending
       : (game.players || []).filter(
@@ -6706,39 +6873,19 @@ window.LasidaoUi = (function () {
           build: Boolean(p.needsDiscardBuild),
           res: Boolean(p.needsDiscardRes),
         }));
-    const myPending = Boolean(
-      me &&
-        (me.pendingDiscardFunc ||
-          me.pendingDiscardBuild ||
-          me.pendingDiscardRes)
-    );
-    if (myPending) {
-      if (
-        me.pendingDiscardRes &&
-        me.pendingDiscardFunc &&
-        me.pendingDiscardBuild
-      ) {
-        return t('lasidao.statusSettleActYouAll');
-      }
-      if (me.pendingDiscardRes && me.pendingDiscardFunc) {
-        return t('lasidao.statusSettleActYouResFunc');
-      }
-      if (me.pendingDiscardRes && me.pendingDiscardBuild) {
-        return t('lasidao.statusSettleActYouResBuild');
-      }
-      if (me.pendingDiscardRes) return t('lasidao.statusSettleActYouRes');
-      if (me.pendingDiscardFunc && me.pendingDiscardBuild) {
-        return t('lasidao.statusSettleActYouBoth');
-      }
-      if (me.pendingDiscardFunc) return t('lasidao.statusSettleActYouFunc');
-      return t('lasidao.statusSettleActYouBuild');
+    const names = formatAllPendingNames(pending);
+    if (names) {
+      return t('lasidao.statusSettleActWait', { names });
     }
-    if (pending.length) {
-      return t('lasidao.statusAwaitDiscard', {
-        names: pending.map((p) => p.name).join('、'),
-      });
+    return '';
+  }
+
+  function wishWellStatusText(game, meId) {
+    const names = formatAllPendingNames(game.wishWellPending);
+    if (names) {
+      return t('lasidao.statusWishWellWait', { names });
     }
-    return t('lasidao.statusSettleAct');
+    return '';
   }
 
   function needsSettleActUi(game, meId) {
@@ -7042,6 +7189,7 @@ window.LasidaoUi = (function () {
       setExchangeModalOpen(true);
       selectedPermanent = null;
     } else if (kind === 'buyFunc') {
+      if (lastMeId) pendingRedrawTrackId = lastMeId;
       netRef.sendAction('buyFuncCardPermanent', {});
       selectedPermanent = null;
     }
@@ -7425,10 +7573,36 @@ window.LasidaoUi = (function () {
       const panelHash = playerBoardContentHash(p, game, meId);
       const panelHost = isMe && meHost ? meHost : host;
       let existing = panelHost.querySelector('[data-pid="' + p.id + '"]');
-      if (existing && existing.dataset.lasPanelHash === panelHash && !isMe) {
+      if (existing && existing.dataset.lasPanelHash === panelHash) {
         existing.classList.toggle('is-current', p.id === game.currentPlayerId);
         existing.classList.toggle('is-left', Boolean(p.left));
-        if (existing.querySelector('.las-other-player-grid')) {
+        existing.classList.toggle(
+          'is-phase-pending',
+          isPlayerParallelPhasePending(game, p, meId)
+        );
+        if (isMe) {
+          const funcSig = (p.funcCards || []).map((c) => c.id).join(',');
+          const buildSig = (p.buildings || [])
+            .map(
+              (b) =>
+                `${b.id}:${b.built ? 1 : 0}:${b.slot}:${b.workers || 0}:${
+                  b.faceDown ? 1 : 0
+                }`
+            )
+            .join(',');
+          const funcHost = $('las-pcell-func');
+          const buildHost = $('las-pcell-build');
+          const cornerSig = funcSig + '|' + buildSig;
+          const cornerFresh =
+            !funcHost ||
+            !buildHost ||
+            funcHost.dataset.lasCornerSig !== cornerSig;
+          if (!cornerFresh) {
+            continue;
+          }
+          if (funcHost) delete funcHost.dataset.lasCornerSig;
+          if (buildHost) delete buildHost.dataset.lasCornerSig;
+        } else if (existing.querySelector('.las-other-player-grid')) {
           othersCount += 1;
           continue;
         }
@@ -7458,6 +7632,9 @@ window.LasidaoUi = (function () {
       board.dataset.pid = p.id;
       if (p.left) board.classList.add('is-left');
       if (p.id === game.currentPlayerId) board.classList.add('is-current');
+      if (isPlayerParallelPhasePending(game, p, meId)) {
+        board.classList.add('is-phase-pending');
+      }
 
       const statsPayload = {
         score: p.score,
@@ -7502,11 +7679,11 @@ window.LasidaoUi = (function () {
         cell.dataset.slot = slotKey;
         const body = document.createElement('div');
         body.className = 'las-pboard-slot-body';
-        // 未建造在下、已建造在上，错位叠放时透出下层
+        // 未建造在上、已建造在下，便于点击未建造卡
         const ordered = group.slice().sort((a, b) => {
           const ab = a.built ? 1 : 0;
           const bb = b.built ? 1 : 0;
-          return ab - bb;
+          return bb - ab;
         });
         if (ordered.length > 1) {
           cell.style.setProperty('--stack-n', String(ordered.length));
@@ -7615,8 +7792,8 @@ window.LasidaoUi = (function () {
         const buildSection = document.createElement('div');
         buildSection.className = 'las-pboard-build-section';
         buildSection.appendChild(slotsTitle);
-        buildSection.appendChild(slots);
         if (unplacedHand) buildSection.appendChild(unplacedHand);
+        buildSection.appendChild(slots);
         if (
           p.pendingDiscardBuild &&
           p.pendingDiscardBuild.newCard &&
@@ -7647,6 +7824,22 @@ window.LasidaoUi = (function () {
         if (funcHost) {
           funcHost.innerHTML = '';
           funcHost.appendChild(funcSection);
+          funcHost.dataset.lasCornerSig =
+            (p.funcCards || []).map((c) => c.id).join(',') +
+            '|' +
+            (p.buildings || [])
+              .map(
+                (b) =>
+                  `${b.id}:${b.built ? 1 : 0}:${b.slot}:${b.workers || 0}:${
+                    b.faceDown ? 1 : 0
+                  }`
+              )
+              .join(',');
+        }
+        if (buildHost) {
+          buildHost.dataset.lasCornerSig = funcHost
+            ? funcHost.dataset.lasCornerSig
+            : '';
         }
       } else {
         board.classList.add('las-other-pboard');
@@ -7665,7 +7858,10 @@ window.LasidaoUi = (function () {
           t('lasidao.buildSlotsCap', { n: buildN, max: maxB }),
           slots
         );
-        if (unplacedHand) buildCell.appendChild(unplacedHand);
+        if (unplacedHand) {
+          const wrap = buildCell.querySelector('.las-other-slots-wrap');
+          if (wrap) wrap.insertBefore(unplacedHand, slots);
+        }
         grid.appendChild(buildCell);
 
         const funcCell = document.createElement('div');
@@ -8678,6 +8874,7 @@ window.LasidaoUi = (function () {
     maybeShowVictoryModal(game, meId);
     maybeShowTurnToast(game, meId);
     syncPlayerPanelHighlight(game, meId);
+    syncPlayerPhasePendingFrames(game, meId);
     syncMeSettleSlot(game, meId);
 
     if (game.over) {
@@ -10369,10 +10566,27 @@ window.LasidaoUi = (function () {
     }
   }
 
+  function refreshMeHandPanels(game, meId) {
+    if (!game || !meId) return;
+    renderPlayerBoards(game, meId);
+    renderActRail(game, meId);
+    const me = mePlayer(game, meId);
+    if (me) renderFuncForm(game, me);
+  }
+
   function syncRedrawUi(game, meId) {
-    if (game && game.pendingRedrawChoice && game.pendingRedrawChoice.forMe) {
+    const pending = game && game.pendingRedrawChoice;
+    const forMe = Boolean(pending && pending.forMe);
+    if (forMe && meId) {
+      pendingRedrawTrackId = meId;
       setRedrawModalOpen(true);
       renderRedrawModal(game);
+      return;
+    }
+    setRedrawModalOpen(false);
+    if (pendingRedrawTrackId && meId === pendingRedrawTrackId) {
+      pendingRedrawTrackId = null;
+      refreshMeHandPanels(game, meId);
     }
   }
 
@@ -10421,6 +10635,7 @@ window.LasidaoUi = (function () {
         }
         btn.onclick = () => {
           if (!netRef) return;
+          if (lastMeId) pendingRedrawTrackId = lastMeId;
           netRef.sendAction('redrawPick', { keepId: card.id });
           setRedrawModalOpen(false);
           selectedFuncId = null;
@@ -12046,6 +12261,7 @@ window.LasidaoUi = (function () {
     if (redrawConfirm) {
       redrawConfirm.onclick = () => {
         if (!redrawCardId) return;
+        if (lastMeId) pendingRedrawTrackId = lastMeId;
         net.sendAction('useFunc', {
           cardId: redrawCardId,
         });

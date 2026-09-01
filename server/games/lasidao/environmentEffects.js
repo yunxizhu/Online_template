@@ -150,13 +150,13 @@ function firstComeRequiredWorkers(round) {
   return 2;
 }
 
-/** 派遣后是否成为本格严格最大者（首次成为或失去领先后重新成为；继续加码不重复触发） */
+/** 派遣后是否成为本格严格最大者（首次成为或失去领先后重新成为；继续加码不重复触发；含中立骰） */
 function becameStrictSlotLeader(workers, playerId, placed) {
   const myCount = Number((workers || {})[playerId]) || 0;
   const myPrev = Math.max(0, myCount - (Number(placed) || 0));
   let otherMax = 0;
   for (const [pid, c] of Object.entries(workers || {})) {
-    if (pid === playerId || pid === NEUTRAL_WORKER_ID) continue;
+    if (pid === playerId) continue;
     otherMax = Math.max(otherMax, Number(c) || 0);
   }
   return myCount > otherMax && myPrev <= otherMax;
