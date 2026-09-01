@@ -9,7 +9,7 @@ window.LasidaoAssets = (function () {
   const RES = '/games/lasidao/res';
   const PIC = RES + '/picture';
   /** 换图后改这个数字，可绕过浏览器旧缓存（曾 max-age=7d） */
-  const ASSET_VER = '20260901a';
+  const ASSET_VER = '20260901b';
 
   function remoteAssetRoot() {
     try {
