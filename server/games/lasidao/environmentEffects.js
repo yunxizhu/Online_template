@@ -5,14 +5,21 @@
  * - setupEnvironmentOnBoard：上场初始化
  * - applyEnvironmentOnDispatch：派遣触发（可能返回 needChoice）
  * - applyEnvironmentOnSettleSlot：结算抵消后（资源发放前/穿插）
+ *
+ * 骰子 vs 派遣强度：
+ * - workers / physical / ranked[].dice = 物理骰子枚数 → 效果文案写「骰子数」时用此值
+ * - slotStrengthMap / ranked[].count / remain = 派遣强度（强化骰 1.5）→ 仅用于抵消、排名、发资源名次
  */
-
 const {
   getEnvironmentDef,
   RESOURCE_LABELS,
   RESOURCES,
   NEUTRAL_WORKER_ID,
 } = require('./decks');
+
+function physicalDiceOnSlot(physical, pid) {
+  return Number(physical && physical[pid]) || 0;
+}
 
 function envOnResourceSlot(game, number) {
   const envs =
@@ -580,16 +587,21 @@ function applyEnvironmentOnSettleSlot(game, ctx) {
       break;
 
     case 'prisonersDilemma': {
+      const physical = ctx.physical || {};
       const top = ranked[0];
-      const n = top ? Number(top.count) || 0 : 0;
+      const n = top
+        ? Number(top.dice) || physicalDiceOnSlot(physical, top.pid)
+        : 0;
       const alive = (ctx.alivePlayers && ctx.alivePlayers(game)) || [];
       let min = Infinity;
       for (const p of alive) {
-        const c = Number(remain[p.id]) || 0;
+        const c = physicalDiceOnSlot(physical, p.id);
         if (c < min) min = c;
       }
       if (!alive.length || !Number.isFinite(min)) break;
-      const victims = alive.filter((p) => (Number(remain[p.id]) || 0) === min);
+      const victims = alive.filter(
+        (p) => physicalDiceOnSlot(physical, p.id) === min
+      );
       if (!game.pendingPrisonerDiscards) game.pendingPrisonerDiscards = {};
       for (const p of victims) {
         if (n <= 0) continue;
@@ -601,7 +613,7 @@ function applyEnvironmentOnSettleSlot(game, ctx) {
           game,
           n <= 0
             ? `「${env.label}」：第一名骰数为 0，无需弃牌`
-            : `「${env.label}」：${victims.map((p) => p.name).join('、')}（最少 ${min}）各需弃 ${n} 张（个人产出后）`
+            : `「${env.label}」：${victims.map((p) => p.name).join('、')}（最少 ${min} 骰）各需弃 ${n} 张（个人产出后）`
         );
       }
       break;
@@ -708,12 +720,16 @@ function applyResistBarbariansAfterSettle(game, report, helpers) {
     if (!env || env.envType !== 'resistBarbarians') continue;
 
     const remain = slot.remain || {};
+    const physical = slot.physical || {};
     const ranked = slot.ranked || [];
     let any = false;
     for (const r of ranked) {
       if (game.over) return;
       if (!r || r.pid === NEUTRAL_WORKER_ID) continue;
-      if ((Number(remain[r.pid]) || 0) < 2) continue;
+      if (!(Number(remain[r.pid]) || 0)) continue;
+      const diceCount =
+        Number(r.dice) || physicalDiceOnSlot(physical, r.pid);
+      if (diceCount < 2) continue;
       const p = playerById(game, r.pid);
       if (!p || p.left) continue;
       p.bonusScore = (Number(p.bonusScore) || 0) + 1;
@@ -721,7 +737,7 @@ function applyResistBarbariansAfterSettle(game, report, helpers) {
       if (pushLog) {
         pushLog(
           game,
-          `「${env.label}」：${p.name}（第 ${ranked.indexOf(r) + 1} 名）+1 胜利点`
+          `「${env.label}」：${p.name}（第 ${ranked.indexOf(r) + 1} 名，剩余 ${diceCount} 骰）+1 胜利点`
         );
       }
       if (typeof checkWin === 'function' && checkWin(game)) return;
@@ -732,7 +748,7 @@ function applyResistBarbariansAfterSettle(game, report, helpers) {
   }
 }
 
-/** 本格第一名玩家 id（抵消后剩余骰子最多者，排除中立） */
+/** 本格第一名玩家 id（按派遣强度排名，排除中立；用于「第一名」类效果） */
 function firstPlacePlayerIds(ranked) {
   const players = (ranked || []).filter(
     (r) => r && r.pid && r.pid !== NEUTRAL_WORKER_ID

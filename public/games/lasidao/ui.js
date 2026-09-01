@@ -321,6 +321,7 @@ window.LasidaoUi = (function () {
   let turnUsedRedraw = false;
   let lastGame = null;
   let lastMeId = null;
+  let lastRenderOpts = null;
   const AUTO_PRODUCE_ROLL_MS = 1500;
   let autoProduceRollTimer = null;
   let autoProduceRollKey = null;
@@ -2284,6 +2285,37 @@ window.LasidaoUi = (function () {
     return (game.players || []).find((p) => p.id === meId) || null;
   }
 
+  /** 观战席：服务端不下发 game.me，且不参与对局 */
+  function isSpectatorView(game, opts) {
+    if (opts && opts.isSpectator) return true;
+    if (lastRenderOpts && lastRenderOpts.isSpectator) return true;
+    return Boolean(game && !game.me);
+  }
+
+  function syncSpectatorLayout(game, opts) {
+    const spectator = isSpectatorView(game, opts);
+    const band = $('las-player-band');
+    const grid = $('las-player-grid');
+    const meHost = $('las-boards-me');
+    const buildHost = $('las-pcell-build');
+    const funcHost = $('las-pcell-func');
+    const othersTitle = $('las-others-title');
+    if (band) band.classList.toggle('is-spectator', spectator);
+    if (grid) grid.hidden = spectator;
+    if (spectator) {
+      if (meHost) meHost.innerHTML = '';
+      if (buildHost) buildHost.innerHTML = '';
+      if (funcHost) funcHost.innerHTML = '';
+      const permAct = $('las-permanent-actions');
+      if (permAct) permAct.hidden = true;
+      const funcPanel = $('las-func-panel');
+      if (funcPanel) funcPanel.hidden = true;
+    }
+    if (othersTitle) {
+      othersTitle.hidden = false;
+    }
+  }
+
   function playerVillagerTotal(p) {
     return (Number(p.villagers) || 0) + (Number(p.tempVillagers) || 0);
   }
@@ -2658,7 +2690,7 @@ window.LasidaoUi = (function () {
         game.phase === 'settle' &&
         me &&
         !me.left &&
-        !me.isSpectator
+        !isSpectatorView(game)
     );
     btn.hidden = !show;
     btn.disabled = !show;
@@ -7134,6 +7166,12 @@ window.LasidaoUi = (function () {
     if (resEl) resEl.innerHTML = '';
     if (fnEl) fnEl.innerHTML = '';
     if (bldEl) bldEl.innerHTML = '';
+    if (isSpectatorView(game)) {
+      setWishWellModalOpen(false);
+      renderPlayerBoards(game, meId);
+      renderActRail(game, meId);
+      return;
+    }
     if (!me) {
       setWishWellModalOpen(false);
       const host = $('las-boards-host');
@@ -7144,7 +7182,6 @@ window.LasidaoUi = (function () {
       if (othersTitle) othersTitle.hidden = true;
       return;
     }
-
     const labels = getResLabels(game);
     renderPlayerBoards(game, meId);
     renderActRail(game, meId);
@@ -7377,12 +7414,13 @@ window.LasidaoUi = (function () {
       return (a.seat || 0) - (b.seat || 0);
     });
     const labels = getResLabels(game);
+    const spectator = isSpectatorView(game);
     let othersCount = 0;
 
     const seenIds = new Set();
     for (const p of players) {
       seenIds.add(p.id);
-      const isMe = Boolean(meId && p.id === meId);
+      const isMe = !spectator && Boolean(meId && p.id === meId);
       const panelHash = playerBoardContentHash(p, game, meId);
       const panelHost = isMe && meHost ? meHost : host;
       let existing = panelHost.querySelector('[data-pid="' + p.id + '"]');
@@ -8498,6 +8536,8 @@ window.LasidaoUi = (function () {
     netRef = net;
     lastGame = game;
     lastMeId = opts && opts.meId;
+    lastRenderOpts = opts || null;
+    syncSpectatorLayout(game, opts);
     onLeaveLobbyRef =
       (opts && opts.onLeaveLobby) ||
       onLeaveLobbyRef ||
@@ -8668,6 +8708,9 @@ window.LasidaoUi = (function () {
     const tradeBtnAct = $('btn-las-trade');
     const resetBuildBtn = $('btn-las-reset-build');
     if (permAct) {
+      if (isSpectatorView(game, opts)) {
+        permAct.hidden = true;
+      } else {
       permAct.hidden = false;
       const myBuildTurn =
         game.phase === 'build' &&
@@ -8827,6 +8870,7 @@ window.LasidaoUi = (function () {
         selectedPermanent = null;
         syncPermanentSelection(game, me);
         syncBuildConfirmBar(game, me);
+      }
       }
     }
 

@@ -666,19 +666,19 @@ window.LasidaoFx = (function () {
 
     boardSlot.classList.add('las-settle-focus');
 
-    const before = slot.before || {};
+    const physical = slot.physical || {};
     const cancelledSet = new Set(
       (slot.cancelled || []).map((c) => c.pid)
     );
     const chips = [];
 
-    for (const [pid, count] of Object.entries(before)) {
-      if (!count) continue;
+    for (const [pid, diceCount] of Object.entries(physical)) {
+      if (!diceCount) continue;
       const chip = spawnWorkerChip(
         layer,
         boardSlot,
         pid,
-        count,
+        diceCount,
         nameOf(game, pid),
         false
       );
@@ -738,12 +738,17 @@ window.LasidaoFx = (function () {
     }
 
     const winner = (slot.ranked && slot.ranked[0]) || null;
+    const winDice = winner
+      ? Number(winner.dice) ||
+        Number((physical || {})[winner.pid]) ||
+        0
+      : 0;
     const remainChips = chips.filter((c) => !c.cancelled);
     if (winner) {
       setBanner(
         t('lasidao.fx.slotWinner', {
           name: winner.name,
-          count: winner.count,
+          count: winDice,
         })
       );
       for (const c of remainChips) {
@@ -765,7 +770,7 @@ window.LasidaoFx = (function () {
       }
       boardSlot.classList.add('las-settle-winner');
       await settleSleep(900);
-    } else if (Object.keys(before).length) {
+    } else if (Object.keys(physical).length) {
       setBanner(
         t('lasidao.fx.slotNobody', { area: areaLab, number: slot.number })
       );

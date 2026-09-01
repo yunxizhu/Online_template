@@ -668,7 +668,7 @@
       "slotFocus": "Resolve {area} slot {number}",
       "slotCancel": "{area}{number}: equal counts cancel",
       "cancelMark": "X",
-      "slotWinner": "{name} leads with {count}",
+      "slotWinner": "{name} leads with {count} dice",
       "winMark": "Win",
       "slotNobody": "{area}{number}: nobody claims",
       "gainRes": "{area} slot {number}: {name} rank {rank}, gains {res}",

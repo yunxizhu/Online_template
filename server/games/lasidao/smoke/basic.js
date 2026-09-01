@@ -2906,6 +2906,53 @@ console.log('— event prisoners dilemma neutrals —');
   console.log('✓ event prisoners dilemma neutrals');
 }
 
+console.log('— prisoners dilemma discard uses physical dice count —');
+{
+  const { startSettle } = require('../engine');
+  const { NEUTRAL_WORKER_ID } = require('../decks');
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.board.resource.environments[6] = {
+    id: 'env_pd',
+    kind: 'environment',
+    envType: 'prisonersDilemma',
+    label: '囚徒困境',
+    trigger: 'settle',
+    setup: 'neutral2',
+    number: 6,
+  };
+  g.board.resource.tiles = [
+    {
+      id: 'res_t6',
+      kind: 'resource',
+      resource: 'wood',
+      large: 1,
+      small: 1,
+      number: 6,
+      label: '木材',
+    },
+  ];
+  g.board.resource.workers = {
+    1: {}, 2: {}, 3: {}, 4: {}, 5: {},
+    6: { [NEUTRAL_WORKER_ID]: 2 },
+  };
+  g.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  const p0 = g.players[0];
+  const p1 = g.players[1];
+  startSettle(g);
+  assert.strictEqual(
+    Number((g.pendingPrisonerDiscards || {})[p0.id]) || 0,
+    2,
+    '仅 2 中立骰时各应弃 2 张而非 4 张'
+  );
+  assert.strictEqual(
+    Number((g.pendingPrisonerDiscards || {})[p1.id]) || 0,
+    2,
+    '第二名玩家同样弃 2 张'
+  );
+  console.log('✓ prisoners dilemma n equals first-place dice not strength');
+}
+
 console.log('— event wei qi rescue zhao —');
 {
   const { beginProduce } = require('../engine');
@@ -3842,6 +3889,149 @@ console.log('— event resistBarbarians VP —');
   assert.ok(g.over, '第一名达 10 应立刻结束');
   assert.strictEqual(p1.bonusScore, 9, '游戏结束后第二名不再得分');
   console.log('✓ event resistBarbarians VP');
+}
+
+console.log('— event resistBarbarians requires 2 physical dice —');
+{
+  const { startSettle } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.board.resource.environments = {};
+  g.board.resource.environments[3] = {
+    id: 'env_rb1',
+    kind: 'environment',
+    label: '抵抗南蛮',
+    envType: 'resistBarbarians',
+    trigger: 'settle',
+    number: 3,
+  };
+  g.board.resource.tiles = [
+    {
+      id: 'res_t3',
+      kind: 'resource',
+      resource: 'wood',
+      large: 1,
+      small: 1,
+      number: 3,
+      label: '木材',
+    },
+  ];
+  g.board.resource.workers = {
+    1: {}, 2: {}, 3: { p0: 1 }, 4: {}, 5: {}, 6: {},
+  };
+  g.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  const p0 = g.players[0];
+  p0.bonusScore = 0;
+  startSettle(g);
+  assert.strictEqual(p0.bonusScore, 0, '仅 1 骰时不应获得胜利点');
+  console.log('✓ resistBarbarians skips single die');
+}
+
+{
+  const { startSettle } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.board.resource.environments = {};
+  g.board.resource.environments[3] = {
+    id: 'env_rb2',
+    kind: 'environment',
+    label: '抵抗南蛮',
+    envType: 'resistBarbarians',
+    trigger: 'settle',
+    number: 3,
+  };
+  g.board.resource.tiles = [
+    {
+      id: 'res_t3b',
+      kind: 'resource',
+      resource: 'wood',
+      large: 1,
+      small: 1,
+      number: 3,
+      label: '木材',
+    },
+  ];
+  g.board.resource.workers = {
+    1: {}, 2: {}, 3: { p0: 2 }, 4: {}, 5: {}, 6: {},
+  };
+  g.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  const p0 = g.players[0];
+  p0.bonusScore = 0;
+  startSettle(g);
+  assert.strictEqual(p0.bonusScore, 1, '剩余 2 骰时应获得胜利点');
+  console.log('✓ resistBarbarians awards VP at 2 dice');
+}
+
+console.log('— dice-count effects ignore dispatch strength —');
+{
+  const { startSettle } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.board.resource.environments = {
+    2: {
+      id: 'env_pd_enh',
+      kind: 'environment',
+      envType: 'prisonersDilemma',
+      label: '囚徒困境',
+      trigger: 'settle',
+      number: 2,
+    },
+    4: {
+      id: 'env_rb_enh',
+      kind: 'environment',
+      envType: 'resistBarbarians',
+      label: '抵抗南蛮',
+      trigger: 'settle',
+      number: 4,
+    },
+  };
+  g.board.resource.tiles = [
+    {
+      id: 'res_t2',
+      kind: 'resource',
+      resource: 'wood',
+      large: 1,
+      small: 1,
+      number: 2,
+      label: '木材',
+    },
+    {
+      id: 'res_t4',
+      kind: 'resource',
+      resource: 'stone',
+      large: 1,
+      small: 1,
+      number: 4,
+      label: '石头',
+    },
+  ];
+  g.board.resource.workers = {
+    1: {},
+    2: { p0: 1 },
+    3: {},
+    4: { p0: 1 },
+    5: {},
+    6: {},
+  };
+  g.board.resource.boosts = {
+    1: {},
+    2: { p0: 1 },
+    3: {},
+    4: { p0: 1 },
+    5: {},
+    6: {},
+  };
+  const p0 = g.players[0];
+  const p1 = g.players[1];
+  p0.bonusScore = 0;
+  startSettle(g);
+  assert.strictEqual(
+    Number((g.pendingPrisonerDiscards || {})[p1.id]) || 0,
+    1,
+    '1 枚强化骰第一名时囚徒困境 n 应为 1 而非强度 3'
+  );
+  assert.strictEqual(p0.bonusScore, 0, '1 枚骰不满足抵抗南蛮 ≥2');
+  console.log('✓ dice-count effects use physical dice not strength');
 }
 
 console.log('— event keepOverflow skip discard —');

@@ -3168,6 +3168,7 @@
       if (window.LasidaoUi) {
         window.LasidaoUi.render(game, net, {
           meId: state.me && state.me.id,
+          isSpectator: state.isSpectator,
           playerNameById,
           onLeaveLobby: leaveAndReturnLocal,
         });

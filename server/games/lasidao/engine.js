@@ -485,7 +485,7 @@ function anyoneNeedsPrisonerDiscard(game) {
 }
 
 /**
- * 囚徒困境：弃第一名强度数量的资源；不足则全弃；无资源则无需弃。
+ * 囚徒困境：弃第一名骰子数量的资源；不足则全弃；无资源则无需弃。
  * 在进入/推进弃牌阶段时把待弃数量钳到实际持有量，避免卡死。
  */
 function clampPrisonerDiscardsToOwned(game) {
@@ -1199,13 +1199,19 @@ function workerDisplayName(game, pid) {
   return p ? p.name : pid;
 }
 
-function mapRanked(game, remain) {
+function mapRanked(game, remain, physical) {
   return rankedRemain(remain).map((r) => ({
     pid: r.pid,
     name: workerDisplayName(game, r.pid),
-    count: r.count,
+    count: r.count, // 派遣强度（抵消后，仅用于排名比较）
+    dice: physical ? Number(physical[r.pid]) || 0 : 0, // 物理骰子枚数（效果判定用）
     neutral: r.pid === NEUTRAL_WORKER_ID,
   }));
+}
+
+/** 读取某格上某阵营的物理骰子枚数（workers 映射） */
+function physicalDiceOnSlot(physical, pid) {
+  return Number(physical && physical[pid]) || 0;
 }
 
 function cancelledEntries(before, remain) {
@@ -1864,7 +1870,7 @@ function startSettle(game) {
 
     const before = slotStrengthMap(workers, boosts);
     const remain = cancelEqualCounts(before);
-    const ranked = mapRanked(game, remain);
+    const ranked = mapRanked(game, remain, workers);
     const gains = [];
     const barren = isBarrenMarkerOn(game, 'resource', num);
 
@@ -1875,6 +1881,7 @@ function startSettle(game) {
       ranked,
       before,
       remain,
+      physical: { ...workers },
       playerById,
       pushLog,
       syncResourceHandPending,
@@ -2014,7 +2021,7 @@ function startSettle(game) {
 
     const before = slotStrengthMap(workers, boosts);
     const remain = cancelEqualCounts(before);
-    const ranked = mapRanked(game, remain);
+    const ranked = mapRanked(game, remain, workers);
     let claimedBy = null;
     const barren = isBarrenMarkerOn(game, 'special', num);
 
@@ -2031,7 +2038,12 @@ function startSettle(game) {
         game.board.special.tiles = game.board.special.tiles.filter(
           (t) => t.number !== num
         );
-        claimedBy = { pid: p.id, name: p.name, count: ranked[0].count };
+        claimedBy = {
+          pid: p.id,
+          name: p.name,
+          count: ranked[0].count,
+          dice: physicalDiceOnSlot(workers, p.id),
+        };
         const needsBuildPlacement = tiles.some((t) => {
           if (deckKindOfTile(t) !== 'building') return false;
           const { number: _n, ...card } = t;
@@ -6207,6 +6219,7 @@ module.exports = {
   // 测试导出
   cancelEqualCounts,
   slotStrengthMap,
+  physicalDiceOnSlot,
   slotPlayerDieCounts,
   playerScore,
   exchangeCostN,

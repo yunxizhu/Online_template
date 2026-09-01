@@ -669,7 +669,7 @@
       "slotFocus": "结算 {area}区 {number} 号格",
       "slotCancel": "{area}{number}：相同数量抵消",
       "cancelMark": "抵消",
-      "slotWinner": "{name} 以 {count} 名领先",
+      "slotWinner": "{name} 以 {count} 骰领先",
       "winMark": "胜",
       "slotNobody": "{area}{number}：无人取得",
       "gainRes": "{area}区 {number} 号格，{name} 第{rank}名，获得{res}",
