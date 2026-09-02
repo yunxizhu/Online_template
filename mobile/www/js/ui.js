@@ -3658,8 +3658,6 @@
   function closeAllModals() {
     if (el.createRoomModal) el.createRoomModal.hidden = true;
     if (el.joinCodeModal) el.joinCodeModal.hidden = true;
-    if (el.rejoinModal) el.rejoinModal.hidden = true;
-    state.pendingRejoin = null;
     state.createModalMode = 'create';
     syncCreateModalChrome();
   }
@@ -3739,6 +3737,47 @@
     }
   }
 
+  const REJOIN_COUNTDOWN_SEC = 3;
+  let rejoinCountdownTimer = null;
+  let rejoinCountdownLeft = 0;
+
+  function rejoinAcceptLabel(seconds) {
+    const base = t('rejoin.accept');
+    if (seconds == null || seconds <= 0) return base;
+    const labeled = t('rejoin.acceptCountdown', { n: seconds });
+    return labeled === 'rejoin.acceptCountdown' ? `${base}（${seconds}）` : labeled;
+  }
+
+  function stopRejoinCountdown() {
+    if (rejoinCountdownTimer) {
+      clearInterval(rejoinCountdownTimer);
+      rejoinCountdownTimer = null;
+    }
+    rejoinCountdownLeft = 0;
+    if (el.btnAcceptRejoin) el.btnAcceptRejoin.textContent = t('rejoin.accept');
+  }
+
+  function startRejoinCountdown() {
+    stopRejoinCountdown();
+    rejoinCountdownLeft = REJOIN_COUNTDOWN_SEC;
+    if (el.btnAcceptRejoin) {
+      el.btnAcceptRejoin.textContent = rejoinAcceptLabel(rejoinCountdownLeft);
+    }
+    rejoinCountdownTimer = setInterval(() => {
+      rejoinCountdownLeft -= 1;
+      if (rejoinCountdownLeft <= 0) {
+        stopRejoinCountdown();
+        acceptPendingRejoin().catch((err) => {
+          showToast((err && err.message) || t('toast.rejoinFail'));
+        });
+        return;
+      }
+      if (el.btnAcceptRejoin) {
+        el.btnAcceptRejoin.textContent = rejoinAcceptLabel(rejoinCountdownLeft);
+      }
+    }, 1000);
+  }
+
   function setRejoinModalOpen(open, probe) {
     if (!el.rejoinModal) return;
     if (open && probe) {
@@ -3757,7 +3796,9 @@
         });
       }
       el.rejoinModal.hidden = false;
+      startRejoinCountdown();
     } else {
+      stopRejoinCountdown();
       state.pendingRejoin = null;
       el.rejoinModal.hidden = true;
     }
@@ -3770,6 +3811,7 @@
   }
 
   async function acceptPendingRejoin() {
+    if (state._rejoining) return;
     const probe = state.pendingRejoin;
     setRejoinModalOpen(false);
     if (!probe || !probe.roomId) return;
@@ -4010,7 +4052,6 @@
       return;
     }
     if (el.rejoinModal && !el.rejoinModal.hidden) {
-      declinePendingRejoin();
       return;
     }
     if (el.createRoomModal && !el.createRoomModal.hidden) {
@@ -4026,12 +4067,6 @@
     }
   });
 
-  document.querySelectorAll('[data-close="rejoin"]').forEach((node) => {
-    node.addEventListener('click', () => declinePendingRejoin());
-  });
-  if (el.btnCloseRejoin) {
-    el.btnCloseRejoin.addEventListener('click', () => declinePendingRejoin());
-  }
   if (el.btnDeclineRejoin) {
     el.btnDeclineRejoin.addEventListener('click', () => declinePendingRejoin());
   }

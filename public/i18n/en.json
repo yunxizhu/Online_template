@@ -181,6 +181,7 @@
     "title": "Unfinished game found",
     "message": "A recoverable room was found. Rejoin?",
     "accept": "Rejoin",
+    "acceptCountdown": "Rejoin ({n})",
     "decline": "Stay in lobby"
   },
   "game": {

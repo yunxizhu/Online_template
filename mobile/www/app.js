@@ -267,6 +267,42 @@
     if (changed) writePersistedLeftRooms(map);
   }
 
+  const REJOIN_COUNTDOWN_SEC = 3;
+  let rejoinCountdownTimer = null;
+  let rejoinCountdownLeft = 0;
+
+  function rejoinAcceptLabel(seconds) {
+    return seconds > 0 ? '重新加入（' + seconds + '）' : '重新加入';
+  }
+
+  function stopRejoinCountdown() {
+    if (rejoinCountdownTimer) {
+      clearInterval(rejoinCountdownTimer);
+      rejoinCountdownTimer = null;
+    }
+    rejoinCountdownLeft = 0;
+    if (el.btnAcceptRejoin) el.btnAcceptRejoin.textContent = '重新加入';
+  }
+
+  function startRejoinCountdown() {
+    stopRejoinCountdown();
+    rejoinCountdownLeft = REJOIN_COUNTDOWN_SEC;
+    if (el.btnAcceptRejoin) {
+      el.btnAcceptRejoin.textContent = rejoinAcceptLabel(rejoinCountdownLeft);
+    }
+    rejoinCountdownTimer = setInterval(() => {
+      rejoinCountdownLeft -= 1;
+      if (rejoinCountdownLeft <= 0) {
+        stopRejoinCountdown();
+        acceptPendingRejoin();
+        return;
+      }
+      if (el.btnAcceptRejoin) {
+        el.btnAcceptRejoin.textContent = rejoinAcceptLabel(rejoinCountdownLeft);
+      }
+    }, 1000);
+  }
+
   function setRejoinModalOpen(open, room) {
     if (!el.rejoinModal) return;
     if (open && room) {
@@ -289,7 +325,9 @@
           '。是否重新加入？';
       }
       el.rejoinModal.hidden = false;
+      startRejoinCountdown();
     } else {
+      stopRejoinCountdown();
       pendingRejoin = null;
       el.rejoinModal.hidden = true;
     }
@@ -310,6 +348,7 @@
   }
 
   function acceptPendingRejoin() {
+    if (joining) return;
     const room = pendingRejoin;
     setRejoinModalOpen(false);
     if (!room || !room.id) return;
@@ -1789,12 +1828,6 @@
     if (el.btnDeclineRejoin) {
       el.btnDeclineRejoin.addEventListener('click', () => declinePendingRejoin());
     }
-    if (el.btnCloseRejoin) {
-      el.btnCloseRejoin.addEventListener('click', () => declinePendingRejoin());
-    }
-    document.querySelectorAll('[data-close="rejoin"]').forEach((node) => {
-      node.addEventListener('click', () => declinePendingRejoin());
-    });
     if (el.roomCtx) {
       el.roomCtx.addEventListener('click', (ev) => {
         const btn = ev.target.closest('[data-action]');

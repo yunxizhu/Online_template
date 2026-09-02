@@ -412,11 +412,10 @@
   </div>
 
   <div class="modal" id="rejoin-modal" hidden>
-    <div class="modal-backdrop" data-close="rejoin"></div>
-    <div class="modal-dialog panel" role="dialog" aria-labelledby="rejoin-title">
+    <div class="modal-backdrop"></div>
+    <div class="modal-dialog panel" role="dialog" aria-labelledby="rejoin-title" aria-modal="true">
       <div class="row panel-head">
         <h2 id="rejoin-title" data-i18n="rejoin.title">发现未结束对局</h2>
-        <button id="btn-close-rejoin" type="button" class="icon-btn" data-i18n-attr="title:create.close,aria-label:create.close" title="关闭" aria-label="关闭">×</button>
       </div>
       <p id="rejoin-message" class="invite-message" data-i18n="rejoin.message">检测到你有可恢复的房间，是否重新加入？</p>
       <div class="row">

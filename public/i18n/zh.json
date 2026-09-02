@@ -181,6 +181,7 @@
     "title": "发现未结束对局",
     "message": "检测到你有可恢复的房间，是否重新加入？",
     "accept": "重新加入",
+    "acceptCountdown": "重新加入（{n}）",
     "decline": "留在大厅"
   },
   "game": {
