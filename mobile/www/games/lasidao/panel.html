@@ -68,7 +68,6 @@
           </div>
           <div id="las-dice-wrap" class="las-dice-wrap" hidden>
             <div class="las-dice-head">
-              <h3 id="las-dice-title" class="game-sub las-dice-title" data-i18n="lasidao.yourDice">你的骰子</h3>
               <p id="las-dice-hint" class="muted las-hint las-dice-hint"></p>
             </div>
             <div id="las-dice-stage" class="las-dice-stage">
@@ -76,8 +75,8 @@
               <div id="las-dice-groups" class="las-dice-groups" hidden></div>
             </div>
             <div class="row las-actions las-side-actions" id="las-produce-actions">
-              <button id="btn-las-void" type="button" class="secondary" data-i18n="lasidao.produceSkip">跳过</button>
               <button id="btn-las-confirm" type="button" hidden data-i18n="lasidao.confirmDispatch">确认派遣</button>
+              <button id="btn-las-void" type="button" class="secondary" data-i18n="lasidao.produceSkip">跳过</button>
             </div>
           </div>
           </div>
@@ -87,8 +86,11 @@
     </div>
 
     <div class="las-top-idle-col">
-      <div class="las-idle-slot">
-        <div id="las-produce-idle" class="las-produce-idle" hidden aria-live="polite"></div>
+      <div class="las-idle-col-stack">
+        <div class="las-idle-slot">
+          <div id="las-produce-idle" class="las-produce-idle" hidden aria-live="polite"></div>
+        </div>
+        <div id="las-title-pool" class="las-title-pool" aria-live="polite"></div>
       </div>
     </div>
   </div>

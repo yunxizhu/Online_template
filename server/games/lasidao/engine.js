@@ -10,14 +10,19 @@ const {
   shuffle,
   resetUid,
   makeFunc,
+  makeProduceBuild,
+  makeExchange,
+  makeWishWell,
   buildResourceDeck,
   buildFunctionDeck,
   buildBuildingDeck,
+  buildBuildingDeckRaw,
   buildSpecialDeck,
   buildEnvironmentDeck,
   environmentDeckSize,
   ENVIRONMENT_CATALOG,
   getEnvironmentDef,
+  BUILD_TYPES,
   BUILD_HOUSE_COST,
   BUY_FUNC_COST,
   BREED_FOOD_PER_VILLAGER,
@@ -802,13 +807,16 @@ function idleVillagers(p) {
   return Math.max(0, (Number(p.villagers) || 0) + temp - (Number(p.dispatched) || 0));
 }
 
-function playerScore(p) {
+function playerScore(p, game) {
   let s = Number(p.houseScore) || 0;
   for (const b of p.buildings || []) {
     if (b.built && b.score) s += b.score;
   }
   s += Number(p.bonusScore) || 0;
   s += stackAchievementScore(p);
+  if (game && game.breedingTycoonPlayerId === p.id) {
+    s += BREEDING_TYCOON_SCORE;
+  }
   return s;
 }
 
@@ -817,11 +825,11 @@ function checkWin(game) {
   // 建造等阶段按回合顺序结算：先达到胜利分的唯一玩家立刻获胜
   let winner = null;
   const cur = playerById(game, game.currentPlayerId);
-  if (cur && !cur.left && playerScore(cur) >= WIN_SCORE) {
+  if (cur && !cur.left && playerScore(cur, game) >= WIN_SCORE) {
     winner = cur;
   } else {
   for (const p of alivePlayers(game)) {
-      if (playerScore(p) >= WIN_SCORE) {
+      if (playerScore(p, game) >= WIN_SCORE) {
         winner = p;
         break;
   }
@@ -1105,6 +1113,20 @@ function clearAllSlotWorkers(game) {
     game.board[area].workers = emptySlotWorkers();
     game.board[area].boosts = emptySlotWorkers();
   }
+}
+
+/** 生产结算后保留场上骰子/卡牌，进入建造阶段时再统一清空 */
+function clearPostProduceBoard(game) {
+  recycleBoard(game);
+  clearAllSlotWorkers(game);
+  for (const p of game.players) {
+    for (const b of p.buildings || []) b.workers = 0;
+  }
+  game.dice = {};
+  game.diceBoosted = {};
+  game.barrenMarkerNumber = null;
+  game.barrenMarkerArea = null;
+  game.barrenMarkerOwnerId = null;
 }
 
 /** 清空工人后：按场上事件牌补回「以身入局」等上场中立骰（setupBoard 已放过，beginProduce 会清掉） */
@@ -1417,6 +1439,7 @@ function createGameState(room) {
     pendingPrisonerDiscards: {},
     pendingMercenaryQueue: [],
     mercenaryRoll: null,
+    breedingTycoonPlayerId: null,
     mercenaryPlaced: [],
     mercenaryGate: null,
     // 生产阶段
@@ -1802,16 +1825,6 @@ function completeSettleAfterAnim(game) {
   game.settleAnimAcks = {};
   game.settleAnimUntil = 0;
   game.personalProduceApplied = false;
-  // 结算动画结束后再回收场上未取走的板块与工人骰子
-  recycleBoard(game);
-  clearAllSlotWorkers(game);
-  for (const p of game.players) {
-    for (const b of p.buildings || []) b.workers = 0;
-  }
-  // 生产结算结束后清空歉收标记
-  game.barrenMarkerNumber = null;
-  game.barrenMarkerArea = null;
-  game.barrenMarkerOwnerId = null;
   advancePostSettlePipeline(game);
   return { ok: true };
 }
@@ -1845,8 +1858,6 @@ function finishSettleAnimForce(game) {
 function startSettle(game) {
   game.phase = 'settle';
   game.currentPlayerId = null;
-  game.dice = {};
-  game.diceBoosted = {};
   game.pendingEventChoice = null;
   game.pendingPrisonerDiscards = {};
   game.pendingMercenaryQueue = [];
@@ -2126,7 +2137,7 @@ function startSettle(game) {
 
   game.lastSettle = report;
 
-  // 工人骰子与版面卡牌均保留至结算动画结束后回收（见 completeSettleAfterAnim）
+  // 工人骰子与版面卡牌均保留至建造阶段开始再回收（见 clearPostProduceBoard）
   game.phase = 'settle';
   game.currentPlayerId = null;
   game.settleAnimAcks = {};
@@ -3068,6 +3079,7 @@ function ensureSettleActPlayer(game) {
 
 function beginBuild(game) {
   if (game.over) return;
+  clearPostProduceBoard(game);
   game.phase = 'build';
   game.buildPassed = {};
   game.buildIdleLoops = 0;
@@ -3804,7 +3816,10 @@ function actConstruct(game, player, payload) {
     `${player.name} 建造了「${b.label}」` +
     (b.score ? `（+${b.score} 分）` : '');
   const stackKey = buildingStackKey(b);
-  if (countBuiltByStackKey(player, stackKey) === STACK_ACHIEVEMENT_NEED) {
+  if (
+    isStackAchievementKey(stackKey) &&
+    countBuiltByStackKey(player, stackKey) === STACK_ACHIEVEMENT_NEED
+  ) {
     if (grantStackAchievement(player, stackKey)) {
       stepText += `，获得成就「${stackAchievementLabel(player, stackKey)}」（+${STACK_ACHIEVEMENT_SCORE} 分）`;
     }
@@ -4075,6 +4090,18 @@ const MAX_EXCHANGE_EFFECT = 2;
 /** 同类型建筑建成第 3 座：每种类型 +2 胜利点 */
 const STACK_ACHIEVEMENT_NEED = 3;
 const STACK_ACHIEVEMENT_SCORE = 2;
+/** 不参与叠放称号的建筑类型（建成即高分，游戏通常已结束） */
+const STACK_ACHIEVEMENT_EXCLUDED_BUILD_TYPES = new Set([
+  'score1',
+  'score2',
+  'eternalThrone',
+]);
+
+function isStackAchievementKey(key) {
+  if (!key) return false;
+  if (STACK_ACHIEVEMENT_EXCLUDED_BUILD_TYPES.has(key)) return false;
+  return true;
+}
 /** @deprecated 兼容旧导出/测试 */
 const EXCHANGE_TITLE_NEED = STACK_ACHIEVEMENT_NEED;
 const EXCHANGE_TITLE_SCORE = STACK_ACHIEVEMENT_SCORE;
@@ -4082,6 +4109,11 @@ const EXCHANGE_TITLE_ID = 'commerceTycoon';
 const EXCHANGE_TITLE_LABEL = '商业巨擎';
 const WISH_WELL_TITLE_ID = 'lampSpirit';
 const WISH_WELL_TITLE_LABEL = '灯灵本灵';
+const BREEDING_TYCOON_STACK_KEY = 'breedingTycoon';
+const BREEDING_TYCOON_ID = 'breedingTycoon';
+const BREEDING_TYCOON_LABEL = '养殖场大户';
+const BREEDING_TYCOON_NEED = 7;
+const BREEDING_TYCOON_SCORE = 2;
 
 function produceManagerTitle(resource) {
   const name = RESOURCE_LABELS[resource] || resource;
@@ -4115,6 +4147,7 @@ function stackAchievementCounts(player) {
   for (const b of player.buildings || []) {
     if (!b.built) continue;
     const key = buildingStackKey(b);
+    if (!isStackAchievementKey(key)) continue;
     counts[key] = (counts[key] || 0) + 1;
   }
   return counts;
@@ -4160,13 +4193,175 @@ function commerceTycoonScore(player) {
   return hasCommerceTycoon(player) ? STACK_ACHIEVEMENT_SCORE : 0;
 }
 
-function playerTitles(player) {
-  return stackAchievementKeys(player).map((key) => ({
+function hasBreedingTycoon(player, game) {
+  return Boolean(
+    game && player && !player.left && game.breedingTycoonPlayerId === player.id
+  );
+}
+
+function breedingTycoonScore(player, game) {
+  return hasBreedingTycoon(player, game) ? BREEDING_TYCOON_SCORE : 0;
+}
+
+/** 称号判定用永久村民数（不含 tempVillagers / recruitPending） */
+function permanentVillagerCount(player) {
+  return Math.max(0, Number(player && player.villagers) || 0);
+}
+
+function breedingTycoonEligiblePlayers(game) {
+  return alivePlayers(game).filter(
+    (p) => permanentVillagerCount(p) >= BREEDING_TYCOON_NEED
+  );
+}
+
+function pickBreedingTycoonHolder(game) {
+  const eligible = breedingTycoonEligiblePlayers(game);
+  if (!eligible.length) return null;
+  const maxV = Math.max(...eligible.map((p) => permanentVillagerCount(p)));
+  const top = eligible.filter((p) => permanentVillagerCount(p) === maxV);
+  const prevId = game.breedingTycoonPlayerId || null;
+  if (prevId && top.some((p) => p.id === prevId)) return prevId;
+  top.sort((a, b) => (a.seat || 0) - (b.seat || 0));
+  return top[0].id;
+}
+
+/** @returns {boolean} 称号持有人是否变化 */
+function resolveBreedingTycoon(game) {
+  if (!game) return false;
+  const prevId = game.breedingTycoonPlayerId || null;
+  const nextId = pickBreedingTycoonHolder(game);
+  if (nextId === prevId) return false;
+  game.breedingTycoonPlayerId = nextId;
+  const next = nextId ? playerById(game, nextId) : null;
+  const prev = prevId ? playerById(game, prevId) : null;
+  if (next && !prev) {
+    pushLog(
+      game,
+      `${next.name} 获得称号「${BREEDING_TYCOON_LABEL}」（永久村民 ≥${BREEDING_TYCOON_NEED}，+${BREEDING_TYCOON_SCORE} 分）`
+    );
+  } else if (next && prev) {
+    pushLog(
+      game,
+      `${next.name} 抢走称号「${BREEDING_TYCOON_LABEL}」（永久村民 ${permanentVillagerCount(next)} > ${permanentVillagerCount(prev)}，+${BREEDING_TYCOON_SCORE} 分）`
+    );
+  } else if (!next && prev) {
+    pushLog(game, `${prev.name} 失去称号「${BREEDING_TYCOON_LABEL}」`);
+  }
+  return true;
+}
+
+function playerTitles(player, game) {
+  const titles = stackAchievementKeys(player).map((key) => ({
     id: stackAchievementTitleId(key),
     stackKey: key,
     label: stackAchievementLabel(player, key),
     score: STACK_ACHIEVEMENT_SCORE,
   }));
+  if (hasBreedingTycoon(player, game)) {
+    titles.push({
+      id: BREEDING_TYCOON_ID,
+      stackKey: BREEDING_TYCOON_STACK_KEY,
+      label: BREEDING_TYCOON_LABEL,
+      score: BREEDING_TYCOON_SCORE,
+      need: BREEDING_TYCOON_NEED,
+    });
+  }
+  return titles;
+}
+
+function stackAchievementLabelFromKey(key, sampleLabel) {
+  if (key === 'exchange') return EXCHANGE_TITLE_LABEL;
+  if (key === 'wishWell') return WISH_WELL_TITLE_LABEL;
+  if (key.startsWith('produce:')) {
+    const resource = key.split(':')[1];
+    if (resource) return produceManagerTitle(resource);
+  }
+  if (sampleLabel) return `${sampleLabel}×${STACK_ACHIEVEMENT_NEED}`;
+  const buildType = String(key || '').split(':')[0];
+  const typeLabel = BUILD_TYPES[buildType] || buildType;
+  return `${typeLabel}×${STACK_ACHIEVEMENT_NEED}`;
+}
+
+function getExclusiveTitleCatalog() {
+  return [
+    {
+      stackKey: BREEDING_TYCOON_STACK_KEY,
+      id: BREEDING_TYCOON_ID,
+      label: BREEDING_TYCOON_LABEL,
+      buildLabel: '',
+      need: BREEDING_TYCOON_NEED,
+      score: BREEDING_TYCOON_SCORE,
+    },
+  ];
+}
+
+function stackTitleCatalogDedupeKey(stackKey) {
+  if (!stackKey) return '';
+  if (stackKey.startsWith('produce:')) {
+    return stackAchievementTitleId(stackKey);
+  }
+  return stackKey;
+}
+
+let _stackTitleCatalog = null;
+function getStackTitleCatalog() {
+  if (_stackTitleCatalog) return _stackTitleCatalog;
+  const seen = new Set();
+  _stackTitleCatalog = [];
+  const samples = buildBuildingDeckRaw().concat([makeExchange(), makeWishWell()]);
+  for (const b of samples) {
+    const stackKey = buildingStackKey(b);
+    if (!isStackAchievementKey(stackKey)) continue;
+    const dedupeKey = stackTitleCatalogDedupeKey(stackKey);
+    if (!stackKey || seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    _stackTitleCatalog.push({
+      stackKey,
+      id: stackAchievementTitleId(stackKey),
+      label: stackAchievementLabelFromKey(stackKey, b.label),
+      buildLabel: b.label || BUILD_TYPES[b.buildType] || stackKey,
+    });
+  }
+  return _stackTitleCatalog;
+}
+
+function claimedStackTitleKeys(game) {
+  const claimed = new Set();
+  if (game && game.breedingTycoonPlayerId) {
+    claimed.add(BREEDING_TYCOON_STACK_KEY);
+  }
+  for (const p of game.players || []) {
+    if (p.left) continue;
+    for (const title of playerTitles(p, game)) {
+      if (title.stackKey) claimed.add(title.stackKey);
+    }
+  }
+  return claimed;
+}
+
+function availableStackTitles(game) {
+  const claimed = claimedStackTitleKeys(game);
+  const stackTitles = getStackTitleCatalog()
+    .filter((t) => !claimed.has(t.stackKey))
+    .map((t) => ({
+      id: t.id,
+      stackKey: t.stackKey,
+      label: t.label,
+      buildLabel: t.buildLabel,
+      need: STACK_ACHIEVEMENT_NEED,
+      score: STACK_ACHIEVEMENT_SCORE,
+    }));
+  const exclusiveTitles = getExclusiveTitleCatalog()
+    .filter((t) => !claimed.has(t.stackKey))
+    .map((t) => ({
+      id: t.id,
+      stackKey: t.stackKey,
+      label: t.label,
+      buildLabel: t.buildLabel,
+      need: t.need,
+      score: t.score,
+    }));
+  return stackTitles.concat(exclusiveTitles);
 }
 
 function effectiveExchangeCount(player) {
@@ -4882,7 +5077,7 @@ function actIllegalBuildPick(game, player, payload) {
   if (lostStackTitle) {
     stepText += `，失去成就「${stackAchievementLabel(player, stackKey)}」（-${STACK_ACHIEVEMENT_SCORE} 分）`;
   }
-  stepText += `（当前 ${playerScore(player)} 分）`;
+  stepText += `（当前 ${playerScore(player, game)} 分）`;
   pushLog(game, stepText);
 
   actor.funcCards.splice(cardIdx, 1);
@@ -4966,7 +5161,7 @@ function actBuildHousePermanent(game, player) {
   player.houses = (Number(player.houses) || 0) + 1;
   player.houseScore = (Number(player.houseScore) || 0) + 1;
   player.roundBuiltHouse = true;
-  const stepText = `${player.name} 建造房子，+1 房 +1 分（房子 ${player.houses}，空位 ${freeHousesFor(player)}，分数 ${playerScore(player)}）`;
+  const stepText = `${player.name} 建造房子，+1 房 +1 分（房子 ${player.houses}，空位 ${freeHousesFor(player)}，分数 ${playerScore(player, game)}）`;
   pushLog(game, stepText);
   pushPlayReveal(game, {
     kind: 'step',
@@ -5011,6 +5206,7 @@ function actBreedPermanent(game, player) {
     actorName: player.name,
     stepText,
   });
+  resolveBreedingTycoon(game);
   if (checkWin(game)) return { ok: true };
   // 常驻功能不结束回合，保留玩家行动权
   game.lastBuilderId = player.id;
@@ -5145,7 +5341,7 @@ function useCaravan(game, player, _payload) {
   let logMsg = `${player.name} 发动商队来临：本回合结束前可按 1换1 兑换资源`;
   if (hasMarket) {
     player.bonusScore = (Number(player.bonusScore) || 0) + 1;
-    logMsg += `，已建集市 +1 分（当前 ${playerScore(player)} 分）`;
+    logMsg += `，已建集市 +1 分（当前 ${playerScore(player, game)} 分）`;
     checkWin(game);
   }
   pushLog(game, logMsg);
@@ -5726,6 +5922,7 @@ function publicGameState(game, viewerId) {
         }
       : null,
     log: game.log.slice(-60),
+    availableTitles: availableStackTitles(game),
     players: game.players.map((p) => {
       const isMe = p.id === viewerId;
       return {
@@ -5746,10 +5943,10 @@ function publicGameState(game, viewerId) {
         welfareHouses: Number(p.welfareHouses) || 0,
         caravanPending: Boolean(p.caravanPending),
         bonusScore: Number(p.bonusScore) || 0,
-        titles: playerTitles(p),
+        titles: playerTitles(p, game),
         commerceTycoon: hasCommerceTycoon(p),
         resources: cloneRes(p.resources),
-        score: playerScore(p),
+        score: playerScore(p, game),
         roundGained: p.roundGained,
         roundBuiltHouse: Boolean(p.roundBuiltHouse),
         roundBred: Boolean(p.roundBred),
@@ -6240,6 +6437,10 @@ function onPlayerQuit(game, playerId) {
   if (!p) return;
   p.left = true;
   pushLog(game, `${p.name} 离开了游戏`);
+  if (game.breedingTycoonPlayerId === playerId) {
+    game.breedingTycoonPlayerId = null;
+  }
+  resolveBreedingTycoon(game);
 
   if (
     game.pendingTrade &&
@@ -6354,7 +6555,17 @@ module.exports = {
   EXCHANGE_TITLE_LABEL,
   hasCommerceTycoon,
   commerceTycoonScore,
+  hasBreedingTycoon,
+  breedingTycoonScore,
+  permanentVillagerCount,
+  resolveBreedingTycoon,
+  BREEDING_TYCOON_NEED,
+  BREEDING_TYCOON_SCORE,
+  BREEDING_TYCOON_ID,
+  BREEDING_TYCOON_LABEL,
   playerTitles,
+  availableStackTitles,
+  getStackTitleCatalog,
   WIN_SCORE,
   VILLAGERS_PER_HOUSE,
   villagerCapacityFor,

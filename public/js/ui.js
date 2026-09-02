@@ -4602,8 +4602,8 @@
 
   net.on('lobby:invite', (data) => {
     if (!data || !data.roomId) return;
-    // 仅在大厅/等待房时显示邀请弹窗
-    if (state.game) return;
+    // 仅在大厅（未进房、未对局）时显示邀请弹窗
+    if (state.game || state.room) return;
     if (isBlockingInvites()) return;
     showInviteToast(data);
   });

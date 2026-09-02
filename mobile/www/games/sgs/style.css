@@ -1096,6 +1096,7 @@
   align-items: flex-end;
   max-height: 11rem;
   overflow: auto;
+  overflow: overlay;
 }
 
 .sgs-ask-cards:empty {
@@ -1361,6 +1362,7 @@
   width: min(340px, calc(100vw - 16px));
   max-height: min(70vh, 480px);
   overflow: auto;
+  overflow: overlay;
 }
 
 .sgs-skill-tip-hero {
@@ -1749,6 +1751,7 @@ button.sgs-kapai {
   width: min(1100px, calc(100% - 1rem));
   max-height: min(72vh, 640px);
   overflow: auto;
+  overflow: overlay;
   margin: 0;
   padding: 0.85rem 1.1rem 1.1rem;
   border-radius: 14px;
@@ -1840,6 +1843,7 @@ button.sgs-kapai {
   width: min(440px, 94vw);
   max-height: min(78vh, 560px);
   overflow: auto;
+  overflow: overlay;
   border: 1px solid #c9a227;
   border-radius: 10px;
   padding: 1rem 1.1rem 1.1rem;

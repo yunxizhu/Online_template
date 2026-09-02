@@ -379,6 +379,7 @@ window.LasidaoFx = (function () {
     const srcEl = tileEl(tile.id) || fromEl;
     const from = rectCenter(srcEl) || rectCenter(fromEl);
     if (!from) return;
+
     const fly = makeSettleFlyCard(tile, areaKey, {
       faceUp: opts && opts.faceUp,
       srcEl: srcEl && srcEl.classList && srcEl.classList.contains('las-tile')
@@ -389,23 +390,8 @@ window.LasidaoFx = (function () {
     fly.style.top = from.y + 'px';
     layer.appendChild(fly);
     if (srcEl && srcEl.classList && srcEl.classList.contains('las-tile')) {
-      const stack = srcEl.parentElement;
-      const slot = srcEl.closest('.las-slot');
-      const idx = stack ? Array.prototype.indexOf.call(stack.children, srcEl) : -1;
-      if (
-        slot &&
-        idx >= 0 &&
-        window.LasidaoUi &&
-        typeof window.LasidaoUi.replaceBoardTileWithEmpty === 'function'
-      ) {
-        window.LasidaoUi.replaceBoardTileWithEmpty(
-          slot.dataset.area,
-          Number(slot.dataset.num),
-          idx
-        );
-      } else {
-        srcEl.style.opacity = '0.15';
-      }
+      srcEl.classList.add('is-settle-claimed');
+      srcEl.setAttribute('aria-hidden', 'true');
     }
     const flyMs =
       opts && opts.ms != null ? opts.ms : settleMs(1000);

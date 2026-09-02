@@ -13,6 +13,12 @@
   --room-accent-hover: #dfa04f;
   --room-panel: #2c241c;
   --room-border: #6a4e32;
+  --scrollbar-size: 8px;
+  --scrollbar-thumb-alpha: 0.2;
+  --scrollbar-thumb-alpha-active: 0.75;
+  --scrollbar-thumb-rgb: 150, 172, 184;
+  --scrollbar-thumb: rgba(var(--scrollbar-thumb-rgb), var(--scrollbar-thumb-alpha));
+  --scrollbar-thumb-active: rgba(var(--scrollbar-thumb-rgb), var(--scrollbar-thumb-alpha-active));
 }
 
 [hidden] {
@@ -21,15 +27,31 @@
 
 * {
   box-sizing: border-box;
-  /* 隐藏滚动条外观，滚轮/触控滑动仍可用 */
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 *::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-  display: none;
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 999px;
+  transition: background-color 0.18s ease;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-active);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 body {
@@ -64,6 +86,21 @@ body.phase-game {
   background:
     radial-gradient(ellipse at top, #243028 0%, transparent 50%),
     #151a18;
+  overflow-x: hidden;
+}
+
+/* 对局页视口滚动：滚动条浮在内容之上，出现时不挤占牌面宽度 */
+html:has(body.phase-game) {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-y: overlay;
+  --scrollbar-thumb-rgb: 118, 168, 148;
+}
+
+body.phase-game .app-content,
+body.phase-game #view-game,
+body.phase-game #game-panels {
+  overflow: visible;
 }
 
 .app {
@@ -352,6 +389,7 @@ body.phase-game .match-clock-label {
   max-width: min(18rem, 70vw);
   max-height: min(16rem, 50vh);
   overflow: auto;
+  overflow: overlay;
   padding: 0.55rem 0.65rem 0.65rem;
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -547,11 +585,13 @@ body.phase-game .match-clock-label {
   background: rgba(36, 48, 56, 0.96);
   padding: 1rem 0.95rem 0.75rem;
   transition: background 0.25s ease, border-color 0.25s ease;
+  --people-aside-pad-x: 0.95rem;
 }
 
 body.phase-room .lobby-people {
   background: rgba(44, 32, 22, 0.97);
   border-left-color: var(--room-border);
+  --scrollbar-thumb-rgb: 201, 133, 58;
 }
 
 .lobby-people[hidden] {
@@ -586,11 +626,18 @@ body.phase-room .lobby-people {
 
 .people-list {
   list-style: none;
-  margin: 0;
-  padding: 0;
+  margin: 0 calc(-1 * var(--people-aside-pad-x)) 0 0;
+  padding: 0 var(--people-aside-pad-x) 0 0;
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  overflow: overlay;
+  scrollbar-gutter: auto;
+}
+
+/* 右侧人员栏滚动条：叠在栏内边距上，出现时不挤占名单宽度 */
+.lobby-people .people-list::-webkit-scrollbar {
+  width: var(--scrollbar-size);
 }
 
 .people-list li {
@@ -728,6 +775,7 @@ body.phase-room .lobby-people {
   width: min(100%, 420px);
   max-height: min(90vh, 640px);
   overflow: auto;
+  overflow: overlay;
   margin: 0;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
 }
@@ -1475,6 +1523,7 @@ body.phase-room .chat-dock:not(.is-active) .chat-panel {
   flex: 1 1 auto;
   min-height: 80px;
   overflow: auto;
+  overflow: overlay;
   font-size: 0.8rem;
   line-height: 1.4;
 }
@@ -1927,6 +1976,7 @@ body.phase-room .chat-tabs button.is-on {
   padding: 0;
   max-height: 160px;
   overflow: auto;
+  overflow: overlay;
   font-size: 0.85rem;
   color: var(--muted);
 }
@@ -1950,6 +2000,12 @@ body.phase-room .chat-tabs button.is-on {
     width: 100%;
     border-left: none;
     border-top: 1px solid var(--border);
+    --people-aside-pad-x: 0;
+  }
+
+  .people-list {
+    margin-right: 0;
+    padding-right: 0;
   }
 
   .app-body:has(.lobby-people:not([hidden])) .app-content,

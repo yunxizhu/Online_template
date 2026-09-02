@@ -418,12 +418,12 @@ function broadcastChatAllLocal(msg) {
   io.to(HALL_CHAT_ROOM).emit('chat:message', msg);
 }
 
-/** 向本实例中处于大厅/等待房的玩家广播邀请 */
+/** 向本实例中处于大厅（未进房）的玩家广播邀请 */
 function broadcastInviteLocal(msg, excludeSocketId = null) {
   const people = rooms.listLobbyPeople();
   for (const person of people) {
     if (excludeSocketId && person.id === excludeSocketId) continue;
-    if (person.status !== 'idle' && person.status !== 'room') continue;
+    if (person.status !== 'idle') continue;
     if (msg.roomId && person.roomId && person.roomId === msg.roomId) continue;
     io.to(person.id).emit('lobby:invite', msg);
   }
