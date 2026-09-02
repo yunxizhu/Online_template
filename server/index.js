@@ -296,7 +296,9 @@ function hostedBeaconRooms() {
         ...r,
         _createdAt: (full && full.createdAt) || Date.now(),
         players: full && full.players
-          ? full.players.map((p) => ({ name: p.name, tag: p.tag || null }))
+          ? full.players
+              .filter((p) => p && !p.left)
+              .map((p) => ({ name: p.name, tag: p.tag || null, left: false }))
           : [],
         observers: full && full.observers
           ? full.observers.map((p) => ({ name: p.name, tag: p.tag || null }))
@@ -315,6 +317,44 @@ function mqttOnLogin() {
 
 function mqttAfterRoomChange() {
   if (mqttBulletin && mqttBulletin.enabled) mqttBulletin.pulseRoom();
+}
+
+function applyExplicitLeaveResult(result) {
+  if (!result || !result.ok || result.noop) return;
+  if (result.leftObserver && result.room) {
+    emitSpectatorLeft(result.room, result.leftObserver);
+    emitRoomUpdate(result.room);
+  } else if (result.abandoned && result.room) {
+    handleAbandonedPlayers(result.room);
+    io.to(result.room.id).emit('game:player-left', {
+      playerId: null,
+      name: result.playerName,
+      tag: result.playerTag,
+    });
+    emitRoomUpdate(result.room);
+    emitGameState(result.room);
+    if (result.room.status === 'playing' && result.room.game) {
+      syncTurnTimer(result.room, { onTimeout: handleTurnTimeout });
+    }
+  } else if (result.dissolved) {
+    for (const otherId of result.affectedPlayerIds || []) {
+      const otherSocket = io.sockets.sockets.get(otherId);
+      if (otherSocket && result.leftRoomId) {
+        otherSocket.leave(result.leftRoomId);
+      }
+      io.to(otherId).emit('room:left', {
+        reason: 'dissolved',
+        roomId: result.leftRoomId || null,
+      });
+    }
+  } else if (result.room) {
+    emitRoomUpdate(result.room);
+  }
+  emitLobbyUpdate();
+  mqttOnLogin();
+  if (result.dissolved) mqttClearRoomOnDissolve();
+  else mqttAfterRoomChange();
+  if (result.dissolved && tunnel && !rooms.rooms.size) tunnel.stop();
 }
 
 /** 对局开始/结束或房间状态变化：立刻刷新大厅 + MQTT 房间心跳 */
@@ -440,6 +480,15 @@ function emitPlayerMe(socket, player, fallbackName) {
     name: (player && player.name) || fallbackName || '玩家',
     tag: (player && player.tag) || null,
     localHost: localBaseUrl(),
+  });
+}
+
+function emitSpectatorLeft(room, observer) {
+  if (!room || !observer || !observer.id) return;
+  io.to(room.id).emit('room:spectatorLeft', {
+    id: observer.id,
+    name: observer.name || '玩家',
+    tag: observer.tag || null,
   });
 }
 
@@ -832,6 +881,20 @@ io.on('connection', (socket) => {
       mqttConnected: mqttBulletin.isConnected(),
     });
     emitLobbyUpdate();
+  });
+
+  socket.on('lobby:announce-leave', (data = {}) => {
+    const me = rooms.getPlayer(socket.id);
+    const ident = {
+      roomId: String(data.roomId || '').toUpperCase(),
+      name: data.name || (me && me.name) || '',
+      tag: data.tag || (me && me.tag) || null,
+      sessionId: data.sessionId || (me && me.sessionId) || null,
+    };
+    if (!ident.roomId) return;
+    const result = rooms.explicitLeaveByIdentity(ident);
+    applyExplicitLeaveResult(result);
+    if (mqttBulletin && mqttBulletin.enabled) mqttBulletin.publishLeave(ident);
   });
 
   socket.on('player:rename', (data = {}) => {
@@ -1265,6 +1328,7 @@ io.on('connection', (socket) => {
       });
     }
     if (result.room) {
+      if (result.leftObserver) emitSpectatorLeft(result.room, result.leftObserver);
       emitRoomUpdate(result.room);
     }
     emitLobbyUpdate();
@@ -1283,7 +1347,10 @@ io.on('connection', (socket) => {
     if (result.leftRoomId) {
       socket.leave(result.leftRoomId);
     }
-    if (result.abandoned && result.room) {
+    if (result.leftObserver && result.room) {
+      emitSpectatorLeft(result.room, result.leftObserver);
+      emitRoomUpdate(result.room);
+    } else if (result.abandoned && result.room) {
       handleAbandonedPlayers(result.room);
       io.to(result.room.id).emit('game:player-left', {
         playerId: socket.id,
@@ -1487,6 +1554,7 @@ io.on('connection', (socket) => {
     // 对局中断线：标记离线并保留牌局，便于重连；大厅/等待房仍直接离开
     const result = rooms.markOffline(socket.id);
     if (result.leftRoomId && result.room) {
+      if (result.leftObserver) emitSpectatorLeft(result.room, result.leftObserver);
       emitRoomUpdate(result.room);
       if (result.offline && result.room.status === 'playing' && result.room.game) {
         emitGameState(result.room);
@@ -1523,6 +1591,14 @@ mqttBulletin = new MqttBulletin({
   },
   onInvite: (msg) => {
     broadcastInviteLocal(msg);
+  },
+  onLeave: (msg) => {
+    try {
+      const result = rooms.explicitLeaveByIdentity(msg || {});
+      applyExplicitLeaveResult(result);
+    } catch (err) {
+      console.warn('[mqtt] leave', err && err.message);
+    }
   },
 });
 

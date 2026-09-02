@@ -133,6 +133,7 @@ class MqttBulletin {
     onChange,
     onChat,
     onInvite,
+    onLeave,
   }) {
     const opt = loadOptions(rootDir || process.cwd());
     this.enabled = !opt.disabled;
@@ -148,6 +149,7 @@ class MqttBulletin {
     this.onChange = onChange || (() => {});
     this.onChat = onChat || (() => {});
     this.onInvite = onInvite || (() => {});
+    this.onLeave = onLeave || (() => {});
     this.loginAt = Date.now();
     this.client = null;
     this._started = false;
@@ -254,6 +256,10 @@ class MqttBulletin {
 
   #inviteTopic() {
     return `${this.#prefix()}/invite`;
+  }
+
+  #leaveTopic() {
+    return `${this.#prefix()}/leave`;
   }
 
   #warn(err) {
@@ -426,6 +432,9 @@ class MqttBulletin {
       client.subscribe(this.#inviteTopic(), { qos: 1 }, (err) => {
         if (err) this.#warn(err);
       });
+      client.subscribe(this.#leaveTopic(), { qos: 1 }, (err) => {
+        if (err) this.#warn(err);
+      });
       this.onChange();
     });
     client.on('message', (topic, buf) => this.#onMessage(topic, buf));
@@ -510,7 +519,13 @@ class MqttBulletin {
       ) || 0
     );
     const over = room.over ? 1 : 0;
-    return `${String(room.id || '').toUpperCase()}|${host}|${playerCount}|${room.status || 'waiting'}|${over}`;
+    const names = Array.isArray(room.players)
+      ? room.players
+          .filter((p) => p && !p.left)
+          .map((p) => `${p.name || ''}:${p.tag || ''}`)
+          .join(',')
+      : '';
+    return `${String(room.id || '').toUpperCase()}|${host}|${playerCount}|${names}|${room.status || 'waiting'}|${over}`;
   }
 
   #isRoomBeaconPublished(room, tunnelUrl) {
@@ -684,6 +699,34 @@ class MqttBulletin {
     }
   }
 
+  publishLeave(msg) {
+    if (!this.enabled || !this._started) return false;
+    const c = this.client;
+    if (!c || !c.connected) return false;
+    const payload = {
+      app: APP_SIGNATURE,
+      kind: 'leave',
+      roomId: String((msg && msg.roomId) || '').toUpperCase(),
+      name: String((msg && msg.name) || '').trim().slice(0, 24),
+      tag: msg && msg.tag ? String(msg.tag).slice(0, 12) : null,
+      sessionId: msg && msg.sessionId ? String(msg.sessionId).slice(0, 64) : null,
+      at: Date.now(),
+    };
+    if (!payload.roomId || (!payload.name && !payload.sessionId)) return false;
+    try {
+      c.publish(this.#leaveTopic(), JSON.stringify(payload), {
+        qos: 1,
+        retain: false,
+      }, (err) => {
+        if (err) this.#warn(err);
+      });
+      return true;
+    } catch (err) {
+      this.#warn(err);
+      return false;
+    }
+  }
+
   async touchLogin() {
     if (!this.enabled || !this._started) return;
     const now = Date.now();
@@ -775,14 +818,13 @@ class MqttBulletin {
       return;
     }
     const now = Date.now();
+    const seated = (room.players || []).filter((p) => p && !p.left);
     const playerCount = Math.max(
       0,
       Number(
         room.playerCount != null
           ? room.playerCount
-          : Array.isArray(room.players)
-            ? room.players.filter((p) => p && !p.left).length
-            : 0
+          : seated.length
       ) || 0
     );
     const payload = {
@@ -797,8 +839,8 @@ class MqttBulletin {
       gameLabel: room.gameLabel || '',
       gameMode: room.gameMode || room.gameModeLabel || '',
       gameModeLabel: room.gameModeLabel || '',
-      playerNames: (room.players || []).map((p) => p.name || '玩家'),
-      playerTags: (room.players || []).map((p) => p.tag || null),
+      playerNames: seated.map((p) => p.name || '玩家'),
+      playerTags: seated.map((p) => p.tag || null),
       playerCount,
       maxPlayers: room.maxPlayers,
       status: room.status || 'waiting',
@@ -878,6 +920,23 @@ class MqttBulletin {
           maxPlayers: Number(p.maxPlayers || 0),
           at: Number(p.at) || Date.now(),
           host: p.host ? String(p.host).replace(/\/$/, '') : null,
+        });
+      } catch (_) {}
+      return;
+    }
+    const leaveTopic = this.#leaveTopic();
+    if (topic === leaveTopic || topic.endsWith('/leave')) {
+      if (!raw.trim()) return;
+      try {
+        const p = JSON.parse(raw);
+        if (!p || p.app !== APP_SIGNATURE || p.kind !== 'leave') return;
+        const roomId = String(p.roomId || '').toUpperCase();
+        if (!roomId) return;
+        this.onLeave({
+          roomId,
+          name: String(p.name || '').trim(),
+          tag: p.tag ? String(p.tag) : null,
+          sessionId: p.sessionId ? String(p.sessionId) : null,
         });
       } catch (_) {}
       return;

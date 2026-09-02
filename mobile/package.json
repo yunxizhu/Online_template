@@ -7,7 +7,7 @@
     "sync": "npm run sync:js && npx cap sync android",
     "sync:js": "node scripts/sync-shared-js.js",
     "open": "npx cap open android",
-    "build:apk": "npm run sync:js && npx cap sync android && cd android && .\\gradlew.bat assembleDebug"
+    "build:apk": "npm run sync:js && npx cap sync android && cd android && ..\\gradlew.bat assembleRelease"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",

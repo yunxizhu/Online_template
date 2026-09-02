@@ -41,6 +41,19 @@ function normalizeRole(raw) {
   return '';
 }
 
+function stripBaseName(name) {
+  return String(name || '')
+    .trim()
+    .replace(/#\d{1,8}\s*$/, '')
+    .trim();
+}
+
+function normalizeTagDigits(tag) {
+  return String(tag || '')
+    .replace(/\D/g, '')
+    .slice(-5);
+}
+
 function generateRoomId(existingIds) {
   for (let attempt = 0; attempt < 50; attempt++) {
     let id = '';
@@ -777,6 +790,9 @@ class RoomManager {
     // 观战席离开：不解散房间
     if (!Array.isArray(room.observers)) room.observers = [];
     const wasObserver = room.observers.some((o) => o.id === playerId);
+    const leftObserver = wasObserver
+      ? room.observers.find((o) => o.id === playerId)
+      : null;
     if (wasObserver) {
       room.observers = room.observers.filter((o) => o.id !== playerId);
       if (
@@ -791,6 +807,13 @@ class RoomManager {
           dissolved: true,
           leftRoomId,
           affectedPlayerIds: [],
+          leftObserver: leftObserver
+            ? {
+                id: leftObserver.id,
+                name: leftObserver.name,
+                tag: leftObserver.tag || null,
+              }
+            : null,
         };
       }
       return {
@@ -799,6 +822,13 @@ class RoomManager {
         dissolved: false,
         leftRoomId,
         affectedPlayerIds: [],
+        leftObserver: leftObserver
+          ? {
+              id: leftObserver.id,
+              name: leftObserver.name,
+              tag: leftObserver.tag || null,
+            }
+          : null,
       };
     }
 
@@ -934,6 +964,170 @@ class RoomManager {
       leftRoomId,
       playerName,
       playerTag,
+    };
+  }
+
+  #identityMatchesSeat(seat, ident = {}) {
+    if (!seat) return false;
+    const sid = ident.sessionId ? String(ident.sessionId).slice(0, 64) : '';
+    if (sid && seat.sessionId && String(seat.sessionId) === sid) return true;
+    const name = stripBaseName(ident.name);
+    const seatName = stripBaseName(seat.name);
+    if (!name || name !== seatName) return false;
+    const tag = normalizeTagDigits(ident.tag);
+    const seatTag = normalizeTagDigits(seat.tag);
+    if (tag && seatTag) return tag === seatTag;
+    if (tag && !seatTag) return false;
+    if (!tag && seatTag) return false;
+    return true;
+  }
+
+  /**
+   * 大厅主动「离开/留在大厅」：按昵称+尾缀（或 sessionId）剔除座位。
+   * 对局中标记 left，心跳不再带该玩家；等待房则移出席位。
+   */
+  explicitLeaveByIdentity(ident = {}) {
+    const roomId = String(ident.roomId || '').toUpperCase();
+    const room = roomId ? this.getRoom(roomId) : null;
+    if (!room) {
+      return { ok: false, noop: true, room: null, dissolved: false };
+    }
+
+    const observers = Array.isArray(room.observers) ? room.observers : [];
+    const observer = observers.find((o) => this.#identityMatchesSeat(o, ident));
+    if (observer) {
+      room.observers = room.observers.filter((o) => o.id !== observer.id);
+      const live = this.players.get(observer.id);
+      if (live) live.roomId = null;
+      if (
+        room.players.filter((p) => !p.left).length === 0 &&
+        room.observers.length === 0
+      ) {
+        const leftRoomId = room.id;
+        clearTurnTimer(room);
+        this.rooms.delete(room.id);
+        return {
+          ok: true,
+          dissolved: true,
+          room: null,
+          leftRoomId,
+          leftObserver: {
+            id: observer.id,
+            name: observer.name,
+            tag: observer.tag || null,
+          },
+        };
+      }
+      return {
+        ok: true,
+        room,
+        dissolved: false,
+        leftRoomId: room.id,
+        leftObserver: {
+          id: observer.id,
+          name: observer.name,
+          tag: observer.tag || null,
+        },
+      };
+    }
+
+    const seat = (room.players || []).find((p) => this.#identityMatchesSeat(p, ident));
+    if (!seat) {
+      return { ok: true, noop: true, room, dissolved: false };
+    }
+    if (seat.left) {
+      return { ok: true, noop: true, room, dissolved: false };
+    }
+
+    if (room.status === 'playing' && room.game) {
+      const live = this.players.get(seat.id);
+      if (live && live.roomId === room.id) {
+        return this.quitPlaying(seat.id);
+      }
+      const playerName = seat.name || '玩家';
+      const playerTag = seat.tag || null;
+      seat.left = true;
+      seat.leftAt = Date.now();
+      seat.offline = false;
+      delete seat.offlineAt;
+      if (Array.isArray(room.game.players)) {
+        const gp = room.game.players.find((p) => p.id === seat.id);
+        if (gp) gp.left = true;
+      }
+      if (Array.isArray(room.game.log)) {
+        room.game.log.push({ at: Date.now(), text: `${playerName} 离开了游戏` });
+      }
+      const stillHere = room.players.filter((p) => !p.left);
+      if (!stillHere.length) {
+        const leftRoomId = room.id;
+        clearTurnTimer(room);
+        this.rooms.delete(room.id);
+        return {
+          ok: true,
+          abandoned: true,
+          dissolved: true,
+          room: null,
+          leftRoomId,
+          playerName,
+          playerTag,
+        };
+      }
+      return {
+        ok: true,
+        abandoned: true,
+        dissolved: false,
+        room,
+        leftRoomId: room.id,
+        playerName,
+        playerTag,
+      };
+    }
+
+    // 等待房：断线后 this.players 可能已无此人，直接改座位
+    if (room.hostId === seat.id) {
+      const affectedPlayerIds = [
+        ...room.players.filter((p) => p.id !== seat.id).map((p) => p.id),
+        ...(room.observers || []).map((o) => o.id),
+      ];
+      for (const memberId of affectedPlayerIds) {
+        const member = this.players.get(memberId);
+        if (member) member.roomId = null;
+      }
+      const leftRoomId = room.id;
+      clearTurnTimer(room);
+      this.rooms.delete(room.id);
+      return {
+        ok: true,
+        dissolved: true,
+        room: null,
+        leftRoomId,
+        affectedPlayerIds,
+      };
+    }
+    room.players = room.players.filter((p) => p.id !== seat.id);
+    const live = this.players.get(seat.id);
+    if (live) live.roomId = null;
+    if (
+      room.players.filter((p) => !p.left).length === 0 &&
+      (room.observers || []).length === 0
+    ) {
+      const leftRoomId = room.id;
+      clearTurnTimer(room);
+      this.rooms.delete(room.id);
+      return {
+        ok: true,
+        dissolved: true,
+        room: null,
+        leftRoomId,
+        affectedPlayerIds: [],
+      };
+    }
+    return {
+      ok: true,
+      dissolved: false,
+      room,
+      leftRoomId: room.id,
+      affectedPlayerIds: [],
     };
   }
 

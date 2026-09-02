@@ -207,6 +207,62 @@
   min-width: 0;
 }
 
+/* 观战：保持玩家面板六宫格布局，信息区仅显示本人+观战中，其余隐藏 */
+.las-player-band.is-spectator .las-pcell-perm {
+  visibility: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+.las-player-band.is-spectator .las-pcell-build,
+.las-player-band.is-spectator .las-pcell-func {
+  visibility: hidden;
+  pointer-events: none;
+  user-select: none;
+  min-height: var(--las-panel-card-h);
+}
+
+.las-player-band.is-spectator .las-pcell-empty {
+  visibility: hidden;
+  pointer-events: none;
+  user-select: none;
+  min-height: var(--las-panel-dice-total-h);
+}
+
+.las-player-band.is-spectator .las-pcell-dice {
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.las-pcell-info .las-spectator-info-grid {
+  grid-template-columns: 1fr;
+  grid-template-rows: auto auto;
+  gap: calc(0.14 * var(--las-rem));
+  justify-items: center;
+  width: 100%;
+}
+
+.las-pcell-info .las-pboard.is-spectator-self {
+  min-height: var(--las-player-row1-h);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.las-pcell-info .las-spectator-info-grid .las-me-info-player {
+  justify-content: center;
+  width: 100%;
+}
+
+.las-spectator-status {
+  font-size: calc(0.74 * var(--las-rem));
+  line-height: 1.2;
+  color: #9ab4c4;
+  letter-spacing: 0.06em;
+  text-align: center;
+  width: 100%;
+}
+
 .las-player-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -221,7 +277,7 @@
   --las-player-row1-h: calc(2.05 * var(--las-rem));
   --las-dice-btn-scale: 0.6666667;
   --las-panel-dice-pad-y: calc(0.14 * var(--las-rem));
-  --las-panel-dice-hint-h: calc(0.48 * var(--las-rem));
+  --las-panel-dice-hint-h: calc(0.72 * var(--las-rem));
   --las-panel-dice-stage-gap: calc(0.1 * var(--las-rem));
   --las-panel-dice-stage-h: calc(2.64 * var(--las-rem));
   --las-panel-dice-full-h: calc(
@@ -649,7 +705,7 @@
   display: grid;
   grid-template-rows:
     var(--las-panel-dice-hint-h) var(--las-panel-dice-stage-h);
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(calc(7.4 * var(--las-rem)), auto);
   row-gap: var(--las-panel-dice-stage-gap);
   column-gap: calc(0.28 * var(--las-rem));
   align-content: start;
@@ -812,7 +868,7 @@
   min-width: 0;
   margin: 0;
   font-size: calc(0.56 * var(--las-rem));
-  line-height: 1.2;
+  line-height: 1.25;
   text-align: center;
   white-space: nowrap;
   overflow: hidden;
@@ -932,14 +988,25 @@
 .las-pcell-dice .las-roll-wrap .las-side-actions > button,
 .las-pcell-dice #las-produce-actions > button,
 .las-pcell-dice .las-init-wrap .las-side-actions > button {
-  flex: 1 1 0;
+  flex: 1 1 auto;
   min-width: 0;
+  white-space: nowrap;
   font-size: calc(0.95 * var(--las-rem) * var(--las-dice-btn-scale));
   padding: calc(0.55 * var(--las-rem) * var(--las-dice-btn-scale))
     calc(0.9 * var(--las-rem) * var(--las-dice-btn-scale));
   min-height: calc(1.72 * var(--las-rem) * var(--las-dice-btn-scale));
   line-height: 1.2;
   border-radius: calc(6px * var(--las-dice-btn-scale));
+}
+
+.las-pcell-dice #las-produce-actions #btn-las-confirm {
+  flex: 1.45 1 auto;
+  min-width: calc(4.85 * var(--las-rem) * var(--las-dice-btn-scale));
+}
+
+.las-pcell-dice #las-produce-actions #btn-las-void {
+  flex: 0.72 1 auto;
+  min-width: calc(2.15 * var(--las-rem) * var(--las-dice-btn-scale));
 }
 
 .las-pcell-dice .las-init-dice {

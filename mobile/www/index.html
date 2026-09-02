@@ -194,6 +194,21 @@
     </div>
   </div>
 
+  <div class="modal" id="rejoin-modal" hidden>
+    <div class="modal-backdrop" data-close="rejoin"></div>
+    <div class="modal-dialog panel" role="dialog" aria-labelledby="rejoin-title">
+      <div class="row panel-head">
+        <h2 id="rejoin-title">发现未结束对局</h2>
+        <button id="btn-close-rejoin" type="button" class="icon-btn" title="关闭" aria-label="关闭">×</button>
+      </div>
+      <p id="rejoin-message" class="invite-message">检测到你有可恢复的房间，是否重新加入？</p>
+      <div class="row">
+        <button id="btn-accept-rejoin" type="button">重新加入</button>
+        <button id="btn-decline-rejoin" type="button" class="secondary">留在大厅</button>
+      </div>
+    </div>
+  </div>
+
   <script src="./vendor/mqtt.min.js"></script>
   <script src="./app.js"></script>
 </body>

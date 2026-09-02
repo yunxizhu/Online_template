@@ -1257,8 +1257,7 @@ console.log('— face-down board slots + hidden func hands —');
 const g10 = createGameState(room(2));
 finishInit(g10);
 for (const t of g10.board.special.tiles) {
-  const expect = t.number === 2 || t.number === 4 || t.number === 6;
-  assert.strictEqual(Boolean(t.faceDown), expect, '合区奇明示偶暗置');
+  assert.strictEqual(Boolean(t.faceDown), false, '合区一律明示');
 }
 assert.ok(
   g10.board.resource.tiles.every((t) => !t.faceDown),
@@ -1281,17 +1280,14 @@ if (oddFn && oddFn.tiles[0]) {
   assert.ok(oddFn.tiles[0].label);
 }
 if (evenFn && evenFn.tiles[0]) {
-  assert.ok(evenFn.tiles[0].faceDown);
-  assert.strictEqual(evenFn.tiles[0].label, null);
-  assert.strictEqual(evenFn.tiles[0].funcType, null);
+  assert.strictEqual(evenFn.tiles[0].faceDown, false);
+  assert.ok(evenFn.tiles[0].label);
 }
 
 console.log('— face-down only visible to claimer —');
 {
   const g = createGameState(room(2));
   finishInit(g);
-  const faceDownTile = g.board.special.tiles.find((t) => t.faceDown);
-  assert.ok(faceDownTile, '应有暗置合区卡');
   const p0 = g.players[0];
   const p1 = g.players[1];
   const secretBld = {

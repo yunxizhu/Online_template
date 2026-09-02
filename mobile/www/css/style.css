@@ -1102,6 +1102,8 @@ button.secondary:hover {
 }
 
 .room-player-slot {
+  position: relative;
+  overflow: visible;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1751,6 +1753,52 @@ body.phase-room .chat-tabs button.is-on {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
 }
 
+.toast-slot.is-spectator-notice {
+  max-width: 54rem;
+  overflow: visible;
+}
+
+.toast.is-spectator-notice {
+  padding: 1.35rem 2.4rem;
+  border-radius: 18px;
+  border-width: 3px;
+  font-size: 1.8rem;
+  line-height: 1.35;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
+  transform: translateY(-120%);
+  opacity: 0;
+}
+
+.toast.is-spectator-notice.is-entering {
+  animation: toast-spectator-in 1s ease forwards;
+}
+
+.toast.is-spectator-notice.is-leaving {
+  animation: toast-spectator-out 1s ease forwards;
+}
+
+@keyframes toast-spectator-in {
+  from {
+    transform: translateY(-120%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes toast-spectator-out {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-120%);
+    opacity: 0;
+  }
+}
+
 .toast[hidden] {
   display: none !important;
 }
@@ -2021,6 +2069,36 @@ body.phase-room .chat-tabs button.is-on {
 
   .chat-panel {
     height: 240px;
+  }
+
+  .view-room {
+    min-height: 0;
+    padding-top: 0.5rem;
+  }
+
+  .view-room .room-shell {
+    margin-top: 0;
+    margin-bottom: 0;
+    width: 100%;
+  }
+
+  .room-panel {
+    min-width: 0;
+    width: 100%;
+    padding: 1.2rem 1.1rem 1.4rem;
+  }
+
+  .room-banner {
+    white-space: normal;
+  }
+
+  .room-actions {
+    justify-content: stretch;
+  }
+
+  .room-actions button {
+    flex: 1 1 calc(50% - 0.5rem);
+    min-height: 2.45rem;
   }
 }
 

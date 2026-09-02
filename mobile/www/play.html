@@ -106,6 +106,42 @@
       <div class="app-top-mid">
         <div class="app-top-title-row">
           <h1 id="app-phase-title" data-i18n="app.title">联机大厅</h1>
+          <div class="spectators-watch" id="spectators-watch" hidden>
+            <button
+              type="button"
+              id="btn-spectators"
+              class="spectators-btn"
+              aria-haspopup="true"
+              aria-expanded="false"
+              aria-controls="spectators-pop"
+            >
+              <span data-i18n="room.spectatorsBtn">观战玩家</span>：<strong id="spectators-count">0</strong>
+            </button>
+            <div
+              id="spectators-pop"
+              class="spectators-pop"
+              hidden
+              role="dialog"
+              aria-labelledby="spectators-pop-title"
+            >
+              <div class="spectators-pop-head">
+                <strong id="spectators-pop-title" data-i18n="room.spectatorsTitle">观战玩家</strong>
+                <button
+                  type="button"
+                  id="btn-spectators-close"
+                  class="icon-btn spectators-pop-close"
+                  data-i18n-attr="aria-label:room.spectatorsClose"
+                  aria-label="关闭"
+                >
+                  ×
+                </button>
+              </div>
+              <ul id="spectators-list" class="spectators-list"></ul>
+              <p id="spectators-empty" class="muted spectators-empty" data-i18n="room.spectatorsEmpty">
+                暂无观战玩家
+              </p>
+            </div>
+          </div>
           <div class="header-nick" id="header-nick" hidden>
             <span id="nick-display" class="nick-display" data-i18n="app.playerDefault">玩家</span>
             <input
@@ -450,11 +486,14 @@
     })();
   </script>
 
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="/js/i18n.js"></script>
-  <script src="/js/bgm-volume.js"></script>
-  <script src="/js/client.js"></script>
-  <script src="/js/boot-games.js"></script>
-  <script src="/js/ui.js"></script>
+  <link rel="stylesheet" href="./mobile.css" />
+  <script src="./vendor/socket.io.min.js"></script>
+  <script src="./vendor/mqtt.min.js"></script>
+  <script src="./js/i18n.js"></script>
+  <script src="./js/bgm-volume.js"></script>
+  <script src="./js/mqtt-room-resolve.js"></script>
+  <script src="./js/client.js"></script>
+  <script src="./js/boot-games.js"></script>
+  <script src="./js/ui.js"></script>
 </body>
 </html>

@@ -13,6 +13,7 @@
   const STORAGE_NICK = 'lianji.nick';
   const STORAGE_TAG = 'lianji.tag';
   const STORAGE_SID = 'lianji.sessionId';
+  const LEFT_ROOMS_KEY = 'lianji.leftRooms';
 
   function detectClient() {
     const ua = String(navigator.userAgent || '');
@@ -76,6 +77,11 @@
     bootSplashText: document.getElementById('boot-splash-text'),
     roomCtx: document.getElementById('room-ctx'),
     peopleCtx: document.getElementById('people-ctx'),
+    rejoinModal: document.getElementById('rejoin-modal'),
+    rejoinMessage: document.getElementById('rejoin-message'),
+    btnAcceptRejoin: document.getElementById('btn-accept-rejoin'),
+    btnDeclineRejoin: document.getElementById('btn-decline-rejoin'),
+    btnCloseRejoin: document.getElementById('btn-close-rejoin'),
   };
 
   /** @type {Map<string, object>} */
@@ -94,6 +100,8 @@
   let loginAt = 0;
   let lastChatAt = 0;
   let toastTimer = null;
+  let pendingRejoin = null;
+  const leftRooms = {};
 
   function uid(prefix) {
     return (
@@ -119,6 +127,203 @@
     toastTimer = setTimeout(() => {
       el.toast.hidden = true;
     }, typeof durationMs === 'number' && durationMs > 0 ? durationMs : 2800);
+  }
+
+  function stripBaseName(name) {
+    return String(name || '')
+      .trim()
+      .replace(/#\d{1,8}\s*$/, '')
+      .trim();
+  }
+
+  function normalizeTagDigits(tag) {
+    return String(tag || '')
+      .replace(/\D/g, '')
+      .slice(-5);
+  }
+
+  function readPersistedLeftRooms() {
+    try {
+      const raw = localStorage.getItem(LEFT_ROOMS_KEY);
+      const map = raw ? JSON.parse(raw) : {};
+      return map && typeof map === 'object' ? map : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function writePersistedLeftRooms(map) {
+    try {
+      localStorage.setItem(LEFT_ROOMS_KEY, JSON.stringify(map || {}));
+    } catch (_) {}
+  }
+
+  function rememberExplicitLeave(roomId) {
+    const id = roomId ? String(roomId).toUpperCase() : '';
+    if (!id) return;
+    const at = Date.now();
+    leftRooms[id] = at;
+    const map = readPersistedLeftRooms();
+    map[id] = at;
+    writePersistedLeftRooms(map);
+  }
+
+  function hasExplicitlyLeft(roomId) {
+    const id = roomId ? String(roomId).toUpperCase() : '';
+    if (!id) return false;
+    if (leftRooms[id]) return true;
+    const map = readPersistedLeftRooms();
+    if (map[id]) {
+      leftRooms[id] = map[id];
+      return true;
+    }
+    return false;
+  }
+
+  function clearExplicitLeave(roomId) {
+    const id = roomId ? String(roomId).toUpperCase() : '';
+    if (!id) return;
+    if (leftRooms[id]) delete leftRooms[id];
+    const map = readPersistedLeftRooms();
+    if (map[id]) {
+      delete map[id];
+      writePersistedLeftRooms(map);
+    }
+  }
+
+  function isSelfInRoomPlayers(room) {
+    if (!room || !Array.isArray(room.playerNames) || !room.playerNames.length) {
+      return false;
+    }
+    const myName = stripBaseName(playerName);
+    if (!myName) return false;
+    const tag = normalizeTagDigits(playerTag);
+    const tags = Array.isArray(room.playerTags) ? room.playerTags : [];
+    return room.playerNames.some((rawName, i) => {
+      const n = stripBaseName(rawName);
+      if (n !== myName) return false;
+      const t = normalizeTagDigits(tags[i] || '');
+      if (tag && t) return tag === t;
+      if (tag && !t) return false;
+      if (!tag && t) return false;
+      return true;
+    });
+  }
+
+  function publishLeave(roomId) {
+    const id = roomId ? String(roomId).toUpperCase() : '';
+    if (!id || !playerName) return false;
+    rememberExplicitLeave(id);
+    if (!client || !client.connected) return false;
+    const payload = {
+      app: APP,
+      kind: 'leave',
+      roomId: id,
+      name: playerName,
+      tag: playerTag || null,
+      sessionId: sessionId || null,
+      at: Date.now(),
+    };
+    try {
+      client.publish(prefix() + '/leave', JSON.stringify(payload), {
+        qos: 1,
+        retain: false,
+      });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function flushPersistedLeaves() {
+    const map = { ...leftRooms, ...readPersistedLeftRooms() };
+    for (const id of Object.keys(map)) {
+      if (id) publishLeave(id);
+    }
+  }
+
+  function pruneLeftRooms(list) {
+    const map = { ...leftRooms, ...readPersistedLeftRooms() };
+    const ttl = 6 * 3600 * 1000;
+    const now = Date.now();
+    let changed = false;
+    for (const id of Object.keys(map)) {
+      const at = Number(map[id] || 0);
+      if (at && now - at > ttl) {
+        delete leftRooms[id];
+        delete map[id];
+        changed = true;
+        continue;
+      }
+      const room = (list || []).find(
+        (r) => String((r && r.id) || '').toUpperCase() === id
+      );
+      if (!room) continue;
+      if (isSelfInRoomPlayers(room)) continue;
+      delete leftRooms[id];
+      delete map[id];
+      changed = true;
+    }
+    if (changed) writePersistedLeftRooms(map);
+  }
+
+  function setRejoinModalOpen(open, room) {
+    if (!el.rejoinModal) return;
+    if (open && room) {
+      pendingRejoin = room;
+      const code = room.id || '—';
+      const statusText =
+        room.status === 'playing'
+          ? '对局仍在进行'
+          : room.status === 'waiting'
+            ? '房间仍在等待'
+            : '房间仍有效';
+      if (el.rejoinMessage) {
+        el.rejoinMessage.textContent =
+          '检测到你还在「' +
+          (room.name || code) +
+          '」（' +
+          code +
+          '），' +
+          statusText +
+          '。是否重新加入？';
+      }
+      el.rejoinModal.hidden = false;
+    } else {
+      pendingRejoin = null;
+      el.rejoinModal.hidden = true;
+    }
+  }
+
+  function maybeOfferRejoinFromLobby(list) {
+    if (!entered || joining) return;
+    if (el.rejoinModal && !el.rejoinModal.hidden) return;
+    const items = list || [];
+    pruneLeftRooms(items);
+    for (const room of items) {
+      if (!room || room.over || room.status !== 'playing') continue;
+      if (hasExplicitlyLeft(room.id)) continue;
+      if (!isSelfInRoomPlayers(room)) continue;
+      setRejoinModalOpen(true, room);
+      return;
+    }
+  }
+
+  function acceptPendingRejoin() {
+    const room = pendingRejoin;
+    setRejoinModalOpen(false);
+    if (!room || !room.id) return;
+    clearExplicitLeave(room.id);
+    openRoomWithPassword(room, 'join');
+  }
+
+  function declinePendingRejoin() {
+    const room = pendingRejoin;
+    setRejoinModalOpen(false);
+    if (room && room.id) {
+      publishLeave(room.id);
+    }
+    showToast('已留在大厅');
   }
 
   function normalizeHost(raw) {
@@ -223,6 +428,7 @@
       showToast('房间信息不完整');
       return false;
     }
+    clearExplicitLeave(boot.roomId);
     if (!boot.name) {
       showToast('请先设置昵称');
       return false;
@@ -886,6 +1092,7 @@
     }
     if (el.roomEmpty) el.roomEmpty.hidden = waiting.length > 0;
     if (el.roomPlayingEmpty) el.roomPlayingEmpty.hidden = playing.length > 0;
+    maybeOfferRejoinFromLobby(items);
   }
 
   function personLabelKey(person) {
@@ -1365,6 +1572,7 @@
           }
           if (el.peersLabel) el.peersLabel.textContent = '广播：已连接';
           publishLogin();
+          flushPersistedLeaves();
           hideBootSplash();
         }
       );
@@ -1575,6 +1783,18 @@
     if (el.btnJoinConfirm) {
       el.btnJoinConfirm.addEventListener('click', joinFromModal);
     }
+    if (el.btnAcceptRejoin) {
+      el.btnAcceptRejoin.addEventListener('click', () => acceptPendingRejoin());
+    }
+    if (el.btnDeclineRejoin) {
+      el.btnDeclineRejoin.addEventListener('click', () => declinePendingRejoin());
+    }
+    if (el.btnCloseRejoin) {
+      el.btnCloseRejoin.addEventListener('click', () => declinePendingRejoin());
+    }
+    document.querySelectorAll('[data-close="rejoin"]').forEach((node) => {
+      node.addEventListener('click', () => declinePendingRejoin());
+    });
     if (el.roomCtx) {
       el.roomCtx.addEventListener('click', (ev) => {
         const btn = ev.target.closest('[data-action]');

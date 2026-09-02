@@ -27,6 +27,7 @@ const DIR_ANDROID = path.join(DIST, 'android');
 const DIR_CLIENT_WIN = path.join(DIST, 'client-windows');
 const DIR_CLIENT_MAC = path.join(DIST, 'client-mac');
 const DEFAULT_PORT = '39200';
+const CLIENT_DEFAULT_PORT = '39199';
 const MOBILE_WWW = path.join(ROOT, 'mobile', 'www');
 
 function rmDir(dir) {
@@ -317,7 +318,7 @@ function buildAndroidApk() {
   const gradlew = path.join(androidDir, 'gradlew.bat');
   if (!fs.existsSync(gradlew)) {
     console.warn('  mobile/android 不存在，跳过 APK 编译');
-    return findExistingApk();
+    return '';
   }
 
   const env = { ...process.env };
@@ -334,6 +335,16 @@ function buildAndroidApk() {
       env.ANDROID_SDK_ROOT = sdk;
     }
   }
+  // Gradle 默认缓存到 C 盘用户目录，空间不足会导致 APK 编不出来；改到项目盘
+  if (!env.GRADLE_USER_HOME) {
+    env.GRADLE_USER_HOME = path.join(ROOT, '.gradle-home');
+  }
+  ensureDir(env.GRADLE_USER_HOME);
+  // Java/Gradle 临时文件也改到 D 盘，避免 C 盘满导致「磁盘空间不足」
+  const buildTmp = path.join(ROOT, '.build-tmp');
+  ensureDir(buildTmp);
+  env.TEMP = buildTmp;
+  env.TMP = buildTmp;
 
   // 打包前：public/* → mobile/www，再 cap sync 进 android 工程
   console.log('  sync shared js → mobile/www...');
@@ -344,7 +355,7 @@ function buildAndroidApk() {
     shell: true,
   });
   if (syncJs.status !== 0) {
-    console.warn('  sync:js failed');
+    throw new Error('[android] sync:js 失败，无法继续编译 APK');
   }
 
   console.log('  cap sync android...');
@@ -355,13 +366,13 @@ function buildAndroidApk() {
     shell: true,
   });
   if (sync.status !== 0) {
-    console.warn('  cap sync failed');
+    throw new Error('[android] cap sync 失败，无法继续编译 APK');
   }
 
   console.log('  gradle assembleRelease (signed)...');
   const r = spawnSync(
     'cmd',
-    ['/c', 'gradlew.bat', 'clean', 'assembleRelease', '--no-daemon'],
+    ['/c', 'gradlew.bat', 'assembleRelease', '--no-daemon'],
     {
       cwd: androidDir,
       env,
@@ -369,7 +380,10 @@ function buildAndroidApk() {
     }
   );
   if (r.status !== 0) {
-    console.warn('  APK build failed');
+    console.error('  APK build failed (gradle exit ' + r.status + ')');
+    console.error(
+      '  常见原因：C 盘或 Gradle 缓存盘空间不足。已尝试使用项目目录 .gradle-home'
+    );
     return '';
   }
 
@@ -382,14 +396,15 @@ function buildAndroidApk() {
     'release',
     'app-release.apk'
   );
-  const apk = fs.existsSync(built) ? built : findExistingApk();
-  if (apk) {
-    ensureDir(path.join(ROOT, 'mobile', 'dist'));
-    const cached = path.join(ROOT, 'mobile', 'dist', 'lianji-android.apk');
-    fs.copyFileSync(apk, cached);
-    console.log(`  rebuilt ${path.relative(ROOT, apk)} (${getSizeMB(apk)} MB)`);
+  if (!fs.existsSync(built)) {
+    console.error('  gradle 成功但未找到 app-release.apk');
+    return '';
   }
-  return apk;
+  ensureDir(path.join(ROOT, 'mobile', 'dist'));
+  const cached = path.join(ROOT, 'mobile', 'dist', 'lianji-android.apk');
+  fs.copyFileSync(built, cached);
+  console.log(`  rebuilt ${path.relative(ROOT, built)} (${getSizeMB(built)} MB)`);
+  return built;
 }
 
 function buildAndroidPack() {
@@ -401,9 +416,12 @@ function buildAndroidPack() {
     fs.copyFileSync(apk, dest);
     console.log(`  lianji.apk (${getSizeMB(dest)} MB)`);
   } else {
-    console.warn('  未找到 APK，仅写入安装说明');
+    writeUtf8(path.join(DIR_ANDROID, '安装说明.txt'), androidReadme(false));
+    throw new Error(
+      '[android] 未生成 lianji.apk。请释放磁盘空间（尤其 C 盘）后运行 打包.bat 选 4，或 mobile 目录下 npm run build:apk'
+    );
   }
-  writeUtf8(path.join(DIR_ANDROID, '安装说明.txt'), androidReadme(Boolean(apk)));
+  writeUtf8(path.join(DIR_ANDROID, '安装说明.txt'), androidReadme(true));
 }
 
 function copyClientWww(destWww) {
@@ -451,47 +469,79 @@ function copyClientWww(destWww) {
   cpDir(MOBILE_WWW, destWww);
 }
 
-/** 轻量纯客户端：仅 www + 启动脚本，用系统浏览器打开，不捆绑 Node */
-function buildClientWindowsPack() {
-  console.log('\n[client-windows] lightweight join client (no Node)...');
-  ensureDir(DIR_CLIENT_WIN);
-  copyClientWww(path.join(DIR_CLIENT_WIN, 'www'));
+function copyClientStaticServer(destPath) {
+  copyFile(path.join(ROOT, 'scripts', 'client-static-server.js'), destPath);
+}
 
+function writeClientWindowsLauncher(destDir) {
   const bat =
     '@echo off\r\n' +
-    'setlocal\r\n' +
+    'setlocal EnableExtensions\r\n' +
     'cd /d "%~dp0"\r\n' +
+    'call "%~dp0_ensure-node.bat"\r\n' +
+    'if errorlevel 1 goto FAIL\r\n' +
     'if not exist "%~dp0www\\index.html" (\r\n' +
     '  echo [ERROR] missing www\\index.html\r\n' +
-    '  pause\r\n' +
-    '  exit /b 1\r\n' +
+    '  goto FAIL\r\n' +
     ')\r\n' +
-    'echo Opening join-only lobby in browser...\r\n' +
-    'where msedge >nul 2>&1 && (\r\n' +
-    '  start "" msedge "%~dp0www\\index.html"\r\n' +
-    '  exit /b 0\r\n' +
+    `set "PORT=${CLIENT_DEFAULT_PORT}"\r\n` +
+    'set "OPEN_BROWSER=1"\r\n' +
+    'echo Checking port %PORT% ...\r\n' +
+    'call :free_listen %PORT%\r\n' +
+    'echo Starting client http://127.0.0.1:%PORT%/ ...\r\n' +
+    'echo Close this window to stop the client server.\r\n' +
+    'echo.\r\n' +
+    'node "%~dp0client-server.js"\r\n' +
+    'echo.\r\n' +
+    'if errorlevel 1 echo Start failed\r\n' +
+    'pause\r\n' +
+    'exit /b 0\r\n' +
+    '\r\n' +
+    ':FAIL\r\n' +
+    'pause\r\n' +
+    'exit /b 1\r\n' +
+    '\r\n' +
+    ':free_listen\r\n' +
+    'set "_p=%~1"\r\n' +
+    'for /f "tokens=5" %%a in (\'netstat -ano ^| findstr /R /C:":%_p% .*LISTENING"\') do (\r\n' +
+    '  echo Port %_p% LISTENING by PID %%a, killing...\r\n' +
+    '  taskkill /F /PID %%a >nul 2>nul\r\n' +
     ')\r\n' +
-    'where chrome >nul 2>&1 && (\r\n' +
-    '  start "" chrome "%~dp0www\\index.html"\r\n' +
-    '  exit /b 0\r\n' +
-    ')\r\n' +
-    'start "" "%~dp0www\\index.html"\r\n';
-  writeUtf8(path.join(DIR_CLIENT_WIN, '启动.bat'), bat);
+    'timeout /t 1 /nobreak >nul\r\n' +
+    'exit /b 0\r\n';
+  writeUtf8(path.join(destDir, '启动.bat'), bat);
+}
+
+/** 轻量纯客户端：www + 本地静态服务（默认 39199，保留命令行窗口） */
+function buildClientWindowsPack() {
+  console.log('\n[client-windows] join client (local server)...');
+  ensureDir(DIR_CLIENT_WIN);
+  copyClientWww(path.join(DIR_CLIENT_WIN, 'www'));
+  copyClientStaticServer(path.join(DIR_CLIENT_WIN, 'client-server.js'));
+  copyFile(path.join(ROOT, '_ensure-node.bat'), path.join(DIR_CLIENT_WIN, '_ensure-node.bat'));
+  copyFile(
+    path.join(ROOT, '_install-node.ps1'),
+    path.join(DIR_CLIENT_WIN, '_install-node.ps1')
+  );
+  writeClientWindowsLauncher(DIR_CLIENT_WIN);
   writeUtf8(
     path.join(DIR_CLIENT_WIN, 'README.txt'),
     '联机大厅 · Windows 纯客户端（轻量 / 仅加入）\n' +
       '==========================================\n' +
-      '不需要 Node.js。双击「启动.bat」用浏览器打开本地大厅。\n' +
-      '不能创建房间；进房后从房主电脑加载游戏资源。\n\n' +
-      '也可直接打开 www\\index.html\n'
+      '双击「启动.bat」在本机 http://127.0.0.1:' +
+      CLIENT_DEFAULT_PORT +
+      ' 打开加入端大厅（需 Node.js 18+，首次可自动下载）。\n' +
+      '关闭黑色命令行窗口即停止服务。\n' +
+      '不能创建房间；进房后从房主电脑加载游戏资源。\n'
   );
-  console.log('  启动.bat + www/ (no node.exe)');
+  console.log(`  启动.bat + www/ + client-server.js (port ${CLIENT_DEFAULT_PORT})`);
 }
 
 async function buildClientMacPack() {
-  console.log('\n[client-mac] lightweight join client (no Node)...');
+  console.log('\n[client-mac] join client (local server)...');
   ensureDir(DIR_CLIENT_MAC);
   copyClientWww(path.join(DIR_CLIENT_MAC, 'www'));
+  copyClientStaticServer(path.join(DIR_CLIENT_MAC, 'client-server.js'));
 
   const cmd =
     '#!/bin/bash\n' +
@@ -501,22 +551,42 @@ async function buildClientMacPack() {
     '  read -r -p "Press Enter..." _\n' +
     '  exit 1\n' +
     'fi\n' +
-    'echo "[lianji-client] opening join-only lobby in browser..."\n' +
-    'open "./www/index.html"\n';
+    'if ! command -v node >/dev/null 2>&1; then\n' +
+    '  echo "[ERROR] Node.js 18+ required: https://nodejs.org/"\n' +
+    '  read -r -p "Press Enter..." _\n' +
+    '  exit 1\n' +
+    'fi\n' +
+    `export PORT="${CLIENT_DEFAULT_PORT}"\n` +
+    'export OPEN_BROWSER=1\n' +
+    'echo "[lianji-client] checking port ${PORT}..."\n' +
+    'if command -v lsof >/dev/null 2>&1; then\n' +
+    '  pids="$(lsof -nP -iTCP:"${PORT}" -sTCP:LISTEN -t 2>/dev/null || true)"\n' +
+    '  if [ -n "$pids" ]; then\n' +
+    '    echo "[lianji-client] killing: ${pids}"\n' +
+    '    kill -9 $pids 2>/dev/null || true\n' +
+    '    sleep 1\n' +
+    '  fi\n' +
+    'fi\n' +
+    'echo "[lianji-client] http://127.0.0.1:${PORT}/ (close window to stop)"\n' +
+    'node "./client-server.js"\n' +
+    'code=$?\n' +
+    'echo\n' +
+    'read -r -p "Press Enter..." _\n' +
+    'exit "$code"\n';
   writeUtf8(path.join(DIR_CLIENT_MAC, '启动.command'), cmd);
   writeUtf8(
     path.join(DIR_CLIENT_MAC, 'README.txt'),
     '联机大厅 · macOS 纯客户端（轻量 / 仅加入）\n' +
       '========================================\n' +
-      '不需要 Node.js。\n' +
-      '双击「启动.command」用浏览器打开本地大厅。\n' +
+      '需要 Node.js 18+。\n' +
+      `双击「启动.command」在本机 http://127.0.0.1:${CLIENT_DEFAULT_PORT} 打开加入端大厅。\n` +
+      '关闭终端窗口即停止服务。\n' +
       '首次若提示“无法验证开发者”：\n' +
       '  前往“系统设置 → 隐私与安全性”点击“仍要打开”\n' +
       '  或按住 Control 键点击文件，选择“打开”\n\n' +
-      '不能创建房间；进房后从房主电脑加载游戏资源。\n\n' +
-      '也可直接打开 www/index.html\n'
+      '不能创建房间；进房后从房主电脑加载游戏资源。\n'
   );
-  console.log('  启动.command + www/ (no node)');
+  console.log(`  启动.command + www/ + client-server.js (port ${CLIENT_DEFAULT_PORT})`);
 
   await archiveMacTarGz(DIR_CLIENT_MAC, 'lianji-client-mac.tar.gz');
 }
@@ -543,6 +613,10 @@ function androidReadme(hasApk) {
     '2. 设置 → 应用，搜「联机大厅」以及旧包 com.lianji.client，有则卸载\n' +
     '3. 关闭「纯净模式 / 外部来源应用检查」后再装本包\n' +
     '4. 本包已换新包名 + 正式签名，与旧 debug 包互不覆盖，相当于全新安装\n\n' +
+    '若提示「解析包出错」或文件很小（几 KB）\n' +
+    '--------------------------------\n' +
+    '说明 APK 未编译成功（常见：电脑 C 盘空间不足）。请在本机释放空间后重新运行 打包.bat 选 4，\n' +
+    '确认 dist\\android\\lianji.apk 约 3MB 以上再拷到手机安装。\n\n' +
     '说明：手机端不能建房开服，只负责加入。\n'
   );
 }

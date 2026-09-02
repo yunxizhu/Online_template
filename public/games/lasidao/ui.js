@@ -494,11 +494,13 @@ window.LasidaoUi = (function () {
           : 54;
       availH = Math.max(220, availH - chatH - 64);
     }
-    const boost = mobile ? 0.76 : LAS_SCALE_BOOST;
-    const scale =
-      Math.min(availW / LAS_DESIGN_W, availH / LAS_DESIGN_H) * boost;
-    const minScale = mobile ? 0.24 : 0.35;
-    const maxScale = mobile ? 0.46 : 3;
+    // 手机改为按宽度缩放并允许纵向滚动，避免按 1080p 双轴塞进屏幕导致字过小
+    const designW = mobile ? 820 : LAS_DESIGN_W;
+    const scale = mobile
+      ? availW / designW
+      : Math.min(availW / LAS_DESIGN_W, availH / LAS_DESIGN_H) * LAS_SCALE_BOOST;
+    const minScale = mobile ? 0.38 : 0.35;
+    const maxScale = mobile ? 0.72 : 3;
     const s = Math.round(Math.max(minScale, Math.min(scale, maxScale)) * 1000) / 1000;
     panel.style.setProperty('--las-ui-scale', String(s));
     panel.dataset.uiScale = String(s);
@@ -2455,11 +2457,27 @@ window.LasidaoUi = (function () {
     const meHost = $('las-boards-me');
     const buildHost = $('las-pcell-build');
     const funcHost = $('las-pcell-func');
+    const diceCell = $('las-pcell-dice');
     const othersTitle = $('las-others-title');
+    const panelCells = [
+      'las-pcell-info',
+      'las-pcell-perm',
+      'las-pcell-build',
+      'las-pcell-func',
+      'las-pcell-dice',
+      'las-pcell-empty',
+    ];
     if (band) band.classList.toggle('is-spectator', spectator);
-    if (grid) grid.hidden = spectator;
+    if (grid) {
+      grid.hidden = false;
+      grid.classList.remove('is-spectator');
+    }
+    for (const id of panelCells) {
+      const cell = $(id);
+      if (cell) cell.hidden = false;
+    }
+    if (diceCell) diceCell.hidden = false;
     if (spectator) {
-      if (meHost) meHost.innerHTML = '';
       if (buildHost) buildHost.innerHTML = '';
       if (funcHost) funcHost.innerHTML = '';
       const permAct = $('las-permanent-actions');
@@ -2470,6 +2488,43 @@ window.LasidaoUi = (function () {
     if (othersTitle) {
       othersTitle.hidden = false;
     }
+    requestAnimationFrame(() => updateLasScale());
+  }
+
+  function renderSpectatorSelfPanel(opts) {
+    const meHost = $('las-boards-me');
+    if (!meHost) return;
+    const meId = (opts && opts.meId) || lastMeId || '';
+    const name =
+      (opts && opts.selfName) ||
+      (typeof t === 'function' ? t('app.playerDefault') : '玩家');
+    const tag = (opts && opts.selfTag) || null;
+    const sig = 'spectator:' + meId + ':' + name + ':' + (tag || '');
+    if (meHost.dataset.lasSpectatorSig === sig) return;
+    meHost.dataset.lasSpectatorSig = sig;
+    meHost.innerHTML = '';
+    const board = document.createElement('section');
+    board.className = 'las-pboard is-me is-spectator-self';
+    const grid = document.createElement('div');
+    grid.className = 'las-me-info-grid las-spectator-info-grid';
+    const playerCell = document.createElement('div');
+    playerCell.className = 'las-me-info-player';
+    const title = document.createElement('div');
+    title.className = 'las-pboard-title';
+    const Nick = window.PlayerNick;
+    title.innerHTML =
+      (Nick && Nick.formatHtml
+        ? Nick.formatHtml(name, tag)
+        : escapeHtml(name)) +
+      ' <span class="you">(' + t('lasidao.youMark') + ')</span>';
+    playerCell.appendChild(title);
+    grid.appendChild(playerCell);
+    const status = document.createElement('div');
+    status.className = 'las-spectator-status';
+    status.textContent = t('lasidao.spectating');
+    grid.appendChild(status);
+    board.appendChild(grid);
+    meHost.appendChild(board);
   }
 
   function playerVillagerTotal(p) {
@@ -4771,11 +4826,7 @@ window.LasidaoUi = (function () {
   }
 
   /** 判断该空卡位/锁定位是否属于暗置位置（解锁后摆放的卡牌为暗置） */
-  function isSlotFaceDownPosition(areaKey, num, idx) {
-    if (areaKey === 'special') {
-      return num === 2 || num === 4 || num === 6;
-    }
-    // 资源区卡位一律明示
+  function isSlotFaceDownPosition(/* areaKey, num, idx */) {
     return false;
   }
 
@@ -7752,6 +7803,7 @@ window.LasidaoUi = (function () {
     if (bldEl) bldEl.innerHTML = '';
     if (isSpectatorView(game)) {
       setWishWellModalOpen(false);
+      renderSpectatorSelfPanel(lastRenderOpts);
       renderPlayerBoards(game, meId);
       renderActRail(game, meId);
       return;
@@ -7761,7 +7813,10 @@ window.LasidaoUi = (function () {
       const host = $('las-boards-host');
       if (host) host.innerHTML = '';
       const meHost = $('las-boards-me');
-      if (meHost) meHost.innerHTML = '';
+      if (meHost) {
+        meHost.innerHTML = '';
+        delete meHost.dataset.lasSpectatorSig;
+      }
       const othersTitle = $('las-others-title');
       if (othersTitle) othersTitle.hidden = true;
       return;

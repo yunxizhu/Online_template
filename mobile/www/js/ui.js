@@ -166,10 +166,14 @@
     roomChatBubbles: {},
     chatNeedsAttention: false,
     _rejoinSnoozeUntil: {},
+    _leftRooms: {},
   };
 
   let board = null;
   let toastTimer = null;
+  let toastExitTimer = null;
+  const SPECTATOR_TOAST_ANIM_MS = 1000;
+  const SPECTATOR_TOAST_HOLD_MS = 2000;
   let roomBusyTimer = null;
   let leavingToLocal = false;
   const inviteToasts = [];
@@ -473,6 +477,104 @@
   function markSelfRoomLeave(roomId) {
     ignoreRoomLeftId = roomId ? String(roomId).toUpperCase() : null;
     ignoreRoomLeftUntil = Date.now() + 10000;
+    rememberExplicitLeave(roomId);
+  }
+
+  const LEFT_ROOMS_KEY = 'lianji.leftRooms';
+
+  function readPersistedLeftRooms() {
+    try {
+      const raw = localStorage.getItem(LEFT_ROOMS_KEY);
+      const map = raw ? JSON.parse(raw) : {};
+      return map && typeof map === 'object' ? map : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function writePersistedLeftRooms(map) {
+    try {
+      localStorage.setItem(LEFT_ROOMS_KEY, JSON.stringify(map || {}));
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  function rememberExplicitLeave(roomId) {
+    const id = roomId ? String(roomId).toUpperCase() : '';
+    if (!id) return;
+    const at = Date.now();
+    state._leftRooms[id] = at;
+    const map = readPersistedLeftRooms();
+    map[id] = at;
+    writePersistedLeftRooms(map);
+  }
+
+  function hasExplicitlyLeft(roomId) {
+    const id = roomId ? String(roomId).toUpperCase() : '';
+    if (!id) return false;
+    if (state._leftRooms[id]) return true;
+    const map = readPersistedLeftRooms();
+    if (map[id]) {
+      state._leftRooms[id] = map[id];
+      return true;
+    }
+    return false;
+  }
+
+  function clearExplicitLeave(roomId) {
+    const id = roomId ? String(roomId).toUpperCase() : '';
+    if (!id) return;
+    if (state._leftRooms[id]) delete state._leftRooms[id];
+    const map = readPersistedLeftRooms();
+    if (map[id]) {
+      delete map[id];
+      writePersistedLeftRooms(map);
+    }
+  }
+
+  function pruneLeftRooms(rooms) {
+    const list = rooms || [];
+    const map = { ...state._leftRooms, ...readPersistedLeftRooms() };
+    const ttl = 6 * 3600 * 1000;
+    const now = Date.now();
+    let changed = false;
+    for (const id of Object.keys(map)) {
+      const at = Number(map[id] || 0);
+      if (at && now - at > ttl) {
+        delete state._leftRooms[id];
+        delete map[id];
+        changed = true;
+        continue;
+      }
+      const room = list.find((r) => String(r && r.id ? r.id : '').toUpperCase() === id);
+      if (!room) continue;
+      if (isSelfInRoomPlayers(room)) continue;
+      delete state._leftRooms[id];
+      delete map[id];
+      changed = true;
+    }
+    if (changed) writePersistedLeftRooms(map);
+  }
+
+  function announceLeaveToHost(probe) {
+    const roomId = String(
+      (probe && (probe.roomId || probe.id)) ||
+        (state.room && state.room.id) ||
+        state._lastRoomId ||
+        ''
+    ).toUpperCase();
+    if (!roomId) return;
+    rememberExplicitLeave(roomId);
+    const payload = {
+      roomId,
+      name: state.playerName || (el.playerName && el.playerName.value) || '',
+      tag: myTag(),
+      sessionId: getTabSessionId(),
+    };
+    try {
+      if (typeof net.announceLeave === 'function') net.announceLeave(payload);
+    } catch (_) {}
   }
 
   function shouldIgnoreRoomLeft(data) {
@@ -687,8 +789,8 @@
     if (!key) return null;
     const lists = [el.memberList, el.observerList].filter(Boolean);
     for (const list of lists) {
-      for (const li of list.querySelectorAll('li[data-speaker-key]')) {
-        if (li.dataset.speakerKey === key) return li;
+      for (const row of list.querySelectorAll('[data-speaker-key]')) {
+        if (row.dataset.speakerKey === key) return row;
       }
     }
     return null;
@@ -1550,12 +1652,47 @@
     }
   }
 
-  function showToast(message, durationMs) {
+  function showToast(message, durationMs, opts) {
+    opts = opts || {};
+    const large = Boolean(opts.large || opts.variant === 'spectator');
+    const toastSlot = el.toast && el.toast.parentElement;
+    clearTimeout(toastTimer);
+    clearTimeout(toastExitTimer);
+    toastTimer = null;
+    toastExitTimer = null;
+
     el.toast.textContent = message;
     el.toast.hidden = false;
-    clearTimeout(toastTimer);
+    el.toast.classList.remove('is-entering', 'is-leaving');
+    el.toast.classList.toggle('is-spectator-notice', large);
+    if (toastSlot) toastSlot.classList.toggle('is-spectator-notice', large);
+
+    if (large) {
+      void el.toast.offsetWidth;
+      el.toast.classList.add('is-entering');
+      toastTimer = setTimeout(() => {
+        el.toast.classList.remove('is-entering');
+        el.toast.classList.add('is-leaving');
+        toastExitTimer = setTimeout(() => {
+          el.toast.hidden = true;
+          el.toast.classList.remove(
+            'is-spectator-notice',
+            'is-entering',
+            'is-leaving'
+          );
+          if (toastSlot) toastSlot.classList.remove('is-spectator-notice');
+          toastExitTimer = null;
+        }, SPECTATOR_TOAST_ANIM_MS);
+        toastTimer = null;
+      }, SPECTATOR_TOAST_ANIM_MS + SPECTATOR_TOAST_HOLD_MS);
+      return;
+    }
+
     toastTimer = setTimeout(() => {
       el.toast.hidden = true;
+      el.toast.classList.remove('is-spectator-notice', 'is-entering', 'is-leaving');
+      if (toastSlot) toastSlot.classList.remove('is-spectator-notice');
+      toastTimer = null;
     }, typeof durationMs === 'number' && durationMs > 0 ? durationMs : 3200);
   }
 
@@ -2472,18 +2609,28 @@
     return until && Date.now() < until;
   }
 
+  function isOnLobbyScreen() {
+    return (
+      state.inLobby &&
+      currentViewName === 'lobby' &&
+      (!el.viewLobby || !el.viewLobby.hidden) &&
+      !isInLiveSession()
+    );
+  }
+
   function maybeOfferRejoinFromLobby(rooms) {
-    if (!state.inLobby || isInLiveSession()) return;
+    if (!isOnLobbyScreen()) return;
     if (state._rejoining || remoteRecovering || leavingToLocal) return;
     if (el.rejoinModal && !el.rejoinModal.hidden) return;
     const list = rooms || [];
+    pruneLeftRooms(list);
     for (const room of list) {
-      if (room.status !== 'playing' || room.over) continue;
-      if (isRejoinSnoozed(room.id)) continue;
+      if (!room || room.over || room.status !== 'playing') continue;
+      if (hasExplicitlyLeft(room.id)) continue;
       if (!isSelfInRoomPlayers(room)) continue;
       const probe = roomToRejoinProbe(room);
       if (!probe) continue;
-      rememberActivePlay({ id: room.id, status: 'playing' });
+      rememberActivePlay({ id: room.id, status: room.status || 'waiting' });
       setRejoinModalOpen(true, probe);
       return;
     }
@@ -3169,6 +3316,8 @@
         window.LasidaoUi.render(game, net, {
           meId: state.me && state.me.id,
           isSpectator: state.isSpectator,
+          selfName: state.me && state.me.name,
+          selfTag: state.me && state.me.tag,
           playerNameById,
           onLeaveLobby: leaveAndReturnLocal,
         });
@@ -3288,17 +3437,23 @@
 
   async function leaveAndReturnLocal() {
     hideRoomBusy();
-    if (navigateJoinClientHome()) {
-      markSelfRoomLeave((state.room && state.room.id) || state._lastRoomId);
+    const rid = (state.room && state.room.id) || state._lastRoomId;
+    announceLeaveToHost({ roomId: rid });
+    markSelfRoomLeave(rid);
+    const joinHome =
+      net.getJoinClientHome && net.getJoinClientHome
+        ? net.getJoinClientHome()
+        : '';
+    if (joinHome) {
       try {
         net.leaveRoom();
       } catch (_) {}
       try {
         net.stopAutoReconnect();
       } catch (_) {}
+      window.location.href = joinHome;
       return;
     }
-    markSelfRoomLeave((state.room && state.room.id) || state._lastRoomId);
     leavingToLocal = true;
     clearActivePlay();
     clearGameArchive();
@@ -3609,31 +3764,16 @@
   }
 
   async function maybeOfferRejoin() {
-    const archive = loadGameArchive() || loadActivePlay();
-    if (!archive || !archive.roomId) return;
-    if (isRejoinSnoozed(archive.roomId)) return;
-    // 等 MQTT 广播刷一轮，避免刚进大厅时 probe 过早
+    // 以大厅心跳里是否含自己为准；等一拍让 MQTT/大厅列表先到
     await new Promise((r) => setTimeout(r, 800));
-    try {
-      let probe = await net.probeRoom(archive.roomId);
-      if (!probe || !probe.ok) {
-        await new Promise((r) => setTimeout(r, 1500));
-        probe = await net.probeRoom(archive.roomId);
-      }
-      if (!probe || !probe.ok) {
-        // 探测失败可能是瞬时网络问题，保留存档以便 MQTT 心跳再次触发重连
-        return;
-      }
-      setRejoinModalOpen(true, probe);
-    } catch (_) {
-      /* ignore probe errors */
-    }
+    maybeOfferRejoinFromLobby(state.lobbyRooms);
   }
 
   async function acceptPendingRejoin() {
     const probe = state.pendingRejoin;
     setRejoinModalOpen(false);
     if (!probe || !probe.roomId) return;
+    clearExplicitLeave(probe.roomId);
 
     const name = state.playerName || t('app.playerDefault');
     const opts = rejoinLobbyOpts(probe);
@@ -3691,11 +3831,12 @@
   }
 
   function declinePendingRejoin() {
-    const rid = state.pendingRejoin && state.pendingRejoin.roomId;
+    const probe = state.pendingRejoin;
     setRejoinModalOpen(false);
-    if (rid) {
-      // 暂时不再弹同房间，30s 后 MQTT 心跳可再次提示
-      state._rejoinSnoozeUntil[rid] = Date.now() + 30000;
+    if (probe && probe.roomId) {
+      announceLeaveToHost(probe);
+      clearActivePlay();
+      clearGameArchive();
     }
     showToast(t('toast.rejoinCancel'));
   }
@@ -4391,6 +4532,13 @@
   if (el.btnQuitGame) {
     el.btnQuitGame.addEventListener('click', () => {
       closeGameMenu();
+      if (state.isSpectator) {
+        leaveAndReturnLocal();
+        return;
+      }
+      announceLeaveToHost({
+        roomId: (state.room && state.room.id) || state._lastRoomId,
+      });
       if (typeof net.quitGame === 'function') net.quitGame();
     });
   }
@@ -4623,6 +4771,7 @@
     const prevRoomId = state._lastRoomId;
     const prev = state.room;
     state.room = data.room;
+    if (data.room && data.room.id) clearExplicitLeave(data.room.id);
     syncPassiveExitButton();
     syncSpectatorsWatchUi();
     const keepEdit =
@@ -4634,6 +4783,10 @@
     if (!keepEdit) closeAllModals();
     if (data.room.status === 'playing') {
       rememberActivePlay(data.room);
+      state.isSpectator = Boolean(
+        state.me &&
+          (data.room.observers || []).some((o) => o.id === state.me.id)
+      );
       const enterPlaying = () => {
         ensureGamePanelsReady()
           .then(() => {
@@ -4775,14 +4928,44 @@
   });
 
   net.on('room:spectatorJoined', (data) => {
-    if (!data) return;
+    if (!data || !state.room) return;
     if (state.me && data.id && data.id === state.me.id) return;
-    if (!state.room) return;
+    const observers = Array.isArray(state.room.observers)
+      ? state.room.observers.slice()
+      : [];
+    if (data.id && !observers.some((o) => o && o.id === data.id)) {
+      observers.push({
+        id: data.id,
+        name: data.name || t('app.playerDefault'),
+        tag: data.tag || null,
+      });
+      state.room = { ...state.room, observers };
+    }
+    syncSpectatorsWatchUi();
     const name = window.PlayerNick.fullLabel(
       data.name || t('app.playerDefault'),
       data.tag || ''
     );
-    showToast(t('app.spectatorJoined', { name }), 3000);
+    showToast(t('app.spectatorJoined', { name }), 0, {
+      large: Boolean(state.room && state.room.status === 'playing'),
+    });
+  });
+
+  net.on('room:spectatorLeft', (data) => {
+    if (!data) return;
+    if (state.room) {
+      const observers = (state.room.observers || []).filter(
+        (o) => o && o.id !== data.id
+      );
+      state.room = { ...state.room, observers };
+    }
+    syncSpectatorsWatchUi();
+    if (state.me && data.id && data.id === state.me.id) return;
+    const name = window.PlayerNick.fullLabel(
+      data.name || t('app.playerDefault'),
+      data.tag || ''
+    );
+    showToast(t('app.spectatorLeft', { name }), 3000);
   });
 
   net.on('room:error', (data) => {
@@ -4878,6 +5061,7 @@
     if (state.passiveMode) applyPassiveLockUi(true);
     syncPassiveExitButton();
     showView('game');
+    syncSpectatorsWatchUi();
     scheduleRenderGame();
     maybeGuestExitAfterGameOver(data && data.state);
   });

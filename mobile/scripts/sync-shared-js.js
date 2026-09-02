@@ -108,7 +108,7 @@ const playHtml = playSrc
     })();`
   )
   .replace(
-    '<script src="/socket.io/socket.io.js"></script>\n  <script src="/js/i18n.js"></script>\n  <script src="/js/bgm-volume.js"></script>\n  <script src="/js/client.js"></script>\n  <script src="/js/boot-games.js"></script>\n  <script src="/js/ui.js"></script>',
+    /<script src="\/socket\.io\/socket\.io\.js"><\/script>[\s\S]*?<script src="\/js\/ui\.js"><\/script>/,
     `<link rel="stylesheet" href="./mobile.css" />
   <script src="./vendor/socket.io.min.js"></script>
   <script src="./vendor/mqtt.min.js"></script>

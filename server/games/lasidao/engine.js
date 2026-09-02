@@ -939,9 +939,9 @@ function peekSpecialTopKind(game) {
   return deckKindOfTile(deck[0]);
 }
 
-/** 功能/建筑合区：奇数格明示，偶数格（2/4/6）暗置 */
-function isBoardFaceDownNumber(number) {
-  return number === 2 || number === 4 || number === 6;
+/** 功能/建筑合区：一律明示（不再暗置 2/4/6 号格） */
+function isBoardFaceDownNumber(/* number */) {
+  return false;
 }
 
 /** 资源区卡位不再暗置（一律明示） */

@@ -24,7 +24,8 @@
     "connectedHost": "已连到房主",
     "inRoom": "房间内",
     "playerLeft": "{name}（已离开）",
-    "spectatorJoined": "{name} 进来观战了"
+    "spectatorJoined": "{name} 正在观看对局",
+    "spectatorLeft": "{name} 已离开观战"
   },
   "lobby": {
     "nick": "昵称",
@@ -435,6 +436,7 @@
     "dispatchPreviewMerged": "预览合并：{name} ×{strength}（含待放置）",
     "targetPersonal": "己方建筑「{label}」",
     "youMark": "你",
+    "spectating": "观战中",
     "produceRoll": "投掷",
     "produceRollCountdown": "投掷 ({n})",
     "useRemoteDice": "使用遥控骰子",

@@ -2582,27 +2582,59 @@ window.SgsUi = (function () {
     }
   }
 
+  function isMobileSgsSurface() {
+    try {
+      if (document.documentElement.dataset.mobilePlay === '1') return true;
+      if (document.body.classList.contains('is-mobile-chat')) return true;
+    } catch (_) {}
+    return false;
+  }
+
   /** 对手人数越多，座位版面等比缩小，避免互相压住 */
   function seatScaleForOpponents(n) {
     const count = Number(n) || 0;
-    if (count <= 2) return 1;
-    if (count === 3) return 0.9;
-    if (count === 4) return 0.78;
-    if (count === 5) return 0.7;
-    if (count === 6) return 0.64;
-    return 0.58; // 7+（如 8 人局）
+    let scale = 1;
+    if (count <= 2) scale = 1;
+    else if (count === 3) scale = 0.9;
+    else if (count === 4) scale = 0.78;
+    else if (count === 5) scale = 0.7;
+    else if (count === 6) scale = 0.64;
+    else scale = 0.58; // 7+（如 8 人局）
+    if (isMobileSgsSurface()) return Math.min(scale, 0.78);
+    return scale;
   }
 
   /** 以本人为底，其余座位沿远端弧线排布 */
   function opponentLayout(index, total) {
     if (total <= 0) return { left: '50%', top: '18%' };
     const t = total === 1 ? 0.5 : index / (total - 1);
+    const mobile = isMobileSgsSurface();
     // 人多时略拉开弧线半径，配合缩小后的版面减少碰撞
-    const rx = total >= 6 ? 43 : total >= 4 ? 40 : 38;
-    const ry = total >= 6 ? 31 : total >= 4 ? 29 : 28;
+    const rx = mobile
+      ? total >= 6
+        ? 36
+        : total >= 4
+          ? 34
+          : 32
+      : total >= 6
+        ? 43
+        : total >= 4
+          ? 40
+          : 38;
+    const ry = mobile
+      ? total >= 6
+        ? 24
+        : total >= 4
+          ? 22
+          : 20
+      : total >= 6
+        ? 31
+        : total >= 4
+          ? 29
+          : 28;
     const angle = Math.PI - t * Math.PI; // 左 π → 右 0
     const x = 50 + Math.cos(angle) * rx;
-    const y = 46 - Math.sin(angle) * ry;
+    const y = (mobile ? 40 : 46) - Math.sin(angle) * ry;
     return { left: `${x}%`, top: `${y}%` };
   }
 

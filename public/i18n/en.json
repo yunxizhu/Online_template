@@ -24,7 +24,8 @@
     "connectedHost": "Connected to host",
     "inRoom": "In room",
     "playerLeft": "{name} (left)",
-    "spectatorJoined": "{name} joined as spectator"
+    "spectatorJoined": "{name} is spectating",
+    "spectatorLeft": "{name} left spectating"
   },
   "lobby": {
     "nick": "Nickname",
@@ -436,6 +437,7 @@
     "dispatchPreviewMerged": "Preview merged: {name} ×{strength} (includes pending dispatch)",
     "targetPersonal": "Your building “{label}”",
     "youMark": "You",
+    "spectating": "Spectating",
     "produceRoll": "Roll",
     "produceRollCountdown": "Roll ({n})",
     "useRemoteDice": "Use remote dice",

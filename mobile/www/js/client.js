@@ -283,6 +283,8 @@ window.GameNet = (function () {
       'room:error',
       'room:settingsUpdated',
       'room:left',
+      'room:spectatorJoined',
+      'room:spectatorLeft',
       'room:probe-result',
       'room:resolved',
       'room:verifyPassword:result',
@@ -336,6 +338,10 @@ window.GameNet = (function () {
       }
 
       currentUrl = target;
+      if (typeof io !== 'function') {
+        reject(new Error('Socket.IO 客户端未加载'));
+        return;
+      }
       const s = io(target, {
         autoConnect: true,
         forceNew: true,
@@ -975,6 +981,10 @@ window.GameNet = (function () {
     ensureSocket().emit('room:leave');
   }
 
+  function announceLeave(payload) {
+    ensureSocket().emit('lobby:announce-leave', payload || {});
+  }
+
   function setReady(ready) {
     ensureSocket().emit('room:ready', { ready });
   }
@@ -1050,6 +1060,7 @@ window.GameNet = (function () {
     probeRoom,
     returnToLocalLobby,
     leaveRoom,
+    announceLeave,
     setReady,
     startGame,
     inviteLobby,

@@ -9,6 +9,7 @@
     "dev": "node server/index.js",
     "start:a": "node server/index.js",
     "start:b": "node -e \"process.env.PORT=process.env.PORT||'3001'; require('./server/index.js')\"",
+    "start:client": "node scripts/client-static-server.js",
     "smoke": "node server/games/gomoku/smoke/basic.js && node server/games/incan/smoke/basic.js && node server/games/lasidao/smoke/basic.js && node server/games/sgs/smoke/identity.js && node server/games/sgs/smoke/identity-death.js && node server/games/sgs/smoke/h2h.js && node server/games/sgs/smoke/1v2.js",
     "package": "node scripts/package.js",
     "package:all": "node scripts/package.js",

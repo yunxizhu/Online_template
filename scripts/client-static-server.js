@@ -9,8 +9,10 @@ const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
 
-const ROOT = path.join(__dirname, 'www');
-const PORT = Math.max(1, Number(process.env.PORT) || 39201);
+const ROOT = fs.existsSync(path.join(__dirname, 'www'))
+  ? path.join(__dirname, 'www')
+  : path.join(__dirname, '..', 'mobile', 'www');
+const PORT = Math.max(1, Number(process.env.PORT) || 39199);
 const OPEN = String(process.env.OPEN_BROWSER || '1') !== '0';
 
 const MIME = {
