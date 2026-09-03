@@ -56,7 +56,7 @@ function addNeutralEachSlot(game) {
   }
 }
 
-/** 围魏救赵：按 2×3 数字格邻接，给周边格各放 1 枚中立骰 */
+/** 围魏救赵：按 2×3 数字格邻接，仅在资源区周边格各放 1 枚中立骰 */
 const WEI_QI_ADJACENT_SLOTS = {
   1: [2, 4],
   2: [1, 3, 5],
@@ -78,9 +78,7 @@ function paritySlotsForEvent(eventNumber) {
 
 function addNeutralAdjacentSlots(game, eventNumber) {
   for (const n of adjacentSlotsForEvent(eventNumber)) {
-    for (const area of ['resource', 'special']) {
-      addNeutral(game, area, n, 1);
-    }
+    addNeutral(game, 'resource', n, 1);
   }
 }
 
@@ -227,9 +225,7 @@ function setupEnvironmentOnBoard(game, env, number, helpers) {
         const slots = adjacentSlotsForEvent(number);
         helpers.pushLog(
           game,
-          `「${env.label}」：资源区与功能/建筑区周边格（${slots.join(
-            '、'
-          )}）各放置 1 枚中立骰`
+          `「${env.label}」：资源区周边格（${slots.join('、')}）各放置 1 枚中立骰`
         );
       }
       break;
@@ -644,8 +640,14 @@ function applyEnvironmentOnSettleSlot(game, ctx) {
     }
 
     case 'luckyDraw': {
-      const top = ranked.find((r) => r.pid !== NEUTRAL_WORKER_ID);
-      if (top && env.sideCard && ctx.playerById) {
+      // 含中立排名：仅当抵消后真正第一名为玩家时发牌（中立独占第一则无人获得）
+      const top = ranked[0];
+      if (
+        top &&
+        top.pid !== NEUTRAL_WORKER_ID &&
+        env.sideCard &&
+        ctx.playerById
+      ) {
         const p = ctx.playerById(game, top.pid);
         if (p) {
           const card = { ...env.sideCard, faceDown: false };
@@ -772,16 +774,20 @@ function applyResistBarbariansAfterSettle(game, report, helpers) {
   }
 }
 
-/** 本格第一名玩家 id（按派遣强度排名，排除中立；用于「第一名」类效果） */
+/** 本格第一名玩家 id（含中立排名；中立为第一则无人获得玩家向「第一名」奖励） */
 function firstPlacePlayerIds(ranked) {
-  const players = (ranked || []).filter(
-    (r) => r && r.pid && r.pid !== NEUTRAL_WORKER_ID
-  );
-  if (!players.length) return [];
-  const top = Number(players[0].count) || 0;
-  if (top <= 0) return [];
-  return players
-    .filter((r) => (Number(r.count) || 0) === top)
+  const top = (ranked || [])[0];
+  if (!top || !top.pid || (Number(top.count) || 0) <= 0) return [];
+  if (top.pid === NEUTRAL_WORKER_ID) return [];
+  const topCount = Number(top.count) || 0;
+  return (ranked || [])
+    .filter(
+      (r) =>
+        r &&
+        r.pid &&
+        r.pid !== NEUTRAL_WORKER_ID &&
+        (Number(r.count) || 0) === topCount
+    )
     .map((r) => r.pid);
 }
 

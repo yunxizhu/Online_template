@@ -57,11 +57,8 @@ window.LasidaoUi = (function () {
     return String(b.buildType || '');
   }
 
-  function canStackBuildingOnSlot(p, slot, building) {
-    const on = buildingsOnBuildSlot(p, slot);
-    if (!on.length || !building) return false;
-    const key = buildingStackKey(building);
-    return on.every((b) => buildingStackKey(b) === key);
+  function canStackBuildingOnSlot(_p, _slot, _building) {
+    return false;
   }
 
   function isHomogeneousStackSlot(p, slot) {
@@ -71,15 +68,7 @@ window.LasidaoUi = (function () {
     return on.every((b) => buildingStackKey(b) === key);
   }
 
-  function findStackSlotKey(p, building) {
-    if (!building) return null;
-    const key = buildingStackKey(building);
-    for (const slot of occupiedBuildSlotKeys(p)) {
-      const on = buildingsOnBuildSlot(p, slot);
-      if (on.length && on.every((b) => buildingStackKey(b) === key)) {
-        return slot;
-      }
-    }
+  function findStackSlotKey(_p, _building) {
     return null;
   }
 
@@ -102,10 +91,8 @@ window.LasidaoUi = (function () {
     return findStackSlotKey(p, { buildType: 'exchange' });
   }
 
-  /** 放置目标：相同建筑优先叠到已有同型格，否则取空位 */
-  function pickPlaceSlotForBuilding(p, building) {
-    const stack = findStackSlotKey(p, building);
-    if (stack != null) return stack;
+  /** 放置目标：未建造仅占空位 */
+  function pickPlaceSlotForBuilding(p, _building) {
     return nextFreeBuildSlotKey(p);
   }
 
@@ -329,9 +316,13 @@ window.LasidaoUi = (function () {
   let autoProduceRollCountdownTimer = null;
 
   let robberyCardId = null;
-  /** @type {[string|null, string|null]} */
-  let robberyTargets = [null, null];
-  let robberyPickStep = 0;
+  /** @type {'mode'|'target'|'confirm'|'pick'|null} */
+  let robberyStep = 'mode';
+  /** @type {'resources'|'cards'|null} */
+  let robberyMode = null;
+  let robberyTargetId = null;
+  /** 效果二已提交，等待服务端下发卡背选项 */
+  let robberyAwaitingPick = false;
   let illegalBuildCardId = null;
   /** 拆迁：选中待确认的建筑 id */
   let illegalBuildSelectedId = null;
@@ -2219,7 +2210,16 @@ window.LasidaoUi = (function () {
     opts = opts || {};
     const boosts = opts.boosts || {};
     const entries = Object.entries(workers || {}).filter(([, n]) => n > 0);
-    if (!entries.length) {
+    const previewAdd = opts.previewAdd;
+    const previewPid =
+      previewAdd && previewAdd.pid ? String(previewAdd.pid) : null;
+    const previewCount = previewAdd
+      ? Math.min(Number(previewAdd.count) || 0, 24)
+      : 0;
+    const previewBoostAdd = previewAdd
+      ? Math.min(Number(previewAdd.boostAdd) || 0, previewCount)
+      : 0;
+    if (!entries.length && !(previewPid && previewCount > 0)) {
       return null;
     }
     const nid = (game && game.neutralWorkerId) || '__neutral__';
@@ -2235,15 +2235,6 @@ window.LasidaoUi = (function () {
     const wrap = document.createElement('div');
     wrap.className =
       'las-workers las-worker-dice' + (opts.overlay ? ' is-overlay' : '');
-    const previewAdd = opts.previewAdd;
-    const previewPid =
-      previewAdd && previewAdd.pid ? String(previewAdd.pid) : null;
-    const previewCount = previewAdd
-      ? Math.min(Number(previewAdd.count) || 0, 24)
-      : 0;
-    const previewBoostAdd = previewAdd
-      ? Math.min(Number(previewAdd.boostAdd) || 0, previewCount)
-      : 0;
     const previewMergedIntoExisting = Boolean(
       previewPid &&
         previewCount > 0 &&
@@ -2304,12 +2295,7 @@ window.LasidaoUi = (function () {
       wrap.appendChild(row);
     }
 
-    if (
-      previewPid &&
-      previewCount > 0 &&
-      entries.length > 0 &&
-      !previewMergedIntoExisting
-    ) {
+    if (previewPid && previewCount > 0 && !previewMergedIntoExisting) {
       const pid = previewPid;
       const count = previewCount;
       const boosted = previewBoostAdd;
@@ -2928,6 +2914,15 @@ window.LasidaoUi = (function () {
             {}).name ||
           '?';
         text = t('lasidao.statusAwaitTrade', { name: decider });
+      } else if (game.pendingRobberyPick) {
+        const pending = game.pendingRobberyPick;
+        text = pending.forMe
+          ? t('lasidao.statusRobberyPick', {
+              name: pending.targetName || '?',
+            })
+          : t('lasidao.statusRobberyAwait', {
+              name: pending.actorName || '?',
+            });
       } else if (game.pendingIllegalBuild) {
         const pending = game.pendingIllegalBuild;
         if (pending.forMe) {
@@ -3719,10 +3714,6 @@ window.LasidaoUi = (function () {
     const overlayEl = slot.querySelector('.las-slot-overlay');
     if (overlayEl) overlayEl.classList.remove('is-dispatch-preview');
 
-    const hasDice =
-      lastGame &&
-      slotHasWorkers(readSlotWorkersBoosts(lastGame, areaKey, num).workers);
-
     const dispatchPicked =
       selectedTarget &&
       selectedTarget.type === 'area' &&
@@ -3732,7 +3723,7 @@ window.LasidaoUi = (function () {
 
     if (dispatchPicked) {
       slot.classList.add('is-dispatch-picked');
-      if (overlayEl && hasDice) overlayEl.classList.add('is-dispatch-preview');
+      if (overlayEl) overlayEl.classList.add('is-dispatch-preview');
       return;
     }
 
@@ -3836,8 +3827,6 @@ window.LasidaoUi = (function () {
     if (!overlayEl) return;
 
     const slotData = readSlotWorkersBoosts(lastGame, area, number);
-    if (!slotHasWorkers(slotData.workers)) return;
-
     replaceSlotOverlayDice(
       overlayEl,
       number,
@@ -7863,8 +7852,10 @@ window.LasidaoUi = (function () {
       setExpandModalOpen(true);
     } else if (card.funcType === 'robbery') {
       robberyCardId = card.id;
-      robberyTargets = [null, null];
-      robberyPickStep = 0;
+      robberyMode = null;
+      robberyTargetId = null;
+      robberyStep = 'mode';
+      robberyAwaitingPick = false;
       setRobberyModalOpen(true);
       renderRobberyModal(game, card);
     } else if (card.funcType === 'illegalBuild') {
@@ -8051,7 +8042,7 @@ window.LasidaoUi = (function () {
   function canProposePlayerTrade(game, meId, targetId) {
     if (!game || !meId || !targetId || meId === targetId) return false;
     if (game.over) return false;
-    if (game.pendingTrade || game.pendingEventChoice || game.pendingRedrawChoice || game.pendingIllegalBuild) {
+    if (game.pendingTrade || game.pendingEventChoice || game.pendingRedrawChoice || game.pendingIllegalBuild || game.pendingRobberyPick) {
       return false;
     }
     if (game.phase === 'build' && (game.players || []).some((p) => p.needsDiscardBuild)) {
@@ -8267,42 +8258,18 @@ window.LasidaoUi = (function () {
         });
         if (ordered.length > 1) {
           const builtN = ordered.filter((b) => b.built).length;
-          const unbuiltN = ordered.length - builtN;
-          const badges = document.createElement('div');
-          badges.className = 'las-pboard-stack-badges';
-          const builtBadge = document.createElement('span');
-          builtBadge.className = 'las-pboard-stack-badge is-built';
-          builtBadge.textContent = String(builtN);
-          builtBadge.title = t('lasidao.stackBuiltCount', { n: builtN });
-          const unbuiltBadge = document.createElement('span');
-          unbuiltBadge.className = 'las-pboard-stack-badge is-unbuilt';
-          unbuiltBadge.textContent = String(unbuiltN);
-          unbuiltBadge.title = t('lasidao.stackUnbuiltCount', { n: unbuiltN });
-          badges.appendChild(builtBadge);
-          badges.appendChild(unbuiltBadge);
-          cell.appendChild(badges);
+          if (builtN > 0) {
+            const badges = document.createElement('div');
+            badges.className = 'las-pboard-stack-badges';
+            const builtBadge = document.createElement('span');
+            builtBadge.className = 'las-pboard-stack-badge is-built';
+            builtBadge.textContent = String(builtN);
+            builtBadge.title = t('lasidao.stackBuiltCount', { n: builtN });
+            badges.appendChild(builtBadge);
+            cell.appendChild(badges);
+          }
         }
         cell.appendChild(body);
-        if (isMe && isHomogeneousStackSlot(p, slotKey)) {
-          cell.classList.add('is-stackable');
-          const slotStackKey = buildingStackKey(group[0]);
-          cell.onclick = (ev) => {
-            if (ev.target && ev.target.closest && ev.target.closest('.las-pboard-card')) {
-              return;
-            }
-            const unplacedMatch = (p.buildings || []).find(
-              (b) =>
-                !b.built &&
-                b.slot == null &&
-                buildingStackKey(b) === slotStackKey
-            );
-            if (!unplacedMatch || !netRef) return;
-            netRef.sendAction('placeBuildingSlot', {
-              buildingId: unplacedMatch.id,
-              slot: slotKey,
-            });
-          };
-        }
         slots.appendChild(cell);
       }
       const emptyCount = Math.max(0, maxB - bySlot.size);
@@ -8320,7 +8287,7 @@ window.LasidaoUi = (function () {
               (b) => !b.built && b.slot == null
             );
             if (!unplaced || !netRef) return;
-            const slot = pickPlaceSlotForBuilding(p, unplaced);
+            const slot = nextFreeBuildSlotKey(p);
             if (slot == null) return;
             netRef.sendAction('placeBuildingSlot', {
               buildingId: unplaced.id,
@@ -9394,6 +9361,7 @@ window.LasidaoUi = (function () {
     syncEventUi(game, meId);
     syncRedrawUi(game, meId);
     syncIllegalBuildUi(game, meId);
+    syncRobberyPendingModal(game);
     syncTradeModals(game, meId);
 
     maybePlaySettle(game);
@@ -10930,8 +10898,10 @@ window.LasidaoUi = (function () {
     modal.hidden = !open;
     if (!open) {
       robberyCardId = null;
-      robberyTargets = [null, null];
-      robberyPickStep = 0;
+      robberyMode = null;
+      robberyTargetId = null;
+      robberyStep = 'mode';
+      robberyAwaitingPick = false;
     } else if (window.I18n && window.I18n.applyDom) {
       window.I18n.applyDom(modal);
     }
@@ -11110,26 +11080,36 @@ window.LasidaoUi = (function () {
     wrap.className = 'las-robbery-players';
     for (const p of eligible) {
       const canPick = countBuiltBuildingsUi(p) > 0;
-      const btn = document.createElement('button');
-      btn.type = 'button';
       const isSelf = p.id === lastMeId;
-      btn.textContent =
-        (p.name || '?') +
-        (isSelf ? ' (' + t('lasidao.youMark') + ')' : '');
-      btn.disabled = !canPick;
-      if (!canPick) {
-        btn.classList.add('is-disabled');
-        btn.title = t('lasidao.illegalBuildNoBuilt');
-      } else {
-        btn.onclick = () => {
-          if (!netRef || !illegalBuildCardId) return;
+      const builtN = countBuiltBuildingsUi(p);
+      const btn = makeExilePlayerButton(
+        game,
+        p.id,
+        builtN,
+        () => {
+          if (!canPick || !netRef || !illegalBuildCardId) return;
           netRef.sendAction('useFunc', {
             cardId: illegalBuildCardId,
             targetId: p.id,
           });
           selectedFuncId = null;
           setIllegalBuildModalOpen(false);
-        };
+        }
+      );
+      if (isSelf) {
+        const label = btn.querySelector('.las-exile-player-label');
+        if (label) {
+          label.textContent =
+            makeExilePlayerLabel(p, p.id, builtN) +
+            ' (' +
+            t('lasidao.youMark') +
+            ')';
+        }
+      }
+      if (!canPick) {
+        btn.disabled = true;
+        btn.classList.add('is-disabled');
+        btn.title = t('lasidao.illegalBuildNoBuilt');
       }
       wrap.appendChild(btn);
     }
@@ -12138,17 +12118,118 @@ window.LasidaoUi = (function () {
     return n;
   }
 
-  function canPickRobberyTarget(p, step) {
-    const count = stealableHandCountForPlayer(p);
-    if (count <= 0) return false;
-    if (
-      step === 1 &&
-      robberyTargets[0] === p.id &&
-      count < 2
-    ) {
-      return false;
+  function unbuiltBuildingCountForPlayer(p) {
+    if (!p) return 0;
+    return (p.buildings || []).filter((b) => b && !b.built).length;
+  }
+
+  function funcCountForPlayer(p) {
+    if (!p) return 0;
+    if (p.funcCount != null) return Number(p.funcCount) || 0;
+    return (p.funcCards || []).length;
+  }
+
+  function canPickRobberyTarget(p, mode) {
+    if (!p || p.left) return false;
+    if (mode === 'resources') return stealableHandCountForPlayer(p) >= 2;
+    if (mode === 'cards') {
+      return (
+        unbuiltBuildingCountForPlayer(p) >= 1 ||
+        funcCountForPlayer(p) >= 1
+      );
     }
-    return true;
+    return false;
+  }
+
+  function syncRobberyPendingModal(game) {
+    const pending = game && game.pendingRobberyPick;
+    if (pending && pending.forMe) {
+      robberyAwaitingPick = true;
+      robberyStep = 'pick';
+      setRobberyModalOpen(true);
+      renderRobberyModal(game, null);
+      return true;
+    }
+    // 仅在抽牌流程结束后关闭，避免确认后、pending 到达前误关弹窗
+    if (
+      robberyAwaitingPick &&
+      !pending &&
+      $('las-robbery-modal') &&
+      !$('las-robbery-modal').hidden
+    ) {
+      setRobberyModalOpen(false);
+    }
+    return false;
+  }
+
+  function submitRobberyCards(game, card) {
+    if (!robberyCardId || !robberyTargetId || !netRef) return;
+    robberyAwaitingPick = true;
+    robberyStep = 'pick';
+    netRef.sendAction('useFunc', {
+      cardId: robberyCardId,
+      mode: 'cards',
+      targetId: robberyTargetId,
+    });
+    selectedFuncId = null;
+    renderRobberyModal(game || lastGame, card);
+  }
+
+  /** useFunc 失败时退回选目标，避免卡在「洗混中」 */
+  function onGameError() {
+    if (!robberyAwaitingPick) return;
+    robberyAwaitingPick = false;
+    robberyStep = 'target';
+    const modal = $('las-robbery-modal');
+    if (modal && !modal.hidden) {
+      renderRobberyModal(lastGame, null);
+    }
+  }
+
+  function renderRobberyPickOptions(body, pending) {
+    const wrap = document.createElement('div');
+    wrap.className = 'las-robbery-card-backs';
+    const options = (pending && pending.options) || [];
+    if (!options.length) {
+      const loading = document.createElement('p');
+      loading.className = 'muted las-hint';
+      loading.textContent = t('lasidao.robberyPickCardLoading');
+      body.appendChild(loading);
+      return;
+    }
+    for (const opt of options) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      const areaKey = opt.kind === 'building' ? 'building' : 'function';
+      btn.className =
+        'las-card ' +
+        (areaKey === 'building' ? 'build' : 'func') +
+        ' is-facedown';
+      if (
+        !decorateHandCardArt(
+          btn,
+          { faceDown: true, label: t('lasidao.faceDown') },
+          areaKey
+        )
+      ) {
+        btn.textContent =
+          areaKey === 'building'
+            ? t('lasidao.robberyBackBuilding')
+            : t('lasidao.robberyBackFunction');
+      }
+      btn.title =
+        areaKey === 'building'
+          ? t('lasidao.robberyBackBuilding')
+          : t('lasidao.robberyBackFunction');
+      btn.onclick = () => {
+        if (!netRef || !opt.id) return;
+        netRef.sendAction('robberyPick', { cardId: opt.id });
+        selectedFuncId = null;
+        setRobberyModalOpen(false);
+      };
+      wrap.appendChild(btn);
+    }
+    body.appendChild(wrap);
   }
 
   function renderRobberyModal(game, card) {
@@ -12161,81 +12242,199 @@ window.LasidaoUi = (function () {
     body.innerHTML = '';
     cancelBtn.hidden = false;
     cancelBtn.textContent = t('lasidao.cancel');
+    confirmBtn.hidden = true;
+    confirmBtn.disabled = true;
+
+    const pending = game && game.pendingRobberyPick;
+    if ((pending && pending.forMe) || robberyStep === 'pick' || robberyAwaitingPick) {
+      robberyStep = 'pick';
+      title.textContent = t('lasidao.robberyPickCardTitle', {
+        name:
+          (pending && pending.targetName) ||
+          (
+            ((game && game.players) || []).find((p) => p.id === robberyTargetId) ||
+            {}
+          ).name ||
+          '?',
+      });
+      const hint = document.createElement('p');
+      hint.className = 'muted las-hint';
+      hint.textContent = t('lasidao.robberyPickCardHint');
+      body.appendChild(hint);
+      renderRobberyPickOptions(body, pending);
+      cancelBtn.onclick = () => {
+        if (pending && pending.forMe && netRef) {
+          netRef.sendAction('cancelRobberyPick', {});
+        }
+        setRobberyModalOpen(false);
+      };
+      return;
+    }
+
+    if (robberyStep === 'mode') {
+      title.textContent = t('lasidao.robberyPickModeTitle');
+      const wrap = document.createElement('div');
+      wrap.className = 'las-robbery-modes';
+      const modes = [
+        {
+          id: 'resources',
+          title: t('lasidao.robberyModeResourcesTitle'),
+          desc: t('lasidao.robberyModeResourcesDesc'),
+          ok: (game.players || []).some(
+            (p) =>
+              !p.left &&
+              p.id !== lastMeId &&
+              canPickRobberyTarget(p, 'resources')
+          ),
+        },
+        {
+          id: 'cards',
+          title: t('lasidao.robberyModeCardsTitle'),
+          desc: t('lasidao.robberyModeCardsDesc'),
+          ok: (game.players || []).some(
+            (p) =>
+              !p.left && p.id !== lastMeId && canPickRobberyTarget(p, 'cards')
+          ),
+        },
+      ];
+      for (const m of modes) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'las-robbery-mode-btn' + (m.ok ? '' : ' is-disabled');
+        btn.disabled = !m.ok;
+        const h = document.createElement('strong');
+        h.textContent = m.title;
+        const d = document.createElement('span');
+        d.className = 'muted';
+        d.textContent = m.desc;
+        btn.appendChild(h);
+        btn.appendChild(d);
+        if (!m.ok) {
+          btn.title = t('lasidao.robberyModeUnavailable');
+        } else {
+          btn.onclick = () => {
+            robberyMode = m.id;
+            robberyTargetId = null;
+            robberyStep = 'target';
+            renderRobberyModal(game, card);
+          };
+        }
+        wrap.appendChild(btn);
+      }
+      body.appendChild(wrap);
+      cancelBtn.onclick = () => setRobberyModalOpen(false);
+      return;
+    }
 
     const players = (game.players || []).filter(
       (p) => !p.left && p.id !== lastMeId
     );
 
-    if (robberyPickStep >= 2) {
-      const t1 = players.find((p) => p.id === robberyTargets[0]);
-      const t2 = players.find((p) => p.id === robberyTargets[1]);
+    if (robberyStep === 'confirm' && robberyMode === 'resources' && robberyTargetId) {
+      const target = players.find((p) => p.id === robberyTargetId);
       title.textContent = t('lasidao.robberyConfirmTitle');
       const hint = document.createElement('p');
       hint.className = 'muted las-hint';
-      if (t1 && t2) {
-        hint.textContent =
-          robberyTargets[0] === robberyTargets[1]
-            ? t('lasidao.robberySummarySame', { name: t1.name })
-            : t('lasidao.robberySummary', { name1: t1.name, name2: t2.name });
-      }
+      hint.textContent = t('lasidao.robberySummaryResources', {
+        name: (target && target.name) || '?',
+      });
       body.appendChild(hint);
       confirmBtn.hidden = false;
       confirmBtn.disabled = false;
       confirmBtn.textContent = t('lasidao.confirmRobbery');
+      cancelBtn.onclick = () => {
+        robberyStep = 'target';
+        renderRobberyModal(game, card);
+      };
+      cancelBtn.textContent = t('lasidao.back');
       return;
     }
 
-    confirmBtn.hidden = true;
-    confirmBtn.disabled = true;
     title.textContent =
-      robberyPickStep === 0
-        ? t('lasidao.robberyPickTarget1')
-        : t('lasidao.robberyPickTarget2');
+      robberyMode === 'cards'
+        ? t('lasidao.robberyPickTargetCards')
+        : t('lasidao.robberyPickTargetResources');
 
     if (!players.length) {
       const empty = document.createElement('p');
       empty.className = 'muted';
       empty.textContent = t('lasidao.robberyNoTarget');
       body.appendChild(empty);
+      cancelBtn.onclick = () => {
+        robberyStep = 'mode';
+        robberyMode = null;
+        renderRobberyModal(game, card);
+      };
+      cancelBtn.textContent = t('lasidao.back');
       return;
     }
 
-    const eligible = players.filter((p) => canPickRobberyTarget(p, robberyPickStep));
+    const eligible = players.filter((p) =>
+      canPickRobberyTarget(p, robberyMode)
+    );
     if (!eligible.length) {
       const empty = document.createElement('p');
       empty.className = 'muted';
-      empty.textContent = t('lasidao.robberyNoStealable');
+      empty.textContent =
+        robberyMode === 'cards'
+          ? t('lasidao.robberyNoCardTarget')
+          : t('lasidao.robberyNoStealable');
       body.appendChild(empty);
+      cancelBtn.onclick = () => {
+        robberyStep = 'mode';
+        robberyMode = null;
+        renderRobberyModal(game, card);
+      };
+      cancelBtn.textContent = t('lasidao.back');
       return;
     }
 
     const wrap = document.createElement('div');
     wrap.className = 'las-robbery-players';
     for (const p of players) {
-      const canPick = canPickRobberyTarget(p, robberyPickStep);
+      const canPick = canPickRobberyTarget(p, robberyMode);
       const resTotal = stealableHandCountForPlayer(p);
       const btn = makeExilePlayerButton(
         game,
         p.id,
         null,
         () => {
-        if (!canPick) return;
-        robberyTargets[robberyPickStep] = p.id;
-        robberyPickStep += 1;
-        renderRobberyModal(game, card);
+          if (!canPick) return;
+          robberyTargetId = p.id;
+          if (robberyMode === 'cards') {
+            submitRobberyCards(game, card);
+            return;
+          }
+          robberyStep = 'confirm';
+          renderRobberyModal(game, card);
         },
         resTotal
       );
       if (!canPick) {
         btn.disabled = true;
         btn.classList.add('is-disabled');
-        btn.title = t('lasidao.robberyNoHand');
+        btn.title =
+          robberyMode === 'cards'
+            ? t('lasidao.robberyNoCardHand')
+            : t('lasidao.robberyNoHand');
+      } else if (robberyMode === 'cards') {
+        btn.title = t('lasidao.robberyCardTargetTip', {
+          buildings: unbuiltBuildingCountForPlayer(p),
+          funcs: funcCountForPlayer(p),
+        });
       } else {
         btn.title = t('lasidao.robberyResourceTotal', { n: resTotal });
       }
       wrap.appendChild(btn);
     }
     body.appendChild(wrap);
+    cancelBtn.onclick = () => {
+      robberyStep = 'mode';
+      robberyMode = null;
+      robberyTargetId = null;
+      renderRobberyModal(game, card);
+    };
+    cancelBtn.textContent = t('lasidao.back');
   }
 
   function bindRedrawDeckClicks() {
@@ -12800,16 +12999,25 @@ window.LasidaoUi = (function () {
     // Robbery modal bindings
     const robCancel = $('btn-las-robbery-cancel');
     if (robCancel) {
-      robCancel.onclick = () => setRobberyModalOpen(false);
+      robCancel.onclick = () => {
+        if (lastGame && lastGame.pendingRobberyPick && lastGame.pendingRobberyPick.forMe && netRef) {
+          netRef.sendAction('cancelRobberyPick', {});
+        }
+        setRobberyModalOpen(false);
+      };
     }
     const robConfirm = $('btn-las-robbery-confirm');
     if (robConfirm) {
       robConfirm.onclick = () => {
-        if (!robberyCardId || robberyPickStep < 2 || !netRef) return;
-        if (!robberyTargets[0] || !robberyTargets[1]) return;
-        net.sendAction('useFunc', {
+        if (!robberyCardId || !robberyMode || !robberyTargetId || !netRef) return;
+        if (robberyMode === 'cards') {
+          submitRobberyCards(lastGame, null);
+          return;
+        }
+        netRef.sendAction('useFunc', {
           cardId: robberyCardId,
-          targets: robberyTargets.slice(),
+          mode: robberyMode,
+          targetId: robberyTargetId,
         });
         selectedFuncId = null;
         setRobberyModalOpen(false);
@@ -13016,6 +13224,7 @@ window.LasidaoUi = (function () {
     resetSession,
     bindButtons,
     onPlayReveal,
+    onGameError,
     showSettleObtain,
     appendGameLogLine,
     openRules: () => setRulesModalOpen(true),

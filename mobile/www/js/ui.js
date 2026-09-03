@@ -5115,7 +5115,15 @@
       window.LasidaoUi.onPlayReveal(data);
     }
   });
-  net.on('game:error', (data) => showToast(data.message || t('toast.opFail')));
+  net.on('game:error', (data) => {
+    showToast(data.message || t('toast.opFail'));
+    if (
+      window.LasidaoUi &&
+      typeof window.LasidaoUi.onGameError === 'function'
+    ) {
+      window.LasidaoUi.onGameError(data);
+    }
+  });
   net.on('chat:message', (msg) => pushChatMessage(msg));
   net.on('chat:error', (data) => showToast((data && data.message) || t('toast.sendFail')));
   net.on('game:player-left', (data) => {

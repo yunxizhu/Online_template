@@ -148,22 +148,15 @@ function isHomogeneousStackSlot(player, slot) {
   return on.every((b) => buildingStackKey(b) === key);
 }
 
-function canStackBuildingOnSlot(player, slot, building) {
-  const on = buildingsOnSlot(player, slot);
-  if (!on.length || !building) return false;
-  const key = buildingStackKey(building);
-  return on.every((b) => buildingStackKey(b) === key);
+/**
+ * 可叠放判定（已废弃用于放置）：未建造一律独占空位。
+ * 建成后的叠放由 mergeBuiltOntoSameStack 处理。
+ */
+function canStackBuildingOnSlot(_player, _slot, _building) {
+  return false;
 }
 
-function findStackSlotFor(player, building) {
-  if (!building) return null;
-  const key = buildingStackKey(building);
-  for (const slot of occupiedBuildSlots(player)) {
-    const on = buildingsOnSlot(player, slot);
-    if (on.length && on.every((b) => buildingStackKey(b) === key)) {
-      return slot;
-    }
-  }
+function findStackSlotFor(_player, _building) {
   return null;
 }
 
@@ -187,21 +180,32 @@ function nextFreeBuildSlot(player) {
 }
 
 /**
- * 为新建筑分配格子：相同建筑可叠到已有同型格；否则取空位。
+ * 为新入手的未建造建筑分配格子：仅空位，绝不叠放。
+ * 无空位返回 false（由调用方进入建筑格弃牌）。
  */
 function assignBuildingSlot(player, neu) {
-  if (!neu) return false;
-  const stack = findStackSlotFor(player, neu);
-  if (stack != null) {
-    neu.slot = stack;
+  return assignUnbuiltExclusiveSlot(player, neu, null);
+}
+
+/**
+ * 建成后叠入已有同型已建格，腾出未建造时占用的独占空位。
+ */
+function mergeBuiltOntoSameStack(player, building) {
+  if (!player || !building || !building.built || building.slot == null) {
+    return false;
+  }
+  const key = buildingStackKey(building);
+  if (!key) return false;
+  const mySlot = String(building.slot);
+  for (const slot of occupiedBuildSlots(player)) {
+    if (String(slot) === mySlot) continue;
+    const on = buildingsOnSlot(player, slot).filter((x) => x.id !== building.id);
+    if (!on.length) continue;
+    if (on.some((x) => !x.built)) continue;
+    if (!on.every((x) => buildingStackKey(x) === key)) continue;
+    building.slot = slot;
     return true;
   }
-  const free = nextFreeBuildSlot(player);
-  if (free != null) {
-    neu.slot = free;
-    return true;
-  }
-  neu.slot = null;
   return false;
 }
 
@@ -1469,6 +1473,7 @@ function createGameState(room) {
     pendingEventChoice: null,
     pendingRedrawChoice: null,
     pendingIllegalBuild: null,
+    pendingRobberyPick: null,
     pendingTrade: null,
     pendingWelfareMinimumQueue: [],
     pendingWelfareMinimumChoices: {},
@@ -3419,6 +3424,19 @@ function applyAction(game, playerId, action) {
     return { ok: false, error: '请先完成重抽选择' };
   }
 
+  if (game.pendingRobberyPick) {
+    if (playerId !== game.pendingRobberyPick.actorId) {
+      return { ok: false, error: '等待其他玩家完成抢劫抽牌' };
+    }
+    if (type === 'robberyPick') {
+      return actRobberyPick(game, player, payload);
+    }
+    if (type === 'cancelRobberyPick') {
+      return actCancelRobberyPick(game, player);
+    }
+    return { ok: false, error: '请先完成抢劫抽牌' };
+  }
+
   if (game.pendingIllegalBuild) {
     if (type === 'illegalBuildPick') {
       if (playerId !== game.pendingIllegalBuild.targetId) {
@@ -3606,6 +3624,8 @@ function applyAction(game, playerId, action) {
       return { ok: false, error: '你已跳过本轮建造' };
     }
     if (type === 'pass') {
+      const block = rejectIfBuildPhaseCardDiscardPending(player);
+      if (block) return block;
       game.buildPassed[playerId] = true;
       pushLog(game, `${player.name} 跳过本轮建造（本阶段不再行动）`);
       afterBuildAction(game, playerId, false);
@@ -3904,6 +3924,7 @@ function actConstruct(game, player, payload) {
   pay(player.resources, b.cost || {});
   b.built = true;
   b.faceDown = false; // 建造后公开
+  mergeBuiltOntoSameStack(player, b);
   let stepText =
     `${player.name} 建造了「${b.label}」` +
     (b.score ? `（+${b.score} 分）` : '');
@@ -3950,10 +3971,12 @@ function actPlaceBuildingSlot(game, player, payload) {
 
   const onSlot = buildingsOnSlot(player, slot);
   if (onSlot.length > 0) {
-    if (!canStackBuildingOnSlot(player, slot, b)) {
-      return { ok: false, error: '该建筑格已被占用（仅相同建筑可叠放）' };
-    }
-  } else if (occupiedBuildSlotCount(player) >= maxBuildingsFor(player)) {
+    return {
+      ok: false,
+      error: '该建筑格已被占用（未建造建筑须独占空位）',
+    };
+  }
+  if (occupiedBuildSlotCount(player) >= maxBuildingsFor(player)) {
     return { ok: false, error: `建筑格已达上限 ${maxBuildingsFor(player)}` };
   }
 
@@ -4005,16 +4028,8 @@ function actDiscardUnbuilt(game, player, payload) {
         if (!assignUnbuiltExclusiveSlot(player, neu, slotKeep)) {
           neu.slot = slotKeep != null ? slotKeep : nextFreeBuildSlot(player) || 'none';
         }
-      } else if (!assignBuildingSlot(player, neu)) {
-        if (
-          slotKeep != null &&
-          (buildingsOnSlot(player, slotKeep).length === 0 ||
-            canStackBuildingOnSlot(player, slotKeep, neu))
-        ) {
-          neu.slot = slotKeep;
-        } else {
-          neu.slot = slotKeep != null ? slotKeep : nextFreeBuildSlot(player) || 'none';
-        }
+      } else if (!assignUnbuiltExclusiveSlot(player, neu, slotKeep)) {
+        neu.slot = nextFreeBuildSlot(player) || (slotKeep != null ? slotKeep : 'none');
       }
       player.buildings.push(neu);
       let msg =
@@ -4810,7 +4825,20 @@ function actUseFunc(game, player, payload) {
   else if (ft === 'freeExpand') result = useFreeExpand(game, player, payload);
   else if (ft === 'welfareHouse') result = useWelfareHouse(game, player, payload);
   else if (ft === 'caravan') result = useCaravan(game, player, payload);
-  else if (ft === 'robbery') result = useRobbery(game, player, payload);
+  else if (ft === 'robbery') {
+    if (!hasRobberyTarget(game, payload.mode)) {
+      return {
+        ok: false,
+        error:
+          payload.mode === 'resources'
+            ? '没有玩家持有至少 2 张资源卡'
+            : payload.mode === 'cards'
+              ? '没有玩家同时持有未建造建筑与功能卡'
+              : '没有可抢劫的目标',
+      };
+    }
+    result = useRobbery(game, player, { ...payload, cardId });
+  }
   else if (ft === 'illegalBuild') {
     if (!hasIllegalBuildTarget(game)) {
       return { ok: false, error: '没有玩家持有已建造的建筑' };
@@ -5051,7 +5079,7 @@ function useBanditRaid(game, player, payload) {
   return { ok: true };
 }
 
-/** 抢劫：从目标玩家手牌中随机夺取 1 张资源卡 */
+/** 抢劫：效果1 随机抢 2 资源；效果2 从未建建筑和/或功能卡中按卡背抽 1 张 */
 function stealableItems(player) {
   const items = [];
   if (!player) return items;
@@ -5066,6 +5094,29 @@ function stealableItems(player) {
 
 function stealableHandCount(player) {
   return stealableItems(player).length;
+}
+
+function countUnbuiltBuildings(player) {
+  return (player.buildings || []).filter((b) => b && !b.built).length;
+}
+
+function canRobberyStealResources(player) {
+  return stealableHandCount(player) >= 2;
+}
+
+function canRobberyStealCards(player) {
+  return (
+    countUnbuiltBuildings(player) >= 1 ||
+    (player.funcCards || []).length >= 1
+  );
+}
+
+function hasRobberyTarget(game, mode) {
+  return alivePlayers(game).some((p) => {
+    if (mode === 'resources') return canRobberyStealResources(p);
+    if (mode === 'cards') return canRobberyStealCards(p);
+    return canRobberyStealResources(p) || canRobberyStealCards(p);
+  });
 }
 
 function applyRandomSteal(game, robber, target) {
@@ -5083,12 +5134,206 @@ function applyRandomSteal(game, robber, target) {
   return null;
 }
 
-function normalizeRobberyTargets(payload) {
-  if (!payload) return null;
-  if (Array.isArray(payload.targets) && payload.targets.length === 2) {
-    return payload.targets.map(String);
+function robberyCardLootPool(player) {
+  const pool = [];
+  for (const b of player.buildings || []) {
+    if (!b || b.built) continue;
+    pool.push({
+      id: b.id,
+      kind: 'building',
+      source: 'building',
+    });
   }
-  return null;
+  for (const c of player.funcCards || []) {
+    if (!c) continue;
+    pool.push({
+      id: c.id,
+      kind: 'function',
+      source: 'function',
+    });
+  }
+  return pool;
+}
+
+function shuffleInPlace(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+  }
+  return arr;
+}
+
+function takeUnbuiltBuildingFromPlayer(player, buildingId) {
+  const idx = (player.buildings || []).findIndex((b) => b && b.id === buildingId);
+  if (idx < 0) return null;
+  const [b] = player.buildings.splice(idx, 1);
+  b.workers = 0;
+  b.slot = null;
+  b.built = false;
+  b.faceDown = false;
+  return b;
+}
+
+function takeFuncCardFromPlayer(player, cardId) {
+  const idx = (player.funcCards || []).findIndex((c) => c && c.id === cardId);
+  if (idx < 0) return null;
+  return player.funcCards.splice(idx, 1)[0];
+}
+
+function useRobbery(game, player, payload) {
+  const mode = payload && payload.mode;
+  if (mode !== 'resources' && mode !== 'cards') {
+    return { ok: false, error: '请选择抢劫效果' };
+  }
+  const targetId = payload.targetId || payload.target;
+  const target = playerById(game, targetId);
+  if (!target || target.left) {
+    return { ok: false, error: '目标玩家无效' };
+  }
+  if (target.id === player.id) {
+    return { ok: false, error: '不能抢劫自己' };
+  }
+
+  if (mode === 'resources') {
+    if (!canRobberyStealResources(target)) {
+      return { ok: false, error: `${target.name} 资源卡不足 2 张` };
+    }
+    const parts = [];
+    for (let i = 0; i < 2; i++) {
+      const stole = applyRandomSteal(game, player, target);
+      if (stole) {
+        parts.push(`「${stole.label}」`);
+      }
+    }
+    if (!parts.length) {
+      return { ok: false, error: '未能夺取资源卡' };
+    }
+    pushLog(
+      game,
+      `${player.name} 抢劫：从 ${target.name} 随机夺取 ${parts.join('、')}`
+    );
+    return { ok: true };
+  }
+
+  if (!canRobberyStealCards(target)) {
+    return {
+      ok: false,
+      error: `${target.name} 没有可抽的未建造建筑或功能卡`,
+    };
+  }
+  if (game.pendingRobberyPick) {
+    return { ok: false, error: '请先完成待处理的抢劫抽牌' };
+  }
+  const pool = shuffleInPlace(robberyCardLootPool(target));
+  if (pool.length < 1) {
+    return { ok: false, error: '目标可抢卡牌不足' };
+  }
+  game.pendingRobberyPick = {
+    actorId: player.id,
+    actorName: player.name,
+    targetId: target.id,
+    targetName: target.name,
+    cardId: payload.cardId,
+    options: pool,
+  };
+  pushLog(
+    game,
+    `${player.name} 抢劫：从 ${target.name} 的未建造建筑/功能卡中抽 1 张（可见卡背）`
+  );
+  return { ok: true, awaitingPick: true };
+}
+
+function actCancelRobberyPick(game, player) {
+  const pending = game.pendingRobberyPick;
+  if (!pending) return { ok: false, error: '没有待处理的抢劫' };
+  if (player.id !== pending.actorId) {
+    return { ok: false, error: '仅发动者可取消抢劫' };
+  }
+  game.pendingRobberyPick = null;
+  pushLog(game, `${player.name} 取消了「抢劫」抽牌`);
+  return { ok: true };
+}
+
+function actRobberyPick(game, player, payload) {
+  const pending = game.pendingRobberyPick;
+  if (!pending) return { ok: false, error: '没有待处理的抢劫' };
+  if (player.id !== pending.actorId) {
+    return { ok: false, error: '请由发动者抽牌' };
+  }
+  const pickId = payload && (payload.cardId || payload.pickId);
+  const option = (pending.options || []).find((o) => o.id === pickId);
+  if (!option) return { ok: false, error: '请选择一张卡背' };
+
+  const target = playerById(game, pending.targetId);
+  if (!target || target.left) {
+    game.pendingRobberyPick = null;
+    return { ok: false, error: '目标玩家无效' };
+  }
+  const actor = playerById(game, pending.actorId);
+  if (!actor || actor.left) {
+    game.pendingRobberyPick = null;
+    return { ok: false, error: '发动者无效' };
+  }
+  const cardIdx = actor.funcCards.findIndex((c) => c.id === pending.cardId);
+  if (cardIdx < 0) {
+    game.pendingRobberyPick = null;
+    return { ok: false, error: '功能卡已失效' };
+  }
+  const robberyCard = actor.funcCards[cardIdx];
+  const logLen = game.log.length;
+
+  let gainedLabel = '?';
+  let gainedKind = option.kind;
+  if (option.source === 'building') {
+    const b = takeUnbuiltBuildingFromPlayer(target, option.id);
+    if (!b) {
+      return { ok: false, error: '目标建筑已不存在，请重选' };
+    }
+    gainedLabel = b.label || '?';
+    const kind = giveSpecialDrawToPlayer(game, actor, b);
+    gainedKind = kind === 'building-instant' ? 'building' : kind;
+  } else {
+    const c = takeFuncCardFromPlayer(target, option.id);
+    if (!c) {
+      return { ok: false, error: '目标功能卡已不存在，请重选' };
+    }
+    gainedLabel = c.label || '?';
+    receiveFunctionCard(game, actor, c);
+    gainedKind = 'function';
+  }
+
+  actor.funcCards.splice(cardIdx, 1);
+  returnFuncToDiscard(game, robberyCard);
+  game.pendingRobberyPick = null;
+
+  const stepText =
+    `${actor.name} 抢劫：从 ${target.name} 抽得${
+      gainedKind === 'building' || gainedKind === 'building-instant'
+        ? '建筑'
+        : '功能'
+    }「${gainedLabel}」`;
+  pushLog(game, stepText);
+  pushLog(game, `${actor.name} 发动功能「${robberyCard.label}」`);
+  pushPlayReveal(game, {
+    kind: 'function',
+    actorId: actor.id,
+    actorName: actor.name,
+    card: {
+      id: robberyCard.id,
+      label: robberyCard.label,
+      funcType: 'robbery',
+    },
+    stepText: pickActionLogText(game, logLen) || stepText,
+  });
+
+  if (checkWin(game)) return { ok: true };
+  if (game.phase === 'build' && game.currentPlayerId === actor.id) {
+    // 建筑格爆牌时停留在当前玩家，待弃牌后再继续建造
+    afterBuildAction(game, actor.id, true);
+  }
+  return { ok: true };
 }
 
 function countBuiltBuildings(player) {
@@ -5244,47 +5489,6 @@ function actIllegalBuildPick(game, player, payload) {
   }
   return { ok: true };
 }
-
-function useRobbery(game, player, payload) {
-  const targetIds = normalizeRobberyTargets(payload);
-  if (!targetIds) {
-    return { ok: false, error: '请选择两名抢劫目标' };
-  }
-  const targets = [];
-  for (const tid of targetIds) {
-    const target = playerById(game, tid);
-    if (!target || target.left) {
-      return { ok: false, error: '目标玩家无效' };
-    }
-    if (target.id === player.id) {
-      return { ok: false, error: '不能抢劫自己' };
-    }
-    if (!stealableHandCount(target)) {
-      return { ok: false, error: `${target.name} 没有可抢的手牌` };
-    }
-    if (
-      targets.length === 1 &&
-      targets[0].id === target.id &&
-      stealableHandCount(target) < 2
-    ) {
-      return { ok: false, error: `${target.name} 手牌不足 2 张，不能重复选择` };
-    }
-    targets.push(target);
-  }
-
-  const parts = [];
-  for (let i = 0; i < targets.length; i++) {
-    const target = targets[i];
-    const stole = applyRandomSteal(game, player, target);
-    if (stole) {
-      parts.push(`从 ${target.name} 夺取「${stole.label}」`);
-    } else {
-      parts.push(`从 ${target.name} 未夺取到牌`);
-    }
-  }
-  pushLog(game, `${player.name} 抢劫：${parts.join('；')}`);
-    return { ok: true };
-  }
 
 function actBuildHousePermanent(game, player) {
   const block = rejectIfBuildPhaseCardDiscardPending(player);
@@ -5495,14 +5699,29 @@ function giveSpecialDrawToPlayer(game, player, card) {
       return 'building-instant';
     }
     const neu = {
-        ...card,
+      ...card,
+      kind: 'building',
       faceDown: false,
-        slot: null,
-        built: false,
-        workers: 0,
+      slot: null,
+      built: false,
+      workers: 0,
     };
     if (!assignBuildingSlot(player, neu)) {
-      queuePendingBuildCard(player, neu);
+      const hasUnbuilt = (player.buildings || []).some((b) => !b.built);
+      if (!hasUnbuilt) {
+        // 与 takeBuildingCard 一致：格满且无可弃未建造时，仍进 pending 让玩家弃掉刚获得的
+        queuePendingBuildCard(player, neu);
+        pushLog(
+          game,
+          `${player.name} 建筑格已满，须弃置刚获得的建筑「${neu.label || '?'}」或先腾出空位`
+        );
+      } else {
+        queuePendingBuildCard(player, neu);
+        pushLog(
+          game,
+          `${player.name} 建筑格不足，请弃置一张未建造建筑以收下「${neu.label || '?'}」`
+        );
+      }
     } else {
       player.buildings.push(neu);
     }
@@ -5995,6 +6214,26 @@ function publicGameState(game, viewerId) {
             game.pendingIllegalBuild.actorId === viewerId,
         }
       : null,
+    pendingRobberyPick: game.pendingRobberyPick
+      ? {
+          actorId: game.pendingRobberyPick.actorId,
+          actorName: game.pendingRobberyPick.actorName,
+          targetId: game.pendingRobberyPick.targetId,
+          targetName: game.pendingRobberyPick.targetName,
+          forMe:
+            Boolean(viewerId) &&
+            game.pendingRobberyPick.actorId === viewerId,
+          options:
+            viewerId === game.pendingRobberyPick.actorId
+              ? (game.pendingRobberyPick.options || []).map((o) => ({
+                  id: o.id,
+                  kind: o.kind,
+                  faceDown: true,
+                }))
+              : null,
+          optionCount: (game.pendingRobberyPick.options || []).length,
+        }
+      : null,
     roundProduceBegun: Boolean(game.roundProduceBegun),
     pendingEventChoice: (() => {
       const welfare =
@@ -6185,6 +6424,12 @@ function canPlayerAct(game, player) {
   ) {
     return true;
   }
+  if (
+    game.pendingRobberyPick &&
+    game.pendingRobberyPick.actorId === player.id
+  ) {
+    return true;
+  }
   if (game.phase === 'settle_act') {
     return playerNeedsSettleAct(player, game.settleActScope || 'all');
   }
@@ -6221,6 +6466,9 @@ function getActingPlayerIds(game) {
   }
   if (game.pendingIllegalBuild && game.pendingIllegalBuild.targetId) {
     return [game.pendingIllegalBuild.targetId];
+  }
+  if (game.pendingRobberyPick && game.pendingRobberyPick.actorId) {
+    return [game.pendingRobberyPick.actorId];
   }
   if (game.phase === 'init_roll') {
     return alivePlayers(game)
@@ -6551,8 +6799,7 @@ function forceTimeout(game, playerId) {
 
   const unplaced = (p.buildings || []).find((b) => !b.built && b.slot == null);
   if (unplaced) {
-    const stack = findStackSlotFor(p, unplaced);
-    const slot = stack != null ? stack : nextFreeBuildSlot(p);
+    const slot = nextFreeBuildSlot(p);
     if (slot != null) {
       return applyAction(game, playerId, {
         type: 'placeBuildingSlot',

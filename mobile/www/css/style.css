@@ -89,12 +89,17 @@ body.phase-game {
   overflow-x: hidden;
 }
 
-/* 对局页视口滚动：滚动条浮在内容之上，出现时不挤占牌面宽度 */
+/* 对局页视口滚动：右侧滚动条始终占位显示（无需滚动时也保留） */
 html:has(body.phase-game) {
   overflow-x: hidden;
-  overflow-y: auto;
-  overflow-y: overlay;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+  scrollbar-color: var(--scrollbar-thumb) rgba(0, 0, 0, 0.18);
   --scrollbar-thumb-rgb: 118, 168, 148;
+}
+
+html:has(body.phase-game)::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.18);
 }
 
 body.phase-game .app-content,
@@ -630,14 +635,20 @@ body.phase-room .lobby-people {
   padding: 0 var(--people-aside-pad-x) 0 0;
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
-  overflow: overlay;
-  scrollbar-gutter: auto;
+  overflow-x: hidden;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+  scrollbar-color: var(--scrollbar-thumb) rgba(0, 0, 0, 0.18);
 }
 
-/* 右侧人员栏滚动条：叠在栏内边距上，出现时不挤占名单宽度 */
+/* 右侧人员栏滚动条：始终显示轨道，不因内容不足而隐藏 */
 .lobby-people .people-list::-webkit-scrollbar {
   width: var(--scrollbar-size);
+}
+
+.lobby-people .people-list::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 999px;
 }
 
 .people-list li {

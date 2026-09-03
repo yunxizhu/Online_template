@@ -1824,7 +1824,7 @@ console.log('— caravan card —');
   finishInit(g);
   const robber = g.players[0];
   const victim = g.players[1];
-  victim.resources.wood = 2;
+  victim.resources.wood = 3;
   victim.funcCards.push({
     id: 'v_func',
     funcType: 'harvest',
@@ -1838,35 +1838,213 @@ console.log('— caravan card —');
   g.phase = 'build';
   g.currentPlayerId = robber.id;
   const woodBefore = victim.resources.wood;
-  const funcBefore = victim.funcCards.length;
+  const robberWoodBefore = robber.resources.wood || 0;
   ok(
     applyAction(g, robber.id, {
       type: 'useFunc',
       payload: {
         cardId: 'rob_card',
-        targets: [victim.id, victim.id],
+        mode: 'resources',
+        targetId: victim.id,
       },
     }),
-    '抢劫成功'
+    '抢劫资源成功'
   );
   assert.ok(
     !robber.funcCards.some((c) => c.id === 'rob_card'),
     '抢劫卡应已打出'
   );
-  assert.ok(
-    woodBefore - victim.resources.wood + (funcBefore - victim.funcCards.length) >=
-      1,
-    '受害者应至少失去一张手牌'
+  assert.strictEqual(
+    woodBefore - victim.resources.wood,
+    2,
+    '应夺走 2 张资源'
   );
-  const robberGain =
-    robber.resources.wood +
-    robber.resources.stone +
-    robber.resources.food +
-    robber.resources.iron +
-    robber.funcCards.length +
-    (robber.buildings || []).filter((b) => !b.built).length;
-  assert.ok(robberGain >= 1, '抢劫者应获得至少一张牌');
-  console.log('✓ robbery random steal twice');
+  assert.strictEqual(
+    (robber.resources.wood || 0) - robberWoodBefore,
+    2,
+    '抢劫者应获得 2 张资源'
+  );
+  console.log('✓ robbery steal 2 resources from one player');
+}
+
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const robber = g.players[0];
+  const victim = g.players[1];
+  victim.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+  victim.funcCards = [
+    { id: 'v_func2', funcType: 'harvest', label: '丰收', kind: 'function' },
+  ];
+  victim.buildings.push({
+    id: 'v_bld',
+    kind: 'building',
+    buildType: 'produce',
+    resource: 'wood',
+    label: '木坊',
+    cost: {},
+    built: false,
+    slot: 1,
+    workers: 0,
+    faceDown: false,
+  });
+  robber.funcCards.push({
+    id: 'rob_cards',
+    funcType: 'robbery',
+    label: '抢劫',
+  });
+  g.phase = 'build';
+  g.currentPlayerId = robber.id;
+  ok(
+    applyAction(g, robber.id, {
+      type: 'useFunc',
+      payload: {
+        cardId: 'rob_cards',
+        mode: 'cards',
+        targetId: victim.id,
+      },
+    }),
+    '抢劫抽牌进入选择'
+  );
+  assert.ok(g.pendingRobberyPick, '应进入抢劫抽牌');
+  assert.ok(
+    robber.funcCards.some((c) => c.id === 'rob_cards'),
+    '抽牌完成前抢劫卡仍在手'
+  );
+  const opt = g.pendingRobberyPick.options[0];
+  ok(
+    applyAction(g, robber.id, {
+      type: 'robberyPick',
+      payload: { cardId: opt.id },
+    }),
+    '完成抢劫抽牌'
+  );
+  assert.ok(!g.pendingRobberyPick, '抽牌后应清除 pending');
+  assert.ok(
+    !robber.funcCards.some((c) => c.id === 'rob_cards'),
+    '抢劫卡应已打出'
+  );
+  const robbedBuilding = !victim.buildings.some((b) => b.id === 'v_bld');
+  const robbedFunc = !victim.funcCards.some((c) => c.id === 'v_func2');
+  assert.ok(robbedBuilding || robbedFunc, '目标应失去一张建筑或功能卡');
+  console.log('✓ robbery draw building/function by card back');
+}
+
+{
+  const { occupiedBuildSlotCount } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const robber = g.players[0];
+  const victim = g.players[1];
+  robber.expandSlots = 0;
+  robber.buildings = [
+    {
+      id: 'ra',
+      buildType: 'wishWell',
+      label: '许愿井A',
+      slot: 'none',
+      built: true,
+      workers: 0,
+      cost: {},
+    },
+    {
+      id: 'rb',
+      buildType: 'wishWell',
+      label: '许愿井B',
+      slot: 'none',
+      built: true,
+      workers: 0,
+      cost: {},
+    },
+    {
+      id: 'rc',
+      buildType: 'exchange',
+      label: '集市',
+      slot: 'none:1',
+      built: true,
+      workers: 0,
+      cost: {},
+    },
+    {
+      id: 'rd',
+      buildType: 'produce',
+      resource: 'wood',
+      label: '木坊',
+      slot: 'none:2',
+      built: false,
+      workers: 0,
+      cost: {},
+    },
+  ];
+  assert.strictEqual(occupiedBuildSlotCount(robber), 3);
+  victim.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+  victim.funcCards = [];
+  victim.buildings = [
+    {
+      id: 'stolen_ww',
+      kind: 'building',
+      buildType: 'wishWell',
+      label: '被抢许愿井',
+      cost: {},
+      built: false,
+      slot: 'none',
+      workers: 0,
+      faceDown: false,
+    },
+  ];
+  robber.funcCards.push({
+    id: 'rob_overflow',
+    funcType: 'robbery',
+    label: '抢劫',
+  });
+  g.phase = 'build';
+  g.currentPlayerId = robber.id;
+  g.buildPassed = {};
+  g.produceFinishOrder = [robber.id, victim.id];
+  ok(
+    applyAction(g, robber.id, {
+      type: 'useFunc',
+      payload: {
+        cardId: 'rob_overflow',
+        mode: 'cards',
+        targetId: victim.id,
+      },
+    })
+  );
+  ok(
+    applyAction(g, robber.id, {
+      type: 'robberyPick',
+      payload: { cardId: 'stolen_ww' },
+    })
+  );
+  assert.ok(
+    robber.pendingDiscardBuild,
+    '抢劫建筑导致格满应进入建筑格弃牌'
+  );
+  assert.strictEqual(
+    robber.pendingDiscardBuild.newCard &&
+      robber.pendingDiscardBuild.newCard.id,
+    'stolen_ww'
+  );
+  assert.ok(
+    !robber.buildings.some((b) => b.id === 'stolen_ww'),
+    '满格时被抢建筑应在 pending 而非直接上板'
+  );
+  const passBlocked = applyAction(g, robber.id, { type: 'pass', payload: {} });
+  assert.ok(!passBlocked.ok, '建筑爆牌未处理前不能跳过建造');
+  ok(
+    applyAction(g, robber.id, {
+      type: 'discardUnbuilt',
+      payload: { buildingId: 'rd' },
+    }),
+    '弃置己方未建造腾位'
+  );
+  assert.ok(!robber.pendingDiscardBuild, '弃牌后应清除 pending');
+  assert.ok(
+    robber.buildings.some((b) => b.id === 'stolen_ww'),
+    '弃牌腾位后应收下被抢建筑'
+  );
+  console.log('✓ robbery building overflow triggers build discard');
 }
 
 {
@@ -1888,12 +2066,108 @@ console.log('— caravan card —');
     type: 'useFunc',
     payload: {
       cardId: 'rob_empty',
-      targets: [victim.id, victim.id],
+      mode: 'resources',
+      targetId: victim.id,
     },
   });
-  assert.ok(!fail.ok, '无手牌目标不可抢劫');
-  assert.ok(/手牌/.test(fail.error || ''), fail.error);
+  assert.ok(!fail.ok, '无资源目标不可抢劫');
+  const fail2 = applyAction(g, robber.id, {
+    type: 'useFunc',
+    payload: {
+      cardId: 'rob_empty',
+      mode: 'cards',
+      targetId: victim.id,
+    },
+  });
+  assert.ok(!fail2.ok, '无建筑/功能目标不可抢劫');
   console.log('✓ robbery rejects empty hand');
+}
+
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const robber = g.players[0];
+  const victim = g.players[1];
+  victim.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+  victim.funcCards = [];
+  victim.buildings.push({
+    id: 'only_bld',
+    kind: 'building',
+    buildType: 'produce',
+    resource: 'wood',
+    label: '木坊',
+    cost: {},
+    built: false,
+    slot: 1,
+    workers: 0,
+    faceDown: false,
+  });
+  robber.funcCards.push({
+    id: 'rob_only_bld',
+    funcType: 'robbery',
+    label: '抢劫',
+  });
+  g.phase = 'build';
+  g.currentPlayerId = robber.id;
+  ok(
+    applyAction(g, robber.id, {
+      type: 'useFunc',
+      payload: {
+        cardId: 'rob_only_bld',
+        mode: 'cards',
+        targetId: victim.id,
+      },
+    }),
+    '仅有未建造建筑也可发动效果二'
+  );
+  assert.strictEqual(g.pendingRobberyPick.options.length, 1);
+  ok(
+    applyAction(g, robber.id, {
+      type: 'robberyPick',
+      payload: { cardId: 'only_bld' },
+    })
+  );
+  assert.ok(!victim.buildings.some((b) => b.id === 'only_bld'));
+  console.log('✓ robbery cards mode with only unbuilt building');
+}
+
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const robber = g.players[0];
+  const victim = g.players[1];
+  victim.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+  victim.buildings = [];
+  victim.funcCards = [
+    { id: 'only_fn', funcType: 'harvest', label: '丰收', kind: 'function' },
+  ];
+  robber.funcCards.push({
+    id: 'rob_only_fn',
+    funcType: 'robbery',
+    label: '抢劫',
+  });
+  g.phase = 'build';
+  g.currentPlayerId = robber.id;
+  ok(
+    applyAction(g, robber.id, {
+      type: 'useFunc',
+      payload: {
+        cardId: 'rob_only_fn',
+        mode: 'cards',
+        targetId: victim.id,
+      },
+    }),
+    '仅有功能卡也可发动效果二'
+  );
+  assert.strictEqual(g.pendingRobberyPick.options.length, 1);
+  ok(
+    applyAction(g, robber.id, {
+      type: 'robberyPick',
+      payload: { cardId: 'only_fn' },
+    })
+  );
+  assert.ok(!victim.funcCards.some((c) => c.id === 'only_fn'));
+  console.log('✓ robbery cards mode with only function card');
 }
 
 console.log('— demolition unbuilds score building —');
@@ -3246,6 +3520,86 @@ console.log('— event luckyDraw side card kind —');
   console.log('✓ event luckyDraw side card kind');
 }
 
+console.log('— event luckyDraw respects neutral first place —');
+{
+  const { applyEnvironmentOnSettleSlot } = require('../environmentEffects');
+  const { NEUTRAL_WORKER_ID } = require('../decks');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p0 = g.players[0];
+  const sideCard = {
+    id: 'side_lucky_bld',
+    kind: 'building',
+    buildType: 'exchange',
+    label: '集市',
+    cost: {},
+    faceDown: true,
+  };
+  g.board.resource.environments[3] = {
+    id: 'env_lucky2',
+    kind: 'environment',
+    label: '幸运一抽',
+    envType: 'luckyDraw',
+    trigger: 'settle',
+    setup: 'sideCard',
+    number: 3,
+    sideCard,
+  };
+  // 抵消后：中立第一、玩家第二（与 2 中立骰 + 1 玩家骰一致）
+  const ranked = [
+    { pid: NEUTRAL_WORKER_ID, count: 4, name: '中立' },
+    { pid: p0.id, count: 2, name: p0.name },
+  ];
+  applyEnvironmentOnSettleSlot(g, {
+    number: 3,
+    ranked,
+    playerById: (game, id) => game.players.find((p) => p.id === id),
+    pushLog: () => {},
+    takeEventSideCard: (game, player, card) => {
+      player.buildings.push({ ...card, built: false, slot: null });
+    },
+  });
+  assert.ok(
+    g.board.resource.environments[3].sideCard,
+    '中立为第一名时暗置牌应保留'
+  );
+  assert.ok(
+    !p0.buildings.some((b) => b.id === 'side_lucky_bld'),
+    '第二名玩家不应获得暗置牌'
+  );
+
+  // 玩家真正第一名时应获得
+  g.board.resource.environments[3].sideCard = {
+    id: 'side_lucky_bld2',
+    kind: 'building',
+    buildType: 'exchange',
+    label: '集市',
+    cost: {},
+    faceDown: true,
+  };
+  applyEnvironmentOnSettleSlot(g, {
+    number: 3,
+    ranked: [
+      { pid: p0.id, count: 4, name: p0.name },
+      { pid: NEUTRAL_WORKER_ID, count: 2, name: '中立' },
+    ],
+    playerById: (game, id) => game.players.find((p) => p.id === id),
+    pushLog: () => {},
+    takeEventSideCard: (game, player, card) => {
+      player.buildings.push({ ...card, built: false, slot: null });
+    },
+  });
+  assert.ok(
+    !g.board.resource.environments[3].sideCard,
+    '玩家第一名应取走暗置牌'
+  );
+  assert.ok(
+    p0.buildings.some((b) => b.id === 'side_lucky_bld2'),
+    '第一名玩家应获得暗置牌'
+  );
+  console.log('✓ event luckyDraw respects neutral first place');
+}
+
 console.log('— event enterFray places 3 neutrals —');
 {
   const { beginProduce } = require('../engine');
@@ -3546,11 +3900,11 @@ console.log('— event wei qi rescue zhao —');
   setupEnvironmentOnBoard(g, g.board.resource.environments[4], 4, {
     pushLog: () => {},
   });
-  // 事件在 4：周边为 1、5
+  // 事件在 4：周边为 1、5；仅资源区
   assert.strictEqual(neutralCountOn(g, 'resource', 1), 1);
-  assert.strictEqual(neutralCountOn(g, 'special', 1), 1);
+  assert.strictEqual(neutralCountOn(g, 'special', 1), 0, '功能区不应放中立骰');
   assert.strictEqual(neutralCountOn(g, 'resource', 5), 1);
-  assert.strictEqual(neutralCountOn(g, 'special', 5), 1);
+  assert.strictEqual(neutralCountOn(g, 'special', 5), 0, '功能区不应放中立骰');
   assert.strictEqual(neutralCountOn(g, 'resource', 2), 0, '非周边格不应放中立骰');
   assert.strictEqual(neutralCountOn(g, 'resource', 3), 0);
   assert.strictEqual(neutralCountOn(g, 'resource', 4), 0, '事件格自身不放');
@@ -3559,6 +3913,7 @@ console.log('— event wei qi rescue zhao —');
   beginProduce(g);
   assert.strictEqual(neutralCountOn(g, 'resource', 1), 1, 'beginProduce 后应恢复周边中立骰');
   assert.strictEqual(neutralCountOn(g, 'resource', 5), 1);
+  assert.strictEqual(neutralCountOn(g, 'special', 1), 0);
   assert.strictEqual(neutralCountOn(g, 'resource', 2), 0);
 
   const p0 = g.players[0];
@@ -5536,19 +5891,27 @@ console.log('— exchange stack same slot —');
       payload: { buildingId: 'ex1', slot: 'none:2' },
     })
   );
+  const failUnbuiltStack = applyAction(g, p.id, {
+    type: 'placeBuildingSlot',
+    payload: { buildingId: 'ex2', slot: 'none:2' },
+  });
+  assert.strictEqual(
+    failUnbuiltStack.ok,
+    false,
+    '两座未建造集市不可叠同一格'
+  );
   ok(
     applyAction(g, p.id, {
       type: 'placeBuildingSlot',
-      payload: { buildingId: 'ex2', slot: 'none:2' },
+      payload: { buildingId: 'ex2', slot: 'none:3' },
     }),
-    '第二座集市应可叠同一格'
+    '第二座未建造集市应占另一空位'
   );
-  assert.strictEqual(
-    p.buildings.filter((b) => String(b.slot) === 'none:2').length,
-    2
-  );
-  assert.strictEqual(occupiedBuildSlotCount(p), 3, '叠放后仍占 3 格');
+  assert.strictEqual(String(p.buildings.find((b) => b.id === 'ex2').slot), 'none:3');
+  assert.strictEqual(occupiedBuildSlotCount(p), 4, '两座未建集市分占两格');
 
+  // 建成第一座后，新入手仍须独占空位，不可叠到已建格
+  p.buildings.find((b) => b.id === 'ex1').built = true;
   const neu = {
     id: 'ex3',
     buildType: 'exchange',
@@ -5558,8 +5921,9 @@ console.log('— exchange stack same slot —');
     workers: 0,
     cost: {},
   };
-  assert.ok(assignBuildingSlot(p, neu), '入手集市应自动叠到已有集市格');
-  assert.strictEqual(neu.slot, 'none:2');
+  assert.ok(assignBuildingSlot(p, neu), '入手集市应占空位');
+  assert.strictEqual(neu.slot, 'none:4');
+  assert.notStrictEqual(String(neu.slot), 'none:2', '未建造不可叠到已建集市格');
   console.log('✓ exchange stack same slot');
 }
 
@@ -5598,17 +5962,23 @@ console.log('— palace stack same slot —');
       payload: { buildingId: 'pal1', slot: 'none' },
     })
   );
+  const failUnbuiltPalace = applyAction(g, p.id, {
+    type: 'placeBuildingSlot',
+    payload: { buildingId: 'pal2', slot: 'none' },
+  });
+  assert.strictEqual(
+    failUnbuiltPalace.ok,
+    false,
+    '两座未建造宫殿不可叠同一格'
+  );
   ok(
     applyAction(g, p.id, {
       type: 'placeBuildingSlot',
-      payload: { buildingId: 'pal2', slot: 'none' },
+      payload: { buildingId: 'pal2', slot: 'none:1' },
     }),
-    '第二座宫殿应可叠同一格'
+    '第二座未建造宫殿应占另一空位'
   );
-  assert.strictEqual(
-    p.buildings.filter((b) => String(b.slot) === 'none').length,
-    2
-  );
+  p.buildings.find((b) => b.id === 'pal1').built = true;
   const neu = {
     id: 'pal3',
     buildType: 'score2',
@@ -5619,9 +5989,170 @@ console.log('— palace stack same slot —');
     workers: 0,
     cost: {},
   };
-  assert.ok(assignBuildingSlot(p, neu), '入手宫殿应自动叠到已有宫殿格');
-  assert.strictEqual(neu.slot, 'none');
+  assert.ok(assignBuildingSlot(p, neu), '入手宫殿应占空位');
+  assert.strictEqual(neu.slot, 'none:2');
+  assert.notStrictEqual(String(neu.slot), 'none', '未建造不可叠到已建宫殿格');
   console.log('✓ palace stack same slot');
+}
+
+console.log('— wish well merge on construct —');
+{
+  const { occupiedBuildSlotCount } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p = g.players[0];
+  g.phase = 'build';
+  g.currentPlayerId = p.id;
+  g.buildPassed = {};
+  g.produceFinishOrder = [p.id, g.players[1].id];
+  g.pendingEventChoice = null;
+  p.expandSlots = 1;
+  p.resources = { wood: 10, stone: 10, food: 10, iron: 10 };
+  p.buildings = [
+    {
+      id: 'ww1',
+      buildType: 'wishWell',
+      label: '许愿井1',
+      slot: 'none',
+      built: false,
+      workers: 0,
+      cost: { wood: 1, stone: 1, food: 1, iron: 1 },
+    },
+    {
+      id: 'ww2',
+      buildType: 'wishWell',
+      label: '许愿井2',
+      slot: 'none:1',
+      built: false,
+      workers: 0,
+      cost: { wood: 1, stone: 1, food: 1, iron: 1 },
+    },
+  ];
+  ok(
+    applyAction(g, p.id, {
+      type: 'construct',
+      payload: { buildingId: 'ww1' },
+    })
+  );
+  assert.strictEqual(String(p.buildings.find((b) => b.id === 'ww1').slot), 'none');
+  ok(
+    applyAction(g, p.id, {
+      type: 'construct',
+      payload: { buildingId: 'ww2' },
+    }),
+    '第二座许愿井应可建造'
+  );
+  const ww1 = p.buildings.find((b) => b.id === 'ww1');
+  const ww2 = p.buildings.find((b) => b.id === 'ww2');
+  assert.ok(ww1.built && ww2.built);
+  assert.strictEqual(
+    String(ww1.slot),
+    String(ww2.slot),
+    '连续建成两座许愿井应叠同一格'
+  );
+  assert.strictEqual(occupiedBuildSlotCount(p), 1, '叠放后只占 1 格');
+  console.log('✓ wish well merge on construct');
+}
+
+console.log('— unbuilt never stacks onto built; overflow discard —');
+{
+  const { assignBuildingSlot, occupiedBuildSlotCount } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p = g.players[0];
+  // 默认上限 3 格：两座已建许愿井叠在一格，另两格也已占用 → 无空位
+  p.expandSlots = 0;
+  p.buildings = [
+    {
+      id: 'ww_a',
+      buildType: 'wishWell',
+      label: '许愿井A',
+      slot: 'none',
+      built: true,
+      workers: 0,
+      cost: {},
+    },
+    {
+      id: 'ww_b',
+      buildType: 'wishWell',
+      label: '许愿井B',
+      slot: 'none',
+      built: true,
+      workers: 0,
+      cost: {},
+    },
+    {
+      id: 'ex_fill1',
+      buildType: 'exchange',
+      label: '集市填1',
+      slot: 'none:1',
+      built: true,
+      workers: 0,
+      cost: {},
+    },
+    {
+      id: 'ex_fill2',
+      buildType: 'exchange',
+      label: '集市填2',
+      slot: 'none:2',
+      built: true,
+      workers: 0,
+      cost: {},
+    },
+  ];
+  assert.strictEqual(occupiedBuildSlotCount(p), 3);
+  const neu = {
+    id: 'ww_c',
+    buildType: 'wishWell',
+    label: '许愿井C',
+    slot: null,
+    built: false,
+    workers: 0,
+    cost: {},
+  };
+  assert.strictEqual(
+    assignBuildingSlot(p, neu),
+    false,
+    '无空位时未建造不可叠到已建许愿井'
+  );
+  assert.strictEqual(neu.slot, null);
+
+  // 有空位时仍独占空位
+  p.buildings = p.buildings.filter((b) => b.id !== 'ex_fill2');
+  assert.strictEqual(occupiedBuildSlotCount(p), 2);
+  const neu2 = {
+    id: 'ww_d',
+    buildType: 'wishWell',
+    label: '许愿井D',
+    slot: null,
+    built: false,
+    workers: 0,
+    cost: {},
+  };
+  assert.ok(assignBuildingSlot(p, neu2), '有空位应独占');
+  assert.strictEqual(neu2.slot, 'none:2');
+  assert.notStrictEqual(String(neu2.slot), 'none');
+
+  // 满格入手 → 仅标记建筑格弃牌 pending，不进入 settle_act
+  p.buildings.push(neu2);
+  assert.strictEqual(occupiedBuildSlotCount(p), 3);
+  const beforePhase = g.phase;
+  const neuE = {
+    id: 'ww_e',
+    kind: 'building',
+    buildType: 'wishWell',
+    label: '许愿井E',
+    cost: {},
+    faceDown: false,
+    slot: null,
+    built: false,
+    workers: 0,
+  };
+  assert.strictEqual(assignBuildingSlot(p, neuE), false);
+  p.pendingDiscardBuild = { newCard: neuE, newCards: [neuE] };
+  assert.ok(p.pendingDiscardBuild, '无空位入手应进入建筑格弃牌');
+  assert.strictEqual(g.phase, beforePhase, '不应因此进入完整弃牌阶段');
+  console.log('✓ unbuilt never stacks onto built; overflow discard');
 }
 
 console.log('— resource face-down slots —');

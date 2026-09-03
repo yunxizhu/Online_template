@@ -55,7 +55,7 @@ function envCardHtml(def, lang) {
       keepOverflow:
         'After settle cancel: 1st place on this slot skips resource discard for this round and picks any 2 resources.',
       weiQiRescueZhao:
-        'Setup: place 1 neutral on each orthogonally adjacent number slot (1→2/4, 2→1/3/5, 3→2/6, 4→1/5, 5→2/4/6, 6→3/5) in both resource and function/building areas. Dispatch: choose another slot with neutrals and move all neutrals here.',
+        'Setup: place 1 neutral on each orthogonally adjacent resource-area number slot (1→2/4, 2→1/3/5, 3→2/6, 4→1/5, 5→2/4/6, 6→3/5). Dispatch: choose another slot with neutrals and move all neutrals here.',
     };
     dd = enMap[def.envType] || dd;
   }
