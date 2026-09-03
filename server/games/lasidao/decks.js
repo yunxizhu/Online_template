@@ -322,7 +322,7 @@ const ENVIRONMENT_CATALOG = [
     trigger: 'dispatch',
     setup: 'marker',
     count: 1,
-    desc: '成为本格最大者时可放置标记（首次亦触发；继续加码不重复）。标记格结算无收获',
+    desc: '在自己的回合中，成为本格最大者时可放置标记（首次亦触发；继续加码不重复）。标记格结算无收获',
   },
   {
     envType: 'resistBarbarians',
@@ -367,7 +367,7 @@ const ENVIRONMENT_CATALOG = [
     trigger: 'settle',
     dispatchAlso: true,
     count: 2,
-    desc: '派遣：成为本格最大者时（首次亦触发；继续加码不重复），任选获得 n 个资源（可重复），n=本格骰子归属者数量（每位玩家与中立各计 1）。结算：第三名额外获得前两名在本格所得资源之和',
+    desc: '派遣：在自己的回合中，成为本格最大者时（首次亦触发；继续加码不重复），任选获得 n 个资源（可重复），n=本格骰子归属者数量（每位玩家与中立各计 1）。结算：第三名额外获得前两名在本格所得资源之和',
   },
   {
     envType: 'firstCome',
@@ -405,7 +405,7 @@ const ENVIRONMENT_CATALOG = [
     label: '传送',
     trigger: 'dispatch',
     count: 1,
-    desc: '派遣：成为本格最大者时（首次亦触发；继续加码不重复），将场上任意板块任意玩家（含中立）的 1 枚骰子传送到任意有板块的格子（触发目标格派遣事件）',
+    desc: '派遣：在自己的回合中，成为本格最大者时（首次亦触发；继续加码不重复），将场上任意板块任意玩家（含中立）的 1 枚骰子传送到任意有板块的格子（触发目标格派遣事件）',
   },
   {
     envType: 'keepOverflow',

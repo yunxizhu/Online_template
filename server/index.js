@@ -534,6 +534,7 @@ function nudgeStaleTunnelPlayers() {
 
 function attachTunnelHooks(t) {
   if (!t) return t;
+  let tunnelHadLost = false;
   t.onUrl = (url) => {
     const oldHost =
       (mqttBulletin && mqttBulletin.getLastKnownHost && mqttBulletin.getLastKnownHost()) ||
@@ -542,7 +543,9 @@ function attachTunnelHooks(t) {
       // 新隧道到手：立刻把本机对局挂到新地址并重发心跳
       mqttBulletin.flushIfReady(url, { skipWarmup: true });
     }
-    io.emit('tunnel:status', { recovering: false, url: url || '' });
+    const wasLost = tunnelHadLost;
+    tunnelHadLost = false;
+    io.emit('tunnel:status', { recovering: false, url: url || '', wasLost });
     startTunnelReloadWatch(url, oldHost);
   };
   t.onLost = () => {
@@ -550,6 +553,7 @@ function attachTunnelHooks(t) {
       // 不要清房间心跳：对局仍在本机，续播旧址并后台拉起新隧道
       mqttBulletin.markTunnelLost();
     }
+    tunnelHadLost = true;
     io.emit('tunnel:status', { recovering: true });
   };
   return t;

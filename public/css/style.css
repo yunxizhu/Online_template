@@ -1730,19 +1730,14 @@ body.phase-room .chat-tabs button.is-on {
 
 .toast-slot {
   position: fixed;
-  top: 1rem;
-  right: 1rem;
+  left: 1rem;
+  bottom: 1rem;
   z-index: 9999;
   height: auto;
   width: auto;
   max-width: 18rem;
   margin: 0;
   pointer-events: none;
-}
-
-.toast-slot.is-left {
-  right: auto;
-  left: 1rem;
 }
 
 .toast {

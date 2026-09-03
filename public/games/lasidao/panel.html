@@ -252,6 +252,30 @@
     </div>
   </div>
 
+  <!-- 其他玩家视角：交易进行中 -->
+  <div id="las-trade-other-modal" class="modal las-trade-decision-modal las-harvest-modal" hidden>
+    <div class="modal-backdrop" id="las-trade-other-backdrop"></div>
+    <div class="modal-dialog panel las-harvest-dialog las-trade-decision-dialog" role="dialog" aria-modal="true" aria-labelledby="las-trade-other-title">
+      <div class="las-harvest-head">
+        <h3 id="las-trade-other-title" data-i18n="lasidao.tradeOtherTitle">交易进行中</h3>
+        <p id="las-trade-other-hint" class="muted las-hint"></p>
+      </div>
+      <div class="las-trade-decision-body">
+        <div class="las-trade-decision-block">
+          <h4 data-i18n="lasidao.tradeGive">发起方交出</h4>
+          <div id="las-trade-other-give" class="las-trade-card-row"></div>
+        </div>
+        <div class="las-trade-decision-block">
+          <h4 data-i18n="lasidao.tradeTake">发起方获得</h4>
+          <div id="las-trade-other-receive" class="las-trade-card-row"></div>
+        </div>
+      </div>
+      <div class="las-harvest-foot row las-actions">
+        <button id="btn-las-trade-other-ok" type="button" data-i18n="app.ok">知道了</button>
+      </div>
+    </div>
+  </div>
+
   <div id="las-robbery-modal" class="modal las-robbery-modal" hidden>
     <div class="modal-backdrop" id="las-robbery-backdrop"></div>
     <div class="modal-dialog panel las-robbery-dialog" role="dialog" aria-modal="true" aria-labelledby="las-robbery-title">

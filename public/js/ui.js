@@ -551,10 +551,13 @@
       }
       const room = list.find((r) => String(r && r.id ? r.id : '').toUpperCase() === id);
       if (!room) continue;
-      if (isSelfInRoomPlayers(room)) continue;
-      delete state._leftRooms[id];
-      delete map[id];
-      changed = true;
+      // 服务端仍认为我在房间里 → 清理本地「已离开」标记，避免阻挡重连弹窗
+      if (isSelfInRoomPlayers(room)) {
+        delete state._leftRooms[id];
+        delete map[id];
+        changed = true;
+        continue;
+      }
     }
     if (changed) writePersistedLeftRooms(map);
   }
@@ -4866,12 +4869,7 @@
         if (gameChanged) fillCreateFormFromRoom(data.room);
       }
       if (data.room.id && data.room.id !== prevRoomId) {
-        const toastSlot = el.toast && el.toast.parentElement;
-        if (toastSlot) toastSlot.classList.add('is-left');
         showToast(t('room.enteredNamed', { name: data.room.name || data.room.id }), 2000);
-        setTimeout(() => {
-          if (toastSlot) toastSlot.classList.remove('is-left');
-        }, 2000);
       }
     }
     state._lastRoomId = data.room.id || null;
@@ -5298,6 +5296,11 @@
   function scheduleRemoteRecover() {
     if (!net.isOnRemoteHost() || remoteRecovering) return;
     cancelRemoteRecover();
+    // 判断自己是否是房主：非房主延迟更长，给房主重启隧道留出时间
+    const isHost = Boolean(
+      state.room && state.me && String(state.room.hostId) === String(state.me.id)
+    );
+    const delayMs = isHost ? 2500 : 12000;
     remoteRecoverTimer = setTimeout(() => {
       remoteRecoverTimer = null;
       recoverRemoteSession().catch((err) => {
@@ -5305,7 +5308,7 @@
           clearArchive: false,
         });
       });
-    }, 2500);
+    }, delayMs);
   }
 
   async function recoverRemoteSession() {
@@ -5466,7 +5469,9 @@
     if (leavingToLocal) return;
     // 房主本机仍连着，需要提示隧道在重建；客人走 disconnect 恢复流程
     if (typeof net.isOnRemoteHost === 'function' && net.isOnRemoteHost()) return;
-    if (data && data.recovering) {
+    // 只在真正经历过隧道中断后恢复时才提示（首次启动不弹）
+    if (!data || !data.wasLost) return;
+    if (data.recovering) {
       showToast(t('toast.tunnelHostRecovering'));
       return;
     }

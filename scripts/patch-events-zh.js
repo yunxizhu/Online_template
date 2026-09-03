@@ -1,0 +1,14 @@
+const fs = require('fs');
+const path = 'public/i18n/zh.json';
+let text = fs.readFileSync(path, 'utf8');
+const old1 = 'env:barrenHarvest\\">颗粒无收</dt><dd>成为本格最大者时可放置标记（首次亦触发；继续加码不重复）。标记格结算无收获</dd>';
+const new1 = 'env:barrenHarvest\\">颗粒无收</dt><dd>在自己的回合中，成为本格最大者时可放置标记（首次亦触发；继续加码不重复）。标记格结算无收获</dd>';
+text = text.split(old1).join(new1);
+const old2 = 'env:fishermanProfit\\">渔翁得利</dt><dd>派遣：成为本格最大者时（首次亦触发；继续加码不重复），任选获得 n 个资源（可重复），n=本格骰子归属者数量（每位玩家与中立各计 1）。结算：第三名额外获得前两名在本格所得资源之和</dd>';
+const new2 = 'env:fishermanProfit\\">渔翁得利</dt><dd>派遣：在自己的回合中，成为本格最大者时（首次亦触发；继续加码不重复），任选获得 n 个资源（可重复），n=本格骰子归属者数量（每位玩家与中立各计 1）。结算：第三名额外获得前两名在本格所得资源之和</dd>';
+text = text.split(old2).join(new2);
+const old3 = 'env:teleport\\">传送</dt><dd>派遣：成为本格最大者时（首次亦触发；继续加码不重复），将场上任意板块任意玩家（含中立）的 1 枚骰子传送到任意有板块的格子（触发目标格派遣事件）</dd>';
+const new3 = 'env:teleport\\">传送</dt><dd>派遣：在自己的回合中，成为本格最大者时（首次亦触发；继续加码不重复），将场上任意板块任意玩家（含中立）的 1 枚骰子传送到任意有板块的格子（触发目标格派遣事件）</dd>';
+text = text.split(old3).join(new3);
+fs.writeFileSync(path, text);
+console.log('zh.json events updated');

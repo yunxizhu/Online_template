@@ -3314,7 +3314,7 @@ console.log('— enhance die counts as 1.5 in settle —');
   ok(applyAction(g, p0.id, { type: 'useFunc', payload: { cardId: 'fn_enhance' } }));
   assert.strictEqual(p0.enhancedDice, 2, '应再强化 1 枚');
   // 达强化上限后再发动应失败
-  p0.enhancedDice = 3;
+  p0.enhancedDice = 4;
   p0.funcCards.push({
     id: 'fn_enhance2',
     kind: 'function',
@@ -3325,7 +3325,7 @@ console.log('— enhance die counts as 1.5 in settle —');
     type: 'useFunc',
     payload: { cardId: 'fn_enhance2' },
   });
-  assert.ok(!fail.ok, '强化骰达上限 3 不可再发动');
+  assert.ok(!fail.ok, '强化骰达上限 4 不可再发动');
   assert.ok(
     String(fail.error || '').includes('上限'),
     '错误应提示强化上限'
@@ -3850,7 +3850,7 @@ console.log('— prisoners dilemma last place not fewest dice —');
   const p0 = g.players[0];
   const p1 = g.players[1];
   const p2 = g.players[2];
-  // 第一名 3、第二名 1、未放置 0：最后一名应为 p1 与 p2（旧逻辑仅惩罚最少骰的 p2）
+  // 第一名 3、第二名 1、未放置 0：最后一名只看所有玩家中最少者，即仅 p2（0 个）
   g.board.resource.workers = {
     1: {},
     2: {},
@@ -3868,15 +3868,15 @@ console.log('— prisoners dilemma last place not fewest dice —');
   );
   assert.strictEqual(
     Number((g.pendingPrisonerDiscards || {})[p1.id]) || 0,
-    3,
-    '抵消后最后一名应弃第一名骰数'
+    0,
+    '第二名不是最少者，不应弃牌'
   );
   assert.strictEqual(
     Number((g.pendingPrisonerDiscards || {})[p2.id]) || 0,
     3,
-    '未放置者固定为最后一名'
+    '未放置者为最少，应弃第一名骰数'
   );
-  console.log('✓ prisoners dilemma last place includes second and non-placers');
+  console.log('✓ prisoners dilemma last place is global minimum');
 }
 
 console.log('— event wei qi rescue zhao —');

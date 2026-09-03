@@ -1,0 +1,13 @@
+const fs = require('fs');
+const text = fs.readFileSync('public/i18n/en.json', 'utf8');
+const old1 = 'env:barrenHarvest">Barren Harvest</dt><dd>On event slot. Dispatch: when you become the slot leader, place the marker (first time counts; stacking more as leader does not retrigger). Move marker to any resource or function/building slot—marked slots yield nothing on settle.</dd>';
+const new1 = 'env:barrenHarvest">Barren Harvest</dt><dd>On event slot. During your own turn, when you become the slot leader, place the marker (first time counts; stacking more as leader does not retrigger). Move marker to any resource or function/building slot—marked slots yield nothing on settle.</dd>';
+let result = text.split(old1).join(new1);
+const old2 = 'env:fishermanProfit">Fisherman\'s Profit</dt><dd>Dispatch: when you become the slot leader (first time counts; stacking more as leader does not retrigger), choose any n resources (duplicates allowed). n = number of distinct dice owners on this slot (each player and neutral counts as 1). Settle: 3rd place also gains the sum of what 1st and 2nd gained on this slot.</dd>';
+const new2 = 'env:fishermanProfit">Fisherman\'s Profit</dt><dd>Dispatch: during your own turn, when you become the slot leader (first time counts; stacking more as leader does not retrigger), choose any n resources (duplicates allowed). n = number of distinct dice owners on this slot (each player and neutral counts as 1). Settle: 3rd place also gains the sum of what 1st and 2nd gained on this slot.</dd>';
+result = result.split(old2).join(new2);
+const old3 = 'env:teleport">Teleport</dt><dd>Dispatch: when you become the slot leader (first time counts; stacking more as leader does not retrigger), teleport 1 die from any board slot (any player, including neutral) to any slot with a tile (triggers dispatch event at the target slot).</dd>';
+const new3 = 'env:teleport">Teleport</dt><dd>Dispatch: during your own turn, when you become the slot leader (first time counts; stacking more as leader does not retrigger), teleport 1 die from any board slot (any player, including neutral) to any slot with a tile (triggers dispatch event at the target slot).</dd>';
+result = result.split(old3).join(new3);
+fs.writeFileSync('public/i18n/en.json', result);
+console.log('en.json events updated');

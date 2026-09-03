@@ -257,6 +257,7 @@ function setupEnvironmentOnBoard(game, env, number, helpers) {
       env.firstComeTier = tier;
       env.firstComeRequired = required;
       env.stash = { wood: tier, stone: tier, food: tier, iron: tier };
+      env.stashClaimed = false;
       env.firstComeClaims = {};
       if (helpers && helpers.pushLog) {
         helpers.pushLog(
@@ -372,6 +373,9 @@ function applyEnvironmentOnDispatch(game, ctx) {
   if (!env || !hasDispatchEffect(env)) return null;
   const player = ctx.player;
   if (!player) return null;
+
+  // 派遣时触发的效果：仅在自己回合生效；在别人回合被传送/驱逐过来时不触发（firstCome除外）
+  if (env.envType !== 'firstCome' && game.currentPlayerId !== player.id) return null;
 
   switch (env.envType) {
     case 'fishermanProfit': {
@@ -533,6 +537,8 @@ function applyEnvironmentOnDispatch(game, ctx) {
           : firstComeRequiredWorkers(game.round);
       if (!env.firstComeClaims) env.firstComeClaims = {};
       if (env.firstComeClaims[player.id]) return null;
+      // 先到先得：资源只有一份，已被别人领走后自己不能再领
+      if (env.stashClaimed) return null;
       if (!(prevCount < required && physical >= required)) return null;
 
       const grant = { wood: tier, stone: tier, food: tier, iron: tier };
@@ -601,27 +607,51 @@ function applyEnvironmentOnSettleSlot(game, ctx) {
       break;
 
     case 'prisonersDilemma': {
-      // 最后一名弃牌：抵消后排名末位（可并列）；未放置者固定为最后一名。
-      // n = 第一名物理骰数。唯一幸存者算第一名，不算最后一名。
       const physical = ctx.physical || {};
-      const remain = ctx.remain || {};
-      const top = ranked[0];
+      const alive = (ctx.alivePlayers && ctx.alivePlayers(game)) || [];
+      if (!alive.length) break;
+
+      // 计算弃牌数 n：先看板上所有实体（含中立）抵消后的名次，取第一名的骰子数
+      const entries = Object.entries(physical).filter(([, c]) => c > 0);
+      const byCount = new Map();
+      for (const [pid, c] of entries) {
+        if (!byCount.has(c)) byCount.set(c, []);
+        byCount.get(c).push(pid);
+      }
+      const physicalRemain = {};
+      for (const [c, pids] of byCount) {
+        if (pids.length === 1) physicalRemain[pids[0]] = c;
+      }
+      const physicalRanked = Object.entries(physicalRemain)
+        .map(([pid, count]) => ({
+          pid,
+          count,
+          dice: Number(physical[pid]) || 0,
+        }))
+        .sort((a, b) => b.count - a.count);
+
+      const top = physicalRanked[0];
       const n = top
         ? Number(top.dice) || physicalDiceOnSlot(physical, top.pid)
         : 0;
-      const alive = (ctx.alivePlayers && ctx.alivePlayers(game)) || [];
-      if (!alive.length) break;
-      const lastCount = ranked.length
-        ? Number(ranked[ranked.length - 1].count) || 0
-        : null;
+
+      // 确定受害者：看所有玩家中谁的物理骰子数最少（含没放的 0）
+      // 中立骰不参与“玩家排名”，只用来算 n
+      const playerCounts = alive.map((p) => ({
+        pid: p.id,
+        count: physicalDiceOnSlot(physical, p.id) || 0,
+      }));
+      if (playerCounts.length <= 1) break; // 只有一人不罚
+      const minCount = Math.min(...playerCounts.map((pc) => pc.count));
+      const maxCount = Math.max(...playerCounts.map((pc) => pc.count));
+
+      // 若所有玩家骰子数相同，则人人都是最后一名（同时也是第一名）
       const victims = alive.filter((p) => {
-        const dice = physicalDiceOnSlot(physical, p.id);
-        if (dice <= 0) return true; // 没放的固定为最后一名
-        const strength = Number(remain[p.id]) || 0;
-        if (strength <= 0) return true; // 抵消出局
-        if (ranked.length < 2 || lastCount == null) return false;
-        return strength === lastCount;
+        const count = physicalDiceOnSlot(physical, p.id) || 0;
+        if (minCount === maxCount) return true;
+        return count === minCount;
       });
+
       if (!game.pendingPrisonerDiscards) game.pendingPrisonerDiscards = {};
       for (const p of victims) {
         if (n <= 0) continue;

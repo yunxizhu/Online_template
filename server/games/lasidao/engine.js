@@ -58,7 +58,7 @@ const MAX_FUNC_HAND = 3;
 const MAX_BUILDINGS = 3;
 const MAX_RESOURCE_HAND = 12;
 /** 每位玩家最多拥有的强化骰数量 */
-const MAX_ENHANCED_DICE = 3;
+const MAX_ENHANCED_DICE = 4;
 /** 开局每位玩家自带的强化骰数量 */
 const START_ENHANCED_DICE = 1;
 /** 强化骰结算效力（普通骰为 1） */
@@ -851,6 +851,9 @@ function playerScore(p, game) {
   if (game && game.breedingTycoonPlayerId === p.id) {
     s += BREEDING_TYCOON_SCORE;
   }
+  if (game && game.boostedTycoonPlayerId === p.id) {
+    s += BOOSTED_TYCOON_SCORE;
+  }
   return s;
 }
 
@@ -1482,6 +1485,7 @@ function createGameState(room) {
     pendingMercenaryQueue: [],
     mercenaryRoll: null,
     breedingTycoonPlayerId: null,
+    boostedTycoonPlayerId: null,
     mercenaryPlaced: [],
     mercenaryGate: null,
     // 生产阶段
@@ -4239,6 +4243,11 @@ const BREEDING_TYCOON_ID = 'breedingTycoon';
 const BREEDING_TYCOON_LABEL = '养殖场大户';
 const BREEDING_TYCOON_NEED = 7;
 const BREEDING_TYCOON_SCORE = 2;
+const BOOSTED_TYCOON_STACK_KEY = 'boostedTycoon';
+const BOOSTED_TYCOON_ID = 'boostedTycoon';
+const BOOSTED_TYCOON_LABEL = '你被强化了！';
+const BOOSTED_TYCOON_NEED = 3;
+const BOOSTED_TYCOON_SCORE = 2;
 
 function produceManagerTitle(resource) {
   const name = RESOURCE_LABELS[resource] || resource;
@@ -4328,6 +4337,16 @@ function breedingTycoonScore(player, game) {
   return hasBreedingTycoon(player, game) ? BREEDING_TYCOON_SCORE : 0;
 }
 
+function hasBoostedTycoon(player, game) {
+  return Boolean(
+    game && player && !player.left && game.boostedTycoonPlayerId === player.id
+  );
+}
+
+function boostedTycoonScore(player, game) {
+  return hasBoostedTycoon(player, game) ? BOOSTED_TYCOON_SCORE : 0;
+}
+
 /** 称号判定用永久村民数（不含 tempVillagers / recruitPending） */
 function permanentVillagerCount(player) {
   return Math.max(0, Number(player && player.villagers) || 0);
@@ -4375,6 +4394,48 @@ function resolveBreedingTycoon(game) {
   return true;
 }
 
+function boostedTycoonEligiblePlayers(game) {
+  return alivePlayers(game).filter(
+    (p) => (Number(p.enhancedDice) || 0) >= BOOSTED_TYCOON_NEED
+  );
+}
+
+function pickBoostedTycoonHolder(game) {
+  const eligible = boostedTycoonEligiblePlayers(game);
+  if (!eligible.length) return null;
+  const maxE = Math.max(...eligible.map((p) => Number(p.enhancedDice) || 0));
+  const top = eligible.filter((p) => (Number(p.enhancedDice) || 0) === maxE);
+  const prevId = game.boostedTycoonPlayerId || null;
+  if (prevId && top.some((p) => p.id === prevId)) return prevId;
+  top.sort((a, b) => (a.seat || 0) - (b.seat || 0));
+  return top[0].id;
+}
+
+/** @returns {boolean} 称号持有人是否变化 */
+function resolveBoostedTycoon(game) {
+  if (!game) return false;
+  const prevId = game.boostedTycoonPlayerId || null;
+  const nextId = pickBoostedTycoonHolder(game);
+  if (nextId === prevId) return false;
+  game.boostedTycoonPlayerId = nextId;
+  const next = nextId ? playerById(game, nextId) : null;
+  const prev = prevId ? playerById(game, prevId) : null;
+  if (next && !prev) {
+    pushLog(
+      game,
+      `${next.name} 获得称号「${BOOSTED_TYCOON_LABEL}」（强化村民 ≥${BOOSTED_TYCOON_NEED}，+${BOOSTED_TYCOON_SCORE} 分）`
+    );
+  } else if (next && prev) {
+    pushLog(
+      game,
+      `${next.name} 抢走称号「${BOOSTED_TYCOON_LABEL}」（强化村民 ${Number(next.enhancedDice) || 0} > ${Number(prev.enhancedDice) || 0}，+${BOOSTED_TYCOON_SCORE} 分）`
+    );
+  } else if (!next && prev) {
+    pushLog(game, `${prev.name} 失去称号「${BOOSTED_TYCOON_LABEL}」`);
+  }
+  return true;
+}
+
 function playerTitles(player, game) {
   const titles = stackAchievementKeys(player).map((key) => ({
     id: stackAchievementTitleId(key),
@@ -4389,6 +4450,15 @@ function playerTitles(player, game) {
       label: BREEDING_TYCOON_LABEL,
       score: BREEDING_TYCOON_SCORE,
       need: BREEDING_TYCOON_NEED,
+    });
+  }
+  if (hasBoostedTycoon(player, game)) {
+    titles.push({
+      id: BOOSTED_TYCOON_ID,
+      stackKey: BOOSTED_TYCOON_STACK_KEY,
+      label: BOOSTED_TYCOON_LABEL,
+      score: BOOSTED_TYCOON_SCORE,
+      need: BOOSTED_TYCOON_NEED,
     });
   }
   return titles;
@@ -4454,6 +4524,9 @@ function claimedStackTitleKeys(game) {
   const claimed = new Set();
   if (game && game.breedingTycoonPlayerId) {
     claimed.add(BREEDING_TYCOON_STACK_KEY);
+  }
+  if (game && game.boostedTycoonPlayerId) {
+    claimed.add(BOOSTED_TYCOON_STACK_KEY);
   }
   for (const p of game.players || []) {
     if (p.left) continue;
@@ -5646,6 +5719,7 @@ function useEnhance(game, player, _payload) {
     game,
     `${player.name} 强化 1 枚骰子（${player.enhancedDice}/${MAX_ENHANCED_DICE}）`
   );
+  resolveBoostedTycoon(game);
   return { ok: true };
 }
 
@@ -6139,6 +6213,14 @@ function publicGameState(game, viewerId) {
     settleAnimUntil:
       game.phase === 'settle' ? Number(game.settleAnimUntil) || 0 : 0,
     settleAnimPending: game.phase === 'settle',
+    settleAnimAcks:
+      game.phase === 'settle' && game.settleAnimAcks
+        ? alivePlayers(game).map((p) => ({
+            id: p.id,
+            name: p.name,
+            ack: Boolean(game.settleAnimAcks[p.id]),
+          }))
+        : [],
     wishWellPending:
       game.phase === 'wish_well' || game.phase === 'settle_act'
         ? playersNeedingWishWell(game).map((p) => ({
@@ -6197,6 +6279,13 @@ function publicGameState(game, viewerId) {
           options:
             viewerId === game.pendingRedrawChoice.playerId
               ? (game.pendingRedrawChoice.options || []).map(publicRedrawOption)
+              : null,
+          shownToAll:
+            (game.pendingRedrawChoice.options || []).length > 0
+              ? (game.pendingRedrawChoice.options || []).map((c) => ({
+                  id: c.id,
+                  kind: c.kind || 'function',
+                }))
               : null,
         }
       : null,
@@ -6281,6 +6370,10 @@ function publicGameState(game, viewerId) {
               Boolean(viewerId) && game.pendingTrade.toId === viewerId,
             isFrom:
               Boolean(viewerId) && game.pendingTrade.fromId === viewerId,
+            forOther:
+              Boolean(viewerId) &&
+              game.pendingTrade.fromId !== viewerId &&
+              game.pendingTrade.toId !== viewerId,
           };
         })()
       : null,
@@ -6843,6 +6936,10 @@ function onPlayerQuit(game, playerId) {
     game.breedingTycoonPlayerId = null;
   }
   resolveBreedingTycoon(game);
+  if (game.boostedTycoonPlayerId === playerId) {
+    game.boostedTycoonPlayerId = null;
+  }
+  resolveBoostedTycoon(game);
 
   if (
     game.pendingTrade &&

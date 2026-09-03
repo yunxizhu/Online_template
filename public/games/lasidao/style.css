@@ -4745,10 +4745,10 @@ button.las-exile-player.color-neutral {
 
 .las-turn-toast {
   position: fixed;
-  left: 50%;
-  top: 18%;
+  left: 1rem;
+  bottom: 1rem;
   z-index: 120;
-  transform: translate(-50%, -12px) scale(0.96);
+  transform: translate(0, 12px) scale(0.96);
   opacity: 0;
   pointer-events: none;
   padding: calc(0.85 * var(--las-rem)) calc(1.35 * var(--las-rem));
@@ -4768,12 +4768,12 @@ button.las-exile-player.color-neutral {
 
 .las-turn-toast.is-in {
   opacity: 1;
-  transform: translate(-50%, 0) scale(1);
+  transform: translate(0, 0) scale(1);
 }
 
 .las-turn-toast.is-out {
   opacity: 0;
-  transform: translate(-50%, -10px) scale(0.98);
+  transform: translate(0, 10px) scale(0.98);
 }
 
 .las-turn-toast[hidden] {

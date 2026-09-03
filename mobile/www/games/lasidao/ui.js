@@ -726,7 +726,6 @@ window.LasidaoUi = (function () {
   function shouldShowPlayRevealForViewer(reveal, meId) {
     if (!reveal || !reveal.id) return false;
     if (reveal.forceAll) return true;
-    if (reveal.actorId && meId && reveal.actorId === meId) return false;
     return true;
   }
 
@@ -2972,7 +2971,17 @@ window.LasidaoUi = (function () {
       } else if (!text && game.phase === 'wish_well') {
         text = wishWellStatusText(game, meId);
       } else if (!text && game.phase === 'settle' && !isBlockingEventStatus(game)) {
-        text = t('lasidao.statusSettle');
+        const pendingOthers =
+          game.settleAnimAcks &&
+          game.settleAnimAcks.filter(
+            (a) => a.id !== meId && !a.ack
+          );
+        if (pendingOthers && pendingOthers.length) {
+          const names = pendingOthers.map((a) => a.name || '?').join('、');
+          text = t('lasidao.statusAwaitSettleAnim', { name: names });
+        } else {
+          text = t('lasidao.statusSettle');
+        }
       } else if (
         !text &&
         !isMyTurn(game, meId) &&
@@ -5053,6 +5062,7 @@ window.LasidaoUi = (function () {
     if (!deferredHeavyRenderPending || !lastGame) return;
     deferredHeavyRenderPending = false;
     const me = mePlayer(lastGame, lastMeId);
+    renderMe(lastGame, lastMeId);
     renderPlayerBoards(lastGame, lastMeId);
     renderActRail(lastGame, lastMeId);
     renderBuildHand(lastGame, lastMeId);
@@ -5800,7 +5810,7 @@ window.LasidaoUi = (function () {
             envCard.classList.add('is-dealing');
           }
           envBox.appendChild(envCard);
-          if (envTile.envType === 'barrenHarvest') {
+          if (envTile.envType === 'barrenHarvest' && barrenMarkerOnSlot(game, areaKey, num)) {
             envBox.appendChild(createEnvBarrenMarkerEl());
           }
           const badges = document.createElement('div');
@@ -9364,6 +9374,37 @@ window.LasidaoUi = (function () {
     syncRobberyPendingModal(game);
     syncTradeModals(game, meId);
 
+    // 旁观者视角：交易弹窗刚消失时，用 turn toast 显示交易结果
+    if (
+      _prevGame &&
+      _prevGame.pendingTrade &&
+      _prevGame.pendingTrade.forOther &&
+      !game.pendingTrade
+    ) {
+      const lastText = lastLogText(game);
+      const prevTrade = _prevGame.pendingTrade;
+      let tradeToastText = '';
+      if (lastText.indexOf('接受了') >= 0) {
+        tradeToastText = t('lasidao.tradeResultAccept', {
+          from: prevTrade.fromName || '?',
+          to: prevTrade.toName || '?',
+        });
+      } else if (lastText.indexOf('拒绝了') >= 0) {
+        tradeToastText = t('lasidao.tradeResultReject', {
+          from: prevTrade.fromName || '?',
+          to: prevTrade.toName || '?',
+        });
+      } else if (lastText.indexOf('取消了') >= 0) {
+        tradeToastText = t('lasidao.tradeResultCancel', {
+          from: prevTrade.fromName || '?',
+          to: prevTrade.toName || '?',
+        });
+      }
+      if (tradeToastText) {
+        showTurnToast(tradeToastText, 3000);
+      }
+    }
+
     maybePlaySettle(game);
     ensureSettleAnimAck(game);
     maybeShowVictoryModal(game, meId);
@@ -10634,6 +10675,29 @@ window.LasidaoUi = (function () {
     }
   }
 
+  function setTradeOtherModalOpen(open) {
+    const modal = $('las-trade-other-modal');
+    if (!modal) return;
+    modal.hidden = !open;
+    if (open && window.I18n && window.I18n.applyDom) {
+      window.I18n.applyDom(modal);
+    }
+  }
+
+  function renderTradeOtherModal(trade) {
+    if (!trade) return;
+    const hintEl = $('las-trade-other-hint');
+    if (hintEl) {
+      hintEl.textContent = t('lasidao.tradeOtherHint', {
+        from: trade.fromName || '?',
+        to: trade.toName || '?',
+      });
+    }
+    // 他人视角：直接显示发起方给出的 give 和要拿走的 take
+    fillTradeCardRow($('las-trade-other-give'), trade.give);
+    fillTradeCardRow($('las-trade-other-receive'), trade.take);
+  }
+
   function fillTradeCardRow(rowEl, amounts) {
     if (!rowEl) return;
     rowEl.innerHTML = '';
@@ -10842,10 +10906,14 @@ window.LasidaoUi = (function () {
     const trade = game && game.pendingTrade;
     const proposeModal = $('las-trade-propose-modal');
     const decisionModal = $('las-trade-decision-modal');
+    const otherModal = $('las-trade-other-modal');
 
     if (trade && trade.forMe) {
       if (proposeModal && !proposeModal.hidden) {
         setTradeProposeModalOpen(false);
+      }
+      if (otherModal && !otherModal.hidden) {
+        setTradeOtherModalOpen(false);
       }
       renderTradeDecisionModal(trade);
       setTradeDecisionModalOpen(true);
@@ -10854,6 +10922,19 @@ window.LasidaoUi = (function () {
 
     if (decisionModal && !decisionModal.hidden) {
       setTradeDecisionModalOpen(false);
+    }
+
+    if (trade && trade.forOther) {
+      if (proposeModal && !proposeModal.hidden) {
+        setTradeProposeModalOpen(false);
+      }
+      renderTradeOtherModal(trade);
+      setTradeOtherModalOpen(true);
+      return;
+    }
+
+    if (otherModal && !otherModal.hidden) {
+      setTradeOtherModalOpen(false);
     }
 
     if (trade && proposeModal && !proposeModal.hidden) {
@@ -11164,9 +11245,9 @@ window.LasidaoUi = (function () {
 
   function syncRedrawUi(game, meId) {
     const pending = game && game.pendingRedrawChoice;
-    const forMe = Boolean(pending && pending.forMe);
-    if (forMe && meId) {
-      pendingRedrawTrackId = meId;
+    if (pending && meId) {
+      const forMe = Boolean(pending.forMe);
+      if (forMe) pendingRedrawTrackId = meId;
       setRedrawModalOpen(true);
       renderRedrawModal(game);
       return;
@@ -11188,31 +11269,30 @@ window.LasidaoUi = (function () {
     const body = $('las-redraw-body');
     const pending = game && game.pendingRedrawChoice;
     const pickMode = Boolean(pending && pending.forMe);
+    const actor = game.players.find((p) => p.id === pending.playerId);
+    const actorName = actor ? actor.name : '';
 
-    if (!pickMode) {
-      setRedrawModalOpen(false);
-      return;
-    }
+    if (!body) return;
+    body.innerHTML = '';
+    const decks = document.createElement('div');
+    decks.className = 'las-redraw-decks';
 
-    if (foot) foot.hidden = true;
-    if (confirmBtn) confirmBtn.hidden = true;
-    if (cancelBtn) cancelBtn.hidden = true;
+    if (pickMode) {
+      if (foot) foot.hidden = true;
+      if (confirmBtn) confirmBtn.hidden = true;
+      if (cancelBtn) cancelBtn.hidden = true;
 
-    const isBuy = pending.source === 'buyFunc';
-    if (title) {
-      title.textContent = isBuy
+      const isBuy = pending.source === 'buyFunc';
+      if (title) {
+        title.textContent = isBuy
           ? t('lasidao.buyFuncPickKeep')
-        : t('lasidao.redrawPickKeep');
-    }
-      if (hint) {
-      hint.textContent = isBuy
-            ? t('lasidao.buyFuncPickHint')
-            : t('lasidao.redrawPickHint');
+          : t('lasidao.redrawPickKeep');
       }
-      if (!body) return;
-      body.innerHTML = '';
-      const decks = document.createElement('div');
-      decks.className = 'las-redraw-decks';
+      if (hint) {
+        hint.textContent = isBuy
+          ? t('lasidao.buyFuncPickHint')
+          : t('lasidao.redrawPickHint');
+      }
       for (const card of pending.options || []) {
         const btn = document.createElement('button');
         btn.type = 'button';
@@ -11225,14 +11305,45 @@ window.LasidaoUi = (function () {
         }
         btn.onclick = () => {
           if (!netRef) return;
-        if (lastMeId) pendingRedrawTrackId = lastMeId;
+          if (lastMeId) pendingRedrawTrackId = lastMeId;
           netRef.sendAction('redrawPick', { keepId: card.id });
           setRedrawModalOpen(false);
           selectedFuncId = null;
         };
         decks.appendChild(btn);
       }
-      body.appendChild(decks);
+    } else {
+      // 他人视角：显示卡背 + 提示文字 + 关闭按钮
+      if (foot) foot.hidden = false;
+      if (confirmBtn) {
+        confirmBtn.hidden = false;
+        confirmBtn.textContent = t('app.ok') || '知道了';
+        confirmBtn.onclick = () => {
+          setRedrawModalOpen(false);
+        };
+      }
+      if (cancelBtn) cancelBtn.hidden = true;
+
+      const isBuy = pending.source === 'buyFunc';
+      if (title) {
+        title.textContent = isBuy
+          ? t('lasidao.buyFuncOtherTitle', { name: actorName })
+          : t('lasidao.redrawOtherTitle', { name: actorName });
+      }
+      if (hint) {
+        hint.textContent = isBuy
+          ? t('lasidao.buyFuncOtherHint', { name: actorName })
+          : t('lasidao.redrawOtherHint', { name: actorName });
+      }
+      const cards = pending.shownToAll || [];
+      for (const c of cards) {
+        const back = document.createElement('div');
+        back.className = 'las-redraw-deck-back';
+        back.title = t('lasidao.cardBack');
+        decks.appendChild(back);
+      }
+    }
+    body.appendChild(decks);
   }
 
   function expandCostPayload(game) {
@@ -12990,6 +13101,10 @@ window.LasidaoUi = (function () {
         if (!netRef) return;
         netRef.sendAction('rejectTrade', {});
       };
+    }
+    const tradeOtherOk = $('btn-las-trade-other-ok');
+    if (tradeOtherOk) {
+      tradeOtherOk.onclick = () => setTradeOtherModalOpen(false);
     }
     // 许愿井已改用丰收样式弹框（allocateWishWell）
     const wishReset = $('btn-las-wishwell-modal-reset');
