@@ -106,5 +106,109 @@ window.MqttRoomResolve = (function () {
     });
   }
 
-  return { resolveHost, normalizeHost };
+  /**
+   * 纯加入端：用登录心跳声明仍停在旧隧道，并监听房主 reload。
+   * @returns {function} stop
+   */
+  function watchTunnelReload(opts) {
+    opts = opts || {};
+    const rid = String(opts.roomId || '')
+      .trim()
+      .toUpperCase();
+    const onReload = typeof opts.onReload === 'function' ? opts.onReload : null;
+    const lib = mqttLib();
+    if (!lib || !rid) return function () {};
+
+    const instanceId = 'join-' + Math.random().toString(36).slice(2, 10);
+    const loginTopic = prefix(opts.channel) + '/login/' + instanceId;
+    const reloadTopic = prefix(opts.channel) + '/reload';
+    const lastHost = normalizeHost(opts.lastHost || '');
+    let stopped = false;
+    let pulseTimer = null;
+    const client = lib.connect(BROKER, {
+      clientId: 'lianji-rel-' + Math.random().toString(36).slice(2, 10),
+      protocolVersion: 4,
+      clean: true,
+      keepalive: 30,
+      connectTimeout: 12000,
+    });
+
+    function pulse() {
+      if (stopped || !client.connected) return;
+      const people = [
+        {
+          name: String(opts.name || '玩家').trim().slice(0, 24) || '玩家',
+          tag: opts.tag ? String(opts.tag).slice(0, 12) : null,
+          status: 'playing',
+          roomId: rid,
+          sessionId: opts.sessionId ? String(opts.sessionId).slice(0, 64) : null,
+          host: lastHost,
+          client: 'mobile',
+          role: 'client',
+        },
+      ];
+      client.publish(
+        loginTopic,
+        JSON.stringify({
+          app: APP,
+          instanceId,
+          displayName: people[0].name,
+          displayTag: people[0].tag,
+          people,
+          host: lastHost,
+          loginAt: Date.now(),
+          updateTime: Date.now(),
+        }),
+        { qos: 1, retain: true }
+      );
+    }
+
+    client.on('connect', () => {
+      if (stopped) return;
+      client.subscribe(reloadTopic, { qos: 1 });
+      pulse();
+      pulseTimer = setInterval(pulse, 10000);
+    });
+    client.on('message', (topic, buf) => {
+      if (stopped || !onReload) return;
+      if (topic !== reloadTopic && !String(topic).endsWith('/reload')) return;
+      const raw = buf ? buf.toString() : '';
+      if (!raw.trim()) return;
+      try {
+        const p = JSON.parse(raw);
+        if (!p || p.app !== APP || p.kind !== 'reload') return;
+        if (String(p.roomId || '').toUpperCase() !== rid) return;
+        if (!p.host) return;
+        onReload({
+          kind: 'reload',
+          roomId: String(p.roomId).toUpperCase(),
+          host: normalizeHost(p.host),
+          name: p.name || '',
+          gameType: p.gameType || '',
+          gameLabel: p.gameLabel || '',
+          status: p.status || 'playing',
+          targets: Array.isArray(p.targets) ? p.targets : [],
+          at: Number(p.at) || Date.now(),
+        });
+      } catch (_) {}
+    });
+
+    return function stop() {
+      stopped = true;
+      if (pulseTimer) {
+        clearInterval(pulseTimer);
+        pulseTimer = null;
+      }
+      try {
+        if (client.connected) {
+          client.publish(loginTopic, '', { qos: 1, retain: true });
+        }
+      } catch (_) {}
+      try {
+        client.end(true);
+      } catch (_) {}
+    };
+  }
+
+  return { resolveHost, normalizeHost, watchTunnelReload };
 })();

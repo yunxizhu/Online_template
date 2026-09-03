@@ -1282,7 +1282,7 @@
 }
 
 .las-pcell-func .las-func-hand > .las-card.is-affordable:not(:disabled):not(.is-inert),
-.las-pcell-build .las-pboard-card.is-affordable:not(:disabled):not(.is-inert) {
+.las-pcell-build .las-pboard-card.is-affordable:not(.is-unbuilt):not(:disabled):not(.is-inert) {
   border-color: rgba(104, 162, 104, 0.75);
   box-shadow: 0 0 0 1px rgba(104, 162, 104, 0.22);
 }
@@ -1435,48 +1435,50 @@
   filter: grayscale(0.35);
 }
 
-/* 可建造的未建造建筑：呼吸闪烁提示 */
-.las-build-card.build.is-unbuilt.is-affordable {
-  animation: las-build-affordable 1s ease-in-out infinite;
-  filter: grayscale(0);
-  border-color: #c9a227;
-  color: #f0e0a0;
+/* 可建造的未建造建筑：保持灰色，仅呼吸闪烁；彩色留给已建造 */
+.las-build-card.build.is-unbuilt.is-affordable,
+.las-pboard-card.build.is-unbuilt.is-affordable,
+.las-act-cards .las-pboard-card.build.is-unbuilt.is-affordable,
+.las-pcell-build .las-pboard-card.build.is-unbuilt.is-affordable {
+  animation: las-build-affordable 1.1s ease-in-out infinite;
+  filter: grayscale(0.75);
+  border-color: #5a6268;
+  color: #9aa8b2;
 }
 
-.las-build-card.build.is-unbuilt.is-affordable.is-selected {
-  animation: las-build-affordable-selected 1s ease-in-out infinite;
-  filter: grayscale(0);
-  border-color: #c9a227;
-  color: #f0e0a0;
+.las-build-card.build.is-unbuilt.is-affordable.is-selected,
+.las-pboard-card.build.is-unbuilt.is-affordable.is-selected,
+.las-act-cards .las-pboard-card.build.is-unbuilt.is-affordable.is-selected,
+.las-pcell-build .las-pboard-card.build.is-unbuilt.is-affordable.is-selected {
+  animation: las-build-affordable-selected 1.1s ease-in-out infinite;
+  filter: grayscale(0.35);
+  border-color: #5a6268;
+  color: #9aa8b2;
 }
 
 @keyframes las-build-affordable {
   0%, 100% {
-    opacity: 0.9;
-    filter: grayscale(0);
-    border-color: #c9a227;
-    color: #f0e0a0;
+    opacity: 0.42;
+    filter: grayscale(0.75) brightness(0.95);
+    box-shadow: none;
   }
   50% {
-    opacity: 1;
-    filter: grayscale(0);
-    border-color: #c9a227;
-    color: #f0e0a0;
+    opacity: 0.92;
+    filter: grayscale(0.75) brightness(1.2);
+    box-shadow: 0 0 0 2px rgba(186, 194, 202, 0.55), 0 0 10px rgba(200, 208, 216, 0.35);
   }
 }
 
 @keyframes las-build-affordable-selected {
   0%, 100% {
-    opacity: 0.95;
-    filter: grayscale(0);
-    border-color: #c9a227;
-    color: #f0e0a0;
+    opacity: 0.72;
+    filter: grayscale(0.35) brightness(0.98);
+    box-shadow: 0 0 0 2px rgba(90, 98, 104, 0.45);
   }
   50% {
     opacity: 1;
-    filter: grayscale(0);
-    border-color: #c9a227;
-    color: #f0e0a0;
+    filter: grayscale(0.35) brightness(1.12);
+    box-shadow: 0 0 0 2px rgba(186, 194, 202, 0.7), 0 0 10px rgba(200, 208, 216, 0.4);
   }
 }
 

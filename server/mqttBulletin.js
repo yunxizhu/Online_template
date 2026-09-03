@@ -52,6 +52,7 @@ function sanitizePeople(list) {
       role: role || null,
       passive: Boolean(p.passive),
       occupied: Boolean(p.occupied) || status === 'occupied',
+      host: p.host ? String(p.host).replace(/\/$/, '').slice(0, 180) : '',
     });
     if (out.length >= 12) break;
   }
@@ -134,6 +135,7 @@ class MqttBulletin {
     onChat,
     onInvite,
     onLeave,
+    onReload,
   }) {
     const opt = loadOptions(rootDir || process.cwd());
     this.enabled = !opt.disabled;
@@ -150,6 +152,7 @@ class MqttBulletin {
     this.onChat = onChat || (() => {});
     this.onInvite = onInvite || (() => {});
     this.onLeave = onLeave || (() => {});
+    this.onReload = onReload || (() => {});
     this.loginAt = Date.now();
     this.client = null;
     this._started = false;
@@ -163,7 +166,12 @@ class MqttBulletin {
     /** @type {object[]} */
     this._chatQueue = [];
     this._lastTunnelUrl = '';
+    /** 隧道掉线后仍用来续心跳的上一跳公网地址 */
+    this._lastKnownHost = '';
     this._tunnelPublishAfter = 0;
+    this._tunnelRecovering = false;
+    this._skipNextWarmup = false;
+    this._ensuringTunnel = false;
     this._brokers = [];
     this._brokerIndex = 0;
     this._currentBroker = '';
@@ -227,15 +235,63 @@ class MqttBulletin {
    * 隧道地址 + MQTT 都就绪时立刻发登录/房间心跳。
    * 任一条件刚满足时调用，不必等下一个周期。
    */
-  flushIfReady(knownUrl) {
+  flushIfReady(knownUrl, opts = {}) {
     if (!this.enabled || !this._started) return false;
     if (!this.#mqttUp()) return false;
-    if (!this.#peekUrl(knownUrl)) return false;
+    const url = this.#peekUrl(knownUrl);
+    if (!url) return false;
+    this._lastKnownHost = url;
+    if (opts.skipWarmup) this._skipNextWarmup = true;
+    if (this._tunnelRecovering) {
+      this._tunnelRecovering = false;
+      this._skipNextWarmup = true;
+    }
     this.touchLogin().catch((e) => this.#warn(e));
-    this.touchRoom().catch((e) => this.#warn(e));
+    this.touchRoom({ skipWarmup: true }).catch((e) => this.#warn(e));
     this.#scheduleLogin();
     this.#scheduleRoom();
     return true;
+  }
+
+  /**
+   * 隧道失效：不要清掉 retained 房间。继续用上一跳地址续心跳，
+   * 同时后台拉起新隧道；新地址到手后再立刻改广播。
+   */
+  markTunnelLost() {
+    if (!this.enabled || !this._started) return;
+    this._tunnelRecovering = true;
+    this._skipNextWarmup = true;
+    this._tunnelPublishAfter = 0;
+    if (!this._lastKnownHost) {
+      this._lastKnownHost = this._lastTunnelUrl || this.#peekUrl() || '';
+    }
+    console.warn(
+      '[mqtt] 隧道中断，房间继续广播（恢复中）' +
+        (this._lastKnownHost ? ` 旧址 ${this._lastKnownHost}` : '')
+    );
+    this.#kickTunnelEnsure();
+    this.touchRoom({ allowStaleHost: true, skipWarmup: true }).catch((e) =>
+      this.#warn(e)
+    );
+    this.#scheduleRoom();
+  }
+
+  #kickTunnelEnsure() {
+    if (!this.ensureTunnelUrl || this._ensuringTunnel) return;
+    this._ensuringTunnel = true;
+    let p;
+    try {
+      p = this.ensureTunnelUrl();
+    } catch (e) {
+      this._ensuringTunnel = false;
+      this.#warn(e);
+      return;
+    }
+    Promise.resolve(p)
+      .catch((e) => this.#warn(e))
+      .finally(() => {
+        this._ensuringTunnel = false;
+      });
   }
 
   #prefix() {
@@ -256,6 +312,10 @@ class MqttBulletin {
 
   #inviteTopic() {
     return `${this.#prefix()}/invite`;
+  }
+
+  #reloadTopic() {
+    return `${this.#prefix()}/reload`;
   }
 
   #leaveTopic() {
@@ -432,6 +492,9 @@ class MqttBulletin {
       client.subscribe(this.#inviteTopic(), { qos: 1 }, (err) => {
         if (err) this.#warn(err);
       });
+      client.subscribe(this.#reloadTopic(), { qos: 1 }, (err) => {
+        if (err) this.#warn(err);
+      });
       client.subscribe(this.#leaveTopic(), { qos: 1 }, (err) => {
         if (err) this.#warn(err);
       });
@@ -495,9 +558,11 @@ class MqttBulletin {
     this.#scheduleRoom();
   }
 
-  /** 隧道掉线时先清掉 retained 房间，避免大厅继续指向已死的旧域名 */
+  /** 房间主动解散时清掉 retained；隧道故障请用 markTunnelLost，不要走这里 */
   clearRoomBeacon() {
     if (!this.enabled || !this._started) return;
+    this._tunnelRecovering = false;
+    this._lastRoomSig = '';
     this.#pub(this.#roomTopic(), '');
   }
 
@@ -508,29 +573,42 @@ class MqttBulletin {
   #roomSig(room, tunnelUrl) {
     if (!room || !tunnelUrl) return '';
     const host = String(tunnelUrl).replace(/\/$/, '');
+    const keys = this.#roomPlayerKeys(room);
     const playerCount = Math.max(
       0,
       Number(
         room.playerCount != null
           ? room.playerCount
-          : Array.isArray(room.players)
-            ? room.players.filter((p) => p && !p.left).length
-            : 0
+          : keys.length
       ) || 0
     );
     const over = room.over ? 1 : 0;
-    const names = Array.isArray(room.players)
-      ? room.players
-          .filter((p) => p && !p.left)
-          .map((p) => `${p.name || ''}:${p.tag || ''}`)
-          .join(',')
-      : '';
-    return `${String(room.id || '').toUpperCase()}|${host}|${playerCount}|${names}|${room.status || 'waiting'}|${over}`;
+    const recovering = room.tunnelRecovering ? 1 : 0;
+    return `${String(room.id || '').toUpperCase()}|${host}|${playerCount}|${keys.join(',')}|${room.status || 'waiting'}|${over}|${recovering}`;
+  }
+
+  #roomPlayerKeys(room) {
+    if (Array.isArray(room.players) && room.players.length) {
+      return room.players
+        .filter((p) => p && !p.left)
+        .map((p) => `${p.name || '玩家'}:${p.tag || ''}`);
+    }
+    if (Array.isArray(room.playerNames)) {
+      const tags = Array.isArray(room.playerTags) ? room.playerTags : [];
+      return room.playerNames.map(
+        (n, i) => `${n || '玩家'}:${tags[i] || ''}`
+      );
+    }
+    return [];
   }
 
   #isRoomBeaconPublished(room, tunnelUrl) {
     if (!room || !tunnelUrl || !this._lastRoomSig) return false;
-    return this._lastRoomSig === this.#roomSig(room, tunnelUrl);
+    if (this._lastRoomSig === this.#roomSig(room, tunnelUrl)) return true;
+    // touchRoom 用 payload 记签名，大厅房间对象字段不完全相同：id+host 对上即视为已广播
+    const host = String(tunnelUrl).replace(/\/$/, '');
+    const prefix = `${String(room.id || '').toUpperCase()}|${host}|`;
+    return this._lastRoomSig.startsWith(prefix);
   }
 
   /**
@@ -699,6 +777,60 @@ class MqttBulletin {
     }
   }
 
+  publishReload(msg) {
+    if (!this.enabled || !this._started) return false;
+    const c = this.client;
+    if (!c || !c.connected) return false;
+    const roomId = String((msg && msg.roomId) || '').toUpperCase();
+    const host = String((msg && msg.host) || '').replace(/\/$/, '');
+    if (!roomId || !host) return false;
+    const targets = Array.isArray(msg && msg.targets)
+      ? msg.targets
+          .filter((t) => t && (t.sessionId || t.name))
+          .slice(0, 12)
+          .map((t) => ({
+            name: String(t.name || '').trim().slice(0, 24),
+            tag: t.tag ? String(t.tag).slice(0, 12) : null,
+            sessionId: t.sessionId ? String(t.sessionId).slice(0, 64) : null,
+          }))
+      : [];
+    const payload = {
+      app: APP_SIGNATURE,
+      kind: 'reload',
+      instanceId: this.instanceId,
+      roomId,
+      host,
+      name: String((msg && msg.name) || '').slice(0, 40),
+      gameType: String((msg && msg.gameType) || ''),
+      gameLabel: String((msg && msg.gameLabel) || ''),
+      gameMode: String((msg && msg.gameMode) || ''),
+      gameModeLabel: String((msg && msg.gameModeLabel) || ''),
+      status: String((msg && msg.status) || 'playing'),
+      targets,
+      at: Date.now(),
+    };
+    try {
+      c.publish(this.#reloadTopic(), JSON.stringify(payload), {
+        qos: 1,
+        retain: false,
+      }, (err) => {
+        if (err) this.#warn(err);
+      });
+      return true;
+    } catch (err) {
+      this.#warn(err);
+      return false;
+    }
+  }
+
+  /** 隧道换址前的上一跳公网地址（恢复中仍指向旧址） */
+  getLastKnownHost() {
+    return String(this._lastKnownHost || this._lastTunnelUrl || '').replace(
+      /\/$/,
+      ''
+    );
+  }
+
   publishLeave(msg) {
     if (!this.enabled || !this._started) return false;
     const c = this.client;
@@ -753,7 +885,7 @@ class MqttBulletin {
     });
   }
 
-  async touchRoom() {
+  async touchRoom(opts = {}) {
     if (!this.enabled || !this._started) return;
     const wantPublish = (room) =>
       room &&
@@ -764,6 +896,7 @@ class MqttBulletin {
 
     // 没有可广播房间时立刻清空 retained，避免别人大厅继续显示旧人数/旧房间
     if (!wantPublish((this.getHostedRooms() || [])[0])) {
+      this._tunnelRecovering = false;
       if (!this.#pub(this.#roomTopic(), '')) {
         this.#scheduleRoomRetry();
         return;
@@ -778,31 +911,59 @@ class MqttBulletin {
       this.#scheduleRoomRetry();
       return;
     }
-    // 地址已经在手里就立刻用，避免再 await 隧道启动
-    const tunnelUrl = this.#peekUrl() || (await this.ensureTunnelUrl()) || '';
+    // 地址已经在手里就立刻用；没有新地址时不要阻塞等隧道（否则 15s 内心跳会断）
+    const liveUrl = this.#peekUrl() || '';
+    if (liveUrl) {
+      this._lastKnownHost = liveUrl;
+      if (this._tunnelRecovering) {
+        this._tunnelRecovering = false;
+        this._skipNextWarmup = true;
+      }
+    } else {
+      this.#kickTunnelEnsure();
+    }
+    const allowStale =
+      opts.allowStaleHost !== false &&
+      (this._tunnelRecovering || opts.allowStaleHost === true);
+    let tunnelUrl = liveUrl;
+    if (!tunnelUrl && allowStale) {
+      tunnelUrl = this._lastKnownHost || this._lastTunnelUrl || '';
+      if (tunnelUrl) this._tunnelRecovering = true;
+    }
     if (!tunnelUrl) {
       this.#scheduleRoomRetry();
       return;
     }
+    const skipWarmup =
+      Boolean(opts.skipWarmup) ||
+      Boolean(this._skipNextWarmup) ||
+      Boolean(this._tunnelRecovering);
     if (tunnelUrl !== this._lastTunnelUrl) {
       this._lastTunnelUrl = tunnelUrl;
-      this._tunnelPublishAfter = Date.now() + TUNNEL_READY_DELAY_MS;
-      if (TUNNEL_READY_DELAY_MS > 0) {
+      if (!skipWarmup && TUNNEL_READY_DELAY_MS > 0) {
+        this._tunnelPublishAfter = Date.now() + TUNNEL_READY_DELAY_MS;
         this.#scheduleRoomRetry();
         console.log(
           `[mqtt] 隧道地址已更新，等待 ${TUNNEL_READY_DELAY_MS}ms 后再广播房间`
         );
         return;
       }
+      this._tunnelPublishAfter = 0;
+      this._skipNextWarmup = false;
       console.log(`[mqtt] 隧道地址已更新，立刻广播房间`);
     }
-    if (Date.now() < this._tunnelPublishAfter) {
+    if (!skipWarmup && Date.now() < this._tunnelPublishAfter) {
       this.#scheduleRoomRetry();
       return;
+    }
+    if (skipWarmup) {
+      this._tunnelPublishAfter = 0;
+      this._skipNextWarmup = false;
     }
     // 等隧道期间房间可能已变，发出前再读一次
     const room = (this.getHostedRooms() || [])[0];
     if (!wantPublish(room)) {
+      this._tunnelRecovering = false;
       if (!this.#pub(this.#roomTopic(), '')) {
         this.#scheduleRoomRetry();
         return;
@@ -827,6 +988,7 @@ class MqttBulletin {
           : seated.length
       ) || 0
     );
+    const recovering = Boolean(this._tunnelRecovering && !liveUrl);
     const payload = {
       app: APP_SIGNATURE,
       id: room.id,
@@ -849,10 +1011,12 @@ class MqttBulletin {
       // 密码明文绝不进 MQTT / 大厅列表
       observerCount: Number(room.observerCount || 0),
       passiveHosted: Boolean(room.passiveHosted),
+      tunnelRecovering: recovering,
       canJoin:
+        !recovering &&
         (!room.status || room.status === 'waiting') &&
         playerCount < Number(room.maxPlayers || 0),
-      canSpectate: !room.over,
+      canSpectate: !recovering && !room.over,
       createTime: room._createdAt || now,
       updateTime: now,
     };
@@ -862,7 +1026,10 @@ class MqttBulletin {
     }
     const sig = this.#roomSig(payload, tunnelUrl);
     if (this._lastRoomSig !== sig) {
-      console.log(`[mqtt] 已广播房间 ${payload.id} → ${payload.host}`);
+      console.log(
+        `[mqtt] 已广播房间 ${payload.id} → ${payload.host}` +
+          (recovering ? '（隧道恢复中，对局仍保留）' : '')
+      );
     }
     this._lastRoomSig = sig;
   }
@@ -920,6 +1087,44 @@ class MqttBulletin {
           maxPlayers: Number(p.maxPlayers || 0),
           at: Number(p.at) || Date.now(),
           host: p.host ? String(p.host).replace(/\/$/, '') : null,
+        });
+      } catch (_) {}
+      return;
+    }
+    const reloadTopic = this.#reloadTopic();
+    if (topic === reloadTopic || topic.endsWith('/reload')) {
+      if (!raw.trim()) return;
+      try {
+        const p = JSON.parse(raw);
+        if (!p || p.app !== APP_SIGNATURE || p.kind !== 'reload') return;
+        if (p.instanceId && p.instanceId === this.instanceId) return;
+        const roomId = String(p.roomId || '').toUpperCase();
+        const host = String(p.host || '').replace(/\/$/, '');
+        if (!roomId || !host) return;
+        const targets = Array.isArray(p.targets)
+          ? p.targets
+              .filter((t) => t && (t.sessionId || t.name))
+              .slice(0, 12)
+              .map((t) => ({
+                name: String(t.name || '').trim().slice(0, 24),
+                tag: t.tag ? String(t.tag).slice(0, 12) : null,
+                sessionId: t.sessionId ? String(t.sessionId).slice(0, 64) : null,
+              }))
+          : [];
+        this.onReload({
+          app: APP_SIGNATURE,
+          kind: 'reload',
+          instanceId: p.instanceId || null,
+          roomId,
+          host,
+          name: String(p.name || ''),
+          gameType: String(p.gameType || ''),
+          gameLabel: String(p.gameLabel || ''),
+          gameMode: String(p.gameMode || ''),
+          gameModeLabel: String(p.gameModeLabel || ''),
+          status: String(p.status || 'playing'),
+          targets,
+          at: Number(p.at) || Date.now(),
         });
       } catch (_) {}
       return;
@@ -991,18 +1196,25 @@ class MqttBulletin {
         }
         const updateTime = Number(p.updateTime || 0);
         const host = String(p.host || '').replace(/\/$/, '');
-        if (!host || !p.id) {
+        const recovering = Boolean(p.tunnelRecovering);
+        if (!p.id) {
           this.rooms.delete(id);
           this.onChange();
           return;
         }
+        if (!host && !recovering) {
+          this.rooms.delete(id);
+          this.onChange();
+          return;
+        }
+        const prev = this.rooms.get(id);
         this.rooms.set(id, {
           id: String(p.id).toUpperCase(),
           name: String(p.name || p.id),
           creatorId: id,
           creatorName: String(p.creatorName || ''),
           creatorTag: p.creatorTag ? String(p.creatorTag) : null,
-          host,
+          host: host || (prev && prev.host) || '',
           gameType: String(p.gameType || ''),
           gameLabel: String(p.gameLabel || p.gameType || ''),
           gameMode: String(p.gameMode || ''),
@@ -1016,6 +1228,7 @@ class MqttBulletin {
           hasPassword: Boolean(p.hasPassword),
           observerCount: Number(p.observerCount || 0),
           passiveHosted: Boolean(p.passiveHosted),
+          tunnelRecovering: recovering,
           canJoin:
             p.canJoin != null
               ? Boolean(p.canJoin)
@@ -1086,9 +1299,10 @@ class MqttBulletin {
             String(pp && pp.status) === 'occupied',
           instanceId: p.instanceId,
           host:
-            pp && pp.passive
+            (pp && pp.host) ||
+            (pp && pp.passive
               ? p.host || (knownRoom && knownRoom.host) || null
-              : (knownRoom && knownRoom.host) || p.host || null,
+              : (knownRoom && knownRoom.host) || p.host || null),
           local: false,
           alive: true,
           via: 'mqtt',

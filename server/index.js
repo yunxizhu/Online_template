@@ -276,6 +276,10 @@ function playerRegisterOpts(data = {}) {
     playerTag: data.playerTag || null,
     client: data.client || null,
     role: data.role || null,
+    lastHost: data.lastHost || null,
+    lastRoomId: data.lastRoomId || data.roomId || null,
+    lastRoomName: data.lastRoomName || null,
+    lastStatus: data.lastStatus || null,
   };
 }
 
@@ -407,16 +411,146 @@ function buildChatMessage(player, channel, text) {
   };
 }
 
+function originHost(url) {
+  try {
+    return new URL(String(url)).origin;
+  } catch (_) {
+    return String(url || '').replace(/\/$/, '');
+  }
+}
+
+const tunnelReloadWatch = {
+  oldHost: '',
+  newHost: '',
+  timer: null,
+  lastSent: new Map(),
+  until: 0,
+};
+
+function sameLobbyPerson(person, seat) {
+  if (!person || !seat) return false;
+  const sid = person.sessionId ? String(person.sessionId).slice(0, 64) : '';
+  const seatSid = seat.sessionId ? String(seat.sessionId).slice(0, 64) : '';
+  if (sid && seatSid && sid === seatSid) return true;
+  const name = String(person.name || '').trim();
+  const seatName = String(seat.name || '').trim();
+  if (!name || name !== seatName) return false;
+  const tag = String(person.tag || '').replace(/\D/g, '').slice(-5);
+  const seatTag = String(seat.tag || '').replace(/\D/g, '').slice(-5);
+  if (tag && seatTag) return tag === seatTag;
+  return !tag && !seatTag;
+}
+
+function isSeatOnThisHost(seat) {
+  if (!seat || seat.left || seat.offline) return false;
+  return Boolean(rooms.getPlayer(seat.id));
+}
+
+function startTunnelReloadWatch(newUrl, oldUrl) {
+  const neu = originHost(newUrl);
+  const old = originHost(oldUrl);
+  if (!neu || !old || neu === old) return;
+  tunnelReloadWatch.oldHost = old;
+  tunnelReloadWatch.newHost = neu;
+  tunnelReloadWatch.until = Date.now() + 120000;
+  nudgeStaleTunnelPlayers();
+  if (tunnelReloadWatch.timer) clearInterval(tunnelReloadWatch.timer);
+  tunnelReloadWatch.timer = setInterval(() => {
+    if (Date.now() > tunnelReloadWatch.until) {
+      clearInterval(tunnelReloadWatch.timer);
+      tunnelReloadWatch.timer = null;
+      return;
+    }
+    nudgeStaleTunnelPlayers();
+  }, 3000);
+  if (typeof tunnelReloadWatch.timer.unref === 'function') {
+    tunnelReloadWatch.timer.unref();
+  }
+}
+
+function nudgeStaleTunnelPlayers() {
+  if (!mqttBulletin || !mqttBulletin.enabled) return;
+  const newHost =
+    tunnelReloadWatch.newHost || originHost(tunnel && tunnel.getPublicUrl());
+  const oldHost = tunnelReloadWatch.oldHost;
+  if (!newHost) return;
+  const listed = hostedBeaconRooms();
+  if (!listed.length) return;
+  const remote = mqttBulletin.getRemotePeople() || [];
+  for (const brief of listed) {
+    const full = rooms.getRoom(brief.id);
+    if (!full) continue;
+    const members = [
+      ...(full.players || []),
+      ...(full.observers || []),
+    ].filter((p) => p && !p.left);
+    const targets = [];
+    for (const seat of members) {
+      if (isSeatOnThisHost(seat)) continue;
+      const hit = remote.find((person) => sameLobbyPerson(person, seat));
+      if (!hit) continue;
+      const theirHost = originHost(hit.host);
+      const theirRoom = String(hit.roomId || '').toUpperCase();
+      const stillInOldRoom =
+        theirRoom === String(full.id).toUpperCase() &&
+        theirHost &&
+        theirHost !== newHost;
+      const stillOnOldHost = Boolean(oldHost && theirHost && theirHost === oldHost);
+      if (!stillInOldRoom && !stillOnOldHost) continue;
+      targets.push({
+        name: seat.name,
+        tag: seat.tag || null,
+        sessionId: seat.sessionId || hit.sessionId || null,
+      });
+    }
+    if (!targets.length) continue;
+    const now = Date.now();
+    const fresh = targets.filter((t) => {
+      const key = t.sessionId || `${t.name}#${t.tag || ''}`;
+      const last = tunnelReloadWatch.lastSent.get(key) || 0;
+      if (now - last < 8000) return false;
+      tunnelReloadWatch.lastSent.set(key, now);
+      return true;
+    });
+    if (!fresh.length) continue;
+    const ok = mqttBulletin.publishReload({
+      roomId: full.id,
+      host: newHost,
+      name: full.name,
+      gameType: full.gameType,
+      gameLabel: full.gameLabel,
+      gameMode: full.gameMode,
+      gameModeLabel: full.gameModeLabel,
+      status: full.status || 'playing',
+      targets: fresh,
+    });
+    if (ok) {
+      console.log(
+        `[mqtt] 已通知 ${fresh.length} 名仍停在旧隧道的玩家 reload → ${newHost}`
+      );
+    }
+  }
+}
+
 function attachTunnelHooks(t) {
   if (!t) return t;
   t.onUrl = (url) => {
+    const oldHost =
+      (mqttBulletin && mqttBulletin.getLastKnownHost && mqttBulletin.getLastKnownHost()) ||
+      '';
     if (mqttBulletin && mqttBulletin.enabled) {
-      // 公网地址刚到手：MQTT 已连上则立刻广播房间
-      mqttBulletin.flushIfReady(url);
+      // 新隧道到手：立刻把本机对局挂到新地址并重发心跳
+      mqttBulletin.flushIfReady(url, { skipWarmup: true });
     }
+    io.emit('tunnel:status', { recovering: false, url: url || '' });
+    startTunnelReloadWatch(url, oldHost);
   };
   t.onLost = () => {
-    if (mqttBulletin && mqttBulletin.enabled) mqttBulletin.clearRoomBeacon();
+    if (mqttBulletin && mqttBulletin.enabled) {
+      // 不要清房间心跳：对局仍在本机，续播旧址并后台拉起新隧道
+      mqttBulletin.markTunnelLost();
+    }
+    io.emit('tunnel:status', { recovering: true });
   };
   return t;
 }
@@ -748,6 +882,10 @@ io.on('connection', (socket) => {
         client: data.client,
         role: data.role,
       });
+      player.lastHost = null;
+      player.lastRoomId = null;
+      player.lastRoomName = null;
+      player.lastStatus = null;
       socket.join(reclaimed.room.id);
       joinHallChat(socket);
       socket.data.playerName = player.name;
@@ -776,6 +914,10 @@ io.on('connection', (socket) => {
         playerTag,
         client: data.client,
         role: data.role,
+        lastHost: data.lastHost || null,
+        lastRoomId: data.lastRoomId || roomIdHint,
+        lastRoomName: data.lastRoomName || null,
+        lastStatus: data.lastStatus || null,
       });
       socket.data.playerName = player.name;
       joinHallChat(socket);
@@ -858,7 +1000,12 @@ io.on('connection', (socket) => {
       host: found.host,
       local: false,
       via: found.via || null,
-      message: active ? null : '房间已不存在或对局已结束',
+      tunnelRecovering: Boolean(found.room.tunnelRecovering),
+      message: active
+        ? found.room.tunnelRecovering
+          ? '房主隧道恢复中'
+          : null
+        : '房间已不存在或对局已结束',
     });
   });
 
@@ -1585,12 +1732,18 @@ mqttBulletin = new MqttBulletin({
   getHostedRooms: () => hostedBeaconRooms(),
   ensureTunnelUrl: ensurePublicTunnelUrl,
   peekTunnelUrl: () => (tunnel && tunnel.getPublicUrl()) || '',
-  onChange: onRosterChange,
+  onChange: () => {
+    onRosterChange();
+    nudgeStaleTunnelPlayers();
+  },
   onChat: (msg) => {
     broadcastChatAllLocal(msg);
   },
   onInvite: (msg) => {
     broadcastInviteLocal(msg);
+  },
+  onReload: (msg) => {
+    io.emit('room:reload', msg);
   },
   onLeave: (msg) => {
     try {

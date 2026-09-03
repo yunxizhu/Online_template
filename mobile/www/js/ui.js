@@ -193,6 +193,8 @@
   let mqttReconnecting = false;
   let remoteRecoverTimer = null;
   let remoteRecovering = false;
+  let roomReloadBusy = false;
+  let reloadTakeover = false;
   const roomBubbleTimers = new Map();
   const ROOM_BUBBLE_MS = 3000;
   const LOBBY_REFRESH_MS = 3000;
@@ -1859,10 +1861,12 @@
         showToast('进入被动模式超时，请重试');
       } else if (was === 'assets') {
         showToast(t('lasidao.loadingAssetsTimeout'));
+      } else if (was === 'reload') {
+        showToast(t('reload.timeout') || t('create.joinTimeout'));
       } else {
         showToast(was === 'create' ? t('create.createTimeout') : t('create.joinTimeout'));
       }
-    }, 15000);
+    }, mode === 'reload' || mode === 'create' ? 90000 : 15000);
   }
 
   function hideRoomBusy() {
@@ -3104,12 +3108,13 @@
     syncRoomChatBubbles();
 
     const min = room.minPlayers || 2;
+    const need = Number(room.maxPlayers) || min;
     // 仅统计座位玩家，观战席不计入开局人数
     const seated = (room.players || []).filter((p) => !p.left).length;
     el.roomStartHint.textContent = t('room.startHintCount', {
       min,
       cur: seated,
-      max: room.maxPlayers,
+      max: need,
     });
 
     const isSpectator =
@@ -3118,7 +3123,7 @@
     state.isSpectator = Boolean(isSpectator);
     const isHost = state.me && room.hostId === state.me.id && !isSpectator;
     el.btnStart.hidden = !isHost;
-    el.btnStart.disabled = seated < min;
+    el.btnStart.disabled = seated < need;
     if (el.btnEditRoom) {
       el.btnEditRoom.hidden = !isHost || room.status === 'playing';
     }
@@ -5170,6 +5175,118 @@
     return !msg.includes('超时');
   }
 
+  function reloadMessageTargetsMe(msg) {
+    if (!msg || !msg.roomId || !msg.host) return false;
+    const sid = getTabSessionId();
+    const myName = window.PlayerNick.stripBaseName(
+      state.playerName || (el.playerName && el.playerName.value) || ''
+    );
+    const mineTag = String(myTag() || '').replace(/\D/g, '').slice(-5);
+    const roomId = String(
+      (state.room && state.room.id) ||
+        state._lastRoomId ||
+        (loadGameArchive() && loadGameArchive().roomId) ||
+        ''
+    ).toUpperCase();
+    const wantRoom = String(msg.roomId).toUpperCase();
+    const targets = Array.isArray(msg.targets) ? msg.targets : [];
+    if (targets.length) {
+      return targets.some((item) => {
+        if (
+          item.sessionId &&
+          sid &&
+          String(item.sessionId) === String(sid)
+        ) {
+          return true;
+        }
+        const n = window.PlayerNick.stripBaseName(item.name || '');
+        const tag = String(item.tag || '').replace(/\D/g, '').slice(-5);
+        if (!n || n !== myName) return false;
+        if (tag && mineTag) return tag === mineTag;
+        return true;
+      });
+    }
+    return Boolean(roomId && roomId === wantRoom && isInLiveSession());
+  }
+
+  function ensureReloadModal() {
+    let box = document.getElementById('room-reload-modal');
+    if (box) return box;
+    box = document.createElement('div');
+    box.id = 'room-reload-modal';
+    box.className = 'modal';
+    box.innerHTML =
+      '<div class="modal-backdrop"></div>' +
+      '<div class="modal-dialog panel" role="dialog" aria-modal="true" aria-labelledby="room-reload-title">' +
+      '<div class="row panel-head"><h2 id="room-reload-title"></h2></div>' +
+      '<p id="room-reload-message" class="invite-message"></p>' +
+      '</div>';
+    document.body.appendChild(box);
+    return box;
+  }
+
+  function showReloadModal(title, message) {
+    const box = ensureReloadModal();
+    const heading = box.querySelector('#room-reload-title');
+    const body = box.querySelector('#room-reload-message');
+    if (heading) heading.textContent = title;
+    if (body) body.textContent = message;
+    box.hidden = false;
+  }
+
+  function hideReloadModal() {
+    const box = document.getElementById('room-reload-modal');
+    if (box) box.hidden = true;
+  }
+
+  async function applyRoomReload(msg) {
+    if (roomReloadBusy || leavingToLocal) return;
+    if (!reloadMessageTargetsMe(msg)) return;
+    const host = String(msg.host || '').replace(/\/$/, '');
+    if (!host) return;
+    if (
+      originOf(host) === originOf(net.getCurrentUrl()) &&
+      typeof net.isConnected === 'function' &&
+      net.isConnected()
+    ) {
+      return;
+    }
+    roomReloadBusy = true;
+    reloadTakeover = true;
+    cancelRemoteRecover();
+    remoteRecovering = false;
+    state._rejoining = true;
+    showReloadModal(t('reload.title'), t('reload.message'));
+    const roomId = String(msg.roomId).toUpperCase();
+    const name =
+      state.playerName ||
+      (el.playerName && el.playerName.value) ||
+      t('app.playerDefault');
+    try {
+      await sleepMs(1200);
+      hideReloadModal();
+      showRoomBusy('reload', t('reload.entering'));
+      const opts = rejoinLobbyOpts({ roomId });
+      await net.joinRoomOnHost(roomId, name, host, {
+        ...opts,
+        local: false,
+        preferLocal: false,
+      });
+      const ok = await waitForSessionRestore(4000);
+      hideRoomBusy();
+      if (ok && isInRestoredGameView()) {
+        showToast(t('toast.tunnelBack'));
+      }
+    } catch (err) {
+      hideRoomBusy();
+      hideReloadModal();
+      showToast((err && err.message) || t('toast.opFail'));
+    } finally {
+      roomReloadBusy = false;
+      state._rejoining = false;
+    }
+  }
+
   function scheduleRemoteRecover() {
     if (!net.isOnRemoteHost() || remoteRecovering) return;
     cancelRemoteRecover();
@@ -5193,44 +5310,119 @@
     if (!roomId || !isInLiveSession()) return;
 
     remoteRecovering = true;
+    reloadTakeover = false;
     state._rejoining = true;
     const deadHost = net.getCurrentUrl();
     const name =
       state.playerName || (el.playerName && el.playerName.value) || t('app.playerDefault');
     showToast(t('toast.tunnelLost'));
+
+    let stopWatch = null;
+    async function resolveMqttHost() {
+      if (
+        !window.MqttRoomResolve ||
+        typeof window.MqttRoomResolve.resolveHost !== 'function'
+      ) {
+        return '';
+      }
+      try {
+        return await window.MqttRoomResolve.resolveHost(roomId, {
+          timeoutMs: 8000,
+        });
+      } catch (_) {
+        return '';
+      }
+    }
+
     try {
       if (typeof net.stopAutoReconnect === 'function') net.stopAutoReconnect();
-      await net.connect(net.getLocalOrigin());
-      let notFoundStreak = 0;
-      for (let i = 0; i < 12; i++) {
-        if (leavingToLocal) return;
-        if (originOf(net.getCurrentUrl()) !== originOf(net.getLocalOrigin())) {
+      const joinOnly = Boolean(
+        typeof net.getJoinClientHome === 'function' && net.getJoinClientHome()
+      );
+      if (!joinOnly) {
+        try {
           await net.connect(net.getLocalOrigin());
+          await net.joinLobbyAndWait(name, {
+            ...rejoinLobbyOpts({ roomId }),
+            lastHost: deadHost,
+            lastRoomId: roomId,
+            lastStatus:
+              (state.room && state.room.status) ||
+              (state.game ? 'playing' : 'room'),
+          });
+        } catch (_) {
+          /* 纯加入端或本机服务不可用时改走 MQTT */
         }
-        const probe = await net.probeRoom(roomId);
-        if (probeMissesRoom(probe)) {
-          notFoundStreak += 1;
-          if (notFoundStreak >= 8) {
-            await bounceToLocalLobby(t('toast.roomInvalid'), { clearArchive: false });
-            return;
+      }
+      if (
+        window.MqttRoomResolve &&
+        typeof window.MqttRoomResolve.watchTunnelReload === 'function'
+      ) {
+        stopWatch = window.MqttRoomResolve.watchTunnelReload({
+          roomId,
+          name,
+          tag: myTag(),
+          sessionId: getTabSessionId(),
+          lastHost: deadHost,
+          onReload: (msg) => {
+            applyRoomReload(msg).catch(() => {});
+          },
+        });
+      }
+      let notFoundStreak = 0;
+      const deadline = Date.now() + 180000;
+      while (Date.now() < deadline) {
+        if (leavingToLocal || reloadTakeover) return;
+        if (
+          !joinOnly &&
+          originOf(net.getCurrentUrl()) !== originOf(net.getLocalOrigin())
+        ) {
+          try {
+            await net.connect(net.getLocalOrigin());
+          } catch (_) {
+            /* ignore */
           }
+        }
+        let probe = null;
+        if (!joinOnly) {
+          try {
+            probe = await net.probeRoom(roomId);
+          } catch (_) {
+            probe = null;
+          }
+        }
+        if (probe && probeMissesRoom(probe)) {
+          notFoundStreak += 1;
         } else {
           notFoundStreak = 0;
         }
-        const host = probe && probe.host;
-        if (probe && probe.ok && host) {
-          const hostOrigin = originOf(host);
-          if (hostOrigin === originOf(deadHost)) {
+        let host = (probe && probe.host) || '';
+        const recovering = Boolean(probe && probe.tunnelRecovering);
+        if (!host || recovering) {
+          const mqttHost = await resolveMqttHost();
+          if (mqttHost) host = mqttHost;
+        }
+        const roomStillThere = Boolean(
+          (probe && probe.ok) || recovering || host
+        );
+        if (roomStillThere) {
+          notFoundStreak = 0;
+          const hostOrigin = host ? originOf(host) : '';
+          if (
+            recovering ||
+            !hostOrigin ||
+            hostOrigin === originOf(deadHost)
+          ) {
             await sleepMs(2000);
             continue;
           }
           showToast(t('toast.tunnelFound'));
           try {
-            const opts = rejoinLobbyOpts(probe);
+            const opts = rejoinLobbyOpts(probe || { roomId });
             await net.joinRoomOnHost(roomId, name, host, {
               ...opts,
-              local: probe.local === true,
-              preferLocal: probe.local === true,
+              local: probe && probe.local === true,
+              preferLocal: probe && probe.local === true,
             });
             const ok = await waitForSessionRestore(4000);
             if (ok && isInRestoredGameView()) {
@@ -5240,15 +5432,38 @@
           } catch (_) {
             /* 新地址可能还没就绪，继续等 */
           }
+        } else if (notFoundStreak >= 20) {
+          await bounceToLocalLobby(t('toast.roomInvalid'), { clearArchive: false });
+          return;
         }
         await sleepMs(2000);
       }
       await bounceToLocalLobby(t('toast.roomInvalid'), { clearArchive: false });
     } finally {
+      if (typeof stopWatch === 'function') {
+        try {
+          stopWatch();
+        } catch (_) {}
+      }
       remoteRecovering = false;
-      state._rejoining = false;
+      if (!reloadTakeover) state._rejoining = false;
     }
   }
+
+  net.on('room:reload', (data) => {
+    applyRoomReload(data).catch(() => {});
+  });
+
+  net.on('tunnel:status', (data) => {
+    if (leavingToLocal) return;
+    // 房主本机仍连着，需要提示隧道在重建；客人走 disconnect 恢复流程
+    if (typeof net.isOnRemoteHost === 'function' && net.isOnRemoteHost()) return;
+    if (data && data.recovering) {
+      showToast(t('toast.tunnelHostRecovering'));
+      return;
+    }
+    showToast(t('toast.tunnelHostReady'));
+  });
 
   net.on('disconnect', () => {
     if (leavingToLocal) return;

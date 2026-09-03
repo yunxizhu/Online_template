@@ -328,15 +328,15 @@ const ENVIRONMENT_CATALOG = [
     envType: 'resistBarbarians',
     label: '抵抗南蛮',
     trigger: 'settle',
-    count: 3,
+    count: 2,
     desc: '生产结算（抵消并发资源）后、弃牌前：本格仍有至少 2 个骰子的玩家按名次从第一名起各获得 1 胜利点；有人达到 15 分则立刻结束游戏',
   },
   {
     envType: 'clearSky',
     label: '晴空万里',
     trigger: 'dispatch',
-    count: 3,
-    desc: '派遣时：派遣者任选获得 1 个资源（每次派遣触发一次，与数量无关）',
+    count: 2,
+    desc: '派遣时：派遣者任选获得与此次派遣数量相同的资源（可重复）',
   },
   {
     envType: 'enterFray',
@@ -344,7 +344,7 @@ const ENVIRONMENT_CATALOG = [
     trigger: 'dispatch',
     setup: 'neutral3',
     count: 2,
-    desc: '上场时在本格放置 3 枚中立骰。派遣时可将本格 1 枚中立骰移到任意板块数字格（无中立骰则不可发动）',
+    desc: '上场时在本格放置 3 枚中立骰。派遣时可将本格与此次派遣数量相同的中立骰移到任意板块数字格（不足则全部移动；无中立骰则不可发动）',
   },
   {
     envType: 'oneMountain',
@@ -358,7 +358,7 @@ const ENVIRONMENT_CATALOG = [
     label: '幸运一抽',
     trigger: 'settle',
     setup: 'sideCard',
-    count: 3,
+    count: 2,
     desc: '上场时将功能/建筑合堆顶 1 张暗置在旁。结算抵消后，第一名获得该暗置牌',
   },
   {
@@ -367,7 +367,7 @@ const ENVIRONMENT_CATALOG = [
     trigger: 'settle',
     dispatchAlso: true,
     count: 2,
-    desc: '派遣：成为本格最大者时（首次亦触发；继续加码不重复），任选获得 2 个资源（可重复）。结算：第三名额外获得前两名在本格所得资源之和',
+    desc: '派遣：成为本格最大者时（首次亦触发；继续加码不重复），任选获得 n 个资源（可重复），n=本格骰子归属者数量（每位玩家与中立各计 1）。结算：第三名额外获得前两名在本格所得资源之和',
   },
   {
     envType: 'firstCome',
@@ -411,7 +411,7 @@ const ENVIRONMENT_CATALOG = [
     envType: 'keepOverflow',
     label: '吃不了兜着走',
     trigger: 'settle',
-    count: 3,
+    count: 2,
     desc: '结算抵消后：本格第一名跳过本轮资源弃牌阶段，并任选 2 个资源',
   },
   {

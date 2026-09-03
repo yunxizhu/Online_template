@@ -347,6 +347,22 @@ window.LasidaoFx = (function () {
       ) {
         hasArt = Boolean(Assets.applyResourceArt(face, tile));
       }
+      if (
+        !hasArt &&
+        Assets &&
+        cardKind === 'building' &&
+        typeof Assets.applyBuildingArt === 'function'
+      ) {
+        hasArt = Boolean(Assets.applyBuildingArt(face, tile));
+      }
+      if (
+        !hasArt &&
+        Assets &&
+        cardKind === 'function' &&
+        typeof Assets.applyFunctionArt === 'function'
+      ) {
+        hasArt = Boolean(Assets.applyFunctionArt(face, tile));
+      }
       if (hasArt) face.classList.add('has-image');
       else {
         face.textContent =
@@ -659,6 +675,66 @@ window.LasidaoFx = (function () {
     }
   }
 
+  function revealSettleBoardTile(el, tile, areaKey) {
+    if (!el || !tile) return;
+    el.classList.remove('is-facedown');
+    const art = el.querySelector('.las-tile-art');
+    const Assets = window.LasidaoAssets;
+    const kind = tileSettleCardKind(tile, areaKey);
+    if (art && Assets) {
+      if (kind === 'resource' && typeof Assets.applyResourceArt === 'function') {
+        Assets.applyResourceArt(art, tile);
+      } else if (
+        kind === 'building' &&
+        typeof Assets.applyBuildingArt === 'function'
+      ) {
+        Assets.applyBuildingArt(art, tile);
+      } else if (
+        kind === 'function' &&
+        typeof Assets.applyFunctionArt === 'function'
+      ) {
+        Assets.applyFunctionArt(art, tile);
+      }
+    }
+    const nameEl = el.querySelector('.las-tile-name');
+    if (nameEl) {
+      nameEl.textContent =
+        tile.label || resLabel(tile.resource) || '';
+    }
+  }
+
+  async function presentSettleObtain(slot, rev) {
+    const gen = settleGen;
+    throwIfSettleAborted(gen);
+    if (!rev) return;
+    const card = rev.card || {};
+    const vis = {
+      ...((slot.tiles || []).find((t) => t && t.id === card.id) || {}),
+      ...card,
+      faceDown: false,
+    };
+    const el = card.id ? tileEl(card.id) : null;
+    if (el && el.classList.contains('is-facedown')) {
+      revealSettleBoardTile(
+        el,
+        vis,
+        slot && slot.area === 'resource' ? 'resource' : 'special'
+      );
+      await settleSleep(400);
+      throwIfSettleAborted(gen);
+    }
+    const Ui = window.LasidaoUi;
+    if (Ui && typeof Ui.showSettleObtain === 'function') {
+      Ui.showSettleObtain(rev);
+      await settleSleep(2000);
+    } else if (rev.stepText) {
+      setBanner(rev.stepText);
+      pushGameLog(rev.stepText);
+      await settleSleep(1200);
+    }
+    throwIfSettleAborted(gen);
+  }
+
   async function playSlot(game, slot) {
     const gen = settleGen;
     throwIfSettleAborted(gen);
@@ -784,21 +860,17 @@ window.LasidaoFx = (function () {
       await settleSleep(700);
     }
 
+    const obtainReveals = slot.obtainReveals || [];
+    for (let ri = 0; ri < obtainReveals.length; ri++) {
+      await presentSettleObtain(slot, obtainReveals[ri]);
+    }
+
     if (slot.area === 'resource' && (slot.gains || []).length) {
       const gains = slot.gains;
       for (const tile of slot.tiles || []) {
         const el = tileEl(tile.id);
         if (el && el.classList.contains('is-facedown') && !tile.faceDown) {
-          el.classList.remove('is-facedown');
-          const art = el.querySelector('.las-tile-art');
-          if (art && window.LasidaoAssets) {
-            const Assets = window.LasidaoAssets;
-            if (typeof Assets.applyResourceArt === 'function') {
-              Assets.applyResourceArt(art, tile);
-            }
-          }
-          const nameEl = el.querySelector('.las-tile-name');
-          if (nameEl) nameEl.textContent = tile.label || resLabel(tile.resource) || '';
+          revealSettleBoardTile(el, tile, 'resource');
         }
       }
       for (let gi = 0; gi < gains.length; gi++) {
@@ -848,10 +920,18 @@ window.LasidaoFx = (function () {
       setBanner(claimLine);
       pushGameLog(claimLine);
       const tiles = slot.tiles || [];
+      const obtainById = {};
+      for (const rev of slot.obtainReveals || []) {
+        if (rev && rev.card && rev.card.id) obtainById[rev.card.id] = rev;
+      }
       for (let ti = 0; ti < tiles.length; ti++) {
         const tile = tiles[ti];
-        await flySettleCard(layer, tile, 'special', boardSlot, target, {
-          faceUp: false,
+        const rev = tile && obtainById[tile.id];
+        const flyTile = rev
+          ? { ...tile, ...rev.card, faceDown: false }
+          : tile;
+        await flySettleCard(layer, flyTile, 'special', boardSlot, target, {
+          faceUp: Boolean(rev),
         });
         if (ti < tiles.length - 1) {
           await settleSleep(500);

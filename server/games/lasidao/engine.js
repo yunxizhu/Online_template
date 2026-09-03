@@ -205,6 +205,35 @@ function assignBuildingSlot(player, neu) {
   return false;
 }
 
+/** 未建造独占一格：只能放到空位，不可叠到仍有其他建筑的格子 */
+function assignUnbuiltExclusiveSlot(player, neu, preferredSlot) {
+  if (!neu) return false;
+  if (
+    preferredSlot != null &&
+    buildingsOnSlot(player, preferredSlot).length === 0
+  ) {
+    neu.slot = preferredSlot;
+    return true;
+  }
+  const free = nextFreeBuildSlot(player);
+  if (free != null) {
+    neu.slot = free;
+    return true;
+  }
+  neu.slot = null;
+  return false;
+}
+
+function occupiedBuildSlotsExcluding(player, buildingId) {
+  const set = new Set();
+  for (const b of player.buildings || []) {
+    if (b.id === buildingId) continue;
+    if (b.slot == null) continue;
+    set.add(String(b.slot));
+  }
+  return set;
+}
+
 function normalizeBuildSlot(slot) {
   if (slot == null || slot === '') return 'none';
   if (slot === 'none' || slot === 0 || slot === '0') return 'none';
@@ -812,6 +841,7 @@ function playerScore(p, game) {
   for (const b of p.buildings || []) {
     if (b.built && b.score) s += b.score;
   }
+  // bonusScore：事件、学堂、永恒王座每回合结束拿到的分等，与建筑是否仍建成无关
   s += Number(p.bonusScore) || 0;
   s += stackAchievementScore(p);
   if (game && game.breedingTycoonPlayerId === p.id) {
@@ -1260,11 +1290,14 @@ function cancelledEntries(before, remain) {
   return out;
 }
 
-function summarizeTiles(tiles) {
+function summarizeTiles(tiles, wasFaceDownById) {
   return (tiles || []).map((t) => ({
     id: t.id,
     kind: t.kind,
     faceDown: Boolean(t.faceDown),
+    wasFaceDown: wasFaceDownById
+      ? Boolean(wasFaceDownById[t.id])
+      : Boolean(t.faceDown),
     label: t.label || null,
     resource: t.resource || null,
     large: t.large,
@@ -1291,6 +1324,7 @@ function publicSettleTiles(tiles, claimedByPid, viewerId) {
         id: t.id,
         kind: t.kind,
         faceDown: true,
+        wasFaceDown: true,
         label: null,
         resource: null,
         large: null,
@@ -1307,6 +1341,7 @@ function publicSettleTiles(tiles, claimedByPid, viewerId) {
       id: t.id,
       kind: t.kind,
       faceDown: false,
+      wasFaceDown: Boolean(t.wasFaceDown || t.faceDown),
       label: t.label,
       resource: t.resource || null,
       large: t.large,
@@ -1391,7 +1426,7 @@ function createGameState(room) {
     welfareHouses: 0, // 福利房提供容量但不计分
     caravanPending: false, // 商队来临：本建造回合结束前特殊兑换率
     tempVillagers: 0, // 本轮生产可用的临时村民（生产结束后清零）
-    bonusScore: 0, // 事件等额外胜利点
+    bonusScore: 0, // 学堂/事件/永恒王座等已拿到的永久胜利点（拆迁不收回）
     /** 同类型建成 3 座后获得的成就 key（拆迁导致不足 3 座时会收回） */
     earnedStackAchievements: [],
     resources: startRes(),
@@ -1403,13 +1438,15 @@ function createGameState(room) {
     roundBred: false,
     roundExpanded: false,
     pendingDiscardFunc: false,
-    pendingDiscardBuild: null, // 总建筑达上限时需弃一张（已建或未建）腾位
+    pendingDiscardBuild: null, // 建筑格不足时需弃一张未建造腾位（入手超限或拆迁爆牌）
     pendingDiscardRes: false, // 手牌资源超上限
     skipSettleResourceDiscard: false, // 吃不了兜着走：本轮结算后豁免资源弃牌
     pendingWishWellBonus: 0, // 本轮许愿井待选取资源次数
     expandSlots: 0, // 扩建建筑格后增加的无数字格数量
     expandFuncSlots: 0, // 扩建功能卡格后增加的上限
     expandResSlots: 0, // 扩建资源卡位次数（每次 +4 手牌资源上限）
+    buildTurnUsedBuyFunc: false, // 本建造回合已购买功能卡（不可重置）
+    buildTurnUsedRedraw: false, // 本建造回合已使用重抽（不可重置）
   }));
 
   const game = {
@@ -1878,6 +1915,7 @@ function startSettle(game) {
     slots: [],
     buildings: [],
   };
+  game._settleObtainBucket = [];
   pushLog(game, '—— 进入结算阶段 ——');
 
   for (const p of alivePlayers(game)) {
@@ -1893,7 +1931,9 @@ function startSettle(game) {
     const tiles = tilesOnNumber(game.board.resource, num);
     if (!tiles.length && !Object.keys(workers).length) continue;
 
+    const wasFaceDownById = {};
     for (const tile of tiles) {
+      wasFaceDownById[tile.id] = Boolean(tile.faceDown);
       if (tile.faceDown) tile.faceDown = false;
     }
 
@@ -2008,9 +2048,10 @@ function startSettle(game) {
       remain,
       cancelled: cancelledEntries(before, remain),
       ranked,
-      tiles: summarizeTiles(tiles),
+      tiles: summarizeTiles(tiles, wasFaceDownById),
       gains,
       claimedBy: null,
+      obtainReveals: takeSettleObtainBucket(game),
       boosts: { ...boosts },
       physical: { ...workers },
       barren: Boolean(barren),
@@ -2101,12 +2142,14 @@ function startSettle(game) {
       tiles: summarizeTiles(tiles),
       gains: [],
       claimedBy,
+      obtainReveals: takeSettleObtainBucket(game),
       boosts: { ...boosts },
       physical: { ...workers },
       barren: Boolean(barren),
       barrenMarker: isBarrenMarkerOn(game, 'special', num),
     });
   }
+  delete game._settleObtainBucket;
 
   collectSettleBuildingReport(game, report);
   for (const entry of report.buildings || []) {
@@ -2168,6 +2211,16 @@ function isInstantScoreBuilding(card) {
   );
 }
 
+function takeSettleObtainBucket(game) {
+  const list = Array.isArray(game._settleObtainBucket)
+    ? game._settleObtainBucket.slice()
+    : [];
+  if (Array.isArray(game._settleObtainBucket)) {
+    game._settleObtainBucket = [];
+  }
+  return list;
+}
+
 /** 学堂等：入手即 +1 胜利点并进弃牌堆，不占建筑格 */
 function grantInstantScoreBuilding(game, player, card) {
   if (!isInstantScoreBuilding(card)) {
@@ -2185,7 +2238,7 @@ function grantInstantScoreBuilding(game, player, card) {
   const stepText =
     `${player.name} 获得「${card.label || '学堂'}」：立刻 +${pts} 胜利点（置入弃牌堆）`;
   pushLog(game, stepText);
-  pushPlayReveal(game, {
+  const reveal = {
     kind: 'building',
     actorId: player.id,
     actorName: player.name,
@@ -2194,9 +2247,16 @@ function grantInstantScoreBuilding(game, player, card) {
       label: card.label,
       buildType: card.buildType,
       score: pts,
+      instantScore: true,
     },
     stepText,
-  });
+  };
+  // 板块结算：等动画落到对应格子后再亮出，不在进入结算阶段时立刻 play-reveal
+  if (Array.isArray(game._settleObtainBucket)) {
+    game._settleObtainBucket.push(reveal);
+  } else {
+    pushPlayReveal(game, reveal);
+  }
   checkWin(game);
   return true;
 }
@@ -2242,15 +2302,16 @@ function ensurePendingBuildQueue(player) {
   return pending.newCards;
 }
 
-function queuePendingBuildCard(player, card) {
+function queuePendingBuildCard(player, card, source) {
   if (!player || !card) return;
   if (!player.pendingDiscardBuild) {
     player.pendingDiscardBuild = { newCard: card, newCards: [card] };
-    return;
+  } else {
+    const q = ensurePendingBuildQueue(player);
+    q.push(card);
+    player.pendingDiscardBuild.newCard = q[0] || null;
   }
-  const q = ensurePendingBuildQueue(player);
-  q.push(card);
-  player.pendingDiscardBuild.newCard = q[0] || null;
+  if (source) player.pendingDiscardBuild.source = source;
 }
 
 function popPendingBuildCard(player) {
@@ -2771,21 +2832,24 @@ function actEventMoveNeutral(game, player, payload) {
   }
   const fromArea = pending.fromArea || 'resource';
   const fromNumber = Number(pending.fromNumber) || Number(pending.number);
-  if (neutralCountOn(game, fromArea, fromNumber) <= 0) {
+  const available = neutralCountOn(game, fromArea, fromNumber);
+  if (available <= 0) {
     return { ok: false, error: '本格已无中立骰' };
   }
+  const want = Math.max(1, Number(pending.count) || 1);
+  const moveCount = Math.min(available, want);
   const fromW =
     game.board[fromArea].workers[fromNumber] ||
     (game.board[fromArea].workers[fromNumber] = {});
-  fromW[NEUTRAL_WORKER_ID] -= 1;
+  fromW[NEUTRAL_WORKER_ID] -= moveCount;
   if (fromW[NEUTRAL_WORKER_ID] <= 0) delete fromW[NEUTRAL_WORKER_ID];
   const toW =
     game.board[toArea].workers[toNumber] ||
     (game.board[toArea].workers[toNumber] = {});
-  toW[NEUTRAL_WORKER_ID] = (toW[NEUTRAL_WORKER_ID] || 0) + 1;
-    pushLog(
-      game,
-    `${player.name}「${pending.label}」：中立骰 ${fromArea}${fromNumber} → ${toArea}${toNumber}`
+  toW[NEUTRAL_WORKER_ID] = (toW[NEUTRAL_WORKER_ID] || 0) + moveCount;
+  pushLog(
+    game,
+    `${player.name}「${pending.label}」：${moveCount} 枚中立骰 ${fromArea}${fromNumber} → ${toArea}${toNumber}`
   );
   finishPendingEventChoice(game);
   return { ok: true };
@@ -3086,6 +3150,8 @@ function beginBuild(game) {
   // 建造阶段获得的资源即使超上限也不再强制弃牌
   for (const p of alivePlayers(game)) {
     p.pendingDiscardRes = false;
+    p.buildTurnUsedBuyFunc = false;
+    p.buildTurnUsedRedraw = false;
   }
   // 按生产阶段派遣完毕顺序决定建造阶段行动顺序（第一个派遣完的先建造）
   const order = game.produceFinishOrder || [];
@@ -3134,6 +3200,12 @@ function makeBuildSnapshot(player) {
 }
 
 function actResetBuildTurn(game, player) {
+  if (player.buildTurnUsedBuyFunc) {
+    return { ok: false, error: '本回合已购买功能卡，无法重置回合' };
+  }
+  if (player.buildTurnUsedRedraw) {
+    return { ok: false, error: '本回合已使用重抽，无法重置回合' };
+  }
   const snap = game.buildSnapshots[player.id];
   if (!snap) return { ok: false, error: '没有可用的重置状态' };
 
@@ -3358,6 +3430,26 @@ function applyAction(game, playerId, action) {
       return actCancelIllegalBuild(game, player);
     }
     return { ok: false, error: '等待目标玩家选择要拆除的建筑' };
+  }
+
+  if (game.phase === 'build') {
+    const waiting = alivePlayers(game).find(
+      (p) => p.pendingDiscardBuild && p.id !== playerId
+    );
+    if (
+      waiting &&
+      type !== 'discardUnbuilt' &&
+      type !== 'discardPendingBuild' &&
+      type !== 'discardFunc'
+    ) {
+      const demolition = waiting.pendingDiscardBuild.source === 'demolition';
+      return {
+        ok: false,
+        error: demolition
+          ? `等待 ${waiting.name} 处理拆迁后的建筑爆牌`
+          : `等待 ${waiting.name} 处理建筑爆牌`,
+      };
+    }
   }
 
   // 派遣 / 结算后事件选择等（跨阶段，须先于 settle 阶段守卫）
@@ -3885,6 +3977,14 @@ function actDiscardUnbuilt(game, player, payload) {
   if (player.pendingDiscardBuild && b.built) {
     return { ok: false, error: '超上限时只能弃置未建造的建筑' };
   }
+  const pendingSource =
+    player.pendingDiscardBuild && player.pendingDiscardBuild.source;
+  if (
+    pendingSource === 'demolition' &&
+    occupiedBuildSlotsExcluding(player, b.id).size >= maxBuildingsFor(player)
+  ) {
+    return { ok: false, error: '请弃置独占一格的未建造建筑，以便安放被拆迁建筑' };
+  }
 
   const slotKeep = b.slot;
   const wasBuilt = !!b.built;
@@ -3901,19 +4001,26 @@ function actDiscardUnbuilt(game, player, payload) {
     if (neu) {
       neu.built = false;
       neu.workers = 0;
-      if (!assignBuildingSlot(player, neu)) {
+      if (pendingSource === 'demolition') {
+        if (!assignUnbuiltExclusiveSlot(player, neu, slotKeep)) {
+          neu.slot = slotKeep != null ? slotKeep : nextFreeBuildSlot(player) || 'none';
+        }
+      } else if (!assignBuildingSlot(player, neu)) {
         if (
           slotKeep != null &&
           (buildingsOnSlot(player, slotKeep).length === 0 ||
             canStackBuildingOnSlot(player, slotKeep, neu))
         ) {
-    neu.slot = slotKeep;
+          neu.slot = slotKeep;
         } else {
           neu.slot = slotKeep != null ? slotKeep : nextFreeBuildSlot(player) || 'none';
         }
       }
-    player.buildings.push(neu);
-      let msg = `${player.name} 弃置${wasBuilt ? '已建' : '未建'}「${b.label}」（入弃牌堆），新建筑「${neu.label}」放到原格子`;
+      player.buildings.push(neu);
+      let msg =
+        pendingSource === 'demolition'
+          ? `${player.name} 弃置未建「${b.label}」（入弃牌堆），被拆迁的「${neu.label}」放到空位`
+          : `${player.name} 弃置${wasBuilt ? '已建' : '未建'}「${b.label}」（入弃牌堆），新建筑「${neu.label}」放到原格子`;
       if (wasBuilt && b.score) {
         msg += `，${b.label}被弃置，失去 +${b.score} 分`;
       }
@@ -3961,11 +4068,14 @@ function actDiscardPendingBuild(game, player) {
   if (!neu) {
     return { ok: false, error: '没有待取舍的新建筑' };
   }
+  const pendingSource = pending.source;
   popPendingBuildCard(player);
   pushToDiscard(game, 'building', neu);
-    pushLog(
-      game,
-    `${player.name} 弃置刚获得的建筑「${neu.label || '?'}」（入弃牌堆），保留现有建筑`
+  pushLog(
+    game,
+    pendingSource === 'demolition'
+      ? `${player.name} 弃置被拆迁、无处安放的建筑「${neu.label || '?'}」（入弃牌堆）`
+      : `${player.name} 弃置刚获得的建筑「${neu.label || '?'}」（入弃牌堆），保留现有建筑`
   );
   if (game.phase === 'settle_act') {
     maybeAdvanceAfterSettleActDiscard(game, player);
@@ -4998,6 +5108,29 @@ function revertBuildingToUnbuilt(player, b) {
   b.faceDown = false;
 }
 
+/**
+ * 拆迁后未建造独占一格：原格已空则留下；仍有其他已建造则改占空位；
+ * 无空位则从板上拿下并进入爆牌弃牌（pendingDiscardBuild）。
+ */
+function placeUnbuiltAfterDemolition(player, b) {
+  if (!player || !b) return { overflow: false };
+  const others = buildingsOnSlot(player, b.slot).filter((x) => x.id !== b.id);
+  if (!others.length) {
+    return { overflow: false };
+  }
+  const free = nextFreeBuildSlot(player);
+  if (free != null) {
+    b.slot = free;
+    return { overflow: false };
+  }
+  player.buildings = (player.buildings || []).filter((x) => x.id !== b.id);
+  b.slot = null;
+  b.built = false;
+  b.workers = 0;
+  queuePendingBuildCard(player, b, 'demolition');
+  return { overflow: true };
+}
+
 function useIllegalBuild(game, player, payload) {
   const targetId = payload.targetId || payload.target;
   const target = playerById(game, targetId);
@@ -5060,11 +5193,13 @@ function actIllegalBuildPick(game, player, payload) {
   const logLen = game.log.length;
 
   const scorePts = b.built ? Math.max(0, Number(b.score) || 0) : 0;
+  const demolishedType = b.buildType;
   const stackKey = buildingStackKey(b);
   const hadStackTitle =
     stackKey && stackAchievementKeys(player).includes(stackKey);
   revertBuildingToUnbuilt(player, b);
   ensureEarnedStackAchievements(player);
+  const overflow = placeUnbuiltAfterDemolition(player, b);
   const lostStackTitle =
     hadStackTitle &&
     stackKey &&
@@ -5074,8 +5209,14 @@ function actIllegalBuildPick(game, player, payload) {
   if (scorePts > 0) {
     stepText += `，失去 +${scorePts} 分`;
   }
+  if (demolishedType === 'eternalThrone') {
+    stepText += '，已获得的胜利点保留';
+  }
   if (lostStackTitle) {
     stepText += `，失去成就「${stackAchievementLabel(player, stackKey)}」（-${STACK_ACHIEVEMENT_SCORE} 分）`;
+  }
+  if (overflow.overflow) {
+    stepText += '，未建造需独占空位但格子已满，请弃置一张未建造建筑';
   }
   stepText += `（当前 ${playerScore(player, game)} 分）`;
   pushLog(game, stepText);
@@ -5331,17 +5472,17 @@ function useWelfareHouse(game, player, _payload) {
   return { ok: true };
 }
 
-/** 商队来临：建造阶段使用；本回合结束前可按 1:1 兑换；已建集市则 +1 胜利点 */
+/** 商队来临：建造阶段使用；本回合结束前可按 1:1 兑换；已建至少 2 座集市则 +1 胜利点 */
 function useCaravan(game, player, _payload) {
   if (player.caravanPending) {
     return { ok: false, error: '商队效果已生效' };
   }
   player.caravanPending = true;
-  const hasMarket = countBuiltExchanges(player) > 0;
+  const hasMarkets = countBuiltExchanges(player) >= 2;
   let logMsg = `${player.name} 发动商队来临：本回合结束前可按 1换1 兑换资源`;
-  if (hasMarket) {
+  if (hasMarkets) {
     player.bonusScore = (Number(player.bonusScore) || 0) + 1;
-    logMsg += `，已建集市 +1 分（当前 ${playerScore(player, game)} 分）`;
+    logMsg += `，已建至少 2 座集市 +1 分（当前 ${playerScore(player, game)} 分）`;
     checkWin(game);
   }
   pushLog(game, logMsg);
@@ -5465,6 +5606,8 @@ function startDrawPickOne(game, player, meta) {
     redrawCardId: meta.redrawCardId || null,
     options: drawn,
   };
+  if (meta.source === 'buyFunc') player.buildTurnUsedBuyFunc = true;
+  else if (meta.source === 'redraw') player.buildTurnUsedRedraw = true;
   if (meta.logText) pushLog(game, meta.logText);
   return { ok: true, awaitingPick: true };
 }
@@ -5973,9 +6116,13 @@ function publicGameState(game, viewerId) {
         maxFuncHand: maxFuncHandFor(p),
         maxResourceHand: maxResourceHandFor(p),
         buildPassed: Boolean(game.buildPassed && game.buildPassed[p.id]),
+        turnUsedBuyFunc: Boolean(p.buildTurnUsedBuyFunc),
+        turnUsedRedraw: Boolean(p.buildTurnUsedRedraw),
         // 他人只知是否待弃牌，不暴露待收建筑内容
         needsDiscardFunc: Boolean(p.pendingDiscardFunc),
         needsDiscardBuild: Boolean(p.pendingDiscardBuild),
+        pendingDiscardBuildSource:
+          (p.pendingDiscardBuild && p.pendingDiscardBuild.source) || null,
         needsDiscardRes: Boolean(p.pendingDiscardRes),
         pendingDiscardFunc: isMe ? p.pendingDiscardFunc : false,
         pendingDiscardBuild: isMe ? p.pendingDiscardBuild : null,
@@ -6018,6 +6165,8 @@ function publicGameState(game, viewerId) {
           caravanPending: Boolean(me.caravanPending),
           pendingWishWellBonus: Number(me.pendingWishWellBonus) || 0,
           buildPassed: Boolean(game.buildPassed && game.buildPassed[me.id]),
+          turnUsedBuyFunc: Boolean(me.buildTurnUsedBuyFunc),
+          turnUsedRedraw: Boolean(me.buildTurnUsedRedraw),
           houses: Number(me.houses) || 0,
           freeHouses: freeHousesFor(me),
         }
@@ -6098,6 +6247,16 @@ function getActingPlayerIds(game) {
     return playersNeedingWishWell(game).map((p) => p.id);
   }
   if (game.phase === 'build') {
+    const discardPending = alivePlayers(game).filter((p) => p.pendingDiscardBuild);
+    if (discardPending.length) {
+      if (
+        game.currentPlayerId &&
+        discardPending.some((p) => p.id === game.currentPlayerId)
+      ) {
+        return [game.currentPlayerId];
+      }
+      return [discardPending[0].id];
+    }
     const placementPending = alivePlayers(game)
       .filter(hasPendingPlacement)
       .map((p) => p.id);
@@ -6184,11 +6343,7 @@ function forceTimeout(game, playerId) {
       payload: { cardId: p.funcCards[p.funcCards.length - 1].id },
     });
   }
-  if (
-    game.phase === 'build' &&
-    game.currentPlayerId === playerId &&
-    p.pendingDiscardBuild
-  ) {
+  if (game.phase === 'build' && p.pendingDiscardBuild) {
     const unbuilt = p.buildings.find((b) => !b.built);
     if (unbuilt) {
       return applyAction(game, playerId, {

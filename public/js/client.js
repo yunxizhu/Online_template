@@ -287,6 +287,7 @@ window.GameNet = (function () {
       'room:spectatorLeft',
       'room:probe-result',
       'room:resolved',
+      'room:reload',
       'room:verifyPassword:result',
       'game:started',
       'game:state',
@@ -296,6 +297,7 @@ window.GameNet = (function () {
       'game:quit-ok',
       'chat:message',
       'chat:error',
+      'tunnel:status',
     ];
     for (const event of events) {
       s.on(event, (data) => emitLocal(event, data));
@@ -499,6 +501,10 @@ window.GameNet = (function () {
       rejoin: Boolean(opts.rejoin),
       client: clientOf(opts),
       role: roleOf(opts),
+      lastHost: opts.lastHost || null,
+      lastRoomId: opts.lastRoomId || opts.roomId || null,
+      lastRoomName: opts.lastRoomName || null,
+      lastStatus: opts.lastStatus || null,
     });
   }
 
@@ -542,6 +548,10 @@ window.GameNet = (function () {
         rejoin: Boolean(opts.rejoin),
         client: clientOf(opts),
         role: roleOf(opts),
+        lastHost: opts.lastHost || null,
+        lastRoomId: opts.lastRoomId || opts.roomId || null,
+        lastRoomName: opts.lastRoomName || null,
+        lastStatus: opts.lastStatus || null,
       });
     });
   }
@@ -816,7 +826,7 @@ window.GameNet = (function () {
     }
     let lastResolved = null;
     let lastErr = null;
-    const deadline = Date.now() + 30000;
+    const deadline = Date.now() + 120000;
     while (Date.now() < deadline) {
       const nextHost = await refreshRemoteHost(roomId, host, deadHosts);
       lastResolved = nextHost
@@ -917,7 +927,7 @@ window.GameNet = (function () {
       await connect(localOrigin);
     }
     let lastErr = null;
-    const deadline = Date.now() + 30000;
+    const deadline = Date.now() + 120000;
     while (Date.now() < deadline) {
       const nextHost = await refreshRemoteHost(roomId, host, deadHosts);
       if (nextHost && !deadHosts.has(nextHost)) {

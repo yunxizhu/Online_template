@@ -288,7 +288,7 @@ window.LasidaoUi = (function () {
       effect = `产出${b.produce}${res}`;
       if (b.needsWorker) effect += '（需工人）';
     } else if (b.buildType === 'score2') {
-      effect = `建成+${b.score}分（无需工人）`;
+      effect = `建成+${b.score}分（分数跟随宫殿）`;
     } else if (b.buildType === 'score1') {
       effect = '建成+1分（无需工人）';
     } else if (b.buildType === 'exchange') {
@@ -296,7 +296,7 @@ window.LasidaoUi = (function () {
     } else if (b.buildType === 'wishWell') {
       effect = '无需工人，生产阶段结束后可选任意资源+1';
     } else if (b.buildType === 'eternalThrone') {
-      effect = '无需工人，每个建造回合结束时+1分';
+      effect = '无需工人，每个建造回合结束时+1分（已得分保留）';
     }
 
     return `消耗：${costText}` + (effect ? `\n${effect}` : '');
@@ -317,8 +317,6 @@ window.LasidaoUi = (function () {
   let selectedBuildingId = null;
   /** @type {null|'buildHouse'|'breed'|'expand'|'exchange'} */
   let selectedPermanent = null;
-  let turnUsedBuyFunc = false;
-  let turnUsedRedraw = false;
   let lastGame = null;
   let lastMeId = null;
   let lastRenderOpts = null;
@@ -736,8 +734,15 @@ window.LasidaoUi = (function () {
 
   function shouldShowPlayRevealForViewer(reveal, meId) {
     if (!reveal || !reveal.id) return false;
+    if (reveal.forceAll) return true;
     if (reveal.actorId && meId && reveal.actorId === meId) return false;
     return true;
+  }
+
+  function isSettleDeferredObtainReveal(reveal, game) {
+    if (!reveal || !game || game.phase !== 'settle') return false;
+    const card = reveal.card;
+    return Boolean(card && (card.instantScore || card.buildType === 'score1'));
   }
 
   function hidePlayReveal(immediate) {
@@ -842,12 +847,24 @@ window.LasidaoUi = (function () {
     const reveal = game.lastPlayReveal;
     if (!reveal || !reveal.id) return false;
     if (reveal.id === prev.lastPlayRevealId) return false;
+    if (isSettleDeferredObtainReveal(reveal, game)) return false;
     return showPlayReveal(reveal, meId);
   }
 
   function onPlayReveal(data) {
     const reveal = data && data.reveal;
+    if (isSettleDeferredObtainReveal(reveal, lastGame)) return;
     showPlayReveal(reveal, lastMeId);
+  }
+
+  function showSettleObtain(reveal) {
+    if (!reveal) return false;
+    const payload = {
+      ...reveal,
+      id: reveal.id || 'settle-obtain-' + Date.now(),
+      forceAll: true,
+    };
+    return showPlayReveal(payload, lastMeId);
   }
 
   function logEntryText(entry) {
@@ -1162,6 +1179,12 @@ window.LasidaoUi = (function () {
       for (let i = prevLen; i < logs.length; i++) {
         const text = logEntryText(logs[i]);
         if (!text || isNoiseActionLog(text)) continue;
+        if (
+          game.phase === 'settle' &&
+          /获得「.+」：立刻/.test(text)
+        ) {
+          continue;
+        }
         if (text.indexOf('生产阶段开始，轮到 ') === 0) {
           produceStartName = text.slice('生产阶段开始，轮到 '.length).trim();
           continue;
@@ -2764,6 +2787,9 @@ window.LasidaoUi = (function () {
         p.needsDiscardFunc || p.needsDiscardBuild || p.needsDiscardRes
       );
     }
+    if (game.phase === 'build') {
+      return Boolean(p.needsDiscardBuild);
+    }
     if (game.phase === 'wish_well') {
       return (game.wishWellPending || []).some((x) => x.id === p.id);
     }
@@ -2807,7 +2833,7 @@ window.LasidaoUi = (function () {
       case 'moveBarrenMarker':
         return t('lasidao.statusEventMoveBarren', { name });
       case 'moveNeutral':
-        return t('lasidao.statusEventMoveNeutral', { name });
+        return t('lasidao.statusEventMoveNeutral', { name, need });
       case 'recallDie':
         return t('lasidao.statusEventRecall', { name });
       case 'teleportDie':
@@ -2919,6 +2945,25 @@ window.LasidaoUi = (function () {
           text = t('lasidao.illegalBuildAwaitOther', {
             target: pending.targetName || '?',
           });
+        }
+      } else if (game.phase === 'build') {
+        const overflowP = (game.players || []).find((p) => p.needsDiscardBuild);
+        if (overflowP) {
+          const demolition =
+            overflowP.pendingDiscardBuildSource === 'demolition' ||
+            (overflowP.pendingDiscardBuild &&
+              overflowP.pendingDiscardBuild.source === 'demolition');
+          if (overflowP.id === meId) {
+            text = demolition
+              ? t('lasidao.illegalBuildOverflowSelf')
+              : t('lasidao.discardBuildTip', {
+                  n: overflowP.maxBuildings || game.maxBuildings || 3,
+                });
+          } else {
+            text = t('lasidao.illegalBuildOverflowAwait', {
+              name: overflowP.name || '?',
+            });
+          }
         }
       }
 
@@ -3180,7 +3225,13 @@ window.LasidaoUi = (function () {
     const rollBtn = $('btn-las-produce-roll');
     if (!rollBtn || rollBtn.hidden) return;
     if (game && isMercenaryRollMode(game, meId)) {
-      rollBtn.textContent = t('lasidao.eventMercenaryRollBtn');
+      const remaining = autoProduceRollEndsAt - Date.now();
+      if (autoProduceRollEndsAt > 0 && remaining > 0) {
+        const secs = Math.max(1, Math.ceil(remaining / 1000));
+        rollBtn.textContent = t('lasidao.eventMercenaryRollCountdown', { n: secs });
+      } else {
+        rollBtn.textContent = t('lasidao.eventMercenaryRollBtn');
+      }
       return;
     }
     const showProduce =
@@ -3224,18 +3275,28 @@ window.LasidaoUi = (function () {
     updateProduceRollButtonLabel(lastGame, lastMeId);
   }
 
-  function syncAutoProduceRoll(game, meId) {
-    const shouldAuto =
-      Boolean(game) &&
-      !game.over &&
+  function autoRollKind(game, meId) {
+    if (!game || game.over) return null;
+    if (isMercenaryRollMode(game, meId)) return 'mercenary';
+    if (
       game.phase === 'produce' &&
       isMyTurn(game, meId) &&
-      isAwaitingRoll(game) &&
-      !isMercenaryRollMode(game, meId);
-    const key = shouldAuto
-      ? `${game.round || 0}:${meId}:${game.currentPlayerId || ''}:await`
-      : null;
-    if (!shouldAuto) {
+      isAwaitingRoll(game)
+    ) {
+      return 'produce';
+    }
+    return null;
+  }
+
+  function syncAutoProduceRoll(game, meId) {
+    const kind = autoRollKind(game, meId);
+    const key =
+      kind === 'produce'
+        ? `${game.round || 0}:${meId}:${game.currentPlayerId || ''}:await`
+        : kind === 'mercenary'
+          ? `merc:${game.round || 0}:${meId}:${game.currentPlayerId || ''}`
+          : null;
+    if (!kind) {
       clearAutoProduceRoll();
       return;
     }
@@ -3254,15 +3315,9 @@ window.LasidaoUi = (function () {
       updateProduceRollButtonLabel(lastGame, lastMeId);
       const g = lastGame;
       const id = lastMeId;
-      if (
-        !netRef ||
-        !g ||
-        g.over ||
-        g.phase !== 'produce' ||
-        !isMyTurn(g, id) ||
-        !isAwaitingRoll(g) ||
-        isMercenaryRollMode(g, id)
-      ) {
+      if (!netRef || !g || autoRollKind(g, id) !== kind) return;
+      if (kind === 'mercenary') {
+        netRef.sendAction('mercenaryRoll', {});
         return;
       }
       netRef.sendAction('produceRoll', {});
@@ -3940,6 +3995,10 @@ window.LasidaoUi = (function () {
     );
   }
 
+  function pendingMoveNeutralCount(choice) {
+    return Math.max(1, Number(choice && choice.count) || 1);
+  }
+
   function isNeutralPickMode(game, meId) {
     const c = game && game.pendingEventChoice;
     return Boolean(
@@ -4430,7 +4489,12 @@ window.LasidaoUi = (function () {
     selectedTarget = null;
     neutralPickArea = null;
     neutralPickNumber = null;
-    showTurnToast(t('lasidao.eventMoveNeutralToast'), 2200);
+    showTurnToast(
+      t('lasidao.eventMoveNeutralToast', {
+        need: pendingMoveNeutralCount(c),
+      }),
+      2200
+    );
   }
 
   function neutralDispatchFromCenter(game) {
@@ -4470,6 +4534,7 @@ window.LasidaoUi = (function () {
     if (!selectedTarget || selectedTarget.type !== 'area') return;
     const toArea = selectedTarget.area;
     const toNumber = selectedTarget.number;
+    const moveCount = pendingMoveNeutralCount(lastGame.pendingEventChoice);
     const fromCenter = neutralDispatchFromCenter(lastGame);
     const LasFx = window.LasidaoFx;
     dispatchBusy = true;
@@ -4479,7 +4544,7 @@ window.LasidaoUi = (function () {
         if (LasFx && typeof LasFx.playDispatch === 'function') {
           await LasFx.playDispatch({
             face: '?',
-            count: 1,
+            count: moveCount,
             color: 'neutral',
             fromCenters: fromCenter ? [fromCenter] : [],
             area: toArea,
@@ -4774,14 +4839,16 @@ window.LasidaoUi = (function () {
     const preview = $('las-dispatch-preview');
     if (wrap) wrap.hidden = false;
     setDiceTitle(t('lasidao.eventMoveNeutralTitle') || t('lasidao.environmentSlot'));
+    const need = pendingMoveNeutralCount(game.pendingEventChoice);
     if (hint) {
       hint.textContent =
         selectedTarget && selectedTarget.type === 'area'
           ? t('lasidao.eventMoveNeutralPicked', {
               area: areaLabel(selectedTarget.area),
               n: selectedTarget.number,
+              need,
             })
-          : t('lasidao.eventMoveNeutralHint');
+          : t('lasidao.eventMoveNeutralHint', { need });
     }
     if (preview) preview.hidden = true;
     if (voidBtn) voidBtn.hidden = true;
@@ -4796,7 +4863,10 @@ window.LasidaoUi = (function () {
     if (diceEl) {
       diceEl.hidden = false;
       diceEl.innerHTML = '';
-      diceEl.appendChild(makeDieEl('?', 'is-mini is-bandit', 'neutral'));
+      const showN = Math.min(need, 8);
+      for (let i = 0; i < showN; i++) {
+        diceEl.appendChild(makeDieEl('?', 'is-mini is-bandit', 'neutral'));
+      }
     }
     if (groupsEl) {
       groupsEl.hidden = true;
@@ -4974,6 +5044,9 @@ window.LasidaoUi = (function () {
       return true;
     }
     if (game.phase === 'build' && isMyTurn(game, meId)) {
+      return true;
+    }
+    if (me.pendingDiscardBuild) {
       return true;
     }
     if (game.phase === 'settle_act') {
@@ -5474,6 +5547,7 @@ window.LasidaoUi = (function () {
       meId && p.id === meId ? Number(game.pendingPrisonerDiscard) || 0 : 0,
       (game.welfareMinimumPending || []).some((w) => w.id === p.id) ? 1 : 0,
       game.phase,
+      p.buildPassed ? 1 : 0,
       selectedBuildingId || '',
       selectedFuncId || '',
       selectedPermanent || '',
@@ -6509,6 +6583,7 @@ window.LasidaoUi = (function () {
       setDiceTitle(t('lasidao.eventMercenaryTitle'));
       updateDiceHint();
       maybeShowMercenaryToast(game, meId);
+      renderRollWrap(game, meId);
       return;
     }
 
@@ -7512,10 +7587,19 @@ window.LasidaoUi = (function () {
     if (!pending || !pending.newCard || !parent) return;
     const maxB = me.maxBuildings || game.maxBuildings || 3;
     const unbuiltExisting = (me.buildings || []).filter((b) => !b.built);
+    const demolition = pending.source === 'demolition';
 
     const tip = document.createElement('div');
     tip.className = 'muted las-pboard-tip las-discard-build-tip';
-    tip.textContent = unbuiltExisting.length
+    tip.textContent = demolition
+      ? unbuiltExisting.length
+        ? t('lasidao.discardBuildDemolitionTip', {
+            label: pending.newCard.label || '?',
+          })
+        : t('lasidao.discardBuildDemolitionOnlyTip', {
+            label: pending.newCard.label || '?',
+          })
+      : unbuiltExisting.length
       ? t('lasidao.discardBuildChoiceTip', { n: maxB })
       : t('lasidao.discardBuildAllBuiltTip', { n: maxB });
     parent.appendChild(tip);
@@ -7524,7 +7608,9 @@ window.LasidaoUi = (function () {
     newWrap.className = 'las-discard-build-group';
     const newLab = document.createElement('div');
     newLab.className = 'las-pboard-label';
-    newLab.textContent = t('lasidao.pendingNewBuild');
+    newLab.textContent = demolition
+      ? t('lasidao.pendingDemolishBuild')
+      : t('lasidao.pendingNewBuild');
     newWrap.appendChild(newLab);
     const newCards = document.createElement('div');
     newCards.className = 'las-cards las-act-cards';
@@ -7891,9 +7977,9 @@ window.LasidaoUi = (function () {
         !p.buildPassed &&
         !b.built
       ) {
-        const canAfford = canPay(p.resources || {}, b.cost || {});
-        const needsPay = b.slot != null;
-        if (!needsPay || canAfford) btn.classList.add('is-affordable');
+        if (canPay(p.resources || {}, b.cost || {})) {
+          btn.classList.add('is-affordable');
+        }
       }
     } else {
       setLasCardInert(btn, true);
@@ -7966,6 +8052,9 @@ window.LasidaoUi = (function () {
     if (!game || !meId || !targetId || meId === targetId) return false;
     if (game.over) return false;
     if (game.pendingTrade || game.pendingEventChoice || game.pendingRedrawChoice || game.pendingIllegalBuild) {
+      return false;
+    }
+    if (game.phase === 'build' && (game.players || []).some((p) => p.needsDiscardBuild)) {
       return false;
     }
     if (game.phase !== 'produce' && game.phase !== 'build') return false;
@@ -9199,25 +9288,6 @@ window.LasidaoUi = (function () {
       setVoidSkipModalOpen(false);
     }
     const meId = lastMeId;
-    // 进入新的建造回合时重置标记
-    if (game.phase === 'build' && isMyTurn(game, meId)) {
-      const prevMe = _prevGame ? mePlayer(_prevGame, meId) : null;
-      const isNewBuildTurn =
-        !_prevGame ||
-        _prevGame.phase !== 'build' ||
-        !isMyTurn(_prevGame, meId) ||
-        (prevMe && prevMe.buildPassed);
-      if (isNewBuildTurn) {
-        turnUsedBuyFunc = false;
-        turnUsedRedraw = false;
-      }
-    }
-    // 根据服务器 pending 状态确认本回合已使用购买功能卡或重抽
-    const pendingRedraw = game.pendingRedrawChoice;
-    if (pendingRedraw && pendingRedraw.playerId === meId) {
-      if (pendingRedraw.source === 'buyFunc') turnUsedBuyFunc = true;
-      else if (pendingRedraw.source === 'redraw') turnUsedRedraw = true;
-    }
 
     $('las-round').textContent = t('lasidao.roundPhase', {
       round: game.round,
@@ -9272,8 +9342,9 @@ window.LasidaoUi = (function () {
     const willPlaySettle = (() => {
       const report = game && game.lastSettle;
       if (!report || !report.at) return false;
+      if (!shouldPlaySettleAnim(game.phase)) return false;
       const key = (report.round || '') + ':' + report.at;
-      return settleAnimKey !== key && !settlePlaying && ['settle', 'settle_act', 'wish_well', 'build', 'over'].includes(game.phase);
+      return settleAnimKey !== key && !settlePlaying;
     })();
     // 结算演绎中可冻结手牌显示；建造/弃牌阶段必须用当前状态，否则回合信息过期导致无法点选
     const freezeHandGame =
@@ -9502,17 +9573,25 @@ window.LasidaoUi = (function () {
           if (selectedPermanent === 'buyFunc' && !ok) selectedPermanent = null;
         }
         if (resetBuildBtn) {
+          const usedBuyFunc = Boolean(
+            (me && me.turnUsedBuyFunc) ||
+              (game.me && game.me.turnUsedBuyFunc)
+          );
+          const usedRedraw = Boolean(
+            (me && me.turnUsedRedraw) ||
+              (game.me && game.me.turnUsedRedraw)
+          );
           const ok =
-            myBuildTurn && !turnUsedBuyFunc && !turnUsedRedraw && !mustDiscard;
+            myBuildTurn && !usedBuyFunc && !usedRedraw && !mustDiscard;
           resetBuildBtn.disabled = !ok;
           markAffordable(resetBuildBtn, ok);
           setPermBtnTip(
             resetBuildBtn,
             formatPermanentTip(
               t('lasidao.resetBuildTurn'),
-            turnUsedBuyFunc
+            usedBuyFunc
               ? t('lasidao.resetBuildTurnBlockedBuyFunc')
-              : turnUsedRedraw
+              : usedRedraw
                 ? t('lasidao.resetBuildTurnBlockedRedraw')
                   : t('lasidao.permanentNoCost')
             )
@@ -9558,6 +9637,11 @@ window.LasidaoUi = (function () {
     return ['settle', 'settle_act', 'wish_well', 'build', 'over'].includes(
       phase
     );
+  }
+
+  /** 仅结算阶段播放结算动画；已到弃牌及之后（含建造）刷新重连不再重播 */
+  function shouldPlaySettleAnim(phase) {
+    return phase === 'settle';
   }
 
   function cloneBoardWorkers(src) {
@@ -9781,10 +9865,15 @@ window.LasidaoUi = (function () {
         for (const t of slot.tiles) {
           if (!t || !t.id) continue;
           const idx = tiles.findIndex((x) => x.id === t.id);
+          const shown = {
+            ...t,
+            number: num,
+            faceDown: Boolean(t.wasFaceDown || t.faceDown),
+          };
           if (idx >= 0) {
-            tiles[idx] = { ...tiles[idx], ...t, number: num };
+            tiles[idx] = { ...tiles[idx], ...shown, faceDown: tiles[idx].faceDown };
           } else {
-            tiles.push({ ...t, number: num });
+            tiles.push(shown);
             ids.add(t.id);
           }
         }
@@ -9797,10 +9886,19 @@ window.LasidaoUi = (function () {
             for (const t of slot.tiles) {
               if (!t || !t.id) continue;
               const idx2 = stiles.findIndex((x) => x.id === t.id);
+              const shown = {
+                ...t,
+                number: num,
+                faceDown: Boolean(t.wasFaceDown || t.faceDown),
+              };
               if (idx2 >= 0) {
-                stiles[idx2] = { ...stiles[idx2], ...t, number: num };
+                stiles[idx2] = {
+                  ...stiles[idx2],
+                  ...shown,
+                  faceDown: stiles[idx2].faceDown,
+                };
               } else {
-                stiles.push({ ...t, number: num });
+                stiles.push(shown);
               }
             }
             s.tiles = stiles;
@@ -9884,7 +9982,8 @@ window.LasidaoUi = (function () {
         if (!rt || !rt.id) continue;
         const idx = tiles.findIndex((t) => t.id === rt.id);
         if (idx >= 0) {
-          tiles[idx] = { ...tiles[idx], ...rt, number: num };
+          // 保留结算前朝向，获得后亮出由结算动画负责
+          tiles[idx] = { ...tiles[idx], number: num };
         }
       }
       snap.board[area].tiles = tiles;
@@ -9897,7 +9996,7 @@ window.LasidaoUi = (function () {
             if (!rt || !rt.id) continue;
             const idx2 = stiles.findIndex((t) => t.id === rt.id);
             if (idx2 >= 0) {
-              stiles[idx2] = { ...stiles[idx2], ...rt, number: num };
+              stiles[idx2] = { ...stiles[idx2], number: num };
             }
           }
           s.tiles = stiles;
@@ -10014,7 +10113,7 @@ window.LasidaoUi = (function () {
       ensureSettleAnimAck(game);
       return;
     }
-    if (!isSettlePipelinePhase(game.phase)) {
+    if (!shouldPlaySettleAnim(game.phase)) {
       return;
     }
 
@@ -12780,7 +12879,9 @@ window.LasidaoUi = (function () {
           setHarvestModalOpen(false);
           selectedFuncId = null;
         } else if (harvestSourceText) {
-          if (harvestMaxCount === 1) {
+          const choice =
+            lastGame && lastGame.pendingEventChoice;
+          if (choice && choice.needChoice === 'pickResource') {
             for (const res of RESOURCES) {
               if ((harvestCounts[res] || 0) > 0) {
                 netRef.sendAction('eventPickResource', { resource: res });
@@ -12915,6 +13016,7 @@ window.LasidaoUi = (function () {
     resetSession,
     bindButtons,
     onPlayReveal,
+    showSettleObtain,
     appendGameLogLine,
     openRules: () => setRulesModalOpen(true),
     makeBoardSlotEmptyEl,

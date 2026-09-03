@@ -460,6 +460,8 @@ class QuickTunnel {
         }
         if (this._stopped) return;
         console.warn('[tunnel] cloudflared 已退出', why);
+        this._clearRestart();
+        this._backoffMs = Math.min(this._backoffMs, 300);
         if (typeof this.onLost === 'function') {
           try {
             this.onLost();
@@ -561,7 +563,8 @@ class QuickTunnel {
   }
 
   /**
-   * 进程可能仍在，但 trycloudflare 域名已死：清 beacon、杀进程、换新隧道。
+   * 进程可能仍在，但 trycloudflare 域名已死：杀进程、立刻换新隧道。
+   * 对局房间仍留在本机内存；MQTT 心跳由 onLost → markTunnelLost 续上。
    * （_killProc 会抬高 _gen，exit 回调不会再走 onLost/_scheduleRestart）
    */
   _forceRotate(reason) {
@@ -572,8 +575,11 @@ class QuickTunnel {
         `${dead ? `（旧址 ${dead}）` : ''}: ${reason || 'health'}`
     );
     this._clearHealth();
+    this._clearRestart();
     this.publicUrl = null;
     this._healthFails = 0;
+    this._backoffMs = Math.min(this._backoffMs || 200, 200);
+    this._killProc();
     if (typeof this.onLost === 'function') {
       try {
         this.onLost();
@@ -581,12 +587,12 @@ class QuickTunnel {
         /* ignore */
       }
     }
-    this._killProc();
     this._scheduleRestart();
   }
 
   _scheduleRestart() {
-    if (this._stopped || this.proc || this._restartTimer) return;
+    if (this._stopped || this._restartTimer) return;
+    if (this.proc && this.publicUrl) return;
     const port = this._port;
     if (!port) return;
     const delay = this._backoffMs;
@@ -594,7 +600,8 @@ class QuickTunnel {
     console.log(`[tunnel] ${Math.round(delay / 100) / 10}s 后自动重连…`);
     this._restartTimer = setTimeout(() => {
       this._restartTimer = null;
-      if (this._stopped || this.proc || this._starting) return;
+      if (this._stopped) return;
+      if (this.proc && this.publicUrl) return;
       this.ensure(port).catch((err) => {
         console.warn(
           '[tunnel] 重连失败:',

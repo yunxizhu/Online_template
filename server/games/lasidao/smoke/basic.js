@@ -119,7 +119,7 @@ function drainNonProduce(game) {
         ok(
           applyAction(game, pid, {
             type: 'eventPickTwoResources',
-            payload: { amounts: { wood: 2 } },
+            payload: { amounts: { wood: ch.count || 2 } },
           })
         );
       } else if (ch.needChoice === 'moveBarrenMarker') {
@@ -555,6 +555,7 @@ console.log('— redraw from special deck top —');
   );
   assert.strictEqual(g.specialDeck.length, beforeSp - 3, '应抽走 3 张');
   assert.ok(g.pendingRedrawChoice, '应等待选择保留牌');
+  assert.ok(p.buildTurnUsedRedraw, '翻开待选时即应记录已使用重抽');
   assert.ok(
     p.funcCards.some((c) => c.id === 'fn_redraw_test'),
     '选择前应仍持有重抽卡'
@@ -582,6 +583,13 @@ console.log('— redraw from special deck top —');
     '手牌应净增 1 张功能卡'
   );
   assert.strictEqual(g.specialDiscard.length, beforeDisc + 3, '弃牌堆应增加重抽卡与2张未选牌');
+  assert.ok(p.buildTurnUsedRedraw, '重抽后应记录本回合已重抽');
+  assert.ok(
+    publicGameState(g, p.id).me.turnUsedRedraw,
+    '公开状态应带上已使用重抽'
+  );
+  const rdReset = applyAction(g, p.id, { type: 'resetBuildTurn', payload: {} });
+  assert.ok(!rdReset.ok, '使用重抽后不应允许重置回合');
   console.log('✓ redraw pick one of three');
 }
 
@@ -670,6 +678,7 @@ console.log('— buy func card permanent —');
   g.buildPassed = {};
   ok(applyAction(g, p.id, { type: 'buyFuncCardPermanent' }));
   assert.ok(g.pendingRedrawChoice && g.pendingRedrawChoice.source === 'buyFunc');
+  assert.ok(p.buildTurnUsedBuyFunc, '翻开待选时即应记录已购买功能卡');
   assert.strictEqual(p.resources.wood, 0);
   assert.strictEqual(p.resources.stone, 0);
   assert.strictEqual(p.resources.iron, 0);
@@ -681,6 +690,13 @@ console.log('— buy func card permanent —');
   );
   assert.ok(!g.pendingRedrawChoice);
   assert.ok(p.funcCards.some((c) => c.id === 'buy_keep'));
+  assert.ok(p.buildTurnUsedBuyFunc, '购买功能卡后应记录本回合已购买');
+  assert.ok(
+    publicGameState(g, p.id).me.turnUsedBuyFunc,
+    '公开状态应带上已购买功能卡'
+  );
+  const buyReset = applyAction(g, p.id, { type: 'resetBuildTurn', payload: {} });
+  assert.ok(!buyReset.ok, '购买功能卡后不应允许重置回合');
   console.log('✓ buy func card permanent');
 }
 
@@ -786,10 +802,21 @@ console.log('— special board score1 instant —');
     !g.board.special.tiles.some((t) => t.id === 'board_school'),
     '板块卡应被收走'
   );
-  assert.ok(g.lastPlayReveal && g.lastPlayReveal.kind === 'building');
-  assert.strictEqual(
-    g.lastPlayReveal.card && g.lastPlayReveal.card.buildType,
-    'score1'
+  const schoolSlot = (g.lastSettle && g.lastSettle.slots || []).find(
+    (s) => s.area === 'special' && Number(s.number) === 1
+  );
+  assert.ok(
+    schoolSlot &&
+      schoolSlot.obtainReveals &&
+      schoolSlot.obtainReveals[0] &&
+      schoolSlot.obtainReveals[0].card &&
+      schoolSlot.obtainReveals[0].card.buildType === 'score1',
+    '学堂应记在对应格子的结算亮出，而不是立刻 play-reveal'
+  );
+  assert.ok(
+    !g.lastPlayReveal ||
+      (g.lastPlayReveal.card && g.lastPlayReveal.card.id !== 'board_school'),
+    '进入结算阶段不应立刻亮出学堂'
   );
   console.log('✓ special board score1 instant');
 }
@@ -826,6 +853,22 @@ console.log('— special board score1 instant faceDown —');
   assert.ok(
     (g.specialDiscard || []).some((c) => c.id === 'board_school_fd'),
     '暗置学堂应入弃牌堆'
+  );
+  const fdSlot = (g.lastSettle && g.lastSettle.slots || []).find(
+    (s) => s.area === 'special' && Number(s.number) === 2
+  );
+  assert.ok(
+    fdSlot &&
+      fdSlot.obtainReveals &&
+      fdSlot.obtainReveals[0] &&
+      fdSlot.obtainReveals[0].card &&
+      fdSlot.obtainReveals[0].card.id === 'board_school_fd',
+    '暗置学堂也应等对应格子再亮出'
+  );
+  assert.ok(
+    !g.lastPlayReveal ||
+      (g.lastPlayReveal.card && g.lastPlayReveal.card.id !== 'board_school_fd'),
+    '进入结算阶段不应立刻亮出暗置学堂'
   );
   console.log('✓ special board score1 instant faceDown');
 }
@@ -1725,7 +1768,53 @@ console.log('— caravan card —');
       payload: { cardId: 'fn_caravan2' },
     })
   );
-  assert.strictEqual(p.bonusScore, 1, '已建集市应 +1 分');
+  assert.strictEqual(p.bonusScore, 0, '仅 1 座集市不应加分');
+  assert.strictEqual(playerScore(p), scoreBefore);
+  console.log('✓ caravan one market no bonus');
+}
+
+{
+  const { playerScore } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p = g.players[0];
+  p.buildings.push(
+    {
+      id: 'ex_bonus_a',
+      buildType: 'exchange',
+      label: '集市',
+      slot: 'none',
+      built: true,
+      workers: 0,
+      cost: {},
+    },
+    {
+      id: 'ex_bonus_b',
+      buildType: 'exchange',
+      label: '集市',
+      slot: 'none',
+      built: true,
+      workers: 0,
+      cost: {},
+    }
+  );
+  p.funcCards.push({
+    id: 'fn_caravan2',
+    kind: 'function',
+    funcType: 'caravan',
+    label: '商队来临',
+  });
+  g.phase = 'build';
+  g.currentPlayerId = 'p0';
+  g.buildPassed = {};
+  const scoreBefore = playerScore(p);
+  ok(
+    applyAction(g, 'p0', {
+      type: 'useFunc',
+      payload: { cardId: 'fn_caravan2' },
+    })
+  );
+  assert.strictEqual(p.bonusScore, 1, '已建至少 2 座集市应 +1 分');
   assert.strictEqual(playerScore(p), scoreBefore + 1);
   console.log('✓ caravan market bonus');
 }
@@ -1869,6 +1958,80 @@ console.log('— demolition unbuilds score building —');
   console.log('✓ demolition removes palace score and allows rebuild');
 }
 
+console.log('— demolition keeps eternal throne bonus score —');
+{
+  const { playerScore: scoreOf } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const actor = g.players[0];
+  const victim = g.players[1];
+  g.phase = 'build';
+  g.currentPlayerId = actor.id;
+  g.buildPassed = {};
+  g.produceFinishOrder = [actor.id, victim.id];
+  victim.bonusScore = 4;
+  victim.buildings.push({
+    id: 'throne_v',
+    kind: 'building',
+    buildType: 'eternalThrone',
+    label: '永恒王座',
+    cost: {},
+    score: 0,
+    built: true,
+    slot: 'none',
+    workers: 0,
+    faceDown: false,
+  });
+  assert.strictEqual(scoreOf(victim), 4, '王座已拿的分应计入总分');
+  actor.funcCards.push({
+    id: 'ib_throne',
+    funcType: 'illegalBuild',
+    label: '拆迁',
+    kind: 'function',
+  });
+  ok(
+    applyAction(g, actor.id, {
+      type: 'useFunc',
+      payload: { cardId: 'ib_throne', targetId: victim.id },
+    })
+  );
+  ok(
+    applyAction(g, victim.id, {
+      type: 'illegalBuildPick',
+      payload: { buildingId: 'throne_v' },
+    })
+  );
+  const throne = victim.buildings.find((b) => b.id === 'throne_v');
+  assert.ok(throne && !throne.built, '王座变为未建造');
+  assert.strictEqual(victim.bonusScore, 4, '拆迁不应收回王座已拿到的分');
+  assert.strictEqual(scoreOf(victim), 4, '总分应仍含王座已得分');
+  assert.ok(
+    g.log.some((line) => /已获得的胜利点保留/.test((line && line.text) || '')),
+    '日志应标明王座已得分保留'
+  );
+
+  g.currentPlayerId = victim.id;
+  ok(applyAction(g, victim.id, { type: 'pass' }));
+  assert.strictEqual(victim.bonusScore, 4, '未建造的王座在建造回合结束时不再继续得分');
+
+  victim.resources = { wood: 9, stone: 9, food: 9, iron: 9 };
+  g.phase = 'build';
+  g.currentPlayerId = victim.id;
+  g.buildPassed = {};
+  ok(
+    applyAction(g, victim.id, {
+      type: 'construct',
+      payload: { buildingId: 'throne_v' },
+    }),
+    '王座应可再次建造'
+  );
+  assert.ok(throne.built);
+  assert.strictEqual(scoreOf(victim), 4, '再建王座不会立刻再给建成即得分');
+  ok(applyAction(g, victim.id, { type: 'pass' }));
+  assert.strictEqual(victim.bonusScore, 5, '再建后建造回合结束应再 +1');
+  console.log('✓ demolition keeps eternal throne bonus score');
+}
+
 {
   const g = createGameState(room(2));
   finishInit(g);
@@ -2005,6 +2168,262 @@ console.log('— demolition cancel before building pick —');
   assert.ok(!g.pendingIllegalBuild);
   assert.ok(actor.funcCards.some((c) => c.id === 'ib_cancel'), '取消后卡牌保留');
   console.log('✓ demolition cancel retains card');
+}
+
+console.log('— demolition overflow: stay on slot vs burst —');
+{
+  const { occupiedBuildSlotCount, forceTimeout } = require('../engine');
+  function bld(id, opts) {
+    return {
+      id,
+      kind: 'building',
+      cost: {},
+      score: 0,
+      workers: 0,
+      faceDown: false,
+      ...opts,
+    };
+  }
+
+  {
+    const g = createGameState(room(2));
+    finishInit(g);
+    const actor = g.players[0];
+    const victim = g.players[1];
+    g.phase = 'build';
+    g.currentPlayerId = actor.id;
+    g.buildPassed = {};
+    victim.expandSlots = 0;
+    victim.buildings = [
+      bld('u1', { buildType: 'produce', resource: 'wood', rich: false, label: '木屋', built: false, slot: 'none' }),
+      bld('u2', { buildType: 'produce', resource: 'stone', rich: false, label: '石屋', built: false, slot: 'none:1' }),
+      bld('b1', { buildType: 'score2', label: '宫殿', score: 2, built: true, slot: 'none:2' }),
+    ];
+    actor.funcCards.push({
+      id: 'ib_stay',
+      funcType: 'illegalBuild',
+      label: '拆迁',
+      kind: 'function',
+    });
+    ok(
+      applyAction(g, actor.id, {
+        type: 'useFunc',
+        payload: { cardId: 'ib_stay', targetId: victim.id },
+      })
+    );
+    ok(
+      applyAction(g, victim.id, {
+        type: 'illegalBuildPick',
+        payload: { buildingId: 'b1' },
+      })
+    );
+    const pal = victim.buildings.find((b) => b.id === 'b1');
+    assert.ok(pal && !pal.built, '独占格被拆后仍为未建造');
+    assert.strictEqual(String(pal.slot), 'none:2', '独占格被拆后留在原格');
+    assert.ok(!victim.pendingDiscardBuild, '3 格 2 未建 + 1 已建被拆不爆牌');
+    assert.strictEqual(occupiedBuildSlotCount(victim), 3);
+  }
+
+  {
+    const g = createGameState(room(2));
+    finishInit(g);
+    const actor = g.players[0];
+    const victim = g.players[1];
+    g.phase = 'build';
+    g.currentPlayerId = actor.id;
+    g.buildPassed = {};
+    g.produceFinishOrder = [actor.id, victim.id];
+    victim.expandSlots = 0;
+    victim.buildings = [
+      bld('u1', { buildType: 'produce', resource: 'wood', rich: false, label: '木屋', built: false, slot: 'none' }),
+      bld('u2', { buildType: 'produce', resource: 'stone', rich: false, label: '石屋', built: false, slot: 'none:1' }),
+      bld('ex1', { buildType: 'exchange', label: '集市甲', built: true, slot: 'none:2' }),
+      bld('ex2', { buildType: 'exchange', label: '集市乙', built: true, slot: 'none:2' }),
+    ];
+    actor.funcCards.push({
+      id: 'ib_burst',
+      funcType: 'illegalBuild',
+      label: '拆迁',
+      kind: 'function',
+    });
+    ok(
+      applyAction(g, actor.id, {
+        type: 'useFunc',
+        payload: { cardId: 'ib_burst', targetId: victim.id },
+      })
+    );
+    ok(
+      applyAction(g, victim.id, {
+        type: 'illegalBuildPick',
+        payload: { buildingId: 'ex1' },
+      })
+    );
+    assert.ok(victim.pendingDiscardBuild, '叠放格被拆且无空位应爆牌');
+    assert.strictEqual(victim.pendingDiscardBuild.source, 'demolition');
+    assert.strictEqual(victim.pendingDiscardBuild.newCard.id, 'ex1');
+    assert.ok(!victim.buildings.find((b) => b.id === 'ex1'), '被拆卡暂离板面');
+    assert.strictEqual(
+      victim.buildings.filter((b) => String(b.slot) === 'none:2').length,
+      1,
+      '剩余已建集市仍占原格'
+    );
+    assert.strictEqual(occupiedBuildSlotCount(victim), 3);
+
+    const pub = publicGameState(g, actor.id);
+    assert.ok(
+      pub.players.find((p) => p.id === victim.id).needsDiscardBuild,
+      '他人可见爆牌待处理'
+    );
+    assert.strictEqual(
+      pub.players.find((p) => p.id === victim.id).pendingDiscardBuildSource,
+      'demolition'
+    );
+    assert.deepStrictEqual(getActingPlayerIds(g), [victim.id], '超时应轮到被拆迁方');
+
+    const blocked = applyAction(g, actor.id, {
+      type: 'construct',
+      payload: { buildingId: 'missing' },
+    });
+    assert.ok(!blocked.ok, '发动者在爆牌处理完前不能继续行动');
+    assert.ok(/爆牌/.test(blocked.error || ''), blocked.error);
+
+    ok(
+      applyAction(g, victim.id, {
+        type: 'discardUnbuilt',
+        payload: { buildingId: 'u1' },
+      }),
+      '弃一张未建造后应能安放被拆建筑'
+    );
+    assert.ok(!victim.pendingDiscardBuild);
+    const placed = victim.buildings.find((b) => b.id === 'ex1');
+    assert.ok(placed && !placed.built, '被拆建筑应回到板面且未建造');
+    assert.strictEqual(String(placed.slot), 'none', '应占用刚腾出的空位');
+    assert.ok(!victim.buildings.find((b) => b.id === 'u1'));
+    assert.strictEqual(occupiedBuildSlotCount(victim), 3);
+  }
+
+  {
+    const g = createGameState(room(2));
+    finishInit(g);
+    const actor = g.players[0];
+    const victim = g.players[1];
+    g.phase = 'build';
+    g.currentPlayerId = actor.id;
+    g.buildPassed = {};
+    victim.expandSlots = 0;
+    victim.buildings = [
+      bld('u1', { buildType: 'produce', resource: 'wood', rich: false, label: '木屋', built: false, slot: 'none' }),
+      bld('ex1', { buildType: 'exchange', label: '集市甲', built: true, slot: 'none:1' }),
+      bld('ex2', { buildType: 'exchange', label: '集市乙', built: true, slot: 'none:1' }),
+    ];
+    actor.funcCards.push({
+      id: 'ib_move',
+      funcType: 'illegalBuild',
+      label: '拆迁',
+      kind: 'function',
+    });
+    ok(
+      applyAction(g, actor.id, {
+        type: 'useFunc',
+        payload: { cardId: 'ib_move', targetId: victim.id },
+      })
+    );
+    ok(
+      applyAction(g, victim.id, {
+        type: 'illegalBuildPick',
+        payload: { buildingId: 'ex1' },
+      })
+    );
+    const moved = victim.buildings.find((b) => b.id === 'ex1');
+    assert.ok(moved && !moved.built);
+    assert.strictEqual(String(moved.slot), 'none:2', '有空位时应改占空位而不爆牌');
+    assert.ok(!victim.pendingDiscardBuild);
+  }
+
+  {
+    const g = createGameState(room(2));
+    finishInit(g);
+    const actor = g.players[0];
+    const victim = g.players[1];
+    g.phase = 'build';
+    g.currentPlayerId = actor.id;
+    g.buildPassed = {};
+    victim.expandSlots = 0;
+    victim.buildings = [
+      bld('u1', { buildType: 'produce', resource: 'wood', rich: false, label: '木屋', built: false, slot: 'none' }),
+      bld('u2', { buildType: 'produce', resource: 'stone', rich: false, label: '石屋', built: false, slot: 'none:1' }),
+      bld('ex1', { buildType: 'exchange', label: '集市甲', built: true, slot: 'none:2' }),
+      bld('ex2', { buildType: 'exchange', label: '集市乙', built: true, slot: 'none:2' }),
+    ];
+    actor.funcCards.push({
+      id: 'ib_drop',
+      funcType: 'illegalBuild',
+      label: '拆迁',
+      kind: 'function',
+    });
+    ok(
+      applyAction(g, actor.id, {
+        type: 'useFunc',
+        payload: { cardId: 'ib_drop', targetId: victim.id },
+      })
+    );
+    ok(
+      applyAction(g, victim.id, {
+        type: 'illegalBuildPick',
+        payload: { buildingId: 'ex1' },
+      })
+    );
+    ok(
+      applyAction(g, victim.id, { type: 'discardPendingBuild' }),
+      '可弃置无处安放的被拆建筑'
+    );
+    assert.ok(!victim.pendingDiscardBuild);
+    assert.ok(!victim.buildings.find((b) => b.id === 'ex1'));
+    assert.ok(
+      g.specialDiscard.some((c) => c.id === 'ex1'),
+      '被拆建筑进入弃牌堆'
+    );
+    assert.strictEqual(occupiedBuildSlotCount(victim), 3);
+  }
+
+  {
+    const g = createGameState(room(2));
+    finishInit(g);
+    const actor = g.players[0];
+    const victim = g.players[1];
+    g.phase = 'build';
+    g.currentPlayerId = actor.id;
+    g.buildPassed = {};
+    victim.expandSlots = 0;
+    victim.buildings = [
+      bld('u1', { buildType: 'produce', resource: 'wood', rich: false, label: '木屋', built: false, slot: 'none' }),
+      bld('u2', { buildType: 'produce', resource: 'stone', rich: false, label: '石屋', built: false, slot: 'none:1' }),
+      bld('ex1', { buildType: 'exchange', label: '集市甲', built: true, slot: 'none:2' }),
+      bld('ex2', { buildType: 'exchange', label: '集市乙', built: true, slot: 'none:2' }),
+    ];
+    actor.funcCards.push({
+      id: 'ib_to',
+      funcType: 'illegalBuild',
+      label: '拆迁',
+      kind: 'function',
+    });
+    ok(
+      applyAction(g, actor.id, {
+        type: 'useFunc',
+        payload: { cardId: 'ib_to', targetId: victim.id },
+      })
+    );
+    ok(
+      applyAction(g, victim.id, {
+        type: 'illegalBuildPick',
+        payload: { buildingId: 'ex1' },
+      })
+    );
+    ok(forceTimeout(g, victim.id), '超时自动弃牌');
+    assert.ok(!victim.pendingDiscardBuild, '超时后爆牌应处理完毕');
+  }
+
+  console.log('✓ demolition overflow stay / move / burst / discard / timeout');
 }
 
 function drainSettleAnim(g) {
@@ -2862,6 +3281,106 @@ console.log('— event enterFray places 3 neutrals —');
   console.log('✓ event enterFray places 3 neutrals');
 }
 
+console.log('— event enterFray move neutrals by dispatch count —');
+{
+  const { NEUTRAL_WORKER_ID } = require('../decks');
+  const { neutralCountOn } = require('../environmentEffects');
+
+  function setupEnterFray(neutralN, diceFaces) {
+    const g = createGameState(room(2));
+    finishInit(g);
+    g.board.resource.environments[4] = {
+      id: 'env_fray_move',
+      kind: 'environment',
+      envType: 'enterFray',
+      label: '以身入局',
+      trigger: 'dispatch',
+      setup: 'neutral3',
+      number: 4,
+    };
+    for (const n of [1, 2, 3, 5, 6]) {
+      delete g.board.resource.environments[n];
+    }
+    if (!g.board.resource.tiles.some((t) => t.number === 4)) {
+      g.board.resource.tiles.push({
+        id: 'res_fray4',
+        kind: 'resource',
+        resource: 'wood',
+        large: 2,
+        small: 1,
+        number: 4,
+        label: '木头·贫',
+      });
+    }
+    g.board.resource.workers = {
+      1: {},
+      2: {},
+      3: {},
+      4: { [NEUTRAL_WORKER_ID]: neutralN },
+      5: {},
+      6: {},
+    };
+    g.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+    g.phase = 'produce';
+    g.currentPlayerId = 'p0';
+    g.awaitingProduceRoll = false;
+    g.dice = { p0: diceFaces.slice(), p1: [] };
+    g.diceBoosted = {
+      p0: diceFaces.map(() => false),
+      p1: [],
+    };
+    g.players[0].dispatched = 0;
+    return g;
+  }
+
+  {
+    const g = setupEnterFray(3, [4]);
+    ok(applyAction(g, 'p0', { type: 'placeDice', payload: { face: 4, area: 'resource' } }));
+    assert.ok(g.pendingEventChoice && g.pendingEventChoice.needChoice === 'moveNeutral');
+    assert.strictEqual(g.pendingEventChoice.count, 1);
+    ok(
+      applyAction(g, 'p0', {
+        type: 'eventMoveNeutral',
+        payload: { area: 'resource', number: 1 },
+      })
+    );
+    assert.strictEqual(neutralCountOn(g, 'resource', 4), 2);
+    assert.strictEqual(neutralCountOn(g, 'resource', 1), 1);
+  }
+
+  {
+    const g = setupEnterFray(3, [4, 4]);
+    ok(applyAction(g, 'p0', { type: 'placeDice', payload: { face: 4, area: 'resource' } }));
+    assert.ok(g.pendingEventChoice && g.pendingEventChoice.needChoice === 'moveNeutral');
+    assert.strictEqual(g.pendingEventChoice.count, 2);
+    ok(
+      applyAction(g, 'p0', {
+        type: 'eventMoveNeutral',
+        payload: { area: 'resource', number: 1 },
+      })
+    );
+    assert.strictEqual(neutralCountOn(g, 'resource', 4), 1);
+    assert.strictEqual(neutralCountOn(g, 'resource', 1), 2);
+  }
+
+  {
+    const g = setupEnterFray(1, [4, 4]);
+    ok(applyAction(g, 'p0', { type: 'placeDice', payload: { face: 4, area: 'resource' } }));
+    assert.ok(g.pendingEventChoice && g.pendingEventChoice.needChoice === 'moveNeutral');
+    assert.strictEqual(g.pendingEventChoice.count, 1, '不足时应按剩余中立骰数量移动');
+    ok(
+      applyAction(g, 'p0', {
+        type: 'eventMoveNeutral',
+        payload: { area: 'resource', number: 1 },
+      })
+    );
+    assert.strictEqual(neutralCountOn(g, 'resource', 4), 0);
+    assert.strictEqual(neutralCountOn(g, 'resource', 1), 1);
+  }
+
+  console.log('✓ event enterFray move neutrals by dispatch count');
+}
+
 console.log('— event prisoners dilemma neutrals —');
 {
   const { beginProduce } = require('../engine');
@@ -3424,15 +3943,16 @@ console.log('— event mercenary place triggers dispatch env —');
     })
   );
   assert.ok(g.pendingEventChoice, '应触发晴空万里选择');
-  assert.strictEqual(g.pendingEventChoice.needChoice, 'pickResource');
+  assert.strictEqual(g.pendingEventChoice.needChoice, 'pickTwoResources');
+  assert.strictEqual(g.pendingEventChoice.count, 1);
   assert.strictEqual(g.pendingEventChoice.resume, 'mercenary');
   assert.strictEqual(g.phase, 'event_mercenary', '选择期间仍停留雇佣军阶段');
   const p0 = g.players[0];
   const woodBefore = p0.resources.wood || 0;
   ok(
     applyAction(g, 'p0', {
-      type: 'eventPickResource',
-      payload: { resource: 'wood' },
+      type: 'eventPickTwoResources',
+      payload: { amounts: { wood: 1 } },
     })
   );
   assert.strictEqual(p0.resources.wood, woodBefore + 1);
@@ -3481,11 +4001,64 @@ console.log('— event clearSky pick resource —');
   p0.resources.iron = 0;
   p0.dispatched = 0;
   ok(applyAction(g, 'p0', { type: 'placeDice', payload: { face: 4, area: 'resource' } }));
-  assert.ok(g.pendingEventChoice && g.pendingEventChoice.needChoice === 'pickResource');
-  ok(applyAction(g, 'p0', { type: 'eventPickResource', payload: { resource: 'iron' } }));
+  assert.ok(g.pendingEventChoice && g.pendingEventChoice.needChoice === 'pickTwoResources');
+  assert.strictEqual(g.pendingEventChoice.count, 1);
+  ok(
+    applyAction(g, 'p0', {
+      type: 'eventPickTwoResources',
+      payload: { amounts: { iron: 1 } },
+    })
+  );
   assert.strictEqual(p0.resources.iron, 1);
   assert.ok(!g.pendingEventChoice);
   console.log('✓ event clearSky pick resource');
+}
+
+console.log('— event clearSky pick two on double dispatch —');
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.board.resource.environments[4] = {
+    id: 'env_sky2',
+    kind: 'environment',
+    label: '晴空万里',
+    envType: 'clearSky',
+    trigger: 'dispatch',
+    number: 4,
+  };
+  if (!g.board.resource.tiles.some((t) => t.number === 4)) {
+    g.board.resource.tiles.push({
+      id: 'res_t4b',
+      kind: 'resource',
+      resource: 'wood',
+      large: 2,
+      small: 1,
+      number: 4,
+      label: '木头·贫',
+    });
+  }
+  g.phase = 'produce';
+  g.currentPlayerId = 'p0';
+  g.awaitingProduceRoll = false;
+  g.dice = { p0: [4, 4], p1: [] };
+  g.diceBoosted = { p0: [false, false], p1: [] };
+  const p0 = g.players[0];
+  p0.resources.iron = 0;
+  p0.resources.wood = 0;
+  p0.dispatched = 0;
+  ok(applyAction(g, 'p0', { type: 'placeDice', payload: { face: 4, area: 'resource' } }));
+  assert.ok(g.pendingEventChoice && g.pendingEventChoice.needChoice === 'pickTwoResources');
+  assert.strictEqual(g.pendingEventChoice.count, 2);
+  ok(
+    applyAction(g, 'p0', {
+      type: 'eventPickTwoResources',
+      payload: { amounts: { iron: 1, wood: 1 } },
+    })
+  );
+  assert.strictEqual(p0.resources.iron, 1);
+  assert.strictEqual(p0.resources.wood, 1);
+  assert.ok(!g.pendingEventChoice);
+  console.log('✓ event clearSky pick two on double dispatch');
 }
 
 console.log('— event recall die —');
@@ -3692,7 +4265,15 @@ console.log('— event teleport die —');
       });
     }
   }
-  g.board.resource.workers[1] = { p1: 1 };
+  g.board.resource.workers = {
+    1: { p1: 1 },
+    2: {},
+    3: {},
+    4: {},
+    5: {},
+    6: {},
+  };
+  g.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
   p1.dispatched = 1;
   p0.resources.iron = 0;
   p1.resources.iron = 0;
@@ -3720,17 +4301,18 @@ console.log('— event teleport die —');
     })
   );
   assert.ok(
-    g.pendingEventChoice && g.pendingEventChoice.needChoice === 'pickResource',
+    g.pendingEventChoice && g.pendingEventChoice.needChoice === 'pickTwoResources',
     '落点晴空万里应触发派遣效果'
   );
+  assert.strictEqual(g.pendingEventChoice.count, 1);
   assert.strictEqual(g.pendingEventChoice.playerId, 'p0');
   assert.strictEqual((g.board.resource.workers[1] || {}).p1 || 0, 0);
   assert.strictEqual((g.board.resource.workers[3] || {}).p1 || 0, 1);
   assert.strictEqual(p1.resources.iron || 0, 0);
   ok(
     applyAction(g, 'p0', {
-      type: 'eventPickResource',
-      payload: { resource: 'iron' },
+      type: 'eventPickTwoResources',
+      payload: { amounts: { iron: 1 } },
     })
   );
   assert.ok(!g.pendingEventChoice);
@@ -3757,11 +4339,21 @@ console.log('— event teleport die —');
       label: '石头·贫',
     });
   }
+  g2.board.resource.workers = {
+    1: {},
+    2: {},
+    3: {},
+    4: {},
+    5: {},
+    6: {},
+  };
+  g2.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
   g2.phase = 'produce';
   g2.currentPlayerId = 'p0';
   g2.awaitingProduceRoll = false;
   g2.dice = { p0: [5], p1: [] };
   g2.diceBoosted = { p0: [false], p1: [] };
+  g2.players[0].dispatched = 0;
   ok(applyAction(g2, 'p0', { type: 'placeDice', payload: { face: 5, area: 'resource' } }));
   assert.ok(
     g2.pendingEventChoice && g2.pendingEventChoice.needChoice === 'teleportDie',
@@ -3872,6 +4464,7 @@ console.log('— event fisherman leader again pick two —');
 
   const g = createGameState(room(2));
   finishInit(g);
+  const { NEUTRAL_WORKER_ID } = require('../decks');
   g.board.resource.environments[4] = {
     id: 'env_fish',
     kind: 'environment',
@@ -3892,6 +4485,15 @@ console.log('— event fisherman leader again pick two —');
       label: '木头·贫',
     });
   }
+  g.board.resource.workers = {
+    1: {},
+    2: {},
+    3: {},
+    4: {},
+    5: {},
+    6: {},
+  };
+  g.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
   g.phase = 'produce';
   g.currentPlayerId = 'p0';
   g.awaitingProduceRoll = false;
@@ -3900,21 +4502,125 @@ console.log('— event fisherman leader again pick two —');
   const p0 = g.players[0];
   p0.dispatched = 0;
   p0.resources.wood = 0;
+  p0.resources.stone = 0;
 
   ok(applyAction(g, 'p0', { type: 'placeDice', payload: { face: 4, area: 'resource' } }));
   assert.ok(
     g.pendingEventChoice && g.pendingEventChoice.needChoice === 'pickTwoResources',
     '首次成为最大者应弹出选资源'
   );
+  assert.strictEqual(g.pendingEventChoice.count, 1, '仅自己的骰子时 n=1');
   ok(
     applyAction(g, 'p0', {
+      type: 'eventPickTwoResources',
+      payload: { amounts: { wood: 1 } },
+    })
+  );
+  assert.strictEqual(p0.resources.wood, 1);
+  assert.ok(!g.pendingEventChoice);
+
+  const g2 = createGameState(room(2));
+  finishInit(g2);
+  g2.board.resource.environments[4] = {
+    id: 'env_fish2',
+    kind: 'environment',
+    label: '渔翁得利',
+    envType: 'fishermanProfit',
+    trigger: 'settle',
+    dispatchAlso: true,
+    number: 4,
+  };
+  if (!g2.board.resource.tiles.some((t) => t.number === 4)) {
+    g2.board.resource.tiles.push({
+      id: 'res_f4b',
+      kind: 'resource',
+      resource: 'wood',
+      large: 2,
+      small: 1,
+      number: 4,
+      label: '木头·贫',
+    });
+  }
+  g2.board.resource.workers = {
+    1: {},
+    2: {},
+    3: {},
+    4: { [NEUTRAL_WORKER_ID]: 1 },
+    5: {},
+    6: {},
+  };
+  g2.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  g2.phase = 'produce';
+  g2.currentPlayerId = 'p0';
+  g2.awaitingProduceRoll = false;
+  g2.dice = { p0: [4, 4], p1: [] };
+  g2.diceBoosted = { p0: [false, false], p1: [] };
+  g2.players[0].dispatched = 0;
+  g2.players[0].resources.wood = 0;
+  g2.players[0].resources.stone = 0;
+  ok(applyAction(g2, 'p0', { type: 'placeDice', payload: { face: 4, area: 'resource' } }));
+  assert.strictEqual(g2.pendingEventChoice.count, 2, '自己+中立时 n=2');
+  ok(
+    applyAction(g2, 'p0', {
       type: 'eventPickTwoResources',
       payload: { amounts: { wood: 1, stone: 1 } },
     })
   );
-  assert.strictEqual(p0.resources.wood, 1);
-  assert.strictEqual(p0.resources.stone, 1);
-  assert.ok(!g.pendingEventChoice);
+  assert.strictEqual(g2.players[0].resources.wood, 1);
+  assert.strictEqual(g2.players[0].resources.stone, 1);
+
+  const g3 = createGameState(room(2));
+  finishInit(g3);
+  g3.board.resource.environments[4] = {
+    id: 'env_fish3',
+    kind: 'environment',
+    label: '渔翁得利',
+    envType: 'fishermanProfit',
+    trigger: 'settle',
+    dispatchAlso: true,
+    number: 4,
+  };
+  if (!g3.board.resource.tiles.some((t) => t.number === 4)) {
+    g3.board.resource.tiles.push({
+      id: 'res_f4c',
+      kind: 'resource',
+      resource: 'wood',
+      large: 2,
+      small: 1,
+      number: 4,
+      label: '木头·贫',
+    });
+  }
+  g3.board.resource.workers = {
+    1: {},
+    2: {},
+    3: {},
+    4: { p1: 2, [NEUTRAL_WORKER_ID]: 1 },
+    5: {},
+    6: {},
+  };
+  g3.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  g3.players[1].dispatched = 2;
+  g3.phase = 'produce';
+  g3.currentPlayerId = 'p0';
+  g3.awaitingProduceRoll = false;
+  g3.dice = { p0: [4, 4, 4], p1: [] };
+  g3.diceBoosted = { p0: [false, false, false], p1: [] };
+  g3.players[0].dispatched = 0;
+  g3.players[0].resources.wood = 0;
+  g3.players[0].resources.stone = 0;
+  g3.players[0].resources.food = 0;
+  ok(applyAction(g3, 'p0', { type: 'placeDice', payload: { face: 4, area: 'resource' } }));
+  assert.strictEqual(g3.pendingEventChoice.count, 3, '自己+另一玩家+中立时 n=3');
+  ok(
+    applyAction(g3, 'p0', {
+      type: 'eventPickTwoResources',
+      payload: { amounts: { wood: 1, stone: 1, food: 1 } },
+    })
+  );
+  assert.strictEqual(g3.players[0].resources.wood, 1);
+  assert.strictEqual(g3.players[0].resources.stone, 1);
+  assert.strictEqual(g3.players[0].resources.food, 1);
   console.log('✓ event fisherman leader again pick two');
 }
 
@@ -4383,7 +5089,7 @@ console.log('— event deck draws until empty then reshuffles discard —');
         ok(
           applyAction(g, ch.playerId, {
             type: 'eventPickTwoResources',
-            payload: { amounts: { wood: 2 } },
+            payload: { amounts: { wood: ch.count || 2 } },
           })
         );
       } else if (ch.needChoice === 'moveBarrenMarker') {
@@ -4550,7 +5256,7 @@ console.log('— event deck reshuffles discard when draw pile empty —');
         ok(
           applyAction(g, ch.playerId, {
             type: 'eventPickTwoResources',
-            payload: { amounts: { wood: 2 } },
+            payload: { amounts: { wood: ch.count || 2 } },
           })
         );
       } else if (ch.needChoice === 'moveBarrenMarker') {

@@ -162,6 +162,15 @@ function becameStrictSlotLeader(workers, playerId, placed) {
   return myCount > otherMax && myPrev <= otherMax;
 }
 
+/** 本格骰子归属者数量：每位玩家与中立各计 1（数量>0 才计入） */
+function slotDistinctOwnerCount(workers) {
+  let n = 0;
+  for (const c of Object.values(workers || {})) {
+    if ((Number(c) || 0) > 0) n += 1;
+  }
+  return n;
+}
+
 /** @deprecated 与 becameStrictSlotLeader 相同；保留供测试兼容 */
 function becameLeaderAgain(workers, playerId, placed, pastLeaders) {
   void pastLeaders;
@@ -380,6 +389,7 @@ function applyEnvironmentOnDispatch(game, ctx) {
         label: env.label,
         number: num,
         playerId: player.id,
+        count: Math.max(1, slotDistinctOwnerCount(workers)),
       };
     }
     case 'barrenHarvest': {
@@ -398,11 +408,12 @@ function applyEnvironmentOnDispatch(game, ctx) {
 
     case 'clearSky':
       return {
-        needChoice: 'pickResource',
+        needChoice: 'pickTwoResources',
         envType: env.envType,
         label: env.label,
         number: num,
         playerId: player.id,
+        count: Math.max(1, Number(ctx.count) || 1),
       };
 
     case 'enterFray': {
@@ -416,6 +427,7 @@ function applyEnvironmentOnDispatch(game, ctx) {
         }
         return { envType: env.envType, label: env.label, skipped: true };
       }
+      const want = Math.max(1, Number(ctx.count) || 1);
       return {
         needChoice: 'moveNeutral',
         envType: env.envType,
@@ -424,6 +436,7 @@ function applyEnvironmentOnDispatch(game, ctx) {
         playerId: player.id,
         fromArea: 'resource',
         fromNumber: num,
+        count: Math.min(n, want),
       };
     }
 

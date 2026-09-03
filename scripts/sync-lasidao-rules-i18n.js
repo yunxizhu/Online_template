@@ -35,15 +35,15 @@ function envCardHtml(def, lang) {
         'On event slot. Dispatch: when you become the slot leader, place the marker (first time counts; stacking more as leader does not retrigger). Move marker to any resource or function/building slot—marked slots yield nothing on settle.',
       resistBarbarians:
         'After produce resolve, before discard: players with ≥2 dice left gain +1 VP in rank order from 1st; reaching 15 VP ends the game immediately.',
-      clearSky: 'Dispatch: dispatcher gains any 1 resource (once per dispatch, regardless of dice count).',
+      clearSky: 'Dispatch: dispatcher gains any resources equal to the number of dice in this dispatch (duplicates allowed).',
       enterFray:
-        'Setup: 3 neutral dice on this slot. Dispatch: move 1 neutral from here to any number slot (cannot use if no neutrals here).',
+        'Setup: 3 neutral dice on this slot. Dispatch: move as many neutrals from here as dice in this dispatch to any number slot (or all remaining if fewer; cannot use if none here).',
       mercenaries:
         'Setup: 2 mercenary dice. After everyone placed dice, before produce resolve: sole 1st place rolls and places (ties skip); gain that slot\'s large share immediately; dispatch events on placement also trigger; then produce resolve.',
       oneMountain: 'Settle: 2nd place gets no small share; 1st place also takes the small share.',
       luckyDraw: 'Setup: face-down top card from merged deck beside slot. Settle: 1st place takes it.',
       fishermanProfit:
-        'Dispatch: when you become slot leader (first time counts; stacking more as leader does not retrigger), gain any 2 resources (duplicates OK). Settle: 3rd place gains the sum of 1st and 2nd place resources from this slot.',
+        'Dispatch: when you become slot leader (first time counts; stacking more as leader does not retrigger), gain any n resources (duplicates OK); n = number of distinct die owners on this slot (each player and neutrals count as 1). Settle: 3rd place gains the sum of 1st and 2nd place resources from this slot.',
       firstCome:
         'Setup reward stash: 1 of each resource rounds 1–4, 2 rounds 5–8, 3 from round 9. Dispatch: when you place 2/4/6 villagers on this slot (by round band), gain one tier (once per player per event).',
       welfareMinimum:
@@ -140,9 +140,9 @@ const zhFunc =
   '<dt data-las-card="func:banditRaid">强盗来袭（5）</dt><dd>生产阶段、轮到你时：在任意板块任意数字格放置 2 枚中立骰；参与抵消并占用名次，不领取收益。</dd>' +
   '<dt data-las-card="func:freeExpand">免费扩建（3）</dt><dd>建造阶段：立即扩建一格（建筑格 / 功能卡格 / 资源卡位），不消耗资源。</dd>' +
   '<dt data-las-card="func:welfareHouse">福利房（3）</dt><dd>建造阶段：获得 1 间免费房子（可繁殖村民，但不加分）。</dd>' +
-  '<dt data-las-card="func:caravan">商队来临（2）</dt><dd>建造阶段：本回合结束前可按 1:1 兑换资源；若已建集市则额外 +1 胜利点。</dd>' +
+  '<dt data-las-card="func:caravan">商队来临（2）</dt><dd>建造阶段：本回合结束前可按 1:1 兑换资源；若已建至少 2 座集市则额外 +1 胜利点。</dd>' +
   '<dt data-las-card="func:robbery">抢劫（5）</dt><dd>建造阶段：选择两名玩家（可为同一人），各从其手牌中随机夺取 1 张（资源 / 功能卡 / 未建建筑）。</dd>' +
-  '<dt data-las-card="func:illegalBuild">拆迁（2）</dt><dd>仅建造阶段：选择一名已有已建建筑的玩家，由其选择一座已建建筑变为未建造；若为分数建筑，对应分数立即消失。</dd>' +
+  '<dt data-las-card="func:illegalBuild">拆迁（2）</dt><dd>仅建造阶段：选择一名已有已建建筑的玩家，由其选择一座已建建筑变为未建造；若为分数建筑，对应分数立即消失。未建造独占一格：若原格仍有其他已建造且无空位安放，则爆牌，须弃一张未建造建筑（或弃置该被拆建筑）。</dd>' +
   '</dl>';
 
 const enFunc =
@@ -156,29 +156,31 @@ const enFunc =
   '<dt data-las-card="func:banditRaid">Bandit Raid (5)</dt><dd>Your produce turn: place 2 neutrals on any number slot.</dd>' +
   '<dt data-las-card="func:freeExpand">Free Expand (3)</dt><dd>Build: expand one slot immediately (building / function / resource), no cost.</dd>' +
   '<dt data-las-card="func:welfareHouse">Welfare House (3)</dt><dd>Build: gain 1 free house (breeding only, no VP).</dd>' +
-  '<dt data-las-card="func:caravan">Caravan (2)</dt><dd>Build: until your turn ends, trade at 1:1; +1 VP if you already built a Market.</dd>' +
+  '<dt data-las-card="func:caravan">Caravan (2)</dt><dd>Build: until your turn ends, trade at 1:1; +1 VP if you have built at least 2 Markets.</dd>' +
   '<dt data-las-card="func:robbery">Robbery (5)</dt><dd>Build: pick two players (can be the same); randomly steal 1 hand card from each.</dd>' +
-  '<dt data-las-card="func:illegalBuild">Demolition (2)</dt><dd>Build phase only: pick a player with at least one built building; they choose one to revert to unbuilt; VP buildings lose their score.</dd>' +
+  '<dt data-las-card="func:illegalBuild">Demolition (2)</dt><dd>Build phase only: pick a player with at least one built building; they choose one to revert to unbuilt; VP buildings lose their score. Unbuilt buildings need their own slot: if the old slot still has a built building and no empty slot remains, discard one unbuilt building (or the demolished card).</dd>' +
   '</dl>';
 
 const zhBuild =
   '<dl class="las-rules-dl">' +
   '<dt data-las-cards="build:wood:rich build:stone:rich build:food:rich">资源建筑·富（木/石/小麦各 2）</dt><dd>木：2 石 3 小麦 2 铁，每轮自动产出 2 木。石：2 木 3 小麦 2 铁，产出 2 石。小麦：3 木 3 石 1 铁，产出 2 小麦。</dd>' +
   '<dt data-las-cards="build:wood:poor build:stone:poor build:food:poor build:iron:poor">资源建筑·贫</dt><dd>木/石/小麦（各 3）：贫档造价见卡面，产出 1。铁（3）：1 木 1 石 1 铁，产出 1 铁。建成后每轮个人产出阶段自动产出，无需工人。</dd>' +
-  '<dt data-las-card="build:score2">宫殿（+2）（4）</dt><dd>造价 3 木 3 石 3 小麦 2 铁。建成即 +2 分，无需工人。被弃置的宫殿不再计分。</dd>' +
+  '<dt data-las-card="build:score2">宫殿（+2）（4）</dt><dd>造价 2 木 2 石 1 小麦 1 铁。建成即 +2 分，无需工人。分数跟随宫殿：拆迁或未建造后不再计该分；被弃置也不再计分。</dd>' +
   '<dt data-las-card="build:score1">学堂（+1）（7）</dt><dd>入手即 +1 胜利点并置入弃牌堆，无需建造、不占建筑格。</dd>' +
   '<dt data-las-card="build:exchange">集市（5）</dt><dd>造价 1 木 1 石 1 小麦。建成后提升兑换比例（默认银行 3:1，1 座→2:1，≥2 座→1:1；兑换最多计 2 座）。相同建筑可叠放同一建筑格。</dd>' +
   '<dt data-las-card="build:wishWell">许愿井（3）</dt><dd>造价 1 木 1 石 1 小麦 1 铁。每建成一座：个人产出阶段可选任意 1 种资源 +1（多座可叠或分配）。无需工人。</dd>' +
+  '<dt data-las-card="build:eternalThrone">永恒王座（2）</dt><dd>造价 3 木 3 石 3 小麦 3 铁。每建成一座：每个建造回合结束时 +1 胜利点。已获得的分数永久保留（与宫殿不同）；拆迁后该座停止继续得分，再次建成后可重新开始获得。</dd>' +
   '</dl><p>任意同类型建筑建成 3 座：额外 +2 胜利点（例：3 座集市→「商业巨擎」；3 座许愿井→「灯灵本灵」；3 座同资源工坊→「××管理者」）。</p>';
 
 const enBuild =
   '<dl class="las-rules-dl">' +
   '<dt data-las-cards="build:wood:rich build:stone:rich build:food:rich">Resource building · Rich (×2 each)</dt><dd>Wood: 2S 3 wheat 2I → 2 wood/round. Stone: 2W 3 wheat 2I → 2 stone. Wheat: 3W 3S 1I → 2 wheat.</dd>' +
   '<dt data-las-cards="build:wood:poor build:stone:poor build:food:poor build:iron:poor">Resource building · Poor</dt><dd>Wood/Stone/Wheat×3: poor costs on card, produce 1. Iron×3: 1W 1S 1I → 1 iron. Auto-produce in personal production step.</dd>' +
-  '<dt data-las-card="build:score2">Palace (+2) (4)</dt><dd>Cost 3W 3S 3 wheat 2I. +2 when built.</dd>' +
+  '<dt data-las-card="build:score2">Palace (+2) (4)</dt><dd>Cost 2W 2S 1 wheat 1I. +2 when built. Score follows the Palace: lost if demolished or unbuilt.</dd>' +
   '<dt data-las-card="build:score1">School (+1) (3)</dt><dd>Cost 1W 1S 1 wheat 1I. +1 when built.</dd>' +
   '<dt data-las-card="build:exchange">Market (5)</dt><dd>Cost 1W 1S 1 wheat. Trade rate: default bank 3:1, 1→2:1, ≥2→1:1 (rate counts at most 2). Same-type buildings may stack.</dd>' +
   '<dt data-las-card="build:wishWell">Wish Well (3)</dt><dd>Cost 1W 1S 1 wheat 1I. Personal production: +1 any resource per well.</dd>' +
+  '<dt data-las-card="build:eternalThrone">Eternal Throne (2)</dt><dd>Cost 3W 3S 3 wheat 3I. Each built throne: +1 VP at the end of each build turn. Earned VP is kept forever (unlike Palace); demolition stops further income from that throne until rebuilt.</dd>' +
   '</dl><p>Build 3 of the same type: +2 VP each (e.g. 3 markets→Commerce Tycoon; 3 wish wells→Lamp Spirit; 3 same workshops→×× Manager).</p>';
 
 function apply(lang, flow, permanent, func, build, resource) {

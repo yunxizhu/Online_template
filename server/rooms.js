@@ -252,6 +252,16 @@ class RoomManager {
       if (tag) existing.tag = tag.padStart(5, '0');
       if (client) existing.client = client;
       if (role) existing.role = role;
+      if (opts.lastHost) {
+        existing.lastHost = String(opts.lastHost).replace(/\/$/, '').slice(0, 180);
+      }
+      if (opts.lastRoomId) {
+        existing.lastRoomId = String(opts.lastRoomId).slice(0, 12).toUpperCase();
+      }
+      if (opts.lastRoomName) {
+        existing.lastRoomName = String(opts.lastRoomName).slice(0, 40);
+      }
+      if (opts.lastStatus) existing.lastStatus = String(opts.lastStatus);
       this.syncNameToRoom(existing);
       this.syncSessionToRoom(existing);
       return existing;
@@ -264,6 +274,16 @@ class RoomManager {
       sessionId,
       client: client || null,
       role: role || null,
+      lastHost: opts.lastHost
+        ? String(opts.lastHost).replace(/\/$/, '').slice(0, 180)
+        : null,
+      lastRoomId: opts.lastRoomId
+        ? String(opts.lastRoomId).slice(0, 12).toUpperCase()
+        : null,
+      lastRoomName: opts.lastRoomName
+        ? String(opts.lastRoomName).slice(0, 40)
+        : null,
+      lastStatus: opts.lastStatus ? String(opts.lastStatus) : null,
     };
     this.players.set(playerId, player);
     return player;
@@ -346,6 +366,7 @@ class RoomManager {
       let roomName = null;
       let roomId = null;
       let occupied = false;
+      let host = p.lastHost || null;
       if (p.roomId) {
         const room = this.getRoom(p.roomId);
         if (room) {
@@ -363,7 +384,17 @@ class RoomManager {
             roomName = room.name;
             roomId = p.roomId;
           }
+          p.lastHost = null;
+          p.lastRoomId = null;
         }
+      } else if (p.lastRoomId && p.lastHost) {
+        // 隧道换址后客人回到本机：心跳仍声明停在旧房间，便于房主发现并 reload
+        roomId = p.lastRoomId;
+        roomName = p.lastRoomName || null;
+        status =
+          p.lastStatus === 'spectating' || p.lastStatus === 'room'
+            ? p.lastStatus
+            : 'playing';
       }
       list.push({
         id: p.id,
@@ -377,6 +408,7 @@ class RoomManager {
         role: p.role || null,
         passive: Boolean(p.passive),
         occupied,
+        host: host || null,
       });
     }
 
@@ -1358,10 +1390,12 @@ class RoomManager {
     if (!room || room.status !== 'waiting') return false;
     const game = getGame(room.gameType);
     const min = game ? game.minPlayers : 2;
+    const need = Number(room.maxPlayers) || min;
     const seated = (room.players || []).filter((p) => !p.left).length;
-    if (seated < min) return false;
+    if (seated < need) return false;
+    if (game && seated < game.minPlayers) return false;
     if (game && seated > game.maxPlayers) return false;
-    // 进房即视为准备，人齐即可开局（观战不计入）
+    // 进房即视为准备；必须坐满房间人数才能开局（观战不计入）
     return true;
   }
 
@@ -1375,10 +1409,11 @@ class RoomManager {
     if (!this.canStart(room)) {
       const game = getGame(room.gameType);
       const min = game ? game.minPlayers : 2;
+      const need = Number(room.maxPlayers) || min;
       const seated = (room.players || []).filter((p) => !p.left).length;
       return {
         ok: false,
-        error: `至少需要 ${min} 人才能开始（当前 ${seated} 人，不含观战）`,
+        error: `需要满员 ${need} 人才能开始（当前 ${seated} 人，不含观战）`,
       };
     }
 
