@@ -314,7 +314,7 @@ const ENVIRONMENT_CATALOG = [
     trigger: 'settle',
     setup: 'neutral2',
     count: 1,
-    desc: '上场在本格放置 2 枚中立骰。结算抵消后：骰子最少的玩家（可并列，可为 0）各弃 n 张资源卡，n=第一名骰子数；该弃牌在个人产出（含许愿井）后、建造前进行',
+    desc: '上场在本格放置 2 枚中立骰。结算抵消后：最后一名玩家（可并列；未放置者固定为最后一名）各弃 n 张资源卡，n=第一名骰子数；该弃牌在个人产出（含许愿井）后、建造前进行',
   },
   {
     envType: 'barrenHarvest',

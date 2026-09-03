@@ -3468,6 +3468,63 @@ console.log('— prisoners dilemma discard uses physical dice count —');
   console.log('✓ prisoners dilemma n equals first-place dice not strength');
 }
 
+console.log('— prisoners dilemma last place not fewest dice —');
+{
+  const { startSettle } = require('../engine');
+  const g = createGameState(room(3));
+  finishInit(g);
+  g.board.resource.environments[6] = {
+    id: 'env_pd_last',
+    kind: 'environment',
+    envType: 'prisonersDilemma',
+    label: '囚徒困境',
+    trigger: 'settle',
+    setup: 'neutral2',
+    number: 6,
+  };
+  g.board.resource.tiles = [
+    {
+      id: 'res_pd_last',
+      kind: 'resource',
+      resource: 'wood',
+      large: 1,
+      small: 1,
+      number: 6,
+      label: '木材',
+    },
+  ];
+  const p0 = g.players[0];
+  const p1 = g.players[1];
+  const p2 = g.players[2];
+  // 第一名 3、第二名 1、未放置 0：最后一名应为 p1 与 p2（旧逻辑仅惩罚最少骰的 p2）
+  g.board.resource.workers = {
+    1: {},
+    2: {},
+    3: {},
+    4: {},
+    5: {},
+    6: { [p0.id]: 3, [p1.id]: 1 },
+  };
+  g.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  startSettle(g);
+  assert.strictEqual(
+    Number((g.pendingPrisonerDiscards || {})[p0.id]) || 0,
+    0,
+    '第一名不应弃牌'
+  );
+  assert.strictEqual(
+    Number((g.pendingPrisonerDiscards || {})[p1.id]) || 0,
+    3,
+    '抵消后最后一名应弃第一名骰数'
+  );
+  assert.strictEqual(
+    Number((g.pendingPrisonerDiscards || {})[p2.id]) || 0,
+    3,
+    '未放置者固定为最后一名'
+  );
+  console.log('✓ prisoners dilemma last place includes second and non-placers');
+}
+
 console.log('— event wei qi rescue zhao —');
 {
   const { beginProduce } = require('../engine');

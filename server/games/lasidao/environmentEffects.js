@@ -605,21 +605,27 @@ function applyEnvironmentOnSettleSlot(game, ctx) {
       break;
 
     case 'prisonersDilemma': {
+      // 最后一名弃牌：抵消后排名末位（可并列）；未放置者固定为最后一名。
+      // n = 第一名物理骰数。唯一幸存者算第一名，不算最后一名。
       const physical = ctx.physical || {};
+      const remain = ctx.remain || {};
       const top = ranked[0];
       const n = top
         ? Number(top.dice) || physicalDiceOnSlot(physical, top.pid)
         : 0;
       const alive = (ctx.alivePlayers && ctx.alivePlayers(game)) || [];
-      let min = Infinity;
-      for (const p of alive) {
-        const c = physicalDiceOnSlot(physical, p.id);
-        if (c < min) min = c;
-      }
-      if (!alive.length || !Number.isFinite(min)) break;
-      const victims = alive.filter(
-        (p) => physicalDiceOnSlot(physical, p.id) === min
-      );
+      if (!alive.length) break;
+      const lastCount = ranked.length
+        ? Number(ranked[ranked.length - 1].count) || 0
+        : null;
+      const victims = alive.filter((p) => {
+        const dice = physicalDiceOnSlot(physical, p.id);
+        if (dice <= 0) return true; // 没放的固定为最后一名
+        const strength = Number(remain[p.id]) || 0;
+        if (strength <= 0) return true; // 抵消出局
+        if (ranked.length < 2 || lastCount == null) return false;
+        return strength === lastCount;
+      });
       if (!game.pendingPrisonerDiscards) game.pendingPrisonerDiscards = {};
       for (const p of victims) {
         if (n <= 0) continue;
@@ -631,7 +637,7 @@ function applyEnvironmentOnSettleSlot(game, ctx) {
           game,
           n <= 0
             ? `「${env.label}」：第一名骰数为 0，无需弃牌`
-            : `「${env.label}」：${victims.map((p) => p.name).join('、')}（最少 ${min} 骰）各需弃 ${n} 张（个人产出后）`
+            : `「${env.label}」：${victims.map((p) => p.name).join('、')}（最后一名）各需弃 ${n} 张（个人产出后）`
         );
       }
       break;
