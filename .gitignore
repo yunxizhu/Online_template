@@ -1,6 +1,11 @@
 node_modules/
 dist/
 dist.zip
+.build-tmp/
+*.bak
+smoke-out.txt
+filelist.txt
+.gradle-home/
 hub.url
 roster.url
 tencent-docs.json
