@@ -45,7 +45,7 @@ function envCardHtml(def, lang) {
       fishermanProfit:
         'Dispatch: when you become slot leader (first time counts; stacking more as leader does not retrigger), gain any n resources (duplicates OK); n = number of distinct die owners on this slot (each player and neutrals count as 1). Settle: 3rd place gains the sum of 1st and 2nd place resources from this slot.',
       firstCome:
-        'Setup reward stash: 1 of each resource rounds 1–4, 2 rounds 5–8, 3 from round 9. Dispatch: when you place 2/4/6 villagers on this slot (by round band), gain one tier (once per player per event).',
+        'Setup: draw 3/5/7 resource cards (rounds 1–4 / 5–8 / 9+) face-down beside this event. Dispatch: when you place 2/3/4 villagers on this slot (by round band), take those cards (one stash per event).',
       welfareMinimum:
         'On appear: lowest-score player(s) each pick any 2 resources (ties all apply; duplicates OK). Multiple copies resolve separately.',
       recall:
@@ -53,7 +53,7 @@ function envCardHtml(def, lang) {
       teleport:
         'Dispatch: when you become slot leader (first time counts; stacking more as leader does not retrigger), move 1 die (any player or neutral) from any slot to any slot with tiles; destination triggers dispatch events.',
       keepOverflow:
-        'After settle cancel: 1st place on this slot skips resource discard for this round and picks any 2 resources.',
+        'After settle cancel: 1st place on this slot skips resource discard for this round and gains 2 random resources.',
       weiQiRescueZhao:
         'Setup: place 1 neutral on each orthogonally adjacent resource-area number slot (1→2/4, 2→1/3/5, 3→2/6, 4→1/5, 5→2/4/6, 6→3/5). Dispatch: choose another slot with neutrals and move all neutrals here.',
     };
@@ -134,14 +134,14 @@ const zhFunc =
   '<dt data-las-card="func:harvest">丰收（5）</dt><dd>建造阶段：任选获得 3 个资源（可重复）。</dd>' +
   '<dt data-las-card="func:remoteDice">遥控骰子（2）</dt><dd>生产阶段、轮到你时可用（投掷前后均可）：本回合可指定任意点数派遣。</dd>' +
   '<dt data-las-card="func:exile">驱逐（5）</dt><dd>生产阶段、轮到你时：将目标玩家在某数字格的 1 枚骰子移到另一有板块的数字格。</dd>' +
-  '<dt data-las-card="func:enhance">强化（2）</dt><dd>建造阶段：强化 1 枚未强化过的骰子（最多 3 枚；达上限则无法发动）。强化骰结算时计为 1.5（普通骰计 1）。开局自带 1 枚强化骰。</dd>' +
+  '<dt data-las-card="func:enhance">强化（2）</dt><dd>建造阶段：强化 1 枚未强化过的骰子（最多 5 枚；达上限则无法发动）。强化骰结算时计为 1.5（普通骰计 1）。开局自带 1 枚强化骰。</dd>' +
   '<dt data-las-card="func:recruit">征召（5）</dt><dd>建造阶段：下一轮生产阶段临时村民 +2，可参与投骰与派遣；该生产阶段结束后消失。</dd>' +
   '<dt data-las-card="func:redraw">重抽（3）</dt><dd>建造阶段：从功能/建筑合堆顶抽 3 张，选 1 保留，其余弃入弃牌堆；合堆不足时洗混弃牌堆合并后再抽。保留后超出手牌上限须先弃置。</dd>' +
   '<dt data-las-card="func:banditRaid">强盗来袭（5）</dt><dd>生产阶段、轮到你时：在任意板块任意数字格放置 2 枚中立骰；参与抵消并占用名次，不领取收益。</dd>' +
   '<dt data-las-card="func:freeExpand">免费扩建（3）</dt><dd>建造阶段：立即扩建一格（建筑格 / 功能卡格 / 资源卡位），不消耗资源。</dd>' +
   '<dt data-las-card="func:welfareHouse">福利房（3）</dt><dd>建造阶段：获得 1 间免费房子（可繁殖村民，但不加分）。</dd>' +
   '<dt data-las-card="func:caravan">商队来临（2）</dt><dd>建造阶段：本回合结束前可按 1:1 兑换资源；若已建至少 2 座集市则额外 +1 胜利点。</dd>' +
-  '<dt data-las-card="func:robbery">抢劫（5）</dt><dd>建造阶段：选择两名玩家（可为同一人），各从其手牌中随机夺取 1 张（资源 / 功能卡 / 未建建筑）。</dd>' +
+  '<dt data-las-card="func:robbery">抢劫（5）</dt><dd>建造阶段：二选一。①选一名至少有 2 张资源卡的玩家，随机夺取其 2 张资源；②选一名持有未建造建筑或功能卡的玩家，由其选择 1 张未建造建筑或功能卡交给你。</dd>' +
   '<dt data-las-card="func:illegalBuild">拆迁（2）</dt><dd>仅建造阶段：选择一名已有已建建筑的玩家，由其选择一座已建建筑变为未建造；若为分数建筑，对应分数立即消失。未建造独占一格：若原格仍有其他已建造且无空位安放，则爆牌，须弃一张未建造建筑（或弃置该被拆建筑）。</dd>' +
   '</dl>';
 
@@ -150,14 +150,14 @@ const enFunc =
   '<dt data-las-card="func:harvest">Harvest (5)</dt><dd>Build: gain any 3 resources (duplicates OK).</dd>' +
   '<dt data-las-card="func:remoteDice">Remote Dice (2)</dt><dd>Your produce turn (before or after rolling): choose any faces.</dd>' +
   '<dt data-las-card="func:exile">Exile (5)</dt><dd>Your produce turn: move 1 villager of a target from a number slot to another slot with tiles.</dd>' +
-  '<dt data-las-card="func:enhance">Enhance (2)</dt><dd>Build: enhance 1 unenhanced die (max 3). Enhanced dice count as 1.5 in settle (normal = 1). Each player starts with 1 enhanced die.</dd>' +
+  '<dt data-las-card="func:enhance">Enhance (2)</dt><dd>Build: enhance 1 unenhanced die (max 5). Enhanced dice count as 1.5 in settle (normal = 1). Each player starts with 1 enhanced die.</dd>' +
   '<dt data-las-card="func:recruit">Recruit (5)</dt><dd>Build: next produce +2 temp villagers; gone after that produce.</dd>' +
   '<dt data-las-card="func:redraw">Redraw (3)</dt><dd>Build: draw 3 from merged deck top, keep 1; reshuffle discard if needed. Discard if over hand cap after keeping.</dd>' +
   '<dt data-las-card="func:banditRaid">Bandit Raid (5)</dt><dd>Your produce turn: place 2 neutrals on any number slot.</dd>' +
   '<dt data-las-card="func:freeExpand">Free Expand (3)</dt><dd>Build: expand one slot immediately (building / function / resource), no cost.</dd>' +
   '<dt data-las-card="func:welfareHouse">Welfare House (3)</dt><dd>Build: gain 1 free house (breeding only, no VP).</dd>' +
   '<dt data-las-card="func:caravan">Caravan (2)</dt><dd>Build: until your turn ends, trade at 1:1; +1 VP if you have built at least 2 Markets.</dd>' +
-  '<dt data-las-card="func:robbery">Robbery (5)</dt><dd>Build: pick two players (can be the same); randomly steal 1 hand card from each.</dd>' +
+  '<dt data-las-card="func:robbery">Robbery (5)</dt><dd>Build: choose one. (1) Pick a player with at least 2 resource cards and steal 2 at random. (2) Pick a player with an unbuilt building or a function card; they choose 1 of those cards to give you.</dd>' +
   '<dt data-las-card="func:illegalBuild">Demolition (2)</dt><dd>Build phase only: pick a player with at least one built building; they choose one to revert to unbuilt; VP buildings lose their score. Unbuilt buildings need their own slot: if the old slot still has a built building and no empty slot remains, discard one unbuilt building (or the demolished card).</dd>' +
   '</dl>';
 

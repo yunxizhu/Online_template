@@ -2455,6 +2455,11 @@
   margin: 0;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
   pointer-events: none;
+  overflow: hidden;
+}
+.las-slot-env .las-env-stash-card.is-facedown .las-tile-name,
+.las-slot-env .las-env-stash-card.is-facedown .las-tile-meta {
+  display: none;
 }
 
 .las-env-stash-stack > .las-env-stash-count {
@@ -4035,6 +4040,9 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
   margin: 0;
   font-size: calc(1.1 * var(--las-rem));
 }
+.las-robbery-head .las-hint {
+  margin: calc(0.35 * var(--las-rem)) 0 0;
+}
 .las-robbery-body,
 .las-redraw-body {
   display: flex;
@@ -4113,6 +4121,11 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
   min-height: var(--las-hand-card-h, calc(6.6 * var(--las-rem)));
   cursor: pointer;
   box-sizing: border-box;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.las-robbery-card-backs .las-card.is-selected {
+  transform: translateY(-4px);
+  box-shadow: 0 0 0 2px #c9a227, 0 4px 10px rgba(201, 162, 39, 0.35);
 }
 
 .las-robbery-players {

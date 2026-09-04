@@ -1080,9 +1080,17 @@ const engine = require('../engine');
 const { createGameState: cgs, applyAction: aa } = require('../engine');
 const g5 = cgs(room(2));
 finishInit(g5);
-// 把当前资源牌移入弃牌并抽空
+// 把当前资源牌移入弃牌并抽空（含先到先得暗置在事件旁的资源）
+const stashHeld = [];
+const envs5 = (g5.board.resource.environments || {});
+for (const env of Object.values(envs5)) {
+  if (!env || !Array.isArray(env.stashCards)) continue;
+  stashHeld.push(...env.stashCards);
+  env.stashCards = [];
+}
 g5.resourceDiscard.push(
   ...g5.board.resource.tiles.map(({ number, ...c }) => c),
+  ...stashHeld.map(({ faceDown, number, cardIndexOnSlot, ...c }) => c),
   ...g5.resourceDeck
 );
 g5.resourceDeck = [];
@@ -1904,30 +1912,56 @@ console.log('— caravan card —');
         targetId: victim.id,
       },
     }),
-    '抢劫抽牌进入选择'
+    '抢劫交牌进入选择'
   );
-  assert.ok(g.pendingRobberyPick, '应进入抢劫抽牌');
+  assert.ok(g.pendingRobberyPick, '应进入抢劫交牌');
+  assert.strictEqual(g.pendingRobberyPick.targetId, victim.id);
+  const actorPub = publicGameState(g, robber.id);
+  const victimPub = publicGameState(g, victim.id);
+  assert.ok(actorPub.pendingRobberyPick.isActor, '发动者应看到等待交牌');
+  assert.ok(!actorPub.pendingRobberyPick.forMe);
+  assert.ok(actorPub.pendingRobberyPick.options == null, '发动者不应看到对方手牌选项');
+  assert.ok(victimPub.pendingRobberyPick.forMe, '目标应轮到选牌');
+  assert.ok(
+    (victimPub.pendingRobberyPick.options || []).every(
+      (o) => o.faceDown === false && o.label
+    ),
+    '目标应明牌看到可交出的卡'
+  );
   assert.ok(
     robber.funcCards.some((c) => c.id === 'rob_cards'),
-    '抽牌完成前抢劫卡仍在手'
+    '交牌完成前抢劫卡仍在手'
   );
-  const opt = g.pendingRobberyPick.options[0];
+  const actorPick = applyAction(g, robber.id, {
+    type: 'robberyPick',
+    payload: { cardId: 'v_func2' },
+  });
+  assert.ok(!actorPick.ok, '发动者不可代为选牌');
   ok(
-    applyAction(g, robber.id, {
+    applyAction(g, victim.id, {
       type: 'robberyPick',
-      payload: { cardId: opt.id },
+      payload: { cardId: 'v_func2' },
     }),
-    '完成抢劫抽牌'
+    '目标交出功能卡'
   );
-  assert.ok(!g.pendingRobberyPick, '抽牌后应清除 pending');
+  assert.ok(!g.pendingRobberyPick, '交牌后应清除 pending');
   assert.ok(
     !robber.funcCards.some((c) => c.id === 'rob_cards'),
     '抢劫卡应已打出'
   );
-  const robbedBuilding = !victim.buildings.some((b) => b.id === 'v_bld');
-  const robbedFunc = !victim.funcCards.some((c) => c.id === 'v_func2');
-  assert.ok(robbedBuilding || robbedFunc, '目标应失去一张建筑或功能卡');
-  console.log('✓ robbery draw building/function by card back');
+  assert.ok(
+    !victim.funcCards.some((c) => c.id === 'v_func2'),
+    '目标应失去所选功能卡'
+  );
+  assert.ok(
+    robber.funcCards.some((c) => c.id === 'v_func2'),
+    '发动者应收下所选功能卡'
+  );
+  assert.ok(
+    victim.buildings.some((b) => b.id === 'v_bld'),
+    '未选中的未建造建筑应仍在目标处'
+  );
+  console.log('✓ robbery target chooses unbuilt building or function to give');
 }
 
 {
@@ -2012,7 +2046,7 @@ console.log('— caravan card —');
     })
   );
   ok(
-    applyAction(g, robber.id, {
+    applyAction(g, victim.id, {
       type: 'robberyPick',
       payload: { cardId: 'stolen_ww' },
     })
@@ -2122,7 +2156,7 @@ console.log('— caravan card —');
   );
   assert.strictEqual(g.pendingRobberyPick.options.length, 1);
   ok(
-    applyAction(g, robber.id, {
+    applyAction(g, victim.id, {
       type: 'robberyPick',
       payload: { cardId: 'only_bld' },
     })
@@ -2161,7 +2195,7 @@ console.log('— caravan card —');
   );
   assert.strictEqual(g.pendingRobberyPick.options.length, 1);
   ok(
-    applyAction(g, robber.id, {
+    applyAction(g, victim.id, {
       type: 'robberyPick',
       payload: { cardId: 'only_fn' },
     })
@@ -3314,7 +3348,7 @@ console.log('— enhance die counts as 1.5 in settle —');
   ok(applyAction(g, p0.id, { type: 'useFunc', payload: { cardId: 'fn_enhance' } }));
   assert.strictEqual(p0.enhancedDice, 2, '应再强化 1 枚');
   // 达强化上限后再发动应失败
-  p0.enhancedDice = 4;
+  p0.enhancedDice = 5;
   p0.funcCards.push({
     id: 'fn_enhance2',
     kind: 'function',
@@ -3325,7 +3359,7 @@ console.log('— enhance die counts as 1.5 in settle —');
     type: 'useFunc',
     payload: { cardId: 'fn_enhance2' },
   });
-  assert.ok(!fail.ok, '强化骰达上限 4 不可再发动');
+  assert.ok(!fail.ok, '强化骰达上限 5 不可再发动');
   assert.ok(
     String(fail.error || '').includes('上限'),
     '错误应提示强化上限'
@@ -5308,28 +5342,25 @@ console.log('— event keepOverflow skip discard —');
 
   startSettle(g);
   assert.ok(p0.skipSettleResourceDiscard, '第一名应豁免资源弃牌');
-  assert.strictEqual(p0.resources.wood, 14, '第一名应保留结算所得');
+  assert.ok((p0.resources.wood || 0) >= 14, '第一名应保留结算所得木头');
   assert.strictEqual(p1.resources.wood, 13, '第二名应获得小份');
+  const p0Total =
+    (p0.resources.wood || 0) +
+    (p0.resources.stone || 0) +
+    (p0.resources.food || 0) +
+    (p0.resources.iron || 0);
+  assert.strictEqual(p0Total, 16, '第一名应额外获得随机 2 张资源');
   assert.ok(
-    (g.pendingKeepOverflowQueue || []).some((q) => q.playerId === p0.id),
-    '应排队等待任选资源'
+    !(g.pendingKeepOverflowQueue || []).length,
+    '随机发放后不应再排队选资源'
   );
   ok(finishSettleAnimForce(g));
   assert.ok(
-    g.pendingEventChoice &&
-      g.pendingEventChoice.playerId === p0.id &&
-      g.pendingEventChoice.needChoice === 'pickTwoResources',
-    '动画结束后应弹出任选资源'
+    !g.pendingEventChoice || g.pendingEventChoice.resume !== 'keepOverflow',
+    '动画结束后不应弹出选资源'
   );
-  ok(
-    applyAction(g, p0.id, {
-      type: 'eventPickTwoResources',
-      payload: { amounts: { wood: 2 } },
-    })
-  );
-  assert.strictEqual(g.phase, 'settle_act', '选完资源后仍有玩家需弃牌时应进入弃牌阶段');
+  assert.strictEqual(g.phase, 'settle_act', '仍有玩家需弃牌时应进入弃牌阶段');
   assert.strictEqual(p0.pendingDiscardRes, false, '第一名仍无需弃资源');
-  assert.strictEqual(p0.resources.wood, 16, '第一名应获得额外 2 资源');
   assert.ok(p1.pendingDiscardRes, '第二名仍需弃牌');
   while (p1.pendingDiscardRes && g.phase === 'settle_act') {
     ok(
@@ -5339,21 +5370,69 @@ console.log('— event keepOverflow skip discard —');
       })
     );
   }
-  assert.strictEqual(p0.resources.wood, 16, '第一名超上限资源应保留');
+  const p0TotalAfter =
+    (p0.resources.wood || 0) +
+    (p0.resources.stone || 0) +
+    (p0.resources.food || 0) +
+    (p0.resources.iron || 0);
+  assert.strictEqual(p0TotalAfter, 16, '第一名超上限资源应保留');
   console.log('✓ event keepOverflow skip discard');
 }
 
 console.log('— event firstCome stash —');
 {
-  const { firstComeGrantTier, firstComeRequiredWorkers } = require('../environmentEffects');
-  assert.strictEqual(firstComeGrantTier(1), 1);
-  assert.strictEqual(firstComeGrantTier(4), 1);
-  assert.strictEqual(firstComeGrantTier(5), 2);
-  assert.strictEqual(firstComeGrantTier(9), 3);
+  const {
+    firstComeStashCount,
+    firstComeRequiredWorkers,
+    setupEnvironmentOnBoard,
+  } = require('../environmentEffects');
+  assert.strictEqual(firstComeStashCount(1), 3);
+  assert.strictEqual(firstComeStashCount(4), 3);
+  assert.strictEqual(firstComeStashCount(5), 5);
+  assert.strictEqual(firstComeStashCount(9), 7);
   assert.strictEqual(firstComeRequiredWorkers(1), 2);
   assert.strictEqual(firstComeRequiredWorkers(4), 2);
   assert.strictEqual(firstComeRequiredWorkers(5), 3);
   assert.strictEqual(firstComeRequiredWorkers(9), 4);
+
+  const gSetup = createGameState(room(2));
+  finishInit(gSetup);
+  gSetup.round = 1;
+  const drawn = [];
+  const envSetup = {
+    id: 'env_fc_setup',
+    kind: 'environment',
+    label: '先到先得',
+    envType: 'firstCome',
+    trigger: 'dispatch',
+    setup: 'stashResources',
+    number: 4,
+  };
+  setupEnvironmentOnBoard(gSetup, envSetup, 4, {
+    pushLog: () => {},
+    drawOne: (_game, kind) => {
+      assert.strictEqual(kind, 'resource');
+      const card = {
+        id: 'fc_draw_' + drawn.length,
+        kind: 'resource',
+        resource: ['wood', 'stone', 'iron'][drawn.length] || 'food',
+        label: '测',
+      };
+      drawn.push(card);
+      return card;
+    },
+  });
+  assert.strictEqual(envSetup.stashCards.length, 3, '第1轮应暗置 3 张');
+  assert.ok(envSetup.stashCards.every((c) => c.faceDown));
+  gSetup.board.resource.environments[4] = envSetup;
+  const pubFc = publicGameState(gSetup, 'p0');
+  const pubEnv =
+    pubFc.board.resource.environments[4] ||
+    (pubFc.board.resource.slots.find((s) => s.number === 4) || {}).environment;
+  assert.strictEqual(pubEnv.stashCount, 3);
+  assert.ok(!pubEnv.stash, '公开状态不应明示暗置资源种类');
+  assert.ok(!pubEnv.stashCards, '公开状态不应下发暗置牌正面');
+
   const g = createGameState(room(2));
   finishInit(g);
   g.board.resource.environments[4] = {
@@ -5363,9 +5442,12 @@ console.log('— event firstCome stash —');
     envType: 'firstCome',
     trigger: 'dispatch',
     setup: 'stashResources',
-    firstComeTier: 1,
     firstComeRequired: 2,
-    stash: { wood: 1, stone: 1, food: 1, iron: 1 },
+    stashCards: [
+      { id: 'fc1', kind: 'resource', resource: 'wood', faceDown: true },
+      { id: 'fc2', kind: 'resource', resource: 'stone', faceDown: true },
+      { id: 'fc3', kind: 'resource', resource: 'food', faceDown: true },
+    ],
     firstComeClaims: {},
     number: 4,
   };
@@ -5389,13 +5471,23 @@ console.log('— event firstCome stash —');
   const p0 = g.players[0];
   p0.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
   p0.dispatched = 1;
+  const discardBefore = (g.resourceDiscard || []).length;
   ok(applyAction(g, 'p0', { type: 'placeDice', payload: { face: 4, area: 'resource' } }));
   assert.strictEqual(g.board.resource.workers[4].p0, 2);
   assert.strictEqual(p0.resources.wood, 1);
   assert.strictEqual(p0.resources.stone, 1);
   assert.strictEqual(p0.resources.food, 1);
-  assert.strictEqual(p0.resources.iron, 1);
+  assert.strictEqual(p0.resources.iron, 0);
   assert.strictEqual(g.board.resource.environments[4].firstComeClaims.p0, true);
+  assert.ok(g.board.resource.environments[4].stashClaimed);
+  assert.strictEqual(
+    (g.board.resource.environments[4].stashCards || []).length,
+    0
+  );
+  assert.ok(
+    (g.resourceDiscard || []).length >= discardBefore + 3,
+    '领取后暗置资源应进入资源弃牌堆'
+  );
   g.currentPlayerId = 'p0';
   g.awaitingProduceRoll = false;
   g.dice = { p0: [4, 4], p1: [] };

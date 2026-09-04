@@ -48,6 +48,16 @@ function grantMap(player, map) {
   return { total, detail };
 }
 
+function grantRandomResources(player, count) {
+  const n = Math.max(0, Number(count) || 0);
+  const map = {};
+  for (let i = 0; i < n; i++) {
+    const r = RESOURCES[Math.floor(Math.random() * RESOURCES.length)];
+    map[r] = (map[r] || 0) + 1;
+  }
+  return grantMap(player, map);
+}
+
 function addNeutralEachSlot(game) {
   for (const area of ['resource', 'special']) {
     for (let n = 1; n <= 6; n++) {
@@ -132,12 +142,30 @@ function neutralCountOn(game, area, number) {
   return Number(w[NEUTRAL_WORKER_ID]) || 0;
 }
 
-/** 先到先得：第 1–4 轮各 1，第 5–8 轮各 2，第 9 轮起各 3 */
-function firstComeGrantTier(round) {
+/** 先到先得：第 1–4 轮暗置 3 张，第 5–8 轮 5 张，第 9 轮起 7 张 */
+function firstComeStashCount(round) {
   const r = Number(round) || 1;
-  if (r >= 9) return 3;
-  if (r >= 5) return 2;
-  return 1;
+  if (r >= 9) return 7;
+  if (r >= 5) return 5;
+  return 3;
+}
+
+/** @deprecated 与 firstComeStashCount 相同 */
+function firstComeGrantTier(round) {
+  return firstComeStashCount(round);
+}
+
+function discardStashResourceCards(game, cards, pushToDiscardFn) {
+  const list = Array.isArray(cards) ? cards : [];
+  if (!list.length) return;
+  if (typeof pushToDiscardFn === 'function') {
+    for (const c of list) pushToDiscardFn(game, 'resource', c);
+    return;
+  }
+  if (!game.resourceDiscard) game.resourceDiscard = [];
+  for (const c of list) {
+    if (c) game.resourceDiscard.push(c);
+  }
 }
 
 /** 先到先得：第 1–4 轮需 2 村民，第 5–8 轮需 3，第 9 轮起需 4 */
@@ -252,17 +280,25 @@ function setupEnvironmentOnBoard(game, env, number, helpers) {
       break;
     }
     case 'stashResources': {
-      const tier = firstComeGrantTier(game.round);
+      const count = firstComeStashCount(game.round);
       const required = firstComeRequiredWorkers(game.round);
-      env.firstComeTier = tier;
       env.firstComeRequired = required;
-      env.stash = { wood: tier, stone: tier, food: tier, iron: tier };
       env.stashClaimed = false;
       env.firstComeClaims = {};
+      env.stashCards = [];
+      const draw =
+        helpers && typeof helpers.drawOne === 'function'
+          ? helpers.drawOne
+          : null;
+      for (let i = 0; i < count; i++) {
+        const card = draw ? draw(game, 'resource') : null;
+        if (!card) break;
+        env.stashCards.push({ ...card, kind: 'resource', faceDown: true });
+      }
       if (helpers && helpers.pushLog) {
         helpers.pushLog(
           game,
-          `「${env.label}」：资源格 ${number}，每种资源 ${tier} 张（本格放置满 ${required} 个村民可获得）`
+          `「${env.label}」：资源格 ${number} 旁暗置 ${env.stashCards.length} 张资源（本格放置满 ${required} 个村民可获得）`
         );
       }
       break;
@@ -527,30 +563,33 @@ function applyEnvironmentOnDispatch(game, ctx) {
       const physical = Number(workers[player.id]) || 0;
       const placed = Number(ctx.count) || 0;
       const prevCount = Math.max(0, physical - placed);
-      const tier =
-        env.firstComeTier != null
-          ? Number(env.firstComeTier)
-          : firstComeGrantTier(game.round);
       const required =
         env.firstComeRequired != null
           ? Number(env.firstComeRequired)
           : firstComeRequiredWorkers(game.round);
       if (!env.firstComeClaims) env.firstComeClaims = {};
       if (env.firstComeClaims[player.id]) return null;
-      // 先到先得：资源只有一份，已被别人领走后自己不能再领
+      // 先到先得：暗置资源只有一份，已被别人领走后自己不能再领
       if (env.stashClaimed) return null;
       if (!(prevCount < required && physical >= required)) return null;
+      const cards = Array.isArray(env.stashCards) ? env.stashCards.slice() : [];
+      if (!cards.length) return null;
 
-      const grant = { wood: tier, stone: tier, food: tier, iron: tier };
+      const grant = {};
+      for (const c of cards) {
+        const r = c && c.resource;
+        if (!RESOURCES.includes(r)) continue;
+        grant[r] = (grant[r] || 0) + 1;
+      }
       const got = grantMap(player, grant);
       env.firstComeClaims[player.id] = true;
       env.stashClaimed = true;
+      env.stashCards = [];
+      discardStashResourceCards(game, cards, ctx.pushToDiscard);
       if (ctx.pushLog) {
         ctx.pushLog(
           game,
-          `${player.name} 触发「${env.label}」：本格放置满 ${required} 个村民，获得${got.detail
-            .map((d) => `${d.amount} ${RESOURCE_LABELS[d.resource]}`)
-            .join('、')}`
+          `${player.name} 触发「${env.label}」：本格放置满 ${required} 个村民，获得了${got.total}张随机资源`
         );
       }
       if (ctx.syncResourceHandPending) ctx.syncResourceHandPending(player, game);
@@ -686,9 +725,13 @@ function applyEnvironmentOnSettleSlot(game, ctx) {
             ctx.takeEventSideCard(game, p, card);
           }
           if (ctx.pushLog) {
+            const kindText =
+              card.kind === 'building' || card.buildType
+                ? '建筑卡'
+                : '功能卡';
             ctx.pushLog(
               game,
-              `「${env.label}」：${p.name} 获得暗置牌「${card.label || card.funcType || card.buildType}」`
+              `「${env.label}」：${p.name}获得了1张${kindText}`
             );
           }
         }
@@ -823,7 +866,7 @@ function firstPlacePlayerIds(ranked) {
 
 /**
  * 生产结算（抵消并发资源）全部完成后、弃牌前：
- * 吃不了兜着走：本格第一名跳过本轮资源弃牌阶段，并任选 2 个资源。
+ * 吃不了兜着走：本格第一名跳过本轮资源弃牌阶段，并获得随机 2 个资源。
  */
 function applyKeepOverflowAfterSettle(game, report, helpers) {
   if (!game || game.over || !report) return;
@@ -831,8 +874,6 @@ function applyKeepOverflowAfterSettle(game, report, helpers) {
   const pushLog = helpers && helpers.pushLog;
   const syncPending = helpers && helpers.syncResourceHandPending;
   if (!playerById) return;
-
-  if (!game.pendingKeepOverflowQueue) game.pendingKeepOverflowQueue = [];
 
   for (const slot of report.slots || []) {
     if (!slot || slot.area !== 'resource') continue;
@@ -856,21 +897,17 @@ function applyKeepOverflowAfterSettle(game, report, helpers) {
       } else {
         p.pendingDiscardRes = false;
       }
-      game.pendingKeepOverflowQueue.push({
-        playerId: pid,
-        envType: env.envType,
-        label: env.label,
-        envNumber: slot.number,
-        resume: 'keepOverflow',
-        count: 2,
-      });
+      const got = grantRandomResources(p, 2);
+      if (typeof syncPending === 'function') {
+        syncPending(p, game);
+      }
       names.push(p.name);
+      if (pushLog) {
+        pushLog(game, `${p.name}获得了${got.total}张随机资源`);
+      }
     }
-    if (pushLog && names.length) {
-      pushLog(
-        game,
-        `「${env.label}」：${names.join('、')}（本格第一名）跳过资源弃牌阶段，并任选 2 个资源`
-      );
+    if (pushLog && !names.length) {
+      pushLog(game, `「${env.label}」：本格无有效第一名，未生效`);
     }
   }
 }
@@ -912,6 +949,7 @@ module.exports = {
   countNeutralGatherSources,
   moveAllNeutralsBetweenSlots,
   firstComeGrantTier,
+  firstComeStashCount,
   firstComeRequiredWorkers,
   becameStrictSlotLeader,
   becameLeaderAgain,

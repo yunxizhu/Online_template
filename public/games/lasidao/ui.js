@@ -202,7 +202,7 @@ window.LasidaoUi = (function () {
       if (funcType === 'enhance') {
         const enh = Number(me && me.enhancedDice) || 0;
         const vil = Number(me && me.villagers) || 0;
-        const maxEnh = Number(game && game.maxEnhancedDice) || 3;
+        const maxEnh = Number(game && game.maxEnhancedDice) || 5;
         if (enh >= Math.min(vil, maxEnh)) return false;
       }
       if (funcType === 'illegalBuild') {
@@ -316,13 +316,16 @@ window.LasidaoUi = (function () {
   let autoProduceRollCountdownTimer = null;
 
   let robberyCardId = null;
-  /** @type {'mode'|'target'|'confirm'|'pick'|null} */
+  /** @type {'mode'|'target'|'confirm'|'give'|null} */
   let robberyStep = 'mode';
   /** @type {'resources'|'cards'|null} */
   let robberyMode = null;
   let robberyTargetId = null;
-  /** 效果二已提交，等待服务端下发卡背选项 */
+  /** 效果二已提交，等待目标交出卡牌 */
   let robberyAwaitingPick = false;
+  /** 被抢方交牌时选中的卡 id */
+  let robberyGiveSelectedId = null;
+  let robberyGiveSubmitting = false;
   let illegalBuildCardId = null;
   /** 拆迁：选中待确认的建筑 id */
   let illegalBuildSelectedId = null;
@@ -2915,13 +2918,15 @@ window.LasidaoUi = (function () {
         text = t('lasidao.statusAwaitTrade', { name: decider });
       } else if (game.pendingRobberyPick) {
         const pending = game.pendingRobberyPick;
-        text = pending.forMe
-          ? t('lasidao.statusRobberyPick', {
-              name: pending.targetName || '?',
-            })
-          : t('lasidao.statusRobberyAwait', {
-              name: pending.actorName || '?',
-            });
+        if (pending.forMe) {
+          text = t('lasidao.statusRobberyGive', {
+            name: pending.actorName || '?',
+          });
+        } else {
+          text = t('lasidao.statusRobberyAwaitGive', {
+            name: pending.targetName || '?',
+          });
+        }
       } else if (game.pendingIllegalBuild) {
         const pending = game.pendingIllegalBuild;
         if (pending.forMe) {
@@ -5054,6 +5059,7 @@ window.LasidaoUi = (function () {
     }
     if (game.pendingEventChoice && game.pendingEventChoice.forMe) return true;
     if (game.pendingTrade && game.pendingTrade.forMe) return true;
+    if (game.pendingRobberyPick && game.pendingRobberyPick.forMe) return true;
     if (isMercenaryPlaceMode(game, meId)) return true;
     return false;
   }
@@ -5093,7 +5099,7 @@ window.LasidaoUi = (function () {
       slotInfo.environment ||
       null;
     const envPart = env
-      ? `${env.id}:${env.mercenaryDice || 0}:${env.envType || ''}:${JSON.stringify(env.stash || {})}:${env.hasSideCard ? 1 : 0}:${env.sideCardKind || ''}`
+      ? `${env.id}:${env.mercenaryDice || 0}:${env.envType || ''}:${env.stashCount || 0}:${env.stashClaimed ? 1 : 0}:${env.hasSideCard ? 1 : 0}:${env.sideCardKind || ''}`
       : '';
     const markerArea =
       (game.barrenMarkerArea != null && game.barrenMarkerArea) || 'resource';
@@ -5845,13 +5851,13 @@ window.LasidaoUi = (function () {
           }
           if (
             envTile.envType === 'firstCome' &&
-            envTile.stash &&
-            RESOURCES.reduce((s, r) => s + (Number(envTile.stash[r]) || 0), 0) > 0
+            !envTile.stashClaimed &&
+            (Number(envTile.stashCount) || 0) > 0
           ) {
-            const labels = defaultResLabels();
             const stashWrap = document.createElement('div');
             stashWrap.className = 'las-env-stash-wrap';
             const need = Number(envTile.firstComeRequired) || 0;
+            const stashN = Number(envTile.stashCount) || 0;
             const stashTitle = document.createElement('div');
             stashTitle.className = 'las-env-stash-title';
             stashTitle.textContent = need
@@ -5860,63 +5866,42 @@ window.LasidaoUi = (function () {
             stashWrap.appendChild(stashTitle);
             const stashStack = document.createElement('div');
             stashStack.className = 'las-env-stash-stack';
-            let stackIdx = 0;
-            let totalN = 0;
-            const tipLines = [];
-            const tipImgs = [];
-            for (const res of RESOURCES) {
-              const n = Number(envTile.stash[res]) || 0;
-              if (n <= 0) continue;
-              const resLabel = labels[res] || res;
-              totalN += n;
-              tipLines.push(resLabel + '×' + n);
-              const handUrl =
-                window.LasidaoAssets &&
-                typeof window.LasidaoAssets.resourceHandImageUrl === 'function'
-                  ? window.LasidaoAssets.resourceHandImageUrl(res)
-                  : '';
-              if (handUrl) tipImgs.push(handUrl);
-              const stashCard = document.createElement('div');
-              stashCard.className =
-                'las-tile resource las-env-stash-card has-art';
-              stashCard.style.setProperty('--las-stash-i', String(stackIdx));
+            const showN = Math.min(stashN, 4);
+            for (let i = 0; i < showN; i++) {
+              const stashCard = makeTileCard(
+                {
+                  id: (envTile.id || 'env') + ':stash:' + i,
+                  kind: 'resource',
+                  faceDown: true,
+                  label: null,
+                },
+                'resource'
+              );
+              stashCard.classList.add('las-env-stash-card');
+              stashCard.style.setProperty('--las-stash-i', String(i));
               stashCard.setAttribute('aria-hidden', 'true');
-              const art = document.createElement('div');
-              art.className = 'las-tile-art has-image';
-              art.setAttribute('aria-hidden', 'true');
-              if (handUrl) {
-                art.style.backgroundImage = 'url("' + handUrl + '")';
-              }
-              stashCard.appendChild(art);
               stashStack.appendChild(stashCard);
-              stackIdx += 1;
             }
             stashStack.style.setProperty(
               '--las-stash-n',
-              String(Math.max(1, stackIdx))
+              String(Math.max(1, showN))
             );
             const stackBadge = document.createElement('span');
             stackBadge.className = 'las-env-stash-count';
-            stackBadge.textContent = '×' + totalN;
+            stackBadge.textContent = '×' + stashN;
             stashStack.appendChild(stackBadge);
             const tipText = [
               t('lasidao.eventFirstComeLabel'),
-              tipLines.join('\n'),
+              t('lasidao.eventFirstComeStashHidden', { n: stashN }),
+              need ? t('lasidao.eventFirstComeStashTitle', { need }) : '',
             ]
               .filter(Boolean)
               .join('\n');
             stashStack.title = tipText.replace(/\n/g, ' · ');
-            stashStack.setAttribute('aria-label', tipText.replace(/\n/g, '，'));
-            stashStack.addEventListener('mouseenter', (e) => {
-              showCardTip(tipText, e, stashStack, tipImgs);
-            });
-            stashStack.addEventListener('mousemove', (e) => {
-              const tip = $('las-card-tip');
-              if (!tip || tip.hidden) return;
-              positionCardTip(tip, e, stashStack);
-            });
-            stashStack.addEventListener('mouseleave', () => hideCardTip());
-            stashStack.addEventListener('pointerdown', () => hideCardTip());
+            stashStack.setAttribute(
+              'aria-label',
+              tipText.replace(/\n/g, '，')
+            );
             stashWrap.appendChild(stashStack);
             envBox.appendChild(stashWrap);
           }
@@ -10983,6 +10968,13 @@ window.LasidaoUi = (function () {
       robberyTargetId = null;
       robberyStep = 'mode';
       robberyAwaitingPick = false;
+      robberyGiveSelectedId = null;
+      robberyGiveSubmitting = false;
+      const giveHint = $('las-robbery-hint');
+      if (giveHint) {
+        giveHint.hidden = true;
+        giveHint.textContent = '';
+      }
     } else if (window.I18n && window.I18n.applyDom) {
       window.I18n.applyDom(modal);
     }
@@ -12255,19 +12247,14 @@ window.LasidaoUi = (function () {
   function syncRobberyPendingModal(game) {
     const pending = game && game.pendingRobberyPick;
     if (pending && pending.forMe) {
+      robberyStep = 'give';
       robberyAwaitingPick = true;
-      robberyStep = 'pick';
       setRobberyModalOpen(true);
       renderRobberyModal(game, null);
       return true;
     }
-    // 仅在抽牌流程结束后关闭，避免确认后、pending 到达前误关弹窗
-    if (
-      robberyAwaitingPick &&
-      !pending &&
-      $('las-robbery-modal') &&
-      !$('las-robbery-modal').hidden
-    ) {
+    if (robberyStep === 'give' && !pending) {
+      robberyGiveSubmitting = false;
       setRobberyModalOpen(false);
     }
     return false;
@@ -12275,26 +12262,35 @@ window.LasidaoUi = (function () {
 
   function submitRobberyCards(game, card) {
     if (!robberyCardId || !robberyTargetId || !netRef) return;
-    robberyAwaitingPick = true;
-    robberyStep = 'pick';
     netRef.sendAction('useFunc', {
       cardId: robberyCardId,
       mode: 'cards',
       targetId: robberyTargetId,
     });
     selectedFuncId = null;
-    renderRobberyModal(game || lastGame, card);
+    setRobberyModalOpen(false);
+    void game;
+    void card;
   }
 
-  /** useFunc 失败时退回选目标，避免卡在「洗混中」 */
-  function onGameError() {
-    if (!robberyAwaitingPick) return;
-    robberyAwaitingPick = false;
-    robberyStep = 'target';
-    const modal = $('las-robbery-modal');
-    if (modal && !modal.hidden) {
-      renderRobberyModal(lastGame, null);
+  function onGameError() {}
+
+  function confirmRobberyGive() {
+    const pending = lastGame && lastGame.pendingRobberyPick;
+    if (
+      !pending ||
+      !pending.forMe ||
+      !robberyGiveSelectedId ||
+      !netRef ||
+      robberyGiveSubmitting
+    ) {
+      return;
     }
+    robberyGiveSubmitting = true;
+    netRef.sendAction('robberyPick', { cardId: robberyGiveSelectedId });
+    selectedFuncId = null;
+    const confirmBtn = $('btn-las-robbery-confirm');
+    if (confirmBtn) confirmBtn.disabled = true;
   }
 
   function renderRobberyPickOptions(body, pending) {
@@ -12304,9 +12300,15 @@ window.LasidaoUi = (function () {
     if (!options.length) {
       const loading = document.createElement('p');
       loading.className = 'muted las-hint';
-      loading.textContent = t('lasidao.robberyPickCardLoading');
+      loading.textContent = t('lasidao.robberyGiveLoading');
       body.appendChild(loading);
       return;
+    }
+    if (
+      robberyGiveSelectedId &&
+      !options.some((o) => o.id === robberyGiveSelectedId)
+    ) {
+      robberyGiveSelectedId = null;
     }
     for (const opt of options) {
       const btn = document.createElement('button');
@@ -12315,28 +12317,15 @@ window.LasidaoUi = (function () {
       btn.className =
         'las-card ' +
         (areaKey === 'building' ? 'build' : 'func') +
-        ' is-facedown';
-      if (
-        !decorateHandCardArt(
-          btn,
-          { faceDown: true, label: t('lasidao.faceDown') },
-          areaKey
-        )
-      ) {
-        btn.textContent =
-          areaKey === 'building'
-            ? t('lasidao.robberyBackBuilding')
-            : t('lasidao.robberyBackFunction');
+        (robberyGiveSelectedId === opt.id ? ' is-selected' : '');
+      if (!decorateHandCardArt(btn, opt, areaKey)) {
+        btn.textContent = opt.label || '?';
       }
-      btn.title =
-        areaKey === 'building'
-          ? t('lasidao.robberyBackBuilding')
-          : t('lasidao.robberyBackFunction');
+      btn.title = opt.label || '?';
       btn.onclick = () => {
-        if (!netRef || !opt.id) return;
-        netRef.sendAction('robberyPick', { cardId: opt.id });
-        selectedFuncId = null;
-        setRobberyModalOpen(false);
+        robberyGiveSelectedId =
+          robberyGiveSelectedId === opt.id ? null : opt.id;
+        renderRobberyModal(lastGame, null);
       };
       wrap.appendChild(btn);
     }
@@ -12348,6 +12337,7 @@ window.LasidaoUi = (function () {
     const body = $('las-robbery-body');
     const confirmBtn = $('btn-las-robbery-confirm');
     const cancelBtn = $('btn-las-robbery-cancel');
+    const headHint = $('las-robbery-hint');
     if (!title || !body || !confirmBtn || !cancelBtn) return;
 
     body.innerHTML = '';
@@ -12355,30 +12345,26 @@ window.LasidaoUi = (function () {
     cancelBtn.textContent = t('lasidao.cancel');
     confirmBtn.hidden = true;
     confirmBtn.disabled = true;
+    if (headHint) {
+      headHint.hidden = true;
+      headHint.textContent = '';
+    }
 
     const pending = game && game.pendingRobberyPick;
-    if ((pending && pending.forMe) || robberyStep === 'pick' || robberyAwaitingPick) {
-      robberyStep = 'pick';
-      title.textContent = t('lasidao.robberyPickCardTitle', {
-        name:
-          (pending && pending.targetName) ||
-          (
-            ((game && game.players) || []).find((p) => p.id === robberyTargetId) ||
-            {}
-          ).name ||
-          '?',
+    if ((pending && pending.forMe) || robberyStep === 'give') {
+      robberyStep = 'give';
+      title.textContent = t('lasidao.robberyGiveCardTitle', {
+        name: (pending && pending.actorName) || '?',
       });
-      const hint = document.createElement('p');
-      hint.className = 'muted las-hint';
-      hint.textContent = t('lasidao.robberyPickCardHint');
-      body.appendChild(hint);
+      if (headHint) {
+        headHint.hidden = false;
+        headHint.textContent = t('lasidao.robberyGiveCardHint');
+      }
       renderRobberyPickOptions(body, pending);
-      cancelBtn.onclick = () => {
-        if (pending && pending.forMe && netRef) {
-          netRef.sendAction('cancelRobberyPick', {});
-        }
-        setRobberyModalOpen(false);
-      };
+      cancelBtn.hidden = true;
+      confirmBtn.hidden = false;
+      confirmBtn.disabled = !robberyGiveSelectedId || robberyGiveSubmitting;
+      confirmBtn.textContent = t('lasidao.robberyGiveConfirm');
       return;
     }
 
@@ -13115,15 +13101,21 @@ window.LasidaoUi = (function () {
     const robCancel = $('btn-las-robbery-cancel');
     if (robCancel) {
       robCancel.onclick = () => {
-        if (lastGame && lastGame.pendingRobberyPick && lastGame.pendingRobberyPick.forMe && netRef) {
-          netRef.sendAction('cancelRobberyPick', {});
-        }
         setRobberyModalOpen(false);
       };
     }
     const robConfirm = $('btn-las-robbery-confirm');
     if (robConfirm) {
       robConfirm.onclick = () => {
+        if (
+          robberyStep === 'give' ||
+          (lastGame &&
+            lastGame.pendingRobberyPick &&
+            lastGame.pendingRobberyPick.forMe)
+        ) {
+          confirmRobberyGive();
+          return;
+        }
         if (!robberyCardId || !robberyMode || !robberyTargetId || !netRef) return;
         if (robberyMode === 'cards') {
           submitRobberyCards(lastGame, null);
