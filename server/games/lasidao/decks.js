@@ -3,9 +3,9 @@
 /** 资源类型 */
 const RESOURCES = ['wood', 'stone', 'food', 'iron'];
 const RESOURCE_LABELS = {
-  wood: '木头',
+  wood: '树林',
   stone: '石头',
-  food: '小麦',
+  food: '农田',
   iron: '铁矿',
 };
 
@@ -72,7 +72,7 @@ function buildResourceDeck() {
         rich: true,
         large: 3,
         small: 2,
-        label: `${RESOURCE_LABELS[res]}·丰`,
+        label: RESOURCE_RICH_LABELS[res],
       });
     }
     for (let i = 0; i < 8; i++) {
@@ -83,7 +83,7 @@ function buildResourceDeck() {
         rich: false,
         large: 2,
         small: 1,
-        label: `${RESOURCE_LABELS[res]}·贫`,
+        label: RESOURCE_POOR_LABELS[res],
       });
     }
   }
@@ -97,11 +97,22 @@ function buildResourceDeck() {
       rich: false,
       large: 2,
       small: 1,
-      label: '铁矿·贫',
+      label: '铁矿',
     });
   }
   return shuffle(cards);
 }
+
+const RESOURCE_RICH_LABELS = {
+  wood: '森林',
+  stone: '石头山',
+  food: '大麦田',
+};
+const RESOURCE_POOR_LABELS = {
+  wood: '灌木丛',
+  stone: '小石堆',
+  food: '野生麦田',
+};
 
 function makeFunc(type, extra = {}) {
   return {

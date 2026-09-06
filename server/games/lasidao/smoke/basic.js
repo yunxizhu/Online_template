@@ -6741,7 +6741,7 @@ console.log('— stack achievement: 3 wish wells +2 VP —');
   console.log('✓ third wish well stack achievement +2 VP');
 }
 
-console.log('— stack achievement: 3 food workshops → 小麦管理者 —');
+  console.log('— stack achievement: 3 food workshops → 农田管理者 —');
 {
   const { playerScore: scoreOf } = require('../engine');
   const g = createGameState(room(2));
@@ -6792,8 +6792,71 @@ console.log('— stack achievement: 3 food workshops → 小麦管理者 —');
   );
   assert.strictEqual(scoreOf(p), base + 2, '第三座小麦工坊 +2 分');
   const mePub = publicGameState(g, p.id).players.find((x) => x.id === p.id);
-  assert.ok((mePub.titles || []).some((t) => t.label === '小麦管理者'));
-  console.log('✓ third food workshop stack achievement → 小麦管理者');
+  assert.ok((mePub.titles || []).some((t) => t.label === '农田管理者'));
+  console.log('✓ third food workshop stack achievement → 农田管理者');
+}
+
+console.log('— real estate tycoon title: 5 different building types —');
+{
+  const {
+    playerScore: scoreOf,
+    resolveRealEstateTycoon,
+    REAL_ESTATE_TYCOON_NEED,
+  } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p0 = g.players[0];
+  const p1 = g.players[1];
+  g.phase = 'build';
+  g.currentPlayerId = p0.id;
+  g.buildPassed = {};
+  g.produceFinishOrder = [p0.id, p1.id];
+  p0.resources = { wood: 20, stone: 20, food: 20, iron: 20 };
+  p1.resources = { wood: 20, stone: 20, food: 20, iron: 20 };
+
+  // 5 种不同建筑类型
+  const buildTypes = ['exchange', 'wishWell', 'palace', 'foodWorkshop', 'school'];
+  for (let i = 0; i < buildTypes.length; i++) {
+    p0.buildings.push({
+      id: 're_t_' + i,
+      kind: 'building',
+      buildType: buildTypes[i],
+      label: '建筑' + i,
+      cost: { wood: 1 },
+      score: 0,
+      built: true,
+      slot: i,
+      faceDown: false,
+    });
+  }
+
+  resolveRealEstateTycoon(g);
+  assert.strictEqual(g.realEstateTycoonPlayerId, p0.id, '5 种建筑应获得地产商');
+  assert.strictEqual(scoreOf(p0, g), 2, '地产商 +2 分');
+  const mePub0 = publicGameState(g, p0.id).players.find((x) => x.id === p0.id);
+  assert.ok((mePub0.titles || []).some((t) => t.label === '地产商'), '称号列表应含地产商');
+
+  // p1 建 6 种不同建筑超过 p0
+  for (let i = 0; i < 6; i++) {
+    p1.buildings.push({
+      id: 're_t2_' + i,
+      kind: 'building',
+      buildType: 'type' + i,
+      label: '建筑二' + i,
+      cost: { wood: 1 },
+      score: 0,
+      built: true,
+      slot: i,
+      faceDown: false,
+    });
+  }
+  resolveRealEstateTycoon(g);
+  assert.strictEqual(g.realEstateTycoonPlayerId, p1.id, '种类更多应抢走地产商');
+  assert.strictEqual(scoreOf(p1, g), 2, '抢走地产商后 +2 分');
+  const mePub1 = publicGameState(g, p1.id).players.find((x) => x.id === p1.id);
+  assert.ok((mePub1.titles || []).some((t) => t.label === '地产商'));
+
+  console.log('✓ real estate tycoon title + steal');
 }
 
 console.log('全部通过');

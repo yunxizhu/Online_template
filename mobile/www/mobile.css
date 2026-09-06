@@ -1006,7 +1006,7 @@ body.is-mobile-chat.phase-game .lasidao-panel.las-mobile-surface .las-deck-stack
   width: 25%;
   max-width: 25%;
   height: auto;
-  aspect-ratio: 600 / 800;
+  aspect-ratio: 60 / 97;
   margin: 0 auto 0.12rem;
   --las-deck-stack: calc(0.04 * var(--las-rem));
   --las-deck-stack-2: calc(0.08 * var(--las-rem));

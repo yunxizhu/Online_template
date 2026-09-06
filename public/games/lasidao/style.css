@@ -14,9 +14,9 @@
   --las-rem: calc(1rem * var(--las-scale));
   --las-design-w: 1920;
   --las-design-h: 1080;
-  /* 卡牌比例 600×800（3:4），全部随 --las-scale 同比缩放 */
+  /* 卡牌比例 60:97，全部随 --las-scale 同比缩放 */
   --las-card-h: calc(7.2 * var(--las-rem));
-  --las-card-w: calc(var(--las-card-h) * 600 / 800);
+  --las-card-w: calc(var(--las-card-h) * 60 / 97);
   --las-slot-pad: calc(0.26 * var(--las-rem));
   --las-slot-tiles-pad-x: calc(0.42 * var(--las-rem));
   --las-card-gap: calc(0.26 * var(--las-rem));
@@ -25,7 +25,7 @@
   --las-slot-confirm-w: calc(2.85 * var(--las-rem));
   --las-divider: rgba(232, 212, 139, 0.42);
   --las-hand-card-w: calc(var(--las-card-w) * 1.2);
-  --las-hand-card-h: calc(var(--las-hand-card-w) * 800 / 600);
+  --las-hand-card-h: calc(var(--las-hand-card-w) * 97 / 60);
   /* 玩家面板：建筑格 / 功能牌（相对手牌区缩至 3/4，比例不变） */
   --las-panel-card-w: calc(var(--las-hand-card-w) * 3 / 4);
   --las-panel-card-h: calc(var(--las-hand-card-h) * 3 / 4);
@@ -1687,7 +1687,7 @@
   z-index: 0;
   flex: 0 0 auto;
   width: var(--las-deck-w);
-  height: calc(var(--las-deck-w) * 800 / 600);
+  height: calc(var(--las-deck-w) * 97 / 60);
   border-radius: 6px;
   border: 1px solid var(--border);
   background: repeating-linear-gradient(
@@ -1792,7 +1792,7 @@
   margin-left: auto;
   --las-board-zone-card-scale: 1.15;
   --las-card-h: calc(7.2 * var(--las-rem) * var(--las-board-zone-card-scale));
-  --las-card-w: calc(var(--las-card-h) * 600 / 800);
+  --las-card-w: calc(var(--las-card-h) * 60 / 97);
   --las-board-card-gap: calc(0.52 * var(--las-rem) * var(--las-board-zone-card-scale));
 }
 
@@ -1801,7 +1801,7 @@
   margin-left: auto;
   --las-board-zone-card-scale: 1.15;
   --las-card-h: calc(7.2 * var(--las-rem) * var(--las-board-zone-card-scale));
-  --las-card-w: calc(var(--las-card-h) * 600 / 800);
+  --las-card-w: calc(var(--las-card-h) * 60 / 97);
   --las-board-card-gap: calc(0.52 * var(--las-rem) * var(--las-board-zone-card-scale));
 }
 
@@ -2495,7 +2495,7 @@
 .las-card-tip-preview.is-stash-mini {
   width: 100%;
   height: auto;
-  aspect-ratio: 600 / 800;
+  aspect-ratio: 60 / 97;
   min-height: 0;
 }
 
@@ -2981,7 +2981,7 @@
 
 .las-card-tip-preview {
   width: calc(29 * var(--las-rem));
-  height: calc(29 * var(--las-rem) * 800 / 600);
+  height: calc(29 * var(--las-rem) * 97 / 60);
   border-radius: 6px;
   border: 1px solid #4a5a66;
   background-color: #12181c;
@@ -4880,12 +4880,12 @@ button.las-exile-player.color-neutral {
   width: min(calc(86vw * 2 / 3), calc(29 * var(--las-rem) * 2 / 3));
   min-width: min(calc(86vw * 2 / 3), calc(29 * var(--las-rem) * 2 / 3));
   height: min(
-    calc(86vw * 800 / 600 * 2 / 3),
-    calc(29 * var(--las-rem) * 800 / 600 * 2 / 3)
+    calc(86vw * 97 / 60 * 2 / 3),
+    calc(29 * var(--las-rem) * 97 / 60 * 2 / 3)
   );
   min-height: min(
-    calc(86vw * 800 / 600 * 2 / 3),
-    calc(29 * var(--las-rem) * 800 / 600 * 2 / 3)
+    calc(86vw * 97 / 60 * 2 / 3),
+    calc(29 * var(--las-rem) * 97 / 60 * 2 / 3)
   );
   border-radius: 8px;
   background-size: cover;
@@ -6396,7 +6396,7 @@ button.las-exile-player.color-neutral {
 .las-rules-card-thumb {
   flex: 0 0 auto;
   width: calc(2.75 * var(--las-rem));
-  height: calc(2.75 * var(--las-rem) * 800 / 600);
+  height: calc(2.75 * var(--las-rem) * 97 / 60);
   border-radius: 5px;
   border: 1px solid rgba(154, 168, 178, 0.45);
   background-color: #1a242b;
@@ -6422,7 +6422,7 @@ button.las-exile-player.color-neutral {
 
 .las-rules-section em.las-rules-dt-has-card .las-rules-card-thumb {
   width: calc(2 * var(--las-rem));
-  height: calc(2 * var(--las-rem) * 800 / 600);
+  height: calc(2 * var(--las-rem) * 97 / 60);
 }
 
 .las-rules-dl dt:first-child {
