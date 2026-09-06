@@ -2654,19 +2654,13 @@ window.LasidaoUi = (function () {
     if (title.id === 'lampSpirit' || title.stackKey === 'wishWell') {
       return [t('lasidao.titleLampSpiritTip')];
     }
-    if (title.id === 'breedingTycoon' || title.stackKey === 'breedingTycoon') {
-      return [t('lasidao.titleBreedingTycoonTip')];
-    }
     const need = title.need || 3;
     const score = title.score || 2;
-    if (title.id && String(title.id).startsWith('produceManager:')) {
-      return [
-        t('lasidao.titleProduceManagerTip', {
-          need,
-          score,
-          build: produceManagerBuildLabel(title),
-        }),
-      ];
+    if (title.id === 'workshopMaster' || title.stackKey === 'workshopMaster') {
+      return [t('lasidao.titleWorkshopMasterTip', { need, score })];
+    }
+    if (title.id === 'boostedTycoon' || title.stackKey === 'boostedTycoon') {
+      return [t('lasidao.titleBoostedTycoonTip', { need, score })];
     }
     return [
       t('lasidao.titlePoolTip', {
@@ -5873,6 +5867,7 @@ window.LasidaoUi = (function () {
                   id: (envTile.id || 'env') + ':stash:' + i,
                   kind: 'resource',
                   faceDown: true,
+                  backKind: 'resourceCard',
                   label: null,
                 },
                 'resource'
@@ -8026,6 +8021,7 @@ window.LasidaoUi = (function () {
     for (const [k, v] of Object.entries(p.resources || {})) {
       const span = document.createElement('span');
       span.className = 'badge';
+      span.dataset.res = k;
       span.textContent = (labels[k] || k) + ' ' + v;
       resCell.appendChild(span);
     }
@@ -10288,6 +10284,19 @@ window.LasidaoUi = (function () {
       return;
     }
 
+    if (fx.type === 'envReward') {
+      const run =
+        LasFx && typeof LasFx.playEnvReward === 'function'
+          ? LasFx.playEnvReward({ game, ...fx })
+          : Promise.resolve();
+      Promise.resolve(run)
+        .then(() => finish())
+        .then(() => new Promise((r) => setTimeout(r, 80)))
+        .then(() => popResourceBadges(fx.rewards))
+        .catch(() => finish());
+      return;
+    }
+
     const run =
       fx.type === 'exile' && LasFx && typeof LasFx.playExile === 'function'
         ? LasFx.playExile({ game, ...fx })
@@ -10297,6 +10306,28 @@ window.LasidaoUi = (function () {
           ? LasFx.playBanditRaid({ game, ...fx })
           : Promise.resolve();
     Promise.resolve(run).then(finish).catch(finish);
+  }
+
+  function popResourceBadges(rewards) {
+    if (!rewards || !rewards.length) return;
+    for (const reward of rewards) {
+      if (!reward.detail || !reward.detail.length) continue;
+      for (const d of reward.detail) {
+        const badge = document.querySelector(
+          `.las-pboard[data-pid="${reward.pid}"] .las-me-info-res .badge[data-res="${d.resource}"]` +
+          `, .las-pboard[data-pid="${reward.pid}"] .las-res .badge[data-res="${d.resource}"]` +
+          `, #las-players li[data-pid="${reward.pid}"] .badge[data-res="${d.resource}"]`
+        );
+        if (badge) {
+          badge.classList.remove('is-gain-pop');
+          void badge.offsetWidth;
+          requestAnimationFrame(() => {
+            badge.classList.add('is-gain-pop');
+            setTimeout(() => badge.classList.remove('is-gain-pop'), 750);
+          });
+        }
+      }
+    }
   }
 
   function collectOpponentDispatchCenters(count) {

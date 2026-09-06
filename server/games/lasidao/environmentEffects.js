@@ -317,26 +317,38 @@ function setupEnvironmentOnBoard(game, env, number, helpers) {
       }
       if (!Number.isFinite(min)) break;
       const lows = alive.filter((p) => scoreFn(p) === min);
-      if (!game.pendingWelfareMinimumQueue) game.pendingWelfareMinimumQueue = [];
       let count = 2;
       if (game.round >= 9) count = 4;
       else if (game.round >= 5) count = 3;
+      const rewards = [];
       for (const p of lows) {
-        game.pendingWelfareMinimumQueue.push({
-          playerId: p.id,
-          envType: env.envType,
-          label: env.label,
-          envNumber: number,
-          needChoice: 'pickTwoResources',
-          resume: 'welfareSetup',
-          count,
-        });
+        const gained = {};
+        for (let i = 0; i < count; i++) {
+          const r = RESOURCES[Math.floor(Math.random() * RESOURCES.length)];
+          p.resources[r] = (p.resources[r] || 0) + 1;
+          p.roundGained = (Number(p.roundGained) || 0) + 1;
+          gained[r] = (gained[r] || 0) + 1;
+        }
+        if (helpers.pushLog) {
+          const parts = Object.entries(gained).map(
+            ([k, v]) => `${v} ${RESOURCE_LABELS[k] || k}`
+          );
+          helpers.pushLog(
+            game,
+            `「${env.label}」：${p.name}（${min} 分）随机获得 ${count} 个资源（${parts.join('、')}）`
+          );
+        }
+        rewards.push({ pid: p.id, detail: Object.entries(gained).map(([k, v]) => ({ resource: k, amount: v })), total: count });
       }
-      if (helpers.pushLog && lows.length) {
-        helpers.pushLog(
-          game,
-          `「${env.label}」：${lows.map((p) => p.name).join('、')}（${min} 分）各任选 ${count} 个资源`
-        );
+      if (rewards.length && helpers.pushProduceFx && typeof helpers.pushProduceFx === 'function') {
+        helpers.pushProduceFx({
+          type: 'envReward',
+          envType: env.envType,
+          envId: env.id,
+          number: number,
+          label: env.label,
+          rewards,
+        });
       }
       break;
     }
@@ -593,6 +605,22 @@ function applyEnvironmentOnDispatch(game, ctx) {
         );
       }
       if (ctx.syncResourceHandPending) ctx.syncResourceHandPending(player, game);
+      if (ctx.pushProduceFx && typeof ctx.pushProduceFx === 'function') {
+        ctx.pushProduceFx({
+          type: 'envReward',
+          envType: env.envType,
+          envId: env.id,
+          number: num,
+          label: env.label,
+          rewards: [
+            {
+              pid: player.id,
+              detail: got.detail,
+              total: got.total,
+            },
+          ],
+        });
+      }
       return {
         envType: env.envType,
         label: env.label,
@@ -873,6 +901,7 @@ function applyKeepOverflowAfterSettle(game, report, helpers) {
   const playerById = helpers && helpers.playerById;
   const pushLog = helpers && helpers.pushLog;
   const syncPending = helpers && helpers.syncResourceHandPending;
+  const pushProduceFx = helpers && helpers.pushProduceFx;
   if (!playerById) return;
 
   for (const slot of report.slots || []) {
@@ -888,6 +917,7 @@ function applyKeepOverflowAfterSettle(game, report, helpers) {
       continue;
     }
     const names = [];
+    const rewards = [];
     for (const pid of ids) {
       const p = playerById(game, pid);
       if (!p || p.left) continue;
@@ -905,9 +935,20 @@ function applyKeepOverflowAfterSettle(game, report, helpers) {
       if (pushLog) {
         pushLog(game, `${p.name}获得了${got.total}张随机资源`);
       }
+      rewards.push({ pid: p.id, detail: got.detail, total: got.total });
     }
     if (pushLog && !names.length) {
       pushLog(game, `「${env.label}」：本格无有效第一名，未生效`);
+    }
+    if (rewards.length && typeof pushProduceFx === 'function') {
+      pushProduceFx({
+        type: 'envReward',
+        envType: env.envType,
+        envId: env.id,
+        number: slot.number,
+        label: env.label,
+        rewards,
+      });
     }
   }
 }

@@ -1350,6 +1350,148 @@ window.LasidaoFx = (function () {
     clearLayer();
   }
 
+  async function playEnvReward(opts) {
+    opts = opts || {};
+    const game = opts.game || {};
+    const layer = ensureLayer();
+    if (!layer) return;
+
+    const envId = opts.envId;
+    const number = opts.number;
+    const rewards = opts.rewards || [];
+    if (!rewards.length) return;
+
+    // 1. 找事件卡在棋盘上的位置
+    let srcEl = null;
+    if (envId) {
+      srcEl = tileEl(envId);
+    }
+    if (!srcEl && number) {
+      srcEl = document.querySelector(
+        `.las-slot[data-area="resource"][data-num="${number}"] .las-tile.environment`
+      );
+    }
+    const srcCenter = rectCenter(srcEl);
+
+    // 2. 展示事件卡面（居中放大，1秒）
+    if (srcCenter) {
+      const displayEl = document.createElement('div');
+      displayEl.className = 'las-fx-env-card-display';
+      displayEl.style.width = '160px';
+      displayEl.style.aspectRatio = '60 / 97';
+      displayEl.style.left = (srcCenter.x - 80) + 'px';
+      displayEl.style.top = (srcCenter.y - 130) + 'px';
+      displayEl.style.borderRadius = '8px';
+      displayEl.style.background = '#1a1f26';
+      displayEl.style.border = '2px solid #4a90a4';
+      displayEl.style.boxShadow = '0 8px 32px rgba(0,0,0,0.5)';
+      displayEl.style.position = 'fixed';
+      displayEl.style.zIndex = '200';
+      displayEl.style.opacity = '0';
+      displayEl.style.transition = 'opacity 250ms ease';
+      displayEl.style.transform = 'translate(-50%, -50%) scale(0.85)';
+      displayEl.style.transition += ', transform 250ms ease';
+
+      if (srcEl) {
+        const srcArt = srcEl.querySelector('.las-tile-art');
+        if (srcArt) {
+          displayEl.style.backgroundImage = srcArt.style.backgroundImage;
+          displayEl.style.backgroundSize = 'cover';
+          displayEl.style.backgroundPosition = 'center';
+        }
+      }
+
+      const lab = document.createElement('div');
+      lab.className = 'las-fx-env-card-label';
+      lab.textContent = opts.label || '';
+      displayEl.appendChild(lab);
+
+      layer.appendChild(displayEl);
+      void displayEl.offsetWidth;
+      displayEl.style.opacity = '1';
+      displayEl.style.transform = 'translate(-50%, -50%) scale(1)';
+
+      await sleep(1000);
+      displayEl.style.opacity = '0';
+      displayEl.style.transform = 'translate(-50%, -50%) scale(0.85)';
+      await sleep(250);
+      if (displayEl.parentNode) displayEl.remove();
+    } else {
+      await sleep(600);
+    }
+
+    // 3. 从事件卡位置生成资源卡背，飞向目标玩家面板
+    const from = srcCenter || rectCenter($('las-board-resource'));
+    if (!from) return;
+
+    for (const reward of rewards) {
+      const pid = reward.pid;
+      const detail = reward.detail || [];
+
+      const targetEl = playerEl(pid);
+      const to = rectCenter(targetEl);
+      if (!to) continue;
+
+      const flies = [];
+      for (const d of detail) {
+        for (let i = 0; i < d.amount; i++) {
+          const fly = document.createElement('div');
+          fly.className = 'las-fx-env-fly-card';
+          fly.style.width = '44px';
+          fly.style.aspectRatio = '60 / 97';
+          fly.style.left = from.x + 'px';
+          fly.style.top = from.y + 'px';
+          fly.style.position = 'fixed';
+          fly.style.zIndex = '150';
+          fly.style.borderRadius = '4px';
+          fly.style.overflow = 'hidden';
+          fly.style.opacity = '1';
+          fly.style.transform = 'translate(-50%, -50%) scale(1)';
+
+          const art = document.createElement('div');
+          art.style.width = '100%';
+          art.style.height = '100%';
+          art.style.borderRadius = '4px';
+          if (
+            window.LasidaoAssets &&
+            typeof window.LasidaoAssets.applyCardBackArt === 'function'
+          ) {
+            window.LasidaoAssets.applyCardBackArt(art, 'resourceCard');
+          } else {
+            art.style.background = '#243038';
+            art.style.border = '1px solid #4a90a4';
+          }
+          fly.appendChild(art);
+
+          layer.appendChild(fly);
+          flies.push(fly);
+        }
+      }
+
+      const jobs = [];
+      for (let i = 0; i < flies.length; i++) {
+        const fly = flies[i];
+        jobs.push(
+          (async () => {
+            await sleep(i * 100);
+            const jitter = {
+              x: to.x + (Math.random() * 40 - 20),
+              y: to.y + (Math.random() * 30 - 15),
+            };
+            await flyToPoint(fly, from, jitter, 600, {
+              fade: true,
+              ease: 'ease-out',
+            });
+            if (fly.parentNode) fly.remove();
+          })()
+        );
+      }
+
+      await Promise.all(jobs);
+      await sleep(150);
+    }
+  }
+
   return {
     playSettle,
     playRecycleBoard,
@@ -1357,6 +1499,7 @@ window.LasidaoFx = (function () {
     playDispatch,
     playExile,
     playBanditRaid,
+    playEnvReward,
     playVictory,
     clearLayer,
     setBanner,

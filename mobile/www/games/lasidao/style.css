@@ -4370,7 +4370,7 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
   cursor: not-allowed;
 }
 .las-harvest-card {
-  width: calc(170px * var(--las-rpick-scale, 1));
+  width: calc(140px * var(--las-rpick-scale, 1));
   height: calc(227px * var(--las-rpick-scale, 1));
   border-radius: calc(10px * var(--las-rpick-scale, 1));
   border: 2px solid transparent;
@@ -4429,7 +4429,7 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
 .las-settle-discard-cards .las-card,
 .las-settle-discard-cards .las-pboard-card.build {
   width: calc(5.4 * var(--las-rem) * var(--las-rpick-scale, 1));
-  min-height: calc(7.6 * var(--las-rem) * var(--las-rpick-scale, 1));
+  min-height: calc(5.4 * var(--las-rem) * var(--las-rpick-scale, 1) * 97 / 60);
   flex: 0 0 auto;
 }
 .las-settle-discard-cards button.is-selected {
@@ -5956,7 +5956,7 @@ button.las-exile-player.color-neutral {
 .las-void-skip-card {
   position: relative;
   width: calc(120px * var(--las-rpick-scale, 1));
-  height: calc(160px * var(--las-rpick-scale, 1));
+  height: calc(120px * var(--las-rpick-scale, 1) * 97 / 60);
   border-radius: calc(8px * var(--las-rpick-scale, 1));
   background: #1a2228 center / cover no-repeat;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);

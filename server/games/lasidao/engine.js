@@ -848,14 +848,11 @@ function playerScore(p, game) {
   // bonusScore：事件、学堂、永恒王座每回合结束拿到的分等，与建筑是否仍建成无关
   s += Number(p.bonusScore) || 0;
   s += stackAchievementScore(p);
-  if (game && game.breedingTycoonPlayerId === p.id) {
-    s += BREEDING_TYCOON_SCORE;
-  }
   if (game && game.boostedTycoonPlayerId === p.id) {
     s += BOOSTED_TYCOON_SCORE;
   }
-  if (game && game.realEstateTycoonPlayerId === p.id) {
-    s += REAL_ESTATE_TYCOON_SCORE;
+  if (game && game.workshopMasterPlayerId === p.id) {
+    s += WORKSHOP_MASTER_SCORE;
   }
   return s;
 }
@@ -1119,6 +1116,7 @@ function drawEnvironmentBoard(game) {
       drawOne,
       alivePlayers,
       playerScore,
+      pushProduceFx: (payload) => pushProduceFx(game, payload),
     });
     environments[num] = env;
   }
@@ -1492,9 +1490,8 @@ function createGameState(room) {
     pendingPrisonerDiscards: {},
     pendingMercenaryQueue: [],
     mercenaryRoll: null,
-    breedingTycoonPlayerId: null,
     boostedTycoonPlayerId: null,
-    realEstateTycoonPlayerId: null,
+    workshopMasterPlayerId: null,
     mercenaryPlaced: [],
     mercenaryGate: null,
     // 生产阶段
@@ -2191,6 +2188,7 @@ function startSettle(game) {
     pushLog,
     syncResourceHandPending,
     pushToDiscard,
+    pushProduceFx: (payload) => pushProduceFx(game, payload),
   });
   if (game.over) {
     game.lastSettle = report;
@@ -2814,6 +2812,7 @@ function actEventTeleportTo(game, player, payload) {
     pushLog,
     syncResourceHandPending,
     pushToDiscard,
+    pushProduceFx: (payload) => pushProduceFx(game, payload),
   });
   if (ev && ev.needChoice) {
     game.pendingEventChoice = {
@@ -2995,6 +2994,7 @@ function actMercenaryPlace(game, player, payload) {
       pushLog,
       syncResourceHandPending,
       pushToDiscard,
+      pushProduceFx: (payload) => pushProduceFx(game, payload),
     });
     if (ev && ev.needChoice) {
       game.pendingEventChoice = {
@@ -3356,7 +3356,7 @@ function advanceBuildTurn(game) {
 
 function afterBuildAction(game, playerId, didRealAction) {
   game.lastBuilderId = playerId;
-  resolveRealEstateTycoon(game);
+  resolveWorkshopMaster(game);
   if (checkWin(game)) return;
   if (didRealAction) {
     game.currentPlayerId = playerId;
@@ -3819,6 +3819,7 @@ function actPlaceDice(game, player, payload) {
     pushLog,
     syncResourceHandPending,
     pushToDiscard,
+    pushProduceFx: (payload) => pushProduceFx(game, payload),
   });
   game.remoteDiceMode = false;
   if (ev && ev.needChoice) {
@@ -4241,11 +4242,13 @@ const STACK_ACHIEVEMENT_EXCLUDED_BUILD_TYPES = new Set([
   'score1',
   'score2',
   'eternalThrone',
+  'produce',
 ]);
 
 function isStackAchievementKey(key) {
   if (!key) return false;
-  if (STACK_ACHIEVEMENT_EXCLUDED_BUILD_TYPES.has(key)) return false;
+  const buildType = String(key).split(':')[0];
+  if (STACK_ACHIEVEMENT_EXCLUDED_BUILD_TYPES.has(buildType)) return false;
   return true;
 }
 /** @deprecated 兼容旧导出/测试 */
@@ -4255,21 +4258,16 @@ const EXCHANGE_TITLE_ID = 'commerceTycoon';
 const EXCHANGE_TITLE_LABEL = '商业巨擎';
 const WISH_WELL_TITLE_ID = 'lampSpirit';
 const WISH_WELL_TITLE_LABEL = '灯灵本灵';
-const BREEDING_TYCOON_STACK_KEY = 'breedingTycoon';
-const BREEDING_TYCOON_ID = 'breedingTycoon';
-const BREEDING_TYCOON_LABEL = '养殖场大户';
-const BREEDING_TYCOON_NEED = 7;
-const BREEDING_TYCOON_SCORE = 2;
 const BOOSTED_TYCOON_STACK_KEY = 'boostedTycoon';
 const BOOSTED_TYCOON_ID = 'boostedTycoon';
 const BOOSTED_TYCOON_LABEL = '你被强化了！';
 const BOOSTED_TYCOON_NEED = 3;
 const BOOSTED_TYCOON_SCORE = 2;
-const REAL_ESTATE_TYCOON_STACK_KEY = 'realEstateTycoon';
-const REAL_ESTATE_TYCOON_ID = 'realEstateTycoon';
-const REAL_ESTATE_TYCOON_LABEL = '地产商';
-const REAL_ESTATE_TYCOON_NEED = 5;
-const REAL_ESTATE_TYCOON_SCORE = 2;
+const WORKSHOP_MASTER_STACK_KEY = 'workshopMaster';
+const WORKSHOP_MASTER_ID = 'workshopMaster';
+const WORKSHOP_MASTER_LABEL = '工坊主';
+const WORKSHOP_MASTER_NEED = 5;
+const WORKSHOP_MASTER_SCORE = 2;
 
 function produceManagerTitle(resource) {
   const name = RESOURCE_LABELS[resource] || resource;
@@ -4349,16 +4347,6 @@ function commerceTycoonScore(player) {
   return hasCommerceTycoon(player) ? STACK_ACHIEVEMENT_SCORE : 0;
 }
 
-function hasBreedingTycoon(player, game) {
-  return Boolean(
-    game && player && !player.left && game.breedingTycoonPlayerId === player.id
-  );
-}
-
-function breedingTycoonScore(player, game) {
-  return hasBreedingTycoon(player, game) ? BREEDING_TYCOON_SCORE : 0;
-}
-
 function hasBoostedTycoon(player, game) {
   return Boolean(
     game && player && !player.left && game.boostedTycoonPlayerId === player.id
@@ -4381,48 +4369,6 @@ function builtBuildTypeVariety(player) {
     if (b.built && b.buildType) types.add(String(b.buildType));
   }
   return types.size;
-}
-
-function breedingTycoonEligiblePlayers(game) {
-  return alivePlayers(game).filter(
-    (p) => permanentVillagerCount(p) >= BREEDING_TYCOON_NEED
-  );
-}
-
-function pickBreedingTycoonHolder(game) {
-  const eligible = breedingTycoonEligiblePlayers(game);
-  if (!eligible.length) return null;
-  const maxV = Math.max(...eligible.map((p) => permanentVillagerCount(p)));
-  const top = eligible.filter((p) => permanentVillagerCount(p) === maxV);
-  const prevId = game.breedingTycoonPlayerId || null;
-  if (prevId && top.some((p) => p.id === prevId)) return prevId;
-  top.sort((a, b) => (a.seat || 0) - (b.seat || 0));
-  return top[0].id;
-}
-
-/** @returns {boolean} 称号持有人是否变化 */
-function resolveBreedingTycoon(game) {
-  if (!game) return false;
-  const prevId = game.breedingTycoonPlayerId || null;
-  const nextId = pickBreedingTycoonHolder(game);
-  if (nextId === prevId) return false;
-  game.breedingTycoonPlayerId = nextId;
-  const next = nextId ? playerById(game, nextId) : null;
-  const prev = prevId ? playerById(game, prevId) : null;
-  if (next && !prev) {
-    pushLog(
-      game,
-      `${next.name} 获得称号「${BREEDING_TYCOON_LABEL}」（永久村民 ≥${BREEDING_TYCOON_NEED}，+${BREEDING_TYCOON_SCORE} 分）`
-    );
-  } else if (next && prev) {
-    pushLog(
-      game,
-      `${next.name} 抢走称号「${BREEDING_TYCOON_LABEL}」（永久村民 ${permanentVillagerCount(next)} > ${permanentVillagerCount(prev)}，+${BREEDING_TYCOON_SCORE} 分）`
-    );
-  } else if (!next && prev) {
-    pushLog(game, `${prev.name} 失去称号「${BREEDING_TYCOON_LABEL}」`);
-  }
-  return true;
 }
 
 function boostedTycoonEligiblePlayers(game) {
@@ -4467,54 +4413,62 @@ function resolveBoostedTycoon(game) {
   return true;
 }
 
-function hasRealEstateTycoon(player, game) {
+function totalBuiltWorkshops(player) {
+  let n = 0;
+  for (const b of player.buildings || []) {
+    if (b.built && b.buildType === 'produce') n += 1;
+  }
+  return n;
+}
+
+function hasWorkshopMaster(player, game) {
   return Boolean(
-    game && player && !player.left && game.realEstateTycoonPlayerId === player.id
+    game && player && !player.left && game.workshopMasterPlayerId === player.id
   );
 }
 
-function realEstateTycoonScore(player, game) {
-  return hasRealEstateTycoon(player, game) ? REAL_ESTATE_TYCOON_SCORE : 0;
+function workshopMasterScore(player, game) {
+  return hasWorkshopMaster(player, game) ? WORKSHOP_MASTER_SCORE : 0;
 }
 
-function realEstateTycoonEligiblePlayers(game) {
+function workshopMasterEligiblePlayers(game) {
   return alivePlayers(game).filter(
-    (p) => builtBuildTypeVariety(p) >= REAL_ESTATE_TYCOON_NEED
+    (p) => totalBuiltWorkshops(p) >= WORKSHOP_MASTER_NEED
   );
 }
 
-function pickRealEstateTycoonHolder(game) {
-  const eligible = realEstateTycoonEligiblePlayers(game);
+function pickWorkshopMasterHolder(game) {
+  const eligible = workshopMasterEligiblePlayers(game);
   if (!eligible.length) return null;
-  const maxV = Math.max(...eligible.map((p) => builtBuildTypeVariety(p)));
-  const top = eligible.filter((p) => builtBuildTypeVariety(p) === maxV);
-  const prevId = game.realEstateTycoonPlayerId || null;
+  const maxW = Math.max(...eligible.map((p) => totalBuiltWorkshops(p)));
+  const top = eligible.filter((p) => totalBuiltWorkshops(p) === maxW);
+  const prevId = game.workshopMasterPlayerId || null;
   if (prevId && top.some((p) => p.id === prevId)) return prevId;
   top.sort((a, b) => (a.seat || 0) - (b.seat || 0));
   return top[0].id;
 }
 
 /** @returns {boolean} 称号持有人是否变化 */
-function resolveRealEstateTycoon(game) {
+function resolveWorkshopMaster(game) {
   if (!game) return false;
-  const prevId = game.realEstateTycoonPlayerId || null;
-  const nextId = pickRealEstateTycoonHolder(game);
+  const prevId = game.workshopMasterPlayerId || null;
+  const nextId = pickWorkshopMasterHolder(game);
   if (nextId === prevId) return false;
-  game.realEstateTycoonPlayerId = nextId;
+  game.workshopMasterPlayerId = nextId;
   const next = nextId ? playerById(game, nextId) : null;
   const prev = prevId ? playerById(game, prevId) : null;
   if (next && !prev) {
     pushLog(
       game,
-      `${next.name} 获得称号「${REAL_ESTATE_TYCOON_LABEL}」（建成建筑种类 ≥${REAL_ESTATE_TYCOON_NEED}，+${REAL_ESTATE_TYCOON_SCORE} 分）`
+      `${next.name} 获得称号「${WORKSHOP_MASTER_LABEL}」（已建成工坊 ≥${WORKSHOP_MASTER_NEED}，+${WORKSHOP_MASTER_SCORE} 分）`
     );
   } else if (next && prev) {
     pushLog(
       game,
-      `${next.name} 抢走称号「${REAL_ESTATE_TYCOON_LABEL}」（建成建筑种类 ${builtBuildTypeVariety(next)} > ${builtBuildTypeVariety(prev)}，+${REAL_ESTATE_TYCOON_SCORE} 分）`
+      `${next.name} 抢走称号「${WORKSHOP_MASTER_LABEL}」（工坊数量 ${totalBuiltWorkshops(next)} > ${totalBuiltWorkshops(prev)}，+${WORKSHOP_MASTER_SCORE} 分）`
     );
   } else if (!next && prev) {
-    pushLog(game, `${prev.name} 失去称号「${REAL_ESTATE_TYCOON_LABEL}」`);
+    pushLog(game, `${prev.name} 失去称号「${WORKSHOP_MASTER_LABEL}」`);
   }
   return true;
 }
@@ -4526,15 +4480,6 @@ function playerTitles(player, game) {
     label: stackAchievementLabel(player, key),
     score: STACK_ACHIEVEMENT_SCORE,
   }));
-  if (hasBreedingTycoon(player, game)) {
-    titles.push({
-      id: BREEDING_TYCOON_ID,
-      stackKey: BREEDING_TYCOON_STACK_KEY,
-      label: BREEDING_TYCOON_LABEL,
-      score: BREEDING_TYCOON_SCORE,
-      need: BREEDING_TYCOON_NEED,
-    });
-  }
   if (hasBoostedTycoon(player, game)) {
     titles.push({
       id: BOOSTED_TYCOON_ID,
@@ -4544,13 +4489,13 @@ function playerTitles(player, game) {
       need: BOOSTED_TYCOON_NEED,
     });
   }
-  if (hasRealEstateTycoon(player, game)) {
+  if (hasWorkshopMaster(player, game)) {
     titles.push({
-      id: REAL_ESTATE_TYCOON_ID,
-      stackKey: REAL_ESTATE_TYCOON_STACK_KEY,
-      label: REAL_ESTATE_TYCOON_LABEL,
-      score: REAL_ESTATE_TYCOON_SCORE,
-      need: REAL_ESTATE_TYCOON_NEED,
+      id: WORKSHOP_MASTER_ID,
+      stackKey: WORKSHOP_MASTER_STACK_KEY,
+      label: WORKSHOP_MASTER_LABEL,
+      score: WORKSHOP_MASTER_SCORE,
+      need: WORKSHOP_MASTER_NEED,
     });
   }
   return titles;
@@ -4572,20 +4517,20 @@ function stackAchievementLabelFromKey(key, sampleLabel) {
 function getExclusiveTitleCatalog() {
   return [
     {
-      stackKey: BREEDING_TYCOON_STACK_KEY,
-      id: BREEDING_TYCOON_ID,
-      label: BREEDING_TYCOON_LABEL,
+      stackKey: BOOSTED_TYCOON_STACK_KEY,
+      id: BOOSTED_TYCOON_ID,
+      label: BOOSTED_TYCOON_LABEL,
       buildLabel: '',
-      need: BREEDING_TYCOON_NEED,
-      score: BREEDING_TYCOON_SCORE,
+      need: BOOSTED_TYCOON_NEED,
+      score: BOOSTED_TYCOON_SCORE,
     },
     {
-      stackKey: REAL_ESTATE_TYCOON_STACK_KEY,
-      id: REAL_ESTATE_TYCOON_ID,
-      label: REAL_ESTATE_TYCOON_LABEL,
+      stackKey: WORKSHOP_MASTER_STACK_KEY,
+      id: WORKSHOP_MASTER_ID,
+      label: WORKSHOP_MASTER_LABEL,
       buildLabel: '',
-      need: REAL_ESTATE_TYCOON_NEED,
-      score: REAL_ESTATE_TYCOON_SCORE,
+      need: WORKSHOP_MASTER_NEED,
+      score: WORKSHOP_MASTER_SCORE,
     },
   ];
 }
@@ -4622,14 +4567,11 @@ function getStackTitleCatalog() {
 
 function claimedStackTitleKeys(game) {
   const claimed = new Set();
-  if (game && game.breedingTycoonPlayerId) {
-    claimed.add(BREEDING_TYCOON_STACK_KEY);
-  }
   if (game && game.boostedTycoonPlayerId) {
     claimed.add(BOOSTED_TYCOON_STACK_KEY);
   }
-  if (game && game.realEstateTycoonPlayerId) {
-    claimed.add(REAL_ESTATE_TYCOON_STACK_KEY);
+  if (game && game.workshopMasterPlayerId) {
+    claimed.add(WORKSHOP_MASTER_STACK_KEY);
   }
   for (const p of game.players || []) {
     if (p.left) continue;
@@ -4961,7 +4903,7 @@ function actUseFunc(game, player, payload) {
 
   // 时机校验
   const produceOnly = ['remoteDice', 'exile', 'banditRaid'];
-  const buildOnly = ['harvest', 'robbery', 'illegalBuild', 'redraw', 'expand', 'enhance', 'recruit', 'freeExpand', 'welfareHouse', 'caravan'];
+  const buildOnly = ['harvest', 'robbery', 'illegalBuild', 'redraw', 'expand', 'enhance', 'recruit', 'caravan'];
 
   if (produceOnly.includes(ft)) {
     if (game.phase !== 'produce') {
@@ -4998,8 +4940,6 @@ function actUseFunc(game, player, payload) {
   else if (ft === 'expand') result = useExpand(game, player, payload);
   else if (ft === 'enhance') result = useEnhance(game, player, payload);
   else if (ft === 'recruit') result = useRecruit(game, player, payload);
-  else if (ft === 'freeExpand') result = useFreeExpand(game, player, payload);
-  else if (ft === 'welfareHouse') result = useWelfareHouse(game, player, payload);
   else if (ft === 'caravan') result = useCaravan(game, player, payload);
   else if (ft === 'robbery') {
     if (!hasRobberyTarget(game, payload.mode)) {
@@ -5661,6 +5601,7 @@ function actIllegalBuildPick(game, player, payload) {
   });
 
   game.pendingIllegalBuild = null;
+  resolveWorkshopMaster(game);
 
   if (checkWin(game)) return { ok: true };
 
@@ -5718,12 +5659,12 @@ function actBreedPermanent(game, player) {
   }
   const cost = breedFoodCost(player.villagers);
   if ((player.resources.food || 0) < cost) {
-    return { ok: false, error: `需要 ${cost} 农田` };
+    return { ok: false, error: `需要 ${cost} 小麦` };
   }
   player.resources.food -= cost;
   player.villagers += 1;
   player.roundBred = true;
-  const stepText = `${player.name} 繁殖村民（-${cost} 农田），村民 ${player.villagers}（空位 ${freeHousesFor(player)}）`;
+  const stepText = `${player.name} 繁殖村民（-${cost} 小麦），村民 ${player.villagers}（空位 ${freeHousesFor(player)}）`;
   pushLog(game, stepText);
   pushPlayReveal(game, {
     kind: 'step',
@@ -5731,7 +5672,6 @@ function actBreedPermanent(game, player) {
     actorName: player.name,
     stepText,
   });
-  resolveBreedingTycoon(game);
   if (checkWin(game)) return { ok: true };
   // 常驻功能不结束回合，保留玩家行动权
   game.lastBuilderId = player.id;
@@ -7059,18 +6999,14 @@ function onPlayerQuit(game, playerId) {
   if (!p) return;
   p.left = true;
   pushLog(game, `${p.name} 离开了游戏`);
-  if (game.breedingTycoonPlayerId === playerId) {
-    game.breedingTycoonPlayerId = null;
-  }
-  resolveBreedingTycoon(game);
   if (game.boostedTycoonPlayerId === playerId) {
     game.boostedTycoonPlayerId = null;
   }
   resolveBoostedTycoon(game);
-  if (game.realEstateTycoonPlayerId === playerId) {
-    game.realEstateTycoonPlayerId = null;
+  if (game.workshopMasterPlayerId === playerId) {
+    game.workshopMasterPlayerId = null;
   }
-  resolveRealEstateTycoon(game);
+  resolveWorkshopMaster(game);
 
   if (
     game.pendingTrade &&
@@ -7185,27 +7121,21 @@ module.exports = {
   EXCHANGE_TITLE_LABEL,
   hasCommerceTycoon,
   commerceTycoonScore,
-  hasBreedingTycoon,
-  breedingTycoonScore,
-  permanentVillagerCount,
-  resolveBreedingTycoon,
-  BREEDING_TYCOON_NEED,
-  BREEDING_TYCOON_SCORE,
-  BREEDING_TYCOON_ID,
-  BREEDING_TYCOON_LABEL,
   hasBoostedTycoon,
   boostedTycoonScore,
+  resolveBoostedTycoon,
   BOOSTED_TYCOON_NEED,
   BOOSTED_TYCOON_SCORE,
   BOOSTED_TYCOON_ID,
   BOOSTED_TYCOON_LABEL,
-  hasRealEstateTycoon,
-  realEstateTycoonScore,
-  resolveRealEstateTycoon,
-  REAL_ESTATE_TYCOON_NEED,
-  REAL_ESTATE_TYCOON_SCORE,
-  REAL_ESTATE_TYCOON_ID,
-  REAL_ESTATE_TYCOON_LABEL,
+  totalBuiltWorkshops,
+  hasWorkshopMaster,
+  workshopMasterScore,
+  resolveWorkshopMaster,
+  WORKSHOP_MASTER_NEED,
+  WORKSHOP_MASTER_SCORE,
+  WORKSHOP_MASTER_ID,
+  WORKSHOP_MASTER_LABEL,
   playerTitles,
   availableStackTitles,
   getStackTitleCatalog,

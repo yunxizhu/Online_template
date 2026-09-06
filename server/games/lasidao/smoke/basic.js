@@ -1632,62 +1632,6 @@ assert.strictEqual(p11.buildings.find((b) => b.id === 'rep_b').slot, 'none:1');
   console.log('✓ expand auto + none slots');
 }
 
-console.log('— free expand card —');
-{
-  const g = createGameState(room(2));
-  finishInit(g);
-  const p = g.players[0];
-  p.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
-  p.funcCards.push({
-    id: 'fn_free_expand',
-    kind: 'function',
-    funcType: 'freeExpand',
-    label: '免费扩建',
-  });
-  g.phase = 'build';
-  g.currentPlayerId = 'p0';
-  g.buildPassed = {};
-  ok(
-    applyAction(g, 'p0', {
-      type: 'useFunc',
-      payload: { cardId: 'fn_free_expand', direction: 'resource' },
-    })
-  );
-  assert.strictEqual(p.expandResSlots, 1, '应扩建资源卡位');
-  assert.ok(!p.funcCards.some((c) => c.id === 'fn_free_expand'), '功能卡应已打出');
-  assert.strictEqual(p.resources.wood, 0, '不应扣资源');
-  console.log('✓ free expand card');
-}
-
-console.log('— welfare house card —');
-{
-  const { playerScore, freeHousesFor } = require('../engine');
-  const g = createGameState(room(2));
-  finishInit(g);
-  const p = g.players[0];
-  const scoreBefore = playerScore(p);
-  p.funcCards.push({
-    id: 'fn_welfare_house',
-    kind: 'function',
-    funcType: 'welfareHouse',
-    label: '福利房',
-  });
-  g.phase = 'build';
-  g.currentPlayerId = 'p0';
-  g.buildPassed = {};
-  ok(
-    applyAction(g, 'p0', {
-      type: 'useFunc',
-      payload: { cardId: 'fn_welfare_house' },
-    })
-  );
-  assert.strictEqual(p.houses, 3, '应增加 1 间房子');
-  assert.strictEqual(p.welfareHouses, 1);
-  assert.strictEqual(playerScore(p), scoreBefore, '福利房不应加分');
-  assert.strictEqual(freeHousesFor(p), 3, '应增加 2 村民容量');
-  console.log('✓ welfare house card');
-}
-
 console.log('— caravan card —');
 {
   const { effectiveExchangeCost } = require('../engine');
@@ -4115,9 +4059,9 @@ console.log('— event welfare minimum lowest score —');
       playerScore,
     }
   );
-  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 1);
-  assert.strictEqual(g.pendingWelfareMinimumQueue[0].playerId, p0.id);
-  assert.strictEqual(g.pendingWelfareMinimumQueue[0].count, 2, '第1轮低保户应为2张');
+  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 0, '不再进入队列');
+  const total0 = (p0.resources.wood || 0) + (p0.resources.stone || 0) + (p0.resources.food || 0) + (p0.resources.iron || 0);
+  assert.strictEqual(total0, 2, '第1轮应随机获得2个资源');
 
   p1.houseScore = 0;
   g.pendingWelfareMinimumQueue = [];
@@ -4135,11 +4079,12 @@ console.log('— event welfare minimum lowest score —');
       playerScore,
     }
   );
-  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 2);
-  const tiedIds = new Set(g.pendingWelfareMinimumQueue.map((x) => x.playerId));
-  assert.ok(tiedIds.has(p0.id) && tiedIds.has(p1.id));
+  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 0);
+  const totalP0 = (p0.resources.wood || 0) + (p0.resources.stone || 0) + (p0.resources.food || 0) + (p0.resources.iron || 0);
+  const totalP1 = (p1.resources.wood || 0) + (p1.resources.stone || 0) + (p1.resources.food || 0) + (p1.resources.iron || 0);
+  assert.strictEqual(totalP0, 4, '并列最低分也应获得2个资源（累计4）');
+  assert.strictEqual(totalP1, 2, 'p1 也获得2个资源');
 
-  // 轮数 count 检查（确保唯一最低分）
   p1.houseScore = 5;
   g.pendingWelfareMinimumQueue = [];
   g.round = 5;
@@ -4157,8 +4102,9 @@ console.log('— event welfare minimum lowest score —');
       playerScore,
     }
   );
-  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 1);
-  assert.strictEqual(g.pendingWelfareMinimumQueue[0].count, 3, '第5轮低保户应为3张');
+  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 0);
+  const total5 = (p0.resources.wood || 0) + (p0.resources.stone || 0) + (p0.resources.food || 0) + (p0.resources.iron || 0);
+  assert.strictEqual(total5, 7, '第5轮应再获得3个资源（累计4+3=7）');
 
   g.pendingWelfareMinimumQueue = [];
   g.round = 9;
@@ -4176,10 +4122,10 @@ console.log('— event welfare minimum lowest score —');
       playerScore,
     }
   );
-  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 1);
-  assert.strictEqual(g.pendingWelfareMinimumQueue[0].count, 4, '第9轮低保户应为4张');
+  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 0);
+  const total9 = (p0.resources.wood || 0) + (p0.resources.stone || 0) + (p0.resources.food || 0) + (p0.resources.iron || 0);
+  assert.strictEqual(total9, 11, '第9轮应再获得4个资源（累计7+4=11）');
 
-  // 完整流程：第5轮选择3个资源（使用全新实例避免状态污染）
   const g5 = createGameState(room(3));
   const q0 = g5.players[0];
   const q1 = g5.players[1];
@@ -4202,32 +4148,11 @@ console.log('— event welfare minimum lowest score —');
   ];
   g5.environmentDiscard = [];
   ok(finishInitAnnounce(g5));
-  assert.ok(
-    g5.pendingWelfareMinimumChoices &&
-      g5.pendingWelfareMinimumChoices[q0.id],
-    '最低分玩家应待选资源'
-  );
-  assert.strictEqual(
-    g5.pendingWelfareMinimumChoices[q0.id].count,
-    3,
-    '第5轮应为3个资源'
-  );
-  assert.ok(!g5.roundProduceBegun, '选完资源前不应正式开始生产');
-  // 只选2个应被拒绝
-  const reject = applyAction(g5, q0.id, {
-    type: 'eventPickTwoResources',
-    payload: { amounts: { wood: 2 } },
-  });
-  assert.strictEqual(reject.ok, false, '第5轮选2个应被拒绝');
-  ok(
-    applyAction(g5, q0.id, {
-      type: 'eventPickTwoResources',
-      payload: { amounts: { wood: 2, stone: 1 } },
-    })
-  );
-  assert.strictEqual(q0.resources.wood, 2);
-  assert.strictEqual(q0.resources.stone, 1);
-  assert.strictEqual(g5.phase, 'produce', '选完后应进入生产');
+  assert.strictEqual(g5.pendingWelfareMinimumQueue.length, 0, '不再创建队列');
+  assert.ok(!g5.pendingWelfareMinimumChoices || !Object.keys(g5.pendingWelfareMinimumChoices).length, '不应有待选弹窗');
+  const totalQ0 = (q0.resources.wood || 0) + (q0.resources.stone || 0) + (q0.resources.food || 0) + (q0.resources.iron || 0);
+  assert.strictEqual(totalQ0, 3, '第5轮应直接获得3个随机资源');
+  assert.strictEqual(g5.phase, 'produce', '低保户后直接进生产');
   console.log('✓ event welfare minimum lowest score');
 }
 
@@ -4272,15 +4197,18 @@ console.log('— event mercenaries preSettle —');
 
   const g2 = createGameState(room(2));
   finishInit(g2);
-  g2.board.resource.environments[5] = {
-    id: 'env_merc2',
-    kind: 'environment',
-    label: '雇佣军',
-    envType: 'mercenaries',
-    trigger: 'preSettle',
-    setup: 'mercenary2',
-    mercenaryDice: 2,
-    number: 5,
+  // 清掉其他随机事件牌，避免雇佣骰放置时触发无关事件选择
+  g2.board.resource.environments = {
+    5: {
+      id: 'env_merc2',
+      kind: 'environment',
+      label: '雇佣军',
+      envType: 'mercenaries',
+      trigger: 'preSettle',
+      setup: 'mercenary2',
+      mercenaryDice: 2,
+      number: 5,
+    },
   };
   if (!g2.board.resource.tiles.some((t) => t.number === 3)) {
     g2.board.resource.tiles.push({
@@ -6741,7 +6669,7 @@ console.log('— stack achievement: 3 wish wells +2 VP —');
   console.log('✓ third wish well stack achievement +2 VP');
 }
 
-  console.log('— stack achievement: 3 food workshops → 农田管理者 —');
+  console.log('— stack achievement: 3 food workshops → 小麦管理者 —');
 {
   const { playerScore: scoreOf } = require('../engine');
   const g = createGameState(room(2));
@@ -6790,18 +6718,17 @@ console.log('— stack achievement: 3 wish wells +2 VP —');
       payload: { buildingId: 'fd_t_2' },
     })
   );
-  assert.strictEqual(scoreOf(p), base + 2, '第三座小麦工坊 +2 分');
-  const mePub = publicGameState(g, p.id).players.find((x) => x.id === p.id);
-  assert.ok((mePub.titles || []).some((t) => t.label === '农田管理者'));
-  console.log('✓ third food workshop stack achievement → 农田管理者');
+  // 工坊不再触发叠放成就（produce 已从 isStackAchievementKey 排除）
+  assert.strictEqual(scoreOf(p), base, '工坊不应再触发叠放成就');
+  console.log('✓ produce workshops no longer give stack achievement');
 }
 
-console.log('— real estate tycoon title: 5 different building types —');
+console.log('— workshop master title: ≥5 built workshops —');
 {
   const {
     playerScore: scoreOf,
-    resolveRealEstateTycoon,
-    REAL_ESTATE_TYCOON_NEED,
+    resolveWorkshopMaster,
+    WORKSHOP_MASTER_NEED,
   } = require('../engine');
   const g = createGameState(room(2));
   finishInit(g);
@@ -6814,49 +6741,59 @@ console.log('— real estate tycoon title: 5 different building types —');
   p0.resources = { wood: 20, stone: 20, food: 20, iron: 20 };
   p1.resources = { wood: 20, stone: 20, food: 20, iron: 20 };
 
-  // 5 种不同建筑类型
-  const buildTypes = ['exchange', 'wishWell', 'palace', 'foodWorkshop', 'school'];
-  for (let i = 0; i < buildTypes.length; i++) {
+  // p0 建 5 个工坊（2 木 + 1 石 + 1 小麦 + 1 铁）
+  const ws0 = [
+    { r: 'wood', id: 'wm0' },
+    { r: 'wood', id: 'wm1' },
+    { r: 'stone', id: 'wm2' },
+    { r: 'food', id: 'wm3' },
+    { r: 'iron', id: 'wm4' },
+  ];
+  for (const w of ws0) {
     p0.buildings.push({
-      id: 're_t_' + i,
+      id: w.id,
       kind: 'building',
-      buildType: buildTypes[i],
-      label: '建筑' + i,
+      buildType: 'produce',
+      resource: w.r,
+      rich: false,
+      label: '工坊',
       cost: { wood: 1 },
       score: 0,
       built: true,
-      slot: i,
+      slot: 0,
       faceDown: false,
     });
   }
-
-  resolveRealEstateTycoon(g);
-  assert.strictEqual(g.realEstateTycoonPlayerId, p0.id, '5 种建筑应获得地产商');
-  assert.strictEqual(scoreOf(p0, g), 2, '地产商 +2 分');
+  resolveWorkshopMaster(g);
+  assert.strictEqual(g.workshopMasterPlayerId, p0.id, '≥5 工坊应获得工坊主');
+  assert.strictEqual(scoreOf(p0, g), 2, '工坊主 +2 分');
   const mePub0 = publicGameState(g, p0.id).players.find((x) => x.id === p0.id);
-  assert.ok((mePub0.titles || []).some((t) => t.label === '地产商'), '称号列表应含地产商');
+  assert.ok((mePub0.titles || []).some((t) => t.label === '工坊主'), '称号列表应含工坊主');
 
-  // p1 建 6 种不同建筑超过 p0
+  // p1 建 6 个工坊超过 p0
   for (let i = 0; i < 6; i++) {
     p1.buildings.push({
-      id: 're_t2_' + i,
+      id: 'wm_p1_' + i,
       kind: 'building',
-      buildType: 'type' + i,
-      label: '建筑二' + i,
+      buildType: 'produce',
+      resource: 'wood',
+      rich: false,
+      label: '工坊',
       cost: { wood: 1 },
       score: 0,
       built: true,
-      slot: i,
+      slot: 0,
       faceDown: false,
     });
   }
-  resolveRealEstateTycoon(g);
-  assert.strictEqual(g.realEstateTycoonPlayerId, p1.id, '种类更多应抢走地产商');
-  assert.strictEqual(scoreOf(p1, g), 2, '抢走地产商后 +2 分');
+  resolveWorkshopMaster(g);
+  assert.strictEqual(g.workshopMasterPlayerId, p1.id, '工坊更多应抢走工坊主');
+  assert.strictEqual(scoreOf(p1, g), 2, '抢走工坊主后 p1 总计 +2 分（工坊主+2，produce 建筑无叠放成就）');
   const mePub1 = publicGameState(g, p1.id).players.find((x) => x.id === p1.id);
-  assert.ok((mePub1.titles || []).some((t) => t.label === '地产商'));
+  assert.ok((mePub1.titles || []).some((t) => t.label === '工坊主'));
+  assert.strictEqual(scoreOf(p0, g), 0, 'p0 失去工坊主后分数归 0');
 
-  console.log('✓ real estate tycoon title + steal');
+  console.log('✓ workshop master title + steal');
 }
 
 console.log('全部通过');

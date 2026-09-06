@@ -3,9 +3,9 @@
 /** 资源类型 */
 const RESOURCES = ['wood', 'stone', 'food', 'iron'];
 const RESOURCE_LABELS = {
-  wood: '树林',
+  wood: '木头',
   stone: '石头',
-  food: '农田',
+  food: '小麦',
   iron: '铁矿',
 };
 
@@ -18,8 +18,6 @@ const FUNC_TYPES = {
   redraw: '重抽',
   banditRaid: '强盗来袭',
   expand: '扩建',
-  freeExpand: '免费扩建',
-  welfareHouse: '福利房',
   caravan: '商队来临',
   robbery: '抢劫',
   illegalBuild: '拆迁',
@@ -39,7 +37,6 @@ const BUILD_TYPES = {
   exchange: '集市',
   wishWell: '许愿井',
   eternalThrone: '永恒王座',
-  mixer: '打料机',
 };
 
 let _uid = 1;

@@ -2654,19 +2654,13 @@ window.LasidaoUi = (function () {
     if (title.id === 'lampSpirit' || title.stackKey === 'wishWell') {
       return [t('lasidao.titleLampSpiritTip')];
     }
-    if (title.id === 'breedingTycoon' || title.stackKey === 'breedingTycoon') {
-      return [t('lasidao.titleBreedingTycoonTip')];
-    }
     const need = title.need || 3;
     const score = title.score || 2;
-    if (title.id && String(title.id).startsWith('produceManager:')) {
-      return [
-        t('lasidao.titleProduceManagerTip', {
-          need,
-          score,
-          build: produceManagerBuildLabel(title),
-        }),
-      ];
+    if (title.id === 'workshopMaster' || title.stackKey === 'workshopMaster') {
+      return [t('lasidao.titleWorkshopMasterTip', { need, score })];
+    }
+    if (title.id === 'boostedTycoon' || title.stackKey === 'boostedTycoon') {
+      return [t('lasidao.titleBoostedTycoonTip', { need, score })];
     }
     return [
       t('lasidao.titlePoolTip', {
@@ -5873,6 +5867,7 @@ window.LasidaoUi = (function () {
                   id: (envTile.id || 'env') + ':stash:' + i,
                   kind: 'resource',
                   faceDown: true,
+                  backKind: 'resourceCard',
                   label: null,
                 },
                 'resource'

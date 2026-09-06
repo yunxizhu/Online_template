@@ -541,9 +541,9 @@
     "faceDownHint": "背面",
     "faceDownTip": "背面朝上；功能/建筑卡取得后仅获得者可见，建筑建造后公开",
     "res": {
-      "wood": "树林",
+      "wood": "木头",
       "stone": "石头",
-      "food": "农田",
+      "food": "小麦",
       "iron": "铁矿"
     },
     "tip": {
