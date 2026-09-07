@@ -602,6 +602,13 @@ function beginMercenaryPhase(game) {
   game.currentPlayerId = cur.playerId;
   game.mercenaryRoll = null;
   game.mercenaryPlaced = [];
+  pushProduceFx(game, {
+    type: 'envReveal',
+    envType: 'mercenaries',
+    envId: cur.envId || null,
+    number: cur.envNumber,
+    label: cur.label,
+  });
   pushLog(
     game,
     `—— 雇佣军：${(playerById(game, cur.playerId) || {}).name || '?'} 请投掷并放置 ——`
@@ -666,6 +673,7 @@ function queueMercenariesBeforeSettle(game) {
     game.pendingMercenaryQueue.push({
       playerId: firstId,
       envNumber: num,
+      envId: env.id,
       diceCount: diceN,
       label: env.label,
     });
@@ -1369,6 +1377,38 @@ function publicSettleTiles(tiles, claimedByPid, viewerId) {
   });
 }
 
+function publicSettleEnvReward(reward, viewerId) {
+  if (!reward) return null;
+  return {
+    type: reward.type || 'envReward',
+    envType: reward.envType || null,
+    envId: reward.envId || null,
+    number: reward.number != null ? Number(reward.number) : null,
+    label: reward.label || '',
+    rewards: (reward.rewards || []).map((r) => ({
+      pid: r.pid,
+      total: Number(r.total) || 0,
+      detail: r.pid === viewerId ? r.detail : undefined,
+    })),
+  };
+}
+
+function publicSettleEnvReveal(reveal) {
+  if (!reveal) return null;
+  return {
+    envType: reveal.envType || null,
+    envId: reveal.envId || null,
+    number: reveal.number != null ? Number(reveal.number) : null,
+    label: reveal.label || '',
+    claimPid: reveal.claimPid || null,
+    sideCardKind: reveal.sideCardKind || null,
+    scoreAwards: (reveal.scoreAwards || []).map((a) => ({
+      pid: a.pid,
+      amount: Number(a.amount) || 1,
+    })),
+  };
+}
+
 function publicLastSettle(report, viewerId) {
   if (!report) return null;
   return {
@@ -1380,6 +1420,8 @@ function publicLastSettle(report, viewerId) {
         s.claimedBy && s.claimedBy.pid,
         viewerId
       ),
+      envReward: publicSettleEnvReward(s.envReward, viewerId),
+      envReveal: publicSettleEnvReveal(s.envReveal),
     })),
   };
 }
@@ -1959,7 +2001,7 @@ function startSettle(game) {
     const barren = isBarrenMarkerOn(game, 'resource', num);
 
     // 事件牌：结算触发（在发放资源前）
-    applyEnvironmentOnSettleSlot(game, {
+    const settleEnv = applyEnvironmentOnSettleSlot(game, {
       number: num,
       tiles,
       ranked,
@@ -2071,6 +2113,7 @@ function startSettle(game) {
       physical: { ...workers },
       barren: Boolean(barren),
       barrenMarker: isBarrenMarkerOn(game, 'resource', num),
+      envReveal: (settleEnv && settleEnv.envReveal) || null,
     });
 
     if (gains.length) {
@@ -6445,6 +6488,7 @@ function publicGameState(game, viewerId) {
             diceCount: q.diceCount,
             label: q.label,
             envNumber: q.envNumber,
+            envId: q.envId || null,
           })),
           roll: (game.mercenaryRoll || []).slice(),
           placed: (game.mercenaryPlaced || []).slice(),

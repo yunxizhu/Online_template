@@ -53,7 +53,7 @@ function envCardHtml(def, lang) {
       teleport:
         'Dispatch: when you become slot leader (first time counts; stacking more as leader does not retrigger), move 1 die (any player or neutral) from any slot to any slot with tiles; destination triggers dispatch events.',
       keepOverflow:
-        'After settle cancel: 1st place on this slot skips resource discard for this round and gains 2 random resources.',
+        'Setup: draw 2 resource cards face-down beside this event. After settle cancel: 1st place skips resource discard for this round and takes those cards.',
       weiQiRescueZhao:
         'Setup: place 1 neutral on each orthogonally adjacent resource-area number slot (1→2/4, 2→1/3/5, 3→2/6, 4→1/5, 5→2/4/6, 6→3/5). Dispatch: choose another slot with neutrals and move all neutrals here.',
     };

@@ -4952,6 +4952,12 @@ button.las-exile-player.color-neutral {
   pointer-events: none;
 }
 
+.las-settling .las-env-stash-wrap.is-settle-claimed {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+
 /* 结算演绎加速（与 fx.js SETTLE_SPEED=2.5 对齐） */
 .las-settling .las-slot.las-settle-winner {
   animation-duration: 0.28s;
@@ -6708,4 +6714,58 @@ button.las-exile-player.color-neutral {
     opacity: 0.28;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(106, 168, 216, 0.1);
   }
+}
+
+@keyframes las-res-pop {
+  0% {
+    transform: scale(1);
+  }
+  30% {
+    transform: scale(1.35);
+    filter: brightness(1.35);
+  }
+  60% {
+    transform: scale(1.2);
+    filter: brightness(1.15);
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+
+.badge.is-gain-pop,
+.las-me-info-score.is-gain-pop {
+  animation: las-res-pop 0.65s ease-in-out;
+  will-change: transform, filter;
+}
+
+.las-fx-env-card-display {
+  pointer-events: none;
+  position: fixed;
+  z-index: 200;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  border-radius: 8px;
+}
+
+.las-fx-env-card-label {
+  position: absolute;
+  bottom: 6px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 11px;
+  color: #e8d48b;
+  background: rgba(0,0,0,0.55);
+  padding: 2px 0;
+  pointer-events: none;
+}
+
+.las-fx-env-fly-card {
+  pointer-events: none;
+  position: fixed;
+  z-index: 150;
+  overflow: hidden;
+  border-radius: 4px;
 }

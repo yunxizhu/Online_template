@@ -4952,6 +4952,12 @@ button.las-exile-player.color-neutral {
   pointer-events: none;
 }
 
+.las-settling .las-env-stash-wrap.is-settle-claimed {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+
 /* 结算演绎加速（与 fx.js SETTLE_SPEED=2.5 对齐） */
 .las-settling .las-slot.las-settle-winner {
   animation-duration: 0.28s;
@@ -6728,7 +6734,8 @@ button.las-exile-player.color-neutral {
   }
 }
 
-.badge.is-gain-pop {
+.badge.is-gain-pop,
+.las-me-info-score.is-gain-pop {
   animation: las-res-pop 0.65s ease-in-out;
   will-change: transform, filter;
 }

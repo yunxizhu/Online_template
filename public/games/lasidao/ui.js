@@ -3371,6 +3371,31 @@ window.LasidaoUi = (function () {
     return Number(merc.roll[idx]) || null;
   }
 
+  function envRevealFxPending(game) {
+    const fx = game && game.lastProduceFx;
+    return Boolean(
+      fx &&
+        fx.type === 'envReveal' &&
+        fx.id &&
+        fx.id !== lastProduceFxKey
+    );
+  }
+
+  function shouldDelayWelfarePick(game) {
+    if (!game) return false;
+    const welfare =
+      (game.welfareMinimumPending || []).length > 0 ||
+      (game.pendingEventChoice &&
+        game.pendingEventChoice.forMe &&
+        game.pendingEventChoice.resume === 'welfareSetup');
+    if (!welfare) return false;
+    if (dealAnimPlaying) return true;
+    const fx = game.lastProduceFx;
+    if (produceFxPlaying && fx && fx.type === 'envReveal') return true;
+    if (envRevealFxPending(game)) return true;
+    return false;
+  }
+
   function isMercenaryRollMode(game, meId) {
     const merc = game && game.mercenary;
     return Boolean(
@@ -3379,7 +3404,9 @@ window.LasidaoUi = (function () {
         merc &&
         merc.forMe &&
         !(merc.roll && merc.roll.length) &&
-        !(game.pendingEventChoice && game.pendingEventChoice.forMe)
+        !(game.pendingEventChoice && game.pendingEventChoice.forMe) &&
+        !produceFxPlaying &&
+        !envRevealFxPending(game)
     );
   }
 
@@ -3400,6 +3427,7 @@ window.LasidaoUi = (function () {
   function maybeShowMercenaryToast(game, meId) {
     const merc = game && game.mercenary;
     if (!merc || !merc.forMe || game.phase !== 'event_mercenary') return;
+    if (produceFxPlaying || envRevealFxPending(game)) return;
     const q0 = (merc.queue && merc.queue[0]) || {};
     const key =
       String(game.round || '') +
@@ -5844,7 +5872,6 @@ window.LasidaoUi = (function () {
             envBox.appendChild(sideCard);
           }
           if (
-            envTile.envType === 'firstCome' &&
             !envTile.stashClaimed &&
             (Number(envTile.stashCount) || 0) > 0
           ) {
@@ -5856,7 +5883,7 @@ window.LasidaoUi = (function () {
             stashTitle.className = 'las-env-stash-title';
             stashTitle.textContent = need
               ? t('lasidao.eventFirstComeStashTitle', { need })
-              : t('lasidao.eventFirstComeLabel');
+              : t('lasidao.eventStashHiddenTitle');
             stashWrap.appendChild(stashTitle);
             const stashStack = document.createElement('div');
             stashStack.className = 'las-env-stash-stack';
@@ -5886,7 +5913,7 @@ window.LasidaoUi = (function () {
             stackBadge.textContent = '×' + stashN;
             stashStack.appendChild(stackBadge);
             const tipText = [
-              t('lasidao.eventFirstComeLabel'),
+              envTile.label || t('lasidao.eventStashHiddenTitle'),
               t('lasidao.eventFirstComeStashHidden', { n: stashN }),
               need ? t('lasidao.eventFirstComeStashTitle', { need }) : '',
             ]
@@ -6134,6 +6161,8 @@ window.LasidaoUi = (function () {
           renderBoard(lastGame, lastMeId);
           applyDeckUi(lastGame);
           flushDeferredHeavyRender();
+          maybePlayProduceFx(lastGame, lastGame);
+          syncEventUi(lastGame, lastMeId);
         }
       });
   }
@@ -9131,6 +9160,7 @@ window.LasidaoUi = (function () {
     const showChoice = Boolean(
       choice &&
         choice.forMe &&
+        !shouldDelayWelfarePick(game) &&
         choice.needChoice !== 'moveBarrenMarker' &&
         choice.needChoice !== 'moveNeutral' &&
         choice.needChoice !== 'recallDie' &&
@@ -10219,6 +10249,11 @@ window.LasidaoUi = (function () {
       }
       if (LasFx && typeof LasFx.clearLayer === 'function') LasFx.clearLayer();
       flushDeferredHeavyRender();
+      if (lastGame && lastMeId) {
+        renderDice(lastGame, lastMeId);
+        maybeShowMercenaryToast(lastGame, lastMeId);
+        syncEventUi(lastGame, lastMeId);
+      }
       if (lastGame && isSettlePipelinePhase(lastGame.phase)) {
         maybePlaySettle(lastGame);
       }
@@ -10281,6 +10316,19 @@ window.LasidaoUi = (function () {
         renderBoard(snap, lastMeId);
       }
       finish();
+      return;
+    }
+
+    if (fx.type === 'envReveal') {
+      const run =
+        LasFx && typeof LasFx.playEnvReveal === 'function'
+          ? LasFx.playEnvReveal({ game, ...fx })
+          : LasFx && typeof LasFx.presentEnvCard === 'function'
+            ? LasFx.presentEnvCard({ game, ...fx })
+            : Promise.resolve();
+      Promise.resolve(run)
+        .then(() => finish())
+        .catch(() => finish());
       return;
     }
 
@@ -13365,6 +13413,7 @@ window.LasidaoUi = (function () {
     onGameError,
     showSettleObtain,
     appendGameLogLine,
+    popResourceBadges,
     openRules: () => setRulesModalOpen(true),
     makeBoardSlotEmptyEl,
     replaceBoardTileWithEmpty,

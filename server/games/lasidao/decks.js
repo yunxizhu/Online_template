@@ -419,8 +419,9 @@ const ENVIRONMENT_CATALOG = [
     envType: 'keepOverflow',
     label: '吃不了兜着走',
     trigger: 'settle',
+    setup: 'stashTwoResources',
     count: 2,
-    desc: '结算抵消后：本格第一名跳过本轮资源弃牌阶段，并获得随机 2 个资源',
+    desc: '上场时从资源牌堆抽出 2 张暗置在事件旁（不明示）；结算抵消后：本格第一名跳过本轮资源弃牌阶段，并获得这些资源',
   },
   {
     envType: 'mercenaries',

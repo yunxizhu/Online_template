@@ -3555,7 +3555,7 @@ console.log('— event luckyDraw respects neutral first place —');
     cost: {},
     faceDown: true,
   };
-  applyEnvironmentOnSettleSlot(g, {
+  const luckyGot = applyEnvironmentOnSettleSlot(g, {
     number: 3,
     ranked: [
       { pid: p0.id, count: 4, name: p0.name },
@@ -3575,6 +3575,9 @@ console.log('— event luckyDraw respects neutral first place —');
     p0.buildings.some((b) => b.id === 'side_lucky_bld2'),
     '第一名玩家应获得暗置牌'
   );
+  assert.ok(luckyGot && luckyGot.envReveal, '应带上幸运一抽亮卡');
+  assert.strictEqual(luckyGot.envReveal.claimPid, p0.id);
+  assert.strictEqual(luckyGot.envReveal.sideCardKind, 'building');
   console.log('✓ event luckyDraw respects neutral first place');
 }
 
@@ -4045,9 +4048,11 @@ console.log('— event welfare minimum lowest score —');
   p2.houseScore = 3;
   p2.bonusScore = 0;
   g.pendingWelfareMinimumQueue = [];
+  const fx = [];
   setupEnvironmentOnBoard(
     g,
     {
+      id: 'env_wm1',
       envType: 'welfareMinimum',
       label: '低保户',
       setup: 'lowestScoreTwo',
@@ -4057,17 +4062,28 @@ console.log('— event welfare minimum lowest score —');
       pushLog: () => {},
       alivePlayers: () => g.players.filter((p) => !p.left),
       playerScore,
+      pushProduceFx: (payload) => fx.push(payload),
     }
   );
-  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 0, '不再进入队列');
-  const total0 = (p0.resources.wood || 0) + (p0.resources.stone || 0) + (p0.resources.food || 0) + (p0.resources.iron || 0);
-  assert.strictEqual(total0, 2, '第1轮应随机获得2个资源');
+  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 1);
+  assert.strictEqual(g.pendingWelfareMinimumQueue[0].playerId, p0.id);
+  assert.strictEqual(g.pendingWelfareMinimumQueue[0].count, 2, '第1轮应选2个资源');
+  assert.strictEqual(fx.length, 1);
+  assert.strictEqual(fx[0].type, 'envReveal');
+  assert.strictEqual(fx[0].envType, 'welfareMinimum');
+  const total0 =
+    (p0.resources.wood || 0) +
+    (p0.resources.stone || 0) +
+    (p0.resources.food || 0) +
+    (p0.resources.iron || 0);
+  assert.strictEqual(total0, 0, '亮卡前不应直接发资源');
 
   p1.houseScore = 0;
   g.pendingWelfareMinimumQueue = [];
   setupEnvironmentOnBoard(
     g,
     {
+      id: 'env_wm2',
       envType: 'welfareMinimum',
       label: '低保户',
       setup: 'lowestScoreTwo',
@@ -4077,13 +4093,12 @@ console.log('— event welfare minimum lowest score —');
       pushLog: () => {},
       alivePlayers: () => g.players.filter((p) => !p.left),
       playerScore,
+      pushProduceFx: () => {},
     }
   );
-  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 0);
-  const totalP0 = (p0.resources.wood || 0) + (p0.resources.stone || 0) + (p0.resources.food || 0) + (p0.resources.iron || 0);
-  const totalP1 = (p1.resources.wood || 0) + (p1.resources.stone || 0) + (p1.resources.food || 0) + (p1.resources.iron || 0);
-  assert.strictEqual(totalP0, 4, '并列最低分也应获得2个资源（累计4）');
-  assert.strictEqual(totalP1, 2, 'p1 也获得2个资源');
+  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 2, '并列最低分都应入队');
+  assert.ok(g.pendingWelfareMinimumQueue.some((x) => x.playerId === p0.id));
+  assert.ok(g.pendingWelfareMinimumQueue.some((x) => x.playerId === p1.id));
 
   p1.houseScore = 5;
   g.pendingWelfareMinimumQueue = [];
@@ -4091,6 +4106,7 @@ console.log('— event welfare minimum lowest score —');
   setupEnvironmentOnBoard(
     g,
     {
+      id: 'env_wm3',
       envType: 'welfareMinimum',
       label: '低保户',
       setup: 'lowestScoreTwo',
@@ -4100,17 +4116,18 @@ console.log('— event welfare minimum lowest score —');
       pushLog: () => {},
       alivePlayers: () => g.players.filter((p) => !p.left),
       playerScore,
+      pushProduceFx: () => {},
     }
   );
-  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 0);
-  const total5 = (p0.resources.wood || 0) + (p0.resources.stone || 0) + (p0.resources.food || 0) + (p0.resources.iron || 0);
-  assert.strictEqual(total5, 7, '第5轮应再获得3个资源（累计4+3=7）');
+  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 1);
+  assert.strictEqual(g.pendingWelfareMinimumQueue[0].count, 3, '第5轮应选3个资源');
 
   g.pendingWelfareMinimumQueue = [];
   g.round = 9;
   setupEnvironmentOnBoard(
     g,
     {
+      id: 'env_wm4',
       envType: 'welfareMinimum',
       label: '低保户',
       setup: 'lowestScoreTwo',
@@ -4120,11 +4137,10 @@ console.log('— event welfare minimum lowest score —');
       pushLog: () => {},
       alivePlayers: () => g.players.filter((p) => !p.left),
       playerScore,
+      pushProduceFx: () => {},
     }
   );
-  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 0);
-  const total9 = (p0.resources.wood || 0) + (p0.resources.stone || 0) + (p0.resources.food || 0) + (p0.resources.iron || 0);
-  assert.strictEqual(total9, 11, '第9轮应再获得4个资源（累计7+4=11）');
+  assert.strictEqual(g.pendingWelfareMinimumQueue[0].count, 4, '第9轮应选4个资源');
 
   const g5 = createGameState(room(3));
   const q0 = g5.players[0];
@@ -4148,11 +4164,29 @@ console.log('— event welfare minimum lowest score —');
   ];
   g5.environmentDiscard = [];
   ok(finishInitAnnounce(g5));
-  assert.strictEqual(g5.pendingWelfareMinimumQueue.length, 0, '不再创建队列');
-  assert.ok(!g5.pendingWelfareMinimumChoices || !Object.keys(g5.pendingWelfareMinimumChoices).length, '不应有待选弹窗');
-  const totalQ0 = (q0.resources.wood || 0) + (q0.resources.stone || 0) + (q0.resources.food || 0) + (q0.resources.iron || 0);
-  assert.strictEqual(totalQ0, 3, '第5轮应直接获得3个随机资源');
-  assert.strictEqual(g5.phase, 'produce', '低保户后直接进生产');
+  assert.strictEqual(g5.pendingWelfareMinimumQueue.length, 0, '入队后应立刻转为待选');
+  assert.ok(
+    g5.pendingWelfareMinimumChoices && g5.pendingWelfareMinimumChoices[q0.id],
+    '最低分玩家应进入选资源'
+  );
+  assert.strictEqual(g5.pendingWelfareMinimumChoices[q0.id].count, 3);
+  assert.ok(g5.lastProduceFx, '开局低保户应先亮事件卡');
+  assert.strictEqual(g5.lastProduceFx.type, 'envReveal');
+  assert.strictEqual(g5.lastProduceFx.envType, 'welfareMinimum');
+  const totalQ0 =
+    (q0.resources.wood || 0) +
+    (q0.resources.stone || 0) +
+    (q0.resources.food || 0) +
+    (q0.resources.iron || 0);
+  assert.strictEqual(totalQ0, 0, '选资源前不应直接发牌');
+  ok(
+    applyAction(g5, q0.id, {
+      type: 'eventPickTwoResources',
+      payload: { amounts: { wood: 3 } },
+    })
+  );
+  assert.strictEqual(q0.resources.wood, 3);
+  assert.strictEqual(g5.phase, 'produce', '选完后进入生产');
   console.log('✓ event welfare minimum lowest score');
 }
 
@@ -4231,6 +4265,10 @@ console.log('— event mercenaries preSettle —');
   assert.strictEqual(g2.phase, 'event_mercenary', '唯一第一应进入雇佣军');
   assert.strictEqual(g2.mercenaryGate, 'preSettle');
   assert.strictEqual(g2.currentPlayerId, 'p0');
+  assert.ok(g2.lastProduceFx, '进入雇佣军应先亮事件卡');
+  assert.strictEqual(g2.lastProduceFx.type, 'envReveal');
+  assert.strictEqual(g2.lastProduceFx.envType, 'mercenaries');
+  assert.strictEqual(g2.lastProduceFx.number, 5);
   assert.strictEqual(g2.board.resource.environments[5].mercenaryDice, 0);
   ok(applyAction(g2, 'p0', { type: 'mercenaryRoll' }));
   assert.strictEqual((g2.mercenaryRoll || []).length, 2);
@@ -5083,6 +5121,13 @@ console.log('— event resistBarbarians VP —');
   assert.strictEqual(p0.bonusScore, 10, '第一名先获得抵抗南蛮分数');
   assert.ok(g.over, '第一名达 10 应立刻结束');
   assert.strictEqual(p1.bonusScore, 9, '游戏结束后第二名不再得分');
+  const rbSlot = (g.lastSettle.slots || []).find((s) => s.number === 5);
+  assert.ok(rbSlot && rbSlot.envReveal, '结算应带上抵抗南蛮亮卡');
+  assert.strictEqual(rbSlot.envReveal.envType, 'resistBarbarians');
+  assert.ok(
+    (rbSlot.envReveal.scoreAwards || []).some((a) => a.pid === 'p0'),
+    '亮卡后应对第一名 +1'
+  );
   console.log('✓ event resistBarbarians VP');
 }
 
@@ -5154,6 +5199,9 @@ console.log('— event resistBarbarians requires 2 physical dice —');
   p0.bonusScore = 0;
   startSettle(g);
   assert.strictEqual(p0.bonusScore, 1, '剩余 2 骰时应获得胜利点');
+  const rb2 = (g.lastSettle.slots || []).find((s) => s.number === 3);
+  assert.ok(rb2 && rb2.envReveal, '2 骰抵抗南蛮应亮卡');
+  assert.strictEqual((rb2.envReveal.scoreAwards || [])[0].pid, 'p0');
   console.log('✓ resistBarbarians awards VP at 2 dice');
 }
 
@@ -5241,7 +5289,13 @@ console.log('— event keepOverflow skip discard —');
     label: '吃不了兜着走',
     envType: 'keepOverflow',
     trigger: 'settle',
+    setup: 'stashTwoResources',
     number: 4,
+    stashCards: [
+      { id: 'ko1', kind: 'resource', resource: 'wood', faceDown: true },
+      { id: 'ko2', kind: 'resource', resource: 'stone', faceDown: true },
+    ],
+    stashClaimed: false,
   };
   g.board.resource.tiles = [
     {
@@ -5272,12 +5326,37 @@ console.log('— event keepOverflow skip discard —');
   assert.ok(p0.skipSettleResourceDiscard, '第一名应豁免资源弃牌');
   assert.ok((p0.resources.wood || 0) >= 14, '第一名应保留结算所得木头');
   assert.strictEqual(p1.resources.wood, 13, '第二名应获得小份');
+  assert.strictEqual(p0.resources.wood, 15, '第一名应得大份木头 + 暗置 1 木头');
+  assert.strictEqual(p0.resources.stone, 1, '第一名应得暗置 1 石头');
   const p0Total =
     (p0.resources.wood || 0) +
     (p0.resources.stone || 0) +
     (p0.resources.food || 0) +
     (p0.resources.iron || 0);
-  assert.strictEqual(p0Total, 16, '第一名应额外获得随机 2 张资源');
+  assert.strictEqual(p0Total, 16, '第一名应额外获得暗置 2 张资源');
+  assert.ok(
+    g.board.resource.environments[4].stashClaimed,
+    '领取后应标记暗置已领'
+  );
+  assert.strictEqual(
+    (g.board.resource.environments[4].stashCards || []).length,
+    0,
+    '领取后暗置堆应清空'
+  );
+  const koSlot = (g.lastSettle.slots || []).find((s) => s.number === 4);
+  assert.ok(koSlot && koSlot.envReward, '结算报告应带上吃不了兜着走发放动画');
+  assert.strictEqual(koSlot.envReward.envType, 'keepOverflow');
+  assert.strictEqual(koSlot.envReward.rewards.length, 1);
+  assert.strictEqual(koSlot.envReward.rewards[0].pid, 'p0');
+  assert.strictEqual(koSlot.envReward.rewards[0].total, 2);
+  const pubOther = publicGameState(g, 'p1');
+  const pubKo =
+    (pubOther.lastSettle.slots || []).find((s) => s.number === 4) || {};
+  assert.ok(pubKo.envReward, '公开结算应保留发放动画');
+  assert.ok(
+    !pubKo.envReward.rewards[0].detail,
+    '其他人不应看到暗置资源种类'
+  );
   assert.ok(
     !(g.pendingKeepOverflowQueue || []).length,
     '随机发放后不应再排队选资源'
@@ -5305,6 +5384,53 @@ console.log('— event keepOverflow skip discard —');
     (p0.resources.iron || 0);
   assert.strictEqual(p0TotalAfter, 16, '第一名超上限资源应保留');
   console.log('✓ event keepOverflow skip discard');
+}
+
+console.log('— event keepOverflow stash —');
+{
+  const {
+    KEEP_OVERFLOW_STASH_COUNT,
+    setupEnvironmentOnBoard,
+  } = require('../environmentEffects');
+  assert.strictEqual(KEEP_OVERFLOW_STASH_COUNT, 2);
+
+  const gSetup = createGameState(room(2));
+  finishInit(gSetup);
+  const drawn = [];
+  const envSetup = {
+    id: 'env_ko_setup',
+    kind: 'environment',
+    label: '吃不了兜着走',
+    envType: 'keepOverflow',
+    trigger: 'settle',
+    setup: 'stashTwoResources',
+    number: 4,
+  };
+  setupEnvironmentOnBoard(gSetup, envSetup, 4, {
+    pushLog: () => {},
+    drawOne: (_game, kind) => {
+      assert.strictEqual(kind, 'resource');
+      const card = {
+        id: 'ko_draw_' + drawn.length,
+        kind: 'resource',
+        resource: ['wood', 'stone'][drawn.length] || 'food',
+        label: '测',
+      };
+      drawn.push(card);
+      return card;
+    },
+  });
+  assert.strictEqual(envSetup.stashCards.length, 2, '应暗置 2 张');
+  assert.ok(envSetup.stashCards.every((c) => c.faceDown));
+  gSetup.board.resource.environments[4] = envSetup;
+  const pubKo = publicGameState(gSetup, 'p0');
+  const pubEnv =
+    pubKo.board.resource.environments[4] ||
+    (pubKo.board.resource.slots.find((s) => s.number === 4) || {}).environment;
+  assert.strictEqual(pubEnv.stashCount, 2);
+  assert.ok(!pubEnv.stash, '公开状态不应明示暗置资源种类');
+  assert.ok(!pubEnv.stashCards, '公开状态不应下发暗置牌正面');
+  console.log('✓ event keepOverflow stash');
 }
 
 console.log('— event firstCome stash —');
@@ -5463,6 +5589,8 @@ console.log('— event barren leader trigger —');
   g.awaitingProduceRoll = false;
   g.dice = { p0: [5], p1: [] };
   g.diceBoosted = { p0: [false], p1: [] };
+  g.board.resource.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  g.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
   const p0 = g.players[0];
   p0.dispatched = 0;
   ok(

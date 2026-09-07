@@ -142,6 +142,9 @@ function neutralCountOn(game, area, number) {
   return Number(w[NEUTRAL_WORKER_ID]) || 0;
 }
 
+/** 吃不了兜着走：上场暗置 2 张资源 */
+const KEEP_OVERFLOW_STASH_COUNT = 2;
+
 /** 先到先得：第 1–4 轮暗置 3 张，第 5–8 轮 5 张，第 9 轮起 7 张 */
 function firstComeStashCount(round) {
   const r = Number(round) || 1;
@@ -166,6 +169,35 @@ function discardStashResourceCards(game, cards, pushToDiscardFn) {
   for (const c of list) {
     if (c) game.resourceDiscard.push(c);
   }
+}
+
+function fillStashResourceCards(game, env, count, helpers) {
+  env.stashClaimed = false;
+  env.stashCards = [];
+  const n = Math.max(0, Number(count) || 0);
+  const draw =
+    helpers && typeof helpers.drawOne === 'function' ? helpers.drawOne : null;
+  for (let i = 0; i < n; i++) {
+    const card = draw ? draw(game, 'resource') : null;
+    if (!card) break;
+    env.stashCards.push({ ...card, kind: 'resource', faceDown: true });
+  }
+  return env.stashCards.length;
+}
+
+function claimStashResourceCards(game, env, player, pushToDiscardFn) {
+  const cards = Array.isArray(env.stashCards) ? env.stashCards.slice() : [];
+  env.stashClaimed = true;
+  env.stashCards = [];
+  const grant = {};
+  for (const c of cards) {
+    const r = c && c.resource;
+    if (!RESOURCES.includes(r)) continue;
+    grant[r] = (grant[r] || 0) + 1;
+  }
+  const got = grantMap(player, grant);
+  discardStashResourceCards(game, cards, pushToDiscardFn);
+  return got;
 }
 
 /** 先到先得：第 1–4 轮需 2 村民，第 5–8 轮需 3，第 9 轮起需 4 */
@@ -283,22 +315,22 @@ function setupEnvironmentOnBoard(game, env, number, helpers) {
       const count = firstComeStashCount(game.round);
       const required = firstComeRequiredWorkers(game.round);
       env.firstComeRequired = required;
-      env.stashClaimed = false;
       env.firstComeClaims = {};
-      env.stashCards = [];
-      const draw =
-        helpers && typeof helpers.drawOne === 'function'
-          ? helpers.drawOne
-          : null;
-      for (let i = 0; i < count; i++) {
-        const card = draw ? draw(game, 'resource') : null;
-        if (!card) break;
-        env.stashCards.push({ ...card, kind: 'resource', faceDown: true });
-      }
+      fillStashResourceCards(game, env, count, helpers);
       if (helpers && helpers.pushLog) {
         helpers.pushLog(
           game,
           `「${env.label}」：资源格 ${number} 旁暗置 ${env.stashCards.length} 张资源（本格放置满 ${required} 个村民可获得）`
+        );
+      }
+      break;
+    }
+    case 'stashTwoResources': {
+      fillStashResourceCards(game, env, KEEP_OVERFLOW_STASH_COUNT, helpers);
+      if (helpers && helpers.pushLog) {
+        helpers.pushLog(
+          game,
+          `「${env.label}」：资源格 ${number} 旁暗置 ${env.stashCards.length} 张资源`
         );
       }
       break;
@@ -320,35 +352,33 @@ function setupEnvironmentOnBoard(game, env, number, helpers) {
       let count = 2;
       if (game.round >= 9) count = 4;
       else if (game.round >= 5) count = 3;
-      const rewards = [];
+      if (!game.pendingWelfareMinimumQueue) game.pendingWelfareMinimumQueue = [];
       for (const p of lows) {
-        const gained = {};
-        for (let i = 0; i < count; i++) {
-          const r = RESOURCES[Math.floor(Math.random() * RESOURCES.length)];
-          p.resources[r] = (p.resources[r] || 0) + 1;
-          p.roundGained = (Number(p.roundGained) || 0) + 1;
-          gained[r] = (gained[r] || 0) + 1;
-        }
-        if (helpers.pushLog) {
-          const parts = Object.entries(gained).map(
-            ([k, v]) => `${v} ${RESOURCE_LABELS[k] || k}`
-          );
-          helpers.pushLog(
-            game,
-            `「${env.label}」：${p.name}（${min} 分）随机获得 ${count} 个资源（${parts.join('、')}）`
-          );
-        }
-        rewards.push({ pid: p.id, detail: Object.entries(gained).map(([k, v]) => ({ resource: k, amount: v })), total: count });
+        game.pendingWelfareMinimumQueue.push({
+          playerId: p.id,
+          envType: env.envType,
+          label: env.label,
+          envNumber: number,
+          envId: env.id,
+          needChoice: 'pickTwoResources',
+          resume: 'welfareSetup',
+          count,
+        });
       }
-      if (rewards.length && helpers.pushProduceFx && typeof helpers.pushProduceFx === 'function') {
+      if (helpers && typeof helpers.pushProduceFx === 'function') {
         helpers.pushProduceFx({
-          type: 'envReward',
+          type: 'envReveal',
           envType: env.envType,
           envId: env.id,
-          number: number,
+          number,
           label: env.label,
-          rewards,
         });
+      }
+      if (helpers && helpers.pushLog && lows.length) {
+        helpers.pushLog(
+          game,
+          `「${env.label}」：${lows.map((p) => p.name).join('、')}（${min} 分）请选择 ${count} 个资源`
+        );
       }
       break;
     }
@@ -586,18 +616,8 @@ function applyEnvironmentOnDispatch(game, ctx) {
       if (!(prevCount < required && physical >= required)) return null;
       const cards = Array.isArray(env.stashCards) ? env.stashCards.slice() : [];
       if (!cards.length) return null;
-
-      const grant = {};
-      for (const c of cards) {
-        const r = c && c.resource;
-        if (!RESOURCES.includes(r)) continue;
-        grant[r] = (grant[r] || 0) + 1;
-      }
-      const got = grantMap(player, grant);
+      const got = claimStashResourceCards(game, env, player, ctx.pushToDiscard);
       env.firstComeClaims[player.id] = true;
-      env.stashClaimed = true;
-      env.stashCards = [];
-      discardStashResourceCards(game, cards, ctx.pushToDiscard);
       if (ctx.pushLog) {
         ctx.pushLog(
           game,
@@ -762,6 +782,17 @@ function applyEnvironmentOnSettleSlot(game, ctx) {
               `「${env.label}」：${p.name}获得了1张${kindText}`
             );
           }
+          result.envReveal = {
+            envType: env.envType,
+            envId: env.id,
+            number: num,
+            label: env.label,
+            claimPid: p.id,
+            sideCardKind:
+              card.kind === 'building' || card.buildType
+                ? 'building'
+                : 'function',
+          };
         }
       } else if (ctx.pushLog) {
         ctx.pushLog(game, `「${env.label}」：无有效第一名或无暗置牌`);
@@ -849,9 +880,9 @@ function applyResistBarbariansAfterSettle(game, report, helpers) {
     const remain = slot.remain || {};
     const physical = slot.physical || {};
     const ranked = slot.ranked || [];
-    let any = false;
+    const awards = [];
     for (const r of ranked) {
-      if (game.over) return;
+      if (game.over) break;
       if (!r || r.pid === NEUTRAL_WORKER_ID) continue;
       if (!(Number(remain[r.pid]) || 0)) continue;
       const diceCount =
@@ -860,18 +891,27 @@ function applyResistBarbariansAfterSettle(game, report, helpers) {
       const p = playerById(game, r.pid);
       if (!p || p.left) continue;
       p.bonusScore = (Number(p.bonusScore) || 0) + 1;
-      any = true;
+      awards.push({ pid: p.id, amount: 1 });
       if (pushLog) {
         pushLog(
           game,
           `「${env.label}」：${p.name}（第 ${ranked.indexOf(r) + 1} 名，剩余 ${diceCount} 骰）+1 胜利点`
         );
       }
-      if (typeof checkWin === 'function' && checkWin(game)) return;
+      if (typeof checkWin === 'function' && checkWin(game)) break;
     }
-    if (!any && pushLog) {
+    if (awards.length) {
+      slot.envReveal = {
+        envType: env.envType,
+        envId: env.id,
+        number: slot.number,
+        label: env.label,
+        scoreAwards: awards,
+      };
+    } else if (pushLog) {
       pushLog(game, `「${env.label}」：无人拥有 ≥2 骰，未生效`);
     }
+    if (game.over) return;
   }
 }
 
@@ -894,14 +934,14 @@ function firstPlacePlayerIds(ranked) {
 
 /**
  * 生产结算（抵消并发资源）全部完成后、弃牌前：
- * 吃不了兜着走：本格第一名跳过本轮资源弃牌阶段，并获得随机 2 个资源。
+ * 吃不了兜着走：本格第一名跳过本轮资源弃牌阶段，并获得上场暗置的 2 张资源。
  */
 function applyKeepOverflowAfterSettle(game, report, helpers) {
   if (!game || game.over || !report) return;
   const playerById = helpers && helpers.playerById;
   const pushLog = helpers && helpers.pushLog;
   const syncPending = helpers && helpers.syncResourceHandPending;
-  const pushProduceFx = helpers && helpers.pushProduceFx;
+  const pushToDiscard = helpers && helpers.pushToDiscard;
   if (!playerById) return;
 
   for (const slot of report.slots || []) {
@@ -918,6 +958,7 @@ function applyKeepOverflowAfterSettle(game, report, helpers) {
     }
     const names = [];
     const rewards = [];
+    let stashGranted = false;
     for (const pid of ids) {
       const p = playerById(game, pid);
       if (!p || p.left) continue;
@@ -927,28 +968,34 @@ function applyKeepOverflowAfterSettle(game, report, helpers) {
       } else {
         p.pendingDiscardRes = false;
       }
-      const got = grantRandomResources(p, 2);
+      let got = { total: 0, detail: [] };
+      if (!stashGranted) {
+        got = claimStashResourceCards(game, env, p, pushToDiscard);
+        stashGranted = true;
+      }
       if (typeof syncPending === 'function') {
         syncPending(p, game);
       }
       names.push(p.name);
-      if (pushLog) {
+      if (pushLog && got.total) {
         pushLog(game, `${p.name}获得了${got.total}张随机资源`);
       }
-      rewards.push({ pid: p.id, detail: got.detail, total: got.total });
+      if (got.total) {
+        rewards.push({ pid: p.id, detail: got.detail, total: got.total });
+      }
     }
     if (pushLog && !names.length) {
       pushLog(game, `「${env.label}」：本格无有效第一名，未生效`);
     }
-    if (rewards.length && typeof pushProduceFx === 'function') {
-      pushProduceFx({
+    if (rewards.length) {
+      slot.envReward = {
         type: 'envReward',
         envType: env.envType,
         envId: env.id,
         number: slot.number,
         label: env.label,
         rewards,
-      });
+      };
     }
   }
 }
@@ -992,6 +1039,7 @@ module.exports = {
   firstComeGrantTier,
   firstComeStashCount,
   firstComeRequiredWorkers,
+  KEEP_OVERFLOW_STASH_COUNT,
   becameStrictSlotLeader,
   becameLeaderAgain,
   hasDispatchEffect,
