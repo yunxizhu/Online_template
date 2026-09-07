@@ -9,32 +9,22 @@ echo ================================
 echo.
 echo   1  All packs
 echo      - dist\windows         host (Node + start.bat)
-echo      - dist\mac             host (deps + start.command)
 echo      - dist\android         APK join client
 echo      - dist\client-windows  lightweight PC client (no Node)
-echo      - dist\client-mac      lightweight Mac client (no Node)
 echo.
 echo   2  Windows host only
 echo      - Rebuild dist\windows (can create rooms)
 echo.
-echo   3  Mac host only
-echo      - Rebuild dist\mac (can create rooms)
-echo.
-echo   4  Android APK only
+echo   3  Android APK only
 echo      - Rebuild APK into dist\android\lianji.apk
 echo      - Gradle cache: project .gradle-home (~500MB+)
 echo.
-echo   5  Windows pure client only
+echo   4  Windows pure client only
 echo      - Rebuild dist\client-windows (www + start.bat)
 echo      - Local server http://127.0.0.1:39199 (keep cmd window open)
 echo      - Join host over MQTT / room code / URL
 echo.
-echo   6  Mac pure client only
-echo      - Rebuild dist\client-mac (www + start.command only)
-echo      - Same join-only lobby as 5 (no Node)
-echo.
-echo   Tip: combine, e.g. 25 = Windows host + Win client
-echo        56 = both pure clients
+echo   Tip: combine, e.g. 24 = Windows host + Win client
 echo ================================
 echo.
 set "CHOICE="
@@ -46,7 +36,7 @@ echo [Pack] choice=%CHOICE%
 set "NEED_ANDROID="
 echo %CHOICE%| findstr "1" >nul
 if not errorlevel 1 (
-  echo [Pack] will run: windows mac android client-windows client-mac
+  echo [Pack] will run: windows android client-windows
   set "NEED_ANDROID=1"
   goto AFTER_HINT
 )
@@ -54,16 +44,12 @@ set "HINT="
 echo %CHOICE%| findstr "2" >nul
 if not errorlevel 1 set "HINT=%HINT% windows"
 echo %CHOICE%| findstr "3" >nul
-if not errorlevel 1 set "HINT=%HINT% mac"
-echo %CHOICE%| findstr "4" >nul
 if not errorlevel 1 (
   set "HINT=%HINT% android"
   set "NEED_ANDROID=1"
 )
-echo %CHOICE%| findstr "5" >nul
+echo %CHOICE%| findstr "4" >nul
 if not errorlevel 1 set "HINT=%HINT% client-windows"
-echo %CHOICE%| findstr "6" >nul
-if not errorlevel 1 set "HINT=%HINT% client-mac"
 if defined HINT (
   echo [Pack] will run:%HINT%
 ) else (

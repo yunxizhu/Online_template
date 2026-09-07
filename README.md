@@ -17,8 +17,8 @@ Node.js + Socket.IO 回合制联机骨架，支持：
 **一键启动（macOS）**：双击 [`启动.command`](启动.command)（首次若无法打开，在终端执行 `chmod +x 启动.command`）  
 **安卓加入端 APK**：见 [`mobile/README.md`](mobile/README.md)；一键打包后在 `dist/android/`  
 **一键打包（多端）**：双击 [`打包.bat`](打包.bat)  
-- `1` 全部 · `2` Windows主机 · `3` Mac主机 · `4` 安卓APK · `5` Win纯客户端 · `6` Mac纯客户端  
-  - 纯客户端（5/6）打 `www` + 本地静态服务脚本，默认端口 **39199**，关闭命令行窗口即停止（约数 MB，需 Node.js 18+）
+- `1` 全部 · `2` Windows主机 · `3` 安卓APK · `4` Win纯客户端  
+  - 纯客户端（4）打 `www` + 本地静态服务脚本，默认端口 **39199**，关闭命令行窗口即停止（约数 MB，需 Node.js 18+）
 **本机双开测联机**：双击 [`本机双开测试.bat`](本机双开测试.bat)（仅 Windows；Mac 请用下方命令行双开）
 
 或用命令行：

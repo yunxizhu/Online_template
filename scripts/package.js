@@ -3,16 +3,13 @@
 /**
  * 一键打包 → dist/
  *   windows/         Windows 主机绿版（自带 node.exe，双击 启动.bat）
- *   mac/             macOS 主机分发包（需本机 Node ≥18）
  *   android/         安卓加入端 APK
  *   client-windows/  轻量纯客户端（仅 www + 启动.bat，无 Node）
- *   client-mac/      同上（Mac）
  */
 
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const tar = require('tar');
 const {
   copyVendoredCloudflaredTo,
   vendoredCloudflaredFilesFor,
@@ -20,12 +17,9 @@ const {
 
 const ROOT = path.resolve(__dirname, '..');
 const DIST = path.join(ROOT, 'dist');
-const TOOLS_DIR = path.join(ROOT, '.tools');
 const DIR_WIN = path.join(DIST, 'windows');
-const DIR_MAC = path.join(DIST, 'mac');
 const DIR_ANDROID = path.join(DIST, 'android');
 const DIR_CLIENT_WIN = path.join(DIST, 'client-windows');
-const DIR_CLIENT_MAC = path.join(DIST, 'client-mac');
 const DEFAULT_PORT = '39200';
 const CLIENT_DEFAULT_PORT = '39199';
 const MOBILE_WWW = path.join(ROOT, 'mobile', 'www');
@@ -73,29 +67,6 @@ function getSizeMB(p) {
 function removeFile(file) {
   if (!fs.existsSync(file)) return;
   fs.rmSync(file, { force: true });
-}
-
-async function archiveMacTarGz(sourceDir, outputName) {
-  const outFile = path.join(DIST, outputName);
-  const entryName = path.basename(sourceDir);
-  console.log(`  打包 ${entryName} → ${outputName}（保留 Unix 执行权限）...`);
-  await tar.create({
-    gzip: true,
-    file: outFile,
-    cwd: DIST,
-    portable: true,
-    onWriteEntry(entry) {
-      const name = (entry.path || '').replace(/\\/g, '/');
-      if (name.endsWith('.command') || /\/\.tools\/cloudflared/.test(name)) {
-        entry.stat.mode = 0o755;
-      } else if (entry.type === 'Directory') {
-        entry.stat.mode = 0o755;
-      } else {
-        entry.stat.mode = 0o644;
-      }
-    },
-  }, [entryName]);
-  console.log(`  => ${outputName} (${getSizeMB(outFile)} MB)`);
 }
 
 function writeUtf8(file, text) {
@@ -218,43 +189,6 @@ function windowsReadme(nodeExeName) {
     '- node_modules/ 依赖\n' +
     '- .tools/       Cloudflare 隧道（cloudflared.exe）\n' +
     '- 启动.bat      一键启动\n'
-  );
-}
-
-async function buildMacPack() {
-  console.log('\n[mac] portable pack...');
-  ensureDir(DIR_MAC);
-  copyAppSources(DIR_MAC);
-  console.log('  bundle cloudflared...');
-  bundleCloudflaredTools(DIR_MAC, 'darwin');
-
-  const cmd = fs.readFileSync(path.join(ROOT, '启动.command'), 'utf8');
-  writeUtf8(path.join(DIR_MAC, '启动.command'), cmd);
-  writeUtf8(path.join(DIR_MAC, 'README.txt'), macReadme());
-  console.log('  启动.command');
-
-  await archiveMacTarGz(DIR_MAC, 'lianji-mac.tar.gz');
-}
-
-function macReadme() {
-  return (
-    '联机大厅 · macOS 分发包\n' +
-    '======================\n' +
-    '本包已含运行依赖。需要本机安装 Node.js 18+（官网或 brew install node）。\n\n' +
-    '用法\n' +
-    '----\n' +
-    '1. 解压 lianji-mac.tar.gz，进入 mac/ 文件夹\n' +
-    '2. 双击「启动.command」\n' +
-    '3. 首次若提示“无法验证开发者”：\n' +
-    '   · 前往“系统设置 → 隐私与安全性”点击“仍要打开”\n' +
-    '   · 或按住 Control 键点击文件，选择“打开”\n' +
-    '4. 之后可直接双击运行\n' +
-    `5. 浏览器打开 http://localhost:${DEFAULT_PORT}\n\n` +
-    '说明\n' +
-    '----\n' +
-    '· tar.gz 已保留文件执行权限，无需再执行 chmod +x\n' +
-    '· .tools/ 已含 macOS 版 cloudflared（Intel + Apple Silicon）\n' +
-    '- 建房仍在本机；手机请用 android 文件夹里的 APK 加入\n'
   );
 }
 
@@ -418,7 +352,7 @@ function buildAndroidPack() {
   } else {
     writeUtf8(path.join(DIR_ANDROID, '安装说明.txt'), androidReadme(false));
     throw new Error(
-      '[android] 未生成 lianji.apk。请释放磁盘空间（尤其 C 盘）后运行 打包.bat 选 4，或 mobile 目录下 npm run build:apk'
+      '[android] 未生成 lianji.apk。请释放磁盘空间（尤其 C 盘）后运行 打包.bat 选 3，或 mobile 目录下 npm run build:apk'
     );
   }
   writeUtf8(path.join(DIR_ANDROID, '安装说明.txt'), androidReadme(true));
@@ -537,60 +471,6 @@ function buildClientWindowsPack() {
   console.log(`  启动.bat + www/ + client-server.js (port ${CLIENT_DEFAULT_PORT})`);
 }
 
-async function buildClientMacPack() {
-  console.log('\n[client-mac] join client (local server)...');
-  ensureDir(DIR_CLIENT_MAC);
-  copyClientWww(path.join(DIR_CLIENT_MAC, 'www'));
-  copyClientStaticServer(path.join(DIR_CLIENT_MAC, 'client-server.js'));
-
-  const cmd =
-    '#!/bin/bash\n' +
-    'cd "$(dirname "$0")"\n' +
-    'if [ ! -f "./www/index.html" ]; then\n' +
-    '  echo "[ERROR] missing www/index.html"\n' +
-    '  read -r -p "Press Enter..." _\n' +
-    '  exit 1\n' +
-    'fi\n' +
-    'if ! command -v node >/dev/null 2>&1; then\n' +
-    '  echo "[ERROR] Node.js 18+ required: https://nodejs.org/"\n' +
-    '  read -r -p "Press Enter..." _\n' +
-    '  exit 1\n' +
-    'fi\n' +
-    `export PORT="${CLIENT_DEFAULT_PORT}"\n` +
-    'export OPEN_BROWSER=1\n' +
-    'echo "[lianji-client] checking port ${PORT}..."\n' +
-    'if command -v lsof >/dev/null 2>&1; then\n' +
-    '  pids="$(lsof -nP -iTCP:"${PORT}" -sTCP:LISTEN -t 2>/dev/null || true)"\n' +
-    '  if [ -n "$pids" ]; then\n' +
-    '    echo "[lianji-client] killing: ${pids}"\n' +
-    '    kill -9 $pids 2>/dev/null || true\n' +
-    '    sleep 1\n' +
-    '  fi\n' +
-    'fi\n' +
-    'echo "[lianji-client] http://127.0.0.1:${PORT}/ (close window to stop)"\n' +
-    'node "./client-server.js"\n' +
-    'code=$?\n' +
-    'echo\n' +
-    'read -r -p "Press Enter..." _\n' +
-    'exit "$code"\n';
-  writeUtf8(path.join(DIR_CLIENT_MAC, '启动.command'), cmd);
-  writeUtf8(
-    path.join(DIR_CLIENT_MAC, 'README.txt'),
-    '联机大厅 · macOS 纯客户端（轻量 / 仅加入）\n' +
-      '========================================\n' +
-      '需要 Node.js 18+。\n' +
-      `双击「启动.command」在本机 http://127.0.0.1:${CLIENT_DEFAULT_PORT} 打开加入端大厅。\n` +
-      '关闭终端窗口即停止服务。\n' +
-      '首次若提示“无法验证开发者”：\n' +
-      '  前往“系统设置 → 隐私与安全性”点击“仍要打开”\n' +
-      '  或按住 Control 键点击文件，选择“打开”\n\n' +
-      '不能创建房间；进房后从房主电脑加载游戏资源。\n'
-  );
-  console.log(`  启动.command + www/ + client-server.js (port ${CLIENT_DEFAULT_PORT})`);
-
-  await archiveMacTarGz(DIR_CLIENT_MAC, 'lianji-client-mac.tar.gz');
-}
-
 function androidReadme(hasApk) {
   return (
     '联机大厅 · 安卓加入端\n' +
@@ -606,7 +486,7 @@ function androidReadme(hasApk) {
     '1. 把 APK 拷到手机「下载」或「文档」本地目录（不要在微信/网盘里直接点开装）\n' +
     '2. 手机允许安装未知来源应用\n' +
     '3. 用文件管理打开 APK 安装；桌面图标名「联机大厅」\n' +
-    '4. 电脑先用 windows/ 或 mac/ 开房，手机再加入\n\n' +
+    '4. 电脑先用 windows/ 开房，手机再加入\n\n' +
     '若一直转圈「正在安装」且无法取消（华为机常见）\n' +
     '----------------------------------------------\n' +
     '1. 划掉安装界面；设置 → 应用 → 搜「软件包安装程序/应用安装器」→ 强行停止 → 清除缓存\n' +
@@ -615,7 +495,7 @@ function androidReadme(hasApk) {
     '4. 本包已换新包名 + 正式签名，与旧 debug 包互不覆盖，相当于全新安装\n\n' +
     '若提示「解析包出错」或文件很小（几 KB）\n' +
     '--------------------------------\n' +
-    '说明 APK 未编译成功（常见：电脑 C 盘空间不足）。请在本机释放空间后重新运行 打包.bat 选 4，\n' +
+    '说明 APK 未编译成功（常见：电脑 C 盘空间不足）。请在本机释放空间后重新运行 打包.bat 选 3，\n' +
     '确认 dist\\android\\lianji.apk 约 3MB 以上再拷到手机安装。\n\n' +
     '说明：手机端不能建房开服，只负责加入。\n'
   );
@@ -629,25 +509,18 @@ async function main() {
 
   const choiceArg = process.argv.slice(2).join('') || '1';
   const targets = parsePackChoice(choiceArg);
-  const any =
-    targets.windows ||
-    targets.mac ||
-    targets.android ||
-    targets.clientWindows ||
-    targets.clientMac;
+  const any = targets.windows || targets.android || targets.clientWindows;
   if (!any) {
     console.error(
-      '[ERROR] 无效选项。1=全部  2=Windows主机  3=Mac主机  4=Android  5=Win纯客户端  6=Mac纯客户端'
+      '[ERROR] 无效选项。1=全部  2=Windows主机  3=Android  4=Win纯客户端'
     );
     process.exit(1);
   }
 
   const bits = [];
   if (targets.windows) bits.push('windows');
-  if (targets.mac) bits.push('mac');
   if (targets.android) bits.push('android');
   if (targets.clientWindows) bits.push('client-windows');
-  if (targets.clientMac) bits.push('client-mac');
   console.log(`[Pack] targets: ${bits.join(', ')} (choice=${choiceArg})`);
 
   ensureDir(DIST);
@@ -662,12 +535,6 @@ async function main() {
     rmDir(DIR_WIN);
     await buildWindowsPack();
   }
-  if (targets.mac) {
-    step += 1;
-    console.log(`\n[${step}/${total}] Build mac/ ...`);
-    rmDir(DIR_MAC);
-    await buildMacPack();
-  }
   if (targets.android) {
     step += 1;
     console.log(`\n[${step}/${total}] Build android/ ...`);
@@ -680,16 +547,9 @@ async function main() {
     rmDir(DIR_CLIENT_WIN);
     buildClientWindowsPack();
   }
-  if (targets.clientMac) {
-    step += 1;
-    console.log(`\n[${step}/${total}] Build client-mac/ ...`);
-    rmDir(DIR_CLIENT_MAC);
-    await buildClientMacPack();
-  }
 
   console.log('\nDone! Output paths:');
   if (targets.windows && fs.existsSync(DIR_WIN)) console.log(`  ${DIR_WIN}`);
-  if (targets.mac && fs.existsSync(DIR_MAC)) console.log(`  ${DIR_MAC}`);
   if (targets.android && fs.existsSync(DIR_ANDROID)) {
     console.log(`  ${DIR_ANDROID}`);
     const apkOut = path.join(DIR_ANDROID, 'lianji.apk');
@@ -698,12 +558,9 @@ async function main() {
   if (targets.clientWindows && fs.existsSync(DIR_CLIENT_WIN)) {
     console.log(`  ${DIR_CLIENT_WIN}`);
   }
-  if (targets.clientMac && fs.existsSync(DIR_CLIENT_MAC)) {
-    console.log(`  ${DIR_CLIENT_MAC}`);
-  }
 }
 
-/** 1=全部；2=Win主机；3=Mac主机；4=Android；5=Win纯客户端；6=Mac纯客户端。可组合 */
+/** 1=全部；2=Win主机；3=Android；4=Win纯客户端。可组合 */
 function parsePackChoice(raw) {
   const s = String(raw || '')
     .replace(/\s+/g, '')
@@ -711,18 +568,14 @@ function parsePackChoice(raw) {
   if (!s || s === '1' || s === 'all' || s.includes('1')) {
     return {
       windows: true,
-      mac: true,
       android: true,
       clientWindows: true,
-      clientMac: true,
     };
   }
   return {
     windows: s.includes('2'),
-    mac: s.includes('3'),
-    android: s.includes('4'),
-    clientWindows: s.includes('5'),
-    clientMac: s.includes('6'),
+    android: s.includes('3'),
+    clientWindows: s.includes('4'),
   };
 }
 
