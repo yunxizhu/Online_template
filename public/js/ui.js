@@ -283,10 +283,8 @@
     if (!gameState || !gameState.over) return;
     if (state._guestExitingOver || leavingToLocal) return;
     state._guestExitingOver = true;
-    showToast('对局结束，正在返回…');
-    leaveAndReturnLocal().catch(() => {
-      tryNavigateGuestReturn();
-    });
+    showToast('对局结束，可点击胜利弹窗下方按钮返回大厅');
+    // 不再自动跳转，让用户看完胜利弹窗后手动离开
   }
 
   /** 被动服务端/隧道断开：代开端回自己的网页端（短延迟避免闪断） */
@@ -5039,13 +5037,12 @@
       seatId,
       phase: data && data.state ? data.state.phase : null,
     });
-    // 被动无人值守：对局结束立刻离席回大厅，锁定不解除
+    // 被动无人值守：对局结束也保留状态，让用户看完胜利弹窗
     if (state.passiveMode && data && data.state && data.state.over) {
-      try {
-        net.leaveRoom();
-      } catch (_) {
-        /* ignore */
-      }
+      applyPassiveLockUi(true);
+      syncPassiveExitButton();
+      showView('game');
+      scheduleRenderGame(true);
       return;
     }
     if (
@@ -5079,11 +5076,11 @@
       phase: data && data.state ? data.state.phase : null,
     });
     if (state.passiveMode && data && data.state && data.state.over) {
-      try {
-        net.leaveRoom();
-      } catch (_) {
-        /* ignore */
-      }
+      applyPassiveLockUi(true);
+      syncPassiveExitButton();
+      showView('game');
+      syncSpectatorsWatchUi();
+      scheduleRenderGame(true);
       return;
     }
     const firstLasidaoFrame =

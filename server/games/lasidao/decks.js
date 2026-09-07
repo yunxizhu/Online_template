@@ -23,6 +23,8 @@ const FUNC_TYPES = {
   illegalBuild: '拆迁',
   enhance: '强化',
   recruit: '征召',
+  shelter: '收留',
+  welfareHouse: '福利房',
 };
 
 /** 中立强盗工人 ID（参与抵消与名次，但不领取收益） */
@@ -36,7 +38,6 @@ const BUILD_TYPES = {
   score1: '学堂',
   exchange: '集市',
   wishWell: '许愿井',
-  eternalThrone: '永恒王座',
 };
 
 let _uid = 1;
@@ -133,9 +134,11 @@ function buildFunctionDeckRaw() {
   for (let i = 0; i < 4; i++) cards.push(makeFunc('illegalBuild')); // 拆迁
 //  for (let i = 0; i < 2; i++) cards.push(makeFunc('freeExpand')); // 免费扩建
 //  for (let i = 0; i < 2; i++) cards.push(makeFunc('welfareHouse')); // 福利房
+  for (let i = 0; i < 3; i++) cards.push(makeFunc('welfareHouse')); // 福利房
   for (let i = 0; i < 4; i++) cards.push(makeFunc('caravan')); // 商队来临
   for (let i = 0; i < 4; i++) cards.push(makeFunc('enhance')); // 强化
   for (let i = 0; i < 4; i++) cards.push(makeFunc('recruit')); // 征召
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('shelter')); // 收留
   return cards;
 }
 
@@ -261,22 +264,6 @@ function makeMixer() {
   };
 }
 
-/** 每个建造回合结束时获得 1 胜利点 */
-function makeEternalThrone() {
-  return {
-    id: nextId('bld'),
-    kind: 'building',
-    buildType: 'eternalThrone',
-    label: '永恒王座',
-    cost: { wood: 3, stone: 3, food: 3, iron: 3 },
-    produce: 0,
-    score: 0,
-    needsWorker: false,
-    functionalOnly: true,
-  };
-}
-
-/** 建筑卡堆 */
 function buildBuildingDeckRaw() {
   const cards = [];
   for (const res of ['wood', 'stone', 'food',]) {
@@ -295,8 +282,8 @@ function buildBuildingDeckRaw() {
   for (let i = 0; i < 6; i++) cards.push(makeScore1());
   for (let i = 0; i < 5; i++) cards.push(makeExchange());
   for (let i = 0; i < 5; i++) cards.push(makeWishWell());
-  //for (let i = 0; i < 2; i++) cards.push(makeMixer());
-  for (let i = 0; i < 2; i++) cards.push(makeEternalThrone());
+  // for (let i = 0; i < 2; i++) cards.push(makeMixer());
+  // for (let i = 0; i < 2; i++) cards.push(makeEternalThrone());
   return cards;
 }
 
@@ -390,7 +377,7 @@ const ENVIRONMENT_CATALOG = [
     label: '低保户',
     trigger: 'setup',
     setup: 'lowestScoreTwo',
-    count: 1,
+    count: 2,
     desc: '出现时：当前分数最低的玩家各任选 2 个资源（可并列、可重复）',
   },
   {
@@ -502,7 +489,6 @@ module.exports = {
   makeProduceBuild,
   makeExchange,
   makeWishWell,
-  makeEternalThrone,
   makeScore1,
   makeScore2,
   PRODUCE_BUILD_COSTS,

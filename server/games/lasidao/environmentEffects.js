@@ -145,11 +145,11 @@ function neutralCountOn(game, area, number) {
 /** 吃不了兜着走：上场暗置 2 张资源 */
 const KEEP_OVERFLOW_STASH_COUNT = 2;
 
-/** 先到先得：第 1–4 轮暗置 3 张，第 5–8 轮 5 张，第 9 轮起 7 张 */
+/** 先到先得：第 1–3 轮暗置 3 张，第 4–6 轮 5 张，第 7 轮起 7 张 */
 function firstComeStashCount(round) {
   const r = Number(round) || 1;
-  if (r >= 9) return 7;
-  if (r >= 5) return 5;
+  if (r >= 7) return 7;
+  if (r >= 4) return 5;
   return 3;
 }
 
@@ -200,24 +200,33 @@ function claimStashResourceCards(game, env, player, pushToDiscardFn) {
   return got;
 }
 
-/** 先到先得：第 1–4 轮需 2 村民，第 5–8 轮需 3，第 9 轮起需 4 */
+/** 先到先得：第 1–3 轮需 2 村民，第 4–6 轮需 3，第 7 轮起需 4 */
 function firstComeRequiredWorkers(round) {
   const r = Number(round) || 1;
-  if (r >= 9) return 4;
-  if (r >= 5) return 3;
+  if (r >= 7) return 4;
+  if (r >= 4) return 3;
   return 2;
 }
 
-/** 派遣后是否成为本格严格最大者（首次成为或失去领先后重新成为；继续加码不重复触发；含中立骰） */
-function becameStrictSlotLeader(workers, playerId, placed) {
+/** 派遣后是否成为本格严格最大者（基于总强度含强化加成） */
+function becameStrictSlotLeader(workers, playerId, placed, boosts) {
   const myCount = Number((workers || {})[playerId]) || 0;
-  const myPrev = Math.max(0, myCount - (Number(placed) || 0));
-  let otherMax = 0;
+  const myBoost = Math.min(Math.max(0, Number(boosts && boosts[playerId]) || 0), myCount);
+  const myStrength = myCount * 2 + myBoost;
+
+  const myPrevCount = Math.max(0, myCount - (Number(placed) || 0));
+  const myPrevBoost = Math.min(Math.max(0, Number(boosts && boosts[playerId]) || 0 - Math.max(0, myCount - myPrevCount)), myPrevCount);
+  const myPrevStrength = myPrevCount * 2 + myPrevBoost;
+
+  let otherMaxStrength = 0;
   for (const [pid, c] of Object.entries(workers || {})) {
     if (pid === playerId) continue;
-    otherMax = Math.max(otherMax, Number(c) || 0);
+    const count = Number(c) || 0;
+    const boost = Math.min(Math.max(0, Number(boosts && boosts[pid]) || 0), count);
+    const strength = count * 2 + boost;
+    otherMaxStrength = Math.max(otherMaxStrength, strength);
   }
-  return myCount > otherMax && myPrev <= otherMax;
+  return myStrength > otherMaxStrength && myPrevStrength <= otherMaxStrength;
 }
 
 /** 本格骰子归属者数量：每位玩家与中立各计 1（数量>0 才计入） */
@@ -230,9 +239,9 @@ function slotDistinctOwnerCount(workers) {
 }
 
 /** @deprecated 与 becameStrictSlotLeader 相同；保留供测试兼容 */
-function becameLeaderAgain(workers, playerId, placed, pastLeaders) {
+function becameLeaderAgain(workers, playerId, placed, pastLeaders, boosts) {
   void pastLeaders;
-  return becameStrictSlotLeader(workers, playerId, placed);
+  return becameStrictSlotLeader(workers, playerId, placed, boosts);
 }
 
 function hasDispatchEffect(env) {
@@ -350,8 +359,8 @@ function setupEnvironmentOnBoard(game, env, number, helpers) {
       if (!Number.isFinite(min)) break;
       const lows = alive.filter((p) => scoreFn(p) === min);
       let count = 2;
-      if (game.round >= 9) count = 4;
-      else if (game.round >= 5) count = 3;
+      if (game.round >= 7) count = 4;
+      else if (game.round >= 4) count = 3;
       if (!game.pendingWelfareMinimumQueue) game.pendingWelfareMinimumQueue = [];
       for (const p of lows) {
         game.pendingWelfareMinimumQueue.push({
@@ -458,7 +467,8 @@ function applyEnvironmentOnDispatch(game, ctx) {
   switch (env.envType) {
     case 'fishermanProfit': {
       const workers = game.board.resource.workers[num] || {};
-      if (!becameStrictSlotLeader(workers, player.id, ctx.count)) {
+      const boostsFish = (game.board.resource.boosts && game.board.resource.boosts[num]) || {};
+      if (!becameStrictSlotLeader(workers, player.id, ctx.count, boostsFish)) {
         return null;
       }
       return {
@@ -472,7 +482,8 @@ function applyEnvironmentOnDispatch(game, ctx) {
     }
     case 'barrenHarvest': {
       const workers = game.board.resource.workers[num] || {};
-      if (!becameStrictSlotLeader(workers, player.id, ctx.count)) {
+      const boostsBarren = (game.board.resource.boosts && game.board.resource.boosts[num]) || {};
+      if (!becameStrictSlotLeader(workers, player.id, ctx.count, boostsBarren)) {
         return null;
       }
       return {
@@ -555,7 +566,8 @@ function applyEnvironmentOnDispatch(game, ctx) {
 
     case 'teleport': {
       const workersTp = game.board.resource.workers[num] || {};
-      if (!becameStrictSlotLeader(workersTp, player.id, ctx.count)) {
+      const boostsTp = (game.board.resource.boosts && game.board.resource.boosts[num]) || {};
+      if (!becameStrictSlotLeader(workersTp, player.id, ctx.count, boostsTp)) {
         return null;
       }
       if (countAllDiceOnBoard(game) <= 0) {
@@ -722,19 +734,19 @@ function applyEnvironmentOnSettleSlot(game, ctx) {
         ? Number(top.dice) || physicalDiceOnSlot(physical, top.pid)
         : 0;
 
-      // 确定受害者：看所有玩家中谁的物理骰子数最少（含没放的 0）
-      // 中立骰不参与“玩家排名”，只用来算 n
+      // 确定受害者：看所有玩家中谁的“抵消后物理骰子数”最少（含没放的 0）
+      // 中立骰只用来参与抵消，本身不进入受害者判定
       const playerCounts = alive.map((p) => ({
         pid: p.id,
-        count: physicalDiceOnSlot(physical, p.id) || 0,
+        count: physicalRemain[p.id] || 0,
       }));
       if (playerCounts.length <= 1) break; // 只有一人不罚
       const minCount = Math.min(...playerCounts.map((pc) => pc.count));
       const maxCount = Math.max(...playerCounts.map((pc) => pc.count));
 
-      // 若所有玩家骰子数相同，则人人都是最后一名（同时也是第一名）
+      // 若所有玩家抵消后骰子数相同，则人人都是最后一名
       const victims = alive.filter((p) => {
-        const count = physicalDiceOnSlot(physical, p.id) || 0;
+        const count = physicalRemain[p.id] || 0;
         if (minCount === maxCount) return true;
         return count === minCount;
       });
@@ -887,7 +899,10 @@ function applyResistBarbariansAfterSettle(game, report, helpers) {
       if (!(Number(remain[r.pid]) || 0)) continue;
       const diceCount =
         Number(r.dice) || physicalDiceOnSlot(physical, r.pid);
-      if (diceCount < 2) continue;
+      let needDice = 2;
+      if (game.round >= 7) needDice = 4;
+      else if (game.round >= 4) needDice = 3;
+      if (diceCount < needDice) continue;
       const p = playerById(game, r.pid);
       if (!p || p.left) continue;
       p.bonusScore = (Number(p.bonusScore) || 0) + 1;
@@ -895,7 +910,7 @@ function applyResistBarbariansAfterSettle(game, report, helpers) {
       if (pushLog) {
         pushLog(
           game,
-          `「${env.label}」：${p.name}（第 ${ranked.indexOf(r) + 1} 名，剩余 ${diceCount} 骰）+1 胜利点`
+          `「${env.label}」：${p.name}（第 ${ranked.indexOf(r) + 1} 名，剩余 ${diceCount} 骰，需≥${needDice}）+1 胜利点`
         );
       }
       if (typeof checkWin === 'function' && checkWin(game)) break;
@@ -909,7 +924,10 @@ function applyResistBarbariansAfterSettle(game, report, helpers) {
         scoreAwards: awards,
       };
     } else if (pushLog) {
-      pushLog(game, `「${env.label}」：无人拥有 ≥2 骰，未生效`);
+      let needDesc = '2';
+      if (game.round >= 7) needDesc = '4';
+      else if (game.round >= 4) needDesc = '3';
+      pushLog(game, `「${env.label}」：无人拥有 ≥${needDesc} 骰，未生效`);
     }
     if (game.over) return;
   }

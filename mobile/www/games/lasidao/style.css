@@ -6267,6 +6267,13 @@ button.las-exile-player.color-neutral {
   overflow: hidden;
 }
 
+.las-func-hand > .las-card.has-art,
+.las-func-hand > .las-card.func.has-art {
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 2px;
+}
+
 .las-func-slot.is-empty {
   flex: 0 0 auto;
   width: var(--las-card-w);

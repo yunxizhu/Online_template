@@ -88,6 +88,8 @@ window.LasidaoAssets = (function () {
     illegalBuild: 'gongnengka_chaiqian.png',
     enhance: 'gongnengka_qianghua.png',
     recruit: 'gongnengka_zhengzhao.png',
+    shelter: 'gongnengka_shouliu.png',
+    welfareHouse: 'gongnengka_fulifang.png',
   };
 
   /** 建筑卡面（buildType / resource+tier → 文件名） */
@@ -96,7 +98,6 @@ window.LasidaoAssets = (function () {
     'score1': 'jianzhuka_xuetang.png',
     'exchange': 'jianzhuka_jishi.png',
     'wishWell': 'jianzhuka_xuyuanjin.png',
-    'eternalThrone': 'jianzhuka_yonghengwangzuo.png',
     'wood:rich': 'jianzhuka_mutougongfang.png',
     'wood:poor': 'jianzhuka_mutougongfang.png',
     'stone:rich': 'jianzhuka_shitougongfang.png',

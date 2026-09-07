@@ -400,9 +400,9 @@ function countBuiltWishWell(p) {
   ).length;
 }
 
-function countEternalThrone(p) {
+function countWishWell(p) {
   return (p.buildings || []).filter(
-    (b) => b.built && b.buildType === 'eternalThrone'
+    (b) => b.built && b.buildType === 'wishWell'
   ).length;
 }
 
@@ -862,6 +862,9 @@ function playerScore(p, game) {
   if (game && game.workshopMasterPlayerId === p.id) {
     s += WORKSHOP_MASTER_SCORE;
   }
+  if (game && game.whatYouWantPlayerId === p.id) {
+    s += WHAT_YOU_WANT_SCORE;
+  }
   return s;
 }
 
@@ -998,8 +1001,30 @@ function isResourceFaceDownOnSlot(/* number, cardIndexOnSlot */) {
 function drawToArea(game, kind, count) {
   const slotCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
   const tiles = [];
+  const usedSpecialKeys = kind === 'special' ? new Set() : null;
   for (let i = 0; i < count; i++) {
-    const card = drawOne(game, kind);
+    let card = null;
+    let retries = 0;
+    const MAX_RETRY = 20;
+    while (retries < MAX_RETRY) {
+      const drawn = drawOne(game, kind);
+      if (!drawn) break;
+      if (kind === 'special') {
+        const key = specialCardDedupeKey(drawn);
+        if (usedSpecialKeys.has(key)) {
+          pushToDiscard(game, kind, drawn);
+          pushLog(
+            game,
+            `「${drawn.label || drawn.id}」与本轮已放置的功能/建筑卡重复，弃置并重新抽取`
+          );
+          retries++;
+          continue;
+        }
+        usedSpecialKeys.add(key);
+      }
+      card = drawn;
+      break;
+    }
     if (!card) break;
     const number = (i % 6) + 1;
     slotCounts[number] += 1;
@@ -1021,6 +1046,18 @@ function drawToArea(game, kind, count) {
     });
   }
   return tiles;
+}
+
+function specialCardDedupeKey(card) {
+  if (!card) return '';
+  if (card.kind === 'function' && card.funcType) return `func:${card.funcType}`;
+  if (card.kind === 'building' && card.buildType) {
+    if (card.buildType === 'produce') {
+      return `build:produce:${card.resource || ''}:${card.rich ? 'rich' : 'poor'}`;
+    }
+    return `build:${card.buildType}`;
+  }
+  return card.id || String(card.label) || '';
 }
 
 function deckKindOfTile(tile) {
@@ -1115,9 +1152,28 @@ function drawEnvironmentBoard(game) {
   game.barrenMarkerOwnerId = null;
 
   const environments = { 1: null, 2: null, 3: null, 4: null, 5: null, 6: null };
+  const usedEnvTypes = new Set();
   for (const num of ENVIRONMENT_SLOT_NUMBERS) {
-    const card = drawOne(game, 'environment');
+    let card = null;
+    let retries = 0;
+    const MAX_RETRY = 20;
+    while (retries < MAX_RETRY) {
+      const drawn = drawOne(game, 'environment');
+      if (!drawn) break;
+      if (usedEnvTypes.has(drawn.envType)) {
+        pushToDiscard(game, 'environment', drawn);
+        pushLog(
+          game,
+          `事件「${drawn.label || drawn.envType}」与本轮已放置的事件重复，弃置并重新抽取`
+        );
+        retries++;
+        continue;
+      }
+      card = drawn;
+      break;
+    }
     if (!card) continue;
+    usedEnvTypes.add(card.envType);
     const env = { ...card, number: num };
     setupEnvironmentOnBoard(game, env, num, {
       pushLog,
@@ -1534,6 +1590,7 @@ function createGameState(room) {
     mercenaryRoll: null,
     boostedTycoonPlayerId: null,
     workshopMasterPlayerId: null,
+    whatYouWantPlayerId: null,
     mercenaryPlaced: [],
     mercenaryGate: null,
     // 生产阶段
@@ -3400,6 +3457,7 @@ function advanceBuildTurn(game) {
 function afterBuildAction(game, playerId, didRealAction) {
   game.lastBuilderId = playerId;
   resolveWorkshopMaster(game);
+  resolveWhatYouWant(game);
   if (checkWin(game)) return;
   if (didRealAction) {
     game.currentPlayerId = playerId;
@@ -3408,12 +3466,6 @@ function afterBuildAction(game, playerId, didRealAction) {
   const p = playerById(game, playerId);
   if (p) {
     p.caravanPending = false;
-    const throneCount = countEternalThrone(p);
-    if (throneCount > 0) {
-      const gain = throneCount;
-      p.bonusScore = (Number(p.bonusScore) || 0) + gain;
-      pushLog(game, `${p.name} 的永恒王座生效，+${gain} 分`);
-    }
   }
   game.buildPassed[playerId] = true;
   advanceBuildTurn(game);
@@ -4284,8 +4336,9 @@ const STACK_ACHIEVEMENT_SCORE = 2;
 const STACK_ACHIEVEMENT_EXCLUDED_BUILD_TYPES = new Set([
   'score1',
   'score2',
-  'eternalThrone',
   'produce',
+  'exchange',
+  'wishWell',
 ]);
 
 function isStackAchievementKey(key) {
@@ -4309,8 +4362,15 @@ const BOOSTED_TYCOON_SCORE = 2;
 const WORKSHOP_MASTER_STACK_KEY = 'workshopMaster';
 const WORKSHOP_MASTER_ID = 'workshopMaster';
 const WORKSHOP_MASTER_LABEL = '工坊主';
-const WORKSHOP_MASTER_NEED = 5;
+const WORKSHOP_MASTER_NEED = 3;
 const WORKSHOP_MASTER_SCORE = 2;
+
+// 新称号：想要啥就拿啥（集市 + 许愿井 >= 3）
+const WHAT_YOU_WANT_STACK_KEY = 'whatYouWant';
+const WHAT_YOU_WANT_ID = 'whatYouWant';
+const WHAT_YOU_WANT_LABEL = '想要啥就拿啥';
+const WHAT_YOU_WANT_NEED = 3;
+const WHAT_YOU_WANT_SCORE = 2;
 
 function produceManagerTitle(resource) {
   const name = RESOURCE_LABELS[resource] || resource;
@@ -4456,6 +4516,12 @@ function resolveBoostedTycoon(game) {
   return true;
 }
 
+function countBuiltExchanges(player) {
+  return (player.buildings || []).filter(
+    (b) => b.built && b.buildType === 'exchange'
+  ).length;
+}
+
 function totalBuiltWorkshops(player) {
   let n = 0;
   for (const b of player.buildings || []) {
@@ -4516,6 +4582,66 @@ function resolveWorkshopMaster(game) {
   return true;
 }
 
+function totalBuiltExchangeAndWishWell(player) {
+  let n = 0;
+  for (const b of player.buildings || []) {
+    if (b.built && (b.buildType === 'exchange' || b.buildType === 'wishWell')) n += 1;
+  }
+  return n;
+}
+
+function hasWhatYouWant(player, game) {
+  return Boolean(
+    game && player && !player.left && game.whatYouWantPlayerId === player.id
+  );
+}
+
+function whatYouWantScore(player, game) {
+  return hasWhatYouWant(player, game) ? WHAT_YOU_WANT_SCORE : 0;
+}
+
+function whatYouWantEligiblePlayers(game) {
+  return alivePlayers(game).filter(
+    (p) => totalBuiltExchangeAndWishWell(p) >= WHAT_YOU_WANT_NEED
+  );
+}
+
+function pickWhatYouWantHolder(game) {
+  const eligible = whatYouWantEligiblePlayers(game);
+  if (!eligible.length) return null;
+  const maxN = Math.max(...eligible.map((p) => totalBuiltExchangeAndWishWell(p)));
+  const top = eligible.filter((p) => totalBuiltExchangeAndWishWell(p) === maxN);
+  const prevId = game.whatYouWantPlayerId || null;
+  if (prevId && top.some((p) => p.id === prevId)) return prevId;
+  top.sort((a, b) => (a.seat || 0) - (b.seat || 0));
+  return top[0].id;
+}
+
+/** @returns {boolean} 称号持有人是否变化 */
+function resolveWhatYouWant(game) {
+  if (!game) return false;
+  const prevId = game.whatYouWantPlayerId || null;
+  const nextId = pickWhatYouWantHolder(game);
+  if (nextId === prevId) return false;
+  game.whatYouWantPlayerId = nextId;
+  const next = nextId ? playerById(game, nextId) : null;
+  const prev = prevId ? playerById(game, prevId) : null;
+  if (next && !prev) {
+    pushLog(
+      game,
+      `${next.name} 获得称号「${WHAT_YOU_WANT_LABEL}」（集市+许愿井 ≥${WHAT_YOU_WANT_NEED}，+${WHAT_YOU_WANT_SCORE} 分）`
+    );
+  } else if (next && prev) {
+    pushLog(
+      game,
+      `${next.name} 抢走称号「${WHAT_YOU_WANT_LABEL}」（${totalBuiltExchangeAndWishWell(next)} > ${totalBuiltExchangeAndWishWell(prev)}，+${WHAT_YOU_WANT_SCORE} 分）`
+    );
+  } else if (!next && prev) {
+    pushLog(game, `${prev.name} 失去称号「${WHAT_YOU_WANT_LABEL}」`);
+  }
+  return true;
+}
+
 function playerTitles(player, game) {
   const titles = stackAchievementKeys(player).map((key) => ({
     id: stackAchievementTitleId(key),
@@ -4539,6 +4665,15 @@ function playerTitles(player, game) {
       label: WORKSHOP_MASTER_LABEL,
       score: WORKSHOP_MASTER_SCORE,
       need: WORKSHOP_MASTER_NEED,
+    });
+  }
+  if (hasWhatYouWant(player, game)) {
+    titles.push({
+      id: WHAT_YOU_WANT_ID,
+      stackKey: WHAT_YOU_WANT_STACK_KEY,
+      label: WHAT_YOU_WANT_LABEL,
+      score: WHAT_YOU_WANT_SCORE,
+      need: WHAT_YOU_WANT_NEED,
     });
   }
   return titles;
@@ -4574,6 +4709,14 @@ function getExclusiveTitleCatalog() {
       buildLabel: '',
       need: WORKSHOP_MASTER_NEED,
       score: WORKSHOP_MASTER_SCORE,
+    },
+    {
+      stackKey: WHAT_YOU_WANT_STACK_KEY,
+      id: WHAT_YOU_WANT_ID,
+      label: WHAT_YOU_WANT_LABEL,
+      buildLabel: '',
+      need: WHAT_YOU_WANT_NEED,
+      score: WHAT_YOU_WANT_SCORE,
     },
   ];
 }
@@ -4615,6 +4758,9 @@ function claimedStackTitleKeys(game) {
   }
   if (game && game.workshopMasterPlayerId) {
     claimed.add(WORKSHOP_MASTER_STACK_KEY);
+  }
+  if (game && game.whatYouWantPlayerId) {
+    claimed.add(WHAT_YOU_WANT_STACK_KEY);
   }
   for (const p of game.players || []) {
     if (p.left) continue;
@@ -4946,7 +5092,7 @@ function actUseFunc(game, player, payload) {
 
   // 时机校验
   const produceOnly = ['remoteDice', 'exile', 'banditRaid'];
-  const buildOnly = ['harvest', 'robbery', 'illegalBuild', 'redraw', 'expand', 'enhance', 'recruit', 'caravan'];
+  const buildOnly = ['harvest', 'robbery', 'illegalBuild', 'redraw', 'expand', 'enhance', 'recruit', 'caravan', 'shelter', 'welfareHouse'];
 
   if (produceOnly.includes(ft)) {
     if (game.phase !== 'produce') {
@@ -5003,6 +5149,12 @@ function actUseFunc(game, player, payload) {
       return { ok: false, error: '没有玩家持有已建造的建筑' };
     }
     result = useIllegalBuild(game, player, { ...payload, cardId });
+  }
+  else if (ft === 'shelter') {
+    result = useShelter(game, player);
+  }
+  else if (ft === 'welfareHouse') {
+    result = useWelfareHouse(game, player);
   }
   else return { ok: false, error: '未知功能' };
 
@@ -5601,7 +5753,6 @@ function actIllegalBuildPick(game, player, payload) {
   const logLen = game.log.length;
 
   const scorePts = b.built ? Math.max(0, Number(b.score) || 0) : 0;
-  const demolishedType = b.buildType;
   const stackKey = buildingStackKey(b);
   const hadStackTitle =
     stackKey && stackAchievementKeys(player).includes(stackKey);
@@ -5616,9 +5767,6 @@ function actIllegalBuildPick(game, player, payload) {
     `${player.name} 被 ${pending.actorName} 的「拆迁」拆除「${b.label}」，变为未建造`;
   if (scorePts > 0) {
     stepText += `，失去 +${scorePts} 分`;
-  }
-  if (demolishedType === 'eternalThrone') {
-    stepText += '，已获得的胜利点保留';
   }
   if (lostStackTitle) {
     stepText += `，失去成就「${stackAchievementLabel(player, stackKey)}」（-${STACK_ACHIEVEMENT_SCORE} 分）`;
@@ -5645,6 +5793,7 @@ function actIllegalBuildPick(game, player, payload) {
 
   game.pendingIllegalBuild = null;
   resolveWorkshopMaster(game);
+  resolveWhatYouWant(game);
 
   if (checkWin(game)) return { ok: true };
 
@@ -5820,6 +5969,18 @@ function useRecruit(game, player, _payload) {
   pushLog(
     game,
     `${player.name} 发动征召：下一轮生产临时村民 +${RECRUIT_TEMP_VILLAGERS}（累计待生效 ${player.recruitPending}）`
+  );
+  return { ok: true };
+}
+
+function useShelter(game, player) {
+  if (player.villagers >= MAX_VILLAGERS) {
+    return { ok: false, error: `村民已达上限 ${MAX_VILLAGERS}` };
+  }
+  player.villagers = (Number(player.villagers) || 0) + 1;
+  pushLog(
+    game,
+    `${player.name} 发动收留：+1 村民（目前 ${player.villagers}/${villagerCapacityFor(player)}）`
   );
   return { ok: true };
 }
@@ -7051,6 +7212,10 @@ function onPlayerQuit(game, playerId) {
     game.workshopMasterPlayerId = null;
   }
   resolveWorkshopMaster(game);
+  if (game.whatYouWantPlayerId === playerId) {
+    game.whatYouWantPlayerId = null;
+  }
+  resolveWhatYouWant(game);
 
   if (
     game.pendingTrade &&
@@ -7180,6 +7345,14 @@ module.exports = {
   WORKSHOP_MASTER_SCORE,
   WORKSHOP_MASTER_ID,
   WORKSHOP_MASTER_LABEL,
+  totalBuiltExchangeAndWishWell,
+  hasWhatYouWant,
+  whatYouWantScore,
+  resolveWhatYouWant,
+  WHAT_YOU_WANT_NEED,
+  WHAT_YOU_WANT_SCORE,
+  WHAT_YOU_WANT_ID,
+  WHAT_YOU_WANT_LABEL,
   playerTitles,
   availableStackTitles,
   getStackTitleCatalog,

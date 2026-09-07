@@ -864,25 +864,34 @@ class RoomManager {
       };
     }
 
-    // 逻辑房主主动离开：解散整个房间
+    // 逻辑房主主动离开：解散整个房间（游戏已结束时不解散，避免胜利后把其他人踢掉）
     if (room.hostId === playerId) {
-      const affectedPlayerIds = [
-        ...room.players.filter((p) => p.id !== playerId).map((p) => p.id),
-        ...room.observers.map((o) => o.id),
-      ];
-      for (const memberId of affectedPlayerIds) {
-        const member = this.players.get(memberId);
-        if (member) member.roomId = null;
+      // 游戏已结束时保留房间，移交房主即可
+      if (room.game && room.game.over) {
+        const newHost = room.players.find(
+          (p) => p.id !== playerId && !p.left && !p.offline
+        );
+        if (newHost) room.hostId = newHost.id;
+        // 继续走普通离开逻辑，不解散
+      } else {
+        const affectedPlayerIds = [
+          ...room.players.filter((p) => p.id !== playerId).map((p) => p.id),
+          ...room.observers.map((o) => o.id),
+        ];
+        for (const memberId of affectedPlayerIds) {
+          const member = this.players.get(memberId);
+          if (member) member.roomId = null;
+        }
+        clearTurnTimer(room);
+        this.rooms.delete(room.id);
+        return {
+          ok: true,
+          room: null,
+          dissolved: true,
+          leftRoomId,
+          affectedPlayerIds,
+        };
       }
-      clearTurnTimer(room);
-      this.rooms.delete(room.id);
-      return {
-        ok: true,
-        room: null,
-        dissolved: true,
-        leftRoomId,
-        affectedPlayerIds,
-      };
     }
 
     room.players = room.players.filter((p) => p.id !== playerId);
@@ -903,7 +912,8 @@ class RoomManager {
     }
 
     // 主动离开才中止对局；断线走 markOffline，不在这里清 game
-    if (abortPlaying && room.status === 'playing') {
+    // 游戏已结束时保留状态，让其他人还能看胜利弹窗
+    if (abortPlaying && room.status === 'playing' && !(room.game && room.game.over)) {
       clearTurnTimer(room);
       room.status = 'waiting';
       room.game = null;
