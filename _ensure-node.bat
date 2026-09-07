@@ -2,6 +2,7 @@
 :: Ensure Node.js >= 18 is available on PATH for this session.
 :: If missing/too old: download official LTS zip into .tools\node (no admin).
 setlocal EnableExtensions
+chcp 65001 >nul
 cd /d "%~dp0"
 
 call :refresh_path
@@ -11,9 +12,9 @@ goto READY
 
 :INSTALL
 echo.
-echo [lianji] Node.js ^>=18 not found. Downloading LTS...
-echo          Target: "%~dp0.tools\node"
-echo          (no admin required; first run may take 1-2 min)
+echo [lianji] 未找到 Node.js 18+，开始下载官方 LTS...
+echo          安装目录: "%~dp0.tools\node"
+echo          （无需管理员权限，首次大约 1–2 分钟）
 echo.
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0_install-node.ps1" -TargetDir "%~dp0.tools\node"
@@ -24,18 +25,18 @@ call :node_ok
 if errorlevel 1 goto FAIL_VERIFY
 
 :READY
-for /f "delims=" %%v in ('node -v 2^>nul') do echo [lianji] Node.js %%v ready
+for /f "delims=" %%v in ('node -v 2^>nul') do echo [lianji] Node.js %%v 已安装
 :: Export PATH to caller (must not be inside parentheses)
 endlocal & set "PATH=%PATH%" & exit /b 0
 
 :FAIL_INSTALL
 echo.
-echo [ERROR] Auto-install failed. Install manually: https://nodejs.org/
+echo [ERROR] Node.js 自动安装失败。请手动安装: https://nodejs.org/
 endlocal
 exit /b 1
 
 :FAIL_VERIFY
-echo [ERROR] Install finished but node still unavailable. Re-open this window or install from https://nodejs.org/
+echo [ERROR] 安装结束但仍无法使用 node。请重新打开本窗口，或从 https://nodejs.org/ 安装
 endlocal
 exit /b 1
 

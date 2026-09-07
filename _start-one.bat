@@ -1,6 +1,6 @@
 @echo off
 cd /d "%~dp0"
-call "%~dp0_ensure-node.bat"
+call "%~dp0_ensure-deps.bat"
 if errorlevel 1 (
   pause
   exit /b 1

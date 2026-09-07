@@ -17,7 +17,5 @@ mqtt.off
 .lianji-room-row-*.json
 .lianji-tencent-row-*.json
 .tools/*
-!.tools/cloudflared.exe
-!.tools/cloudflared-darwin-amd64
-!.tools/cloudflared-darwin-arm64
+!.tools/cloudflared.rar
 !.tools/README.md

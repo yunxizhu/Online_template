@@ -2,7 +2,7 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 
-call "%~dp0_ensure-node.bat"
+call "%~dp0_ensure-deps.bat"
 if errorlevel 1 goto FAIL
 
 if not exist "node_modules\" (

@@ -2,6 +2,12 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 
+call "%~dp0_ensure-deps.bat"
+if errorlevel 1 (
+  pause
+  exit /b 1
+)
+
 echo.
 echo ================================
 echo   LianJi pack menu
