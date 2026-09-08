@@ -1777,7 +1777,7 @@ console.log('— caravan card —');
   finishInit(g);
   const robber = g.players[0];
   const victim = g.players[1];
-  victim.resources.wood = 3;
+  victim.resources = { wood: 3, stone: 0, food: 0, iron: 0 };
   victim.funcCards.push({
     id: 'v_func',
     funcType: 'harvest',
@@ -3368,7 +3368,7 @@ console.log('— welfare house and shelter —');
   const raw = require('../decks').buildFunctionDeck();
   assert.strictEqual(
     raw.filter((c) => c.funcType === 'welfareHouse').length,
-    4
+    3
   );
   assert.strictEqual(raw.filter((c) => c.funcType === 'shelter').length, 4);
   console.log('✓ welfare house and shelter');

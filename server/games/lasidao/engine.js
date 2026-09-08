@@ -5235,12 +5235,6 @@ function actUseFunc(game, player, payload) {
     }
     result = useIllegalBuild(game, player, { ...payload, cardId });
   }
-  else if (ft === 'shelter') {
-    result = useShelter(game, player);
-  }
-  else if (ft === 'welfareHouse') {
-    result = useWelfareHouse(game, player);
-  }
   else return { ok: false, error: '未知功能' };
 
   if (!result.ok) return result;
@@ -6054,18 +6048,6 @@ function useRecruit(game, player, _payload) {
   pushLog(
     game,
     `${player.name} 发动征召：下一轮生产临时村民 +${RECRUIT_TEMP_VILLAGERS}（累计待生效 ${player.recruitPending}）`
-  );
-  return { ok: true };
-}
-
-function useShelter(game, player) {
-  if (player.villagers >= MAX_VILLAGERS) {
-    return { ok: false, error: `村民已达上限 ${MAX_VILLAGERS}` };
-  }
-  player.villagers = (Number(player.villagers) || 0) + 1;
-  pushLog(
-    game,
-    `${player.name} 发动收留：+1 村民（目前 ${player.villagers}/${villagerCapacityFor(player)}）`
   );
   return { ok: true };
 }
