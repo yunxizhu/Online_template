@@ -30,7 +30,7 @@ function envCardHtml(def, lang) {
   if (lang === 'en') {
     const enMap = {
       prisonersDilemma:
-        'Setup: place 2 neutral dice on this slot. Settle: after cancel, fewest dice on this slot (ties / 0 allowed) each discard n resource cards (n = 1st place dice). After personal production (including wish well), before build.',
+        'Setup: place 1 neutral die on this slot. Dispatch: place 1 additional neutral die on this slot. Settle: after cancel, fewest dice on this slot (ties / 0 allowed) each discard n resource cards (n = 1st place dice). After personal production (including wish well), before build.',
       barrenHarvest:
         'On event slot. Dispatch: when you become the slot leader, place the marker (first time counts; stacking more as leader does not retrigger). Move marker to any resource or function/building slot—marked slots yield nothing on settle.',
       resistBarbarians:
@@ -45,9 +45,9 @@ function envCardHtml(def, lang) {
       fishermanProfit:
         'Dispatch: when you become slot leader (first time counts; stacking more as leader does not retrigger), gain any n resources (duplicates OK); n = number of distinct die owners on this slot (each player and neutrals count as 1). Settle: 3rd place gains the sum of 1st and 2nd place resources from this slot.',
       firstCome:
-        'Setup: draw 3/5/7 resource cards (rounds 1–4 / 5–8 / 9+) face-down beside this event. Dispatch: when you place 2/3/4 villagers on this slot (by round band), take those cards (one stash per event).',
+        'Setup: draw 3/5/7 resource cards (rounds 1–3 / 4–6 / 7+) face-down beside this event. Dispatch: when you place 2/3/4 villagers on this slot (by round band), take those cards (one stash per event).',
       welfareMinimum:
-        'On appear: lowest-score player(s) each pick any 2 resources (ties all apply; duplicates OK). Multiple copies resolve separately.',
+        'On appear: lowest-score player(s) each gain 2/3/4 random resources (rounds 1–3 / 4–6 / 7+; ties all apply; duplicates OK). Multiple copies resolve separately.',
       recall:
         'Dispatch: recall 1 of your dice from a board slot other than this dispatch target; skip if none elsewhere.',
       teleport:
@@ -139,7 +139,8 @@ const zhFunc =
   '<dt data-las-card="func:redraw">重抽（3）</dt><dd>建造阶段：从功能/建筑合堆顶抽 3 张，选 1 保留，其余弃入弃牌堆；合堆不足时洗混弃牌堆合并后再抽。保留后超出手牌上限须先弃置。</dd>' +
   '<dt data-las-card="func:banditRaid">强盗来袭（5）</dt><dd>生产阶段、轮到你时：在任意板块任意数字格放置 2 枚中立骰；参与抵消并占用名次，不领取收益。</dd>' +
   '<dt data-las-card="func:freeExpand">免费扩建（3）</dt><dd>建造阶段：立即扩建一格（建筑格 / 功能卡格 / 资源卡位），不消耗资源。</dd>' +
-  '<dt data-las-card="func:welfareHouse">福利房（3）</dt><dd>建造阶段：获得 1 间免费房子（可繁殖村民，但不加分）。</dd>' +
+  '<dt data-las-card="func:welfareHouse">福利房（4）</dt><dd>建造阶段：获得 1 间免费房子（可繁殖村民，但不加分）。</dd>' +
+  '<dt data-las-card="func:shelter">收留（4）</dt><dd>建造阶段：立即获得 1 名村民（不消耗小麦；没有住房空位则不可用）。</dd>' +
   '<dt data-las-card="func:caravan">商队来临（2）</dt><dd>建造阶段：本回合结束前可按 1:1 兑换资源；若已建至少 2 座集市则额外 +1 胜利点。</dd>' +
   '<dt data-las-card="func:robbery">抢劫（5）</dt><dd>建造阶段：二选一。①选一名至少有 2 张资源卡的玩家，随机夺取其 2 张资源；②选一名持有未建造建筑或功能卡的玩家，由其选择 1 张未建造建筑或功能卡交给你。</dd>' +
   '<dt data-las-card="func:illegalBuild">拆迁（2）</dt><dd>仅建造阶段：选择一名已有已建建筑的玩家，由其选择一座已建建筑变为未建造；若为分数建筑，对应分数立即消失。未建造独占一格：若原格仍有其他已建造且无空位安放，则爆牌，须弃一张未建造建筑（或弃置该被拆建筑）。</dd>' +
@@ -155,7 +156,8 @@ const enFunc =
   '<dt data-las-card="func:redraw">Redraw (3)</dt><dd>Build: draw 3 from merged deck top, keep 1; reshuffle discard if needed. Discard if over hand cap after keeping.</dd>' +
   '<dt data-las-card="func:banditRaid">Bandit Raid (5)</dt><dd>Your produce turn: place 2 neutrals on any number slot.</dd>' +
   '<dt data-las-card="func:freeExpand">Free Expand (3)</dt><dd>Build: expand one slot immediately (building / function / resource), no cost.</dd>' +
-  '<dt data-las-card="func:welfareHouse">Welfare House (3)</dt><dd>Build: gain 1 free house (breeding only, no VP).</dd>' +
+  '<dt data-las-card="func:welfareHouse">Welfare House (4)</dt><dd>Build: gain 1 free house (breeding only, no VP).</dd>' +
+  '<dt data-las-card="func:shelter">Shelter (4)</dt><dd>Build: gain 1 villager immediately (no wheat cost; unusable without housing space).</dd>' +
   '<dt data-las-card="func:caravan">Caravan (2)</dt><dd>Build: until your turn ends, trade at 1:1; +1 VP if you have built at least 2 Markets.</dd>' +
   '<dt data-las-card="func:robbery">Robbery (5)</dt><dd>Build: choose one. (1) Pick a player with at least 2 resource cards and steal 2 at random. (2) Pick a player with an unbuilt building or a function card; they choose 1 of those cards to give you.</dd>' +
   '<dt data-las-card="func:illegalBuild">Demolition (2)</dt><dd>Build phase only: pick a player with at least one built building; they choose one to revert to unbuilt; VP buildings lose their score. Unbuilt buildings need their own slot: if the old slot still has a built building and no empty slot remains, discard one unbuilt building (or the demolished card).</dd>' +

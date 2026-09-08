@@ -122,6 +122,59 @@ function resolveRoomConfig({
   };
 }
 
+function isTeamSeatRoom(room) {
+  return Boolean(
+    room && room.gameType === 'lasidao' && room.gameMode === 'h2h'
+  );
+}
+
+function clearTeamSeats(room) {
+  for (const p of room.players || []) {
+    if (!p) continue;
+    delete p.team;
+    delete p.teamSlot;
+  }
+}
+
+function ensureTeamSeats(room) {
+  if (!room) return;
+  if (!isTeamSeatRoom(room)) {
+    clearTeamSeats(room);
+    return;
+  }
+  const used = new Set();
+  const need = [];
+  for (const p of room.players || []) {
+    if (!p || p.left) continue;
+    const team = p.team === 'B' ? 'B' : p.team === 'A' ? 'A' : null;
+    const slot = Number(p.teamSlot);
+    const key =
+      team && (slot === 0 || slot === 1) ? `${team}:${slot}` : null;
+    if (key && !used.has(key)) {
+      used.add(key);
+      p.team = team;
+      p.teamSlot = slot;
+    } else {
+      need.push(p);
+    }
+  }
+  for (const p of need) {
+    let assigned = false;
+    for (const team of ['A', 'B']) {
+      for (let s = 0; s < 2; s++) {
+        const key = `${team}:${s}`;
+        if (used.has(key)) continue;
+        used.add(key);
+        p.team = team;
+        p.teamSlot = s;
+        assigned = true;
+        break;
+      }
+      if (assigned) break;
+    }
+  }
+}
+
 function publicRoomView(room) {
   const waiting = !room.status || room.status === 'waiting';
   const playing = room.status === 'playing';
@@ -169,6 +222,8 @@ function fullRoomView(room) {
       ready: p.ready,
       offline: Boolean(p.offline),
       left: Boolean(p.left),
+      team: p.team === 'B' ? 'B' : p.team === 'A' ? 'A' : null,
+      teamSlot: p.teamSlot === 0 || p.teamSlot === 1 ? p.teamSlot : null,
     })),
     observers: (room.observers || []).map((p) => ({
       id: p.id,
@@ -547,6 +602,7 @@ class RoomManager {
       passiveHosted: Boolean(passiveHost),
     };
 
+    ensureTeamSeats(room);
     this.rooms.set(id, room);
     player.roomId = id;
     player.passive = false;
@@ -626,6 +682,7 @@ class RoomManager {
     room.gameMode = cfg.modeId;
     room.gameModeLabel = cfg.modeLabel;
     room.turnTimeSec = cfg.turnTimeSec;
+    ensureTeamSeats(room);
 
     return { ok: true, room };
   }
@@ -716,6 +773,7 @@ class RoomManager {
       ready: true,
       sessionId: player.sessionId || null,
     });
+    ensureTeamSeats(room);
     player.roomId = room.id;
     player.passive = false;
     return { ok: true, room };
@@ -1396,6 +1454,46 @@ class RoomManager {
     return { ok: true, room };
   }
 
+  moveTeamSeat(playerId, from, to) {
+    const player = this.players.get(playerId);
+    if (!player || !player.roomId) return { ok: false, error: '你不在房间中' };
+    const room = this.getRoom(player.roomId);
+    if (!room) return { ok: false, error: '房间不存在' };
+    if (room.hostId !== playerId) return { ok: false, error: '只有房主可以调整队伍' };
+    if (room.status !== 'waiting') return { ok: false, error: '对局已开始，无法调整队伍' };
+    if (!isTeamSeatRoom(room)) return { ok: false, error: '当前模式不支持调整队伍' };
+
+    const fromTeam = from && from.team === 'B' ? 'B' : from && from.team === 'A' ? 'A' : null;
+    const toTeam = to && to.team === 'B' ? 'B' : to && to.team === 'A' ? 'A' : null;
+    const fromSlot = Number(from && from.slot);
+    const toSlot = Number(to && to.slot);
+    if (!fromTeam || !toTeam || (fromSlot !== 0 && fromSlot !== 1) || (toSlot !== 0 && toSlot !== 1)) {
+      return { ok: false, error: '座位无效' };
+    }
+    if (fromTeam === toTeam && fromSlot === toSlot) return { ok: true, room };
+
+    const fromP = (room.players || []).find(
+      (p) => p && !p.left && p.team === fromTeam && Number(p.teamSlot) === fromSlot
+    );
+    const toP = (room.players || []).find(
+      (p) => p && !p.left && p.team === toTeam && Number(p.teamSlot) === toSlot
+    );
+    if (!fromP && !toP) return { ok: false, error: '没有可移动的玩家' };
+    if (fromP && toP) {
+      fromP.team = toTeam;
+      fromP.teamSlot = toSlot;
+      toP.team = fromTeam;
+      toP.teamSlot = fromSlot;
+    } else if (fromP) {
+      fromP.team = toTeam;
+      fromP.teamSlot = toSlot;
+    } else {
+      toP.team = fromTeam;
+      toP.teamSlot = fromSlot;
+    }
+    return { ok: true, room };
+  }
+
   canStart(room) {
     if (!room || room.status !== 'waiting') return false;
     const game = getGame(room.gameType);
@@ -1405,6 +1503,11 @@ class RoomManager {
     if (seated < need) return false;
     if (game && seated < game.minPlayers) return false;
     if (game && seated > game.maxPlayers) return false;
+    if (isTeamSeatRoom(room)) {
+      const countA = (room.players || []).filter((p) => p && !p.left && p.team === 'A').length;
+      const countB = (room.players || []).filter((p) => p && !p.left && p.team === 'B').length;
+      if (countA !== 2 || countB !== 2) return false;
+    }
     // 进房即视为准备；必须坐满房间人数才能开局（观战不计入）
     return true;
   }
@@ -1421,6 +1524,9 @@ class RoomManager {
       const min = game ? game.minPlayers : 2;
       const need = Number(room.maxPlayers) || min;
       const seated = (room.players || []).filter((p) => !p.left).length;
+      if (isTeamSeatRoom(room) && seated >= need) {
+        return { ok: false, error: '2V2 需要队伍 A、B 各 2 人才能开始' };
+      }
       return {
         ok: false,
         error: `需要满员 ${need} 人才能开始（当前 ${seated} 人，不含观战）`,
@@ -1453,4 +1559,5 @@ module.exports = {
   RoomManager,
   publicRoomView,
   fullRoomView,
+  isTeamSeatRoom,
 };

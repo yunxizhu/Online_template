@@ -7,7 +7,10 @@ module.exports = {
   label: '卡拉斯坦',
   minPlayers: 2,
   maxPlayers: 5,
-  modes: [{ id: 'standard', label: '标准模式' }],
+  modes: [
+    { id: 'standard', label: '标准模式' },
+    { id: 'h2h', label: '2V2', seats: [4] },
+  ],
   client: {
     styles: ['/games/lasidao/style.css'],
     scripts: [

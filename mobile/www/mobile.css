@@ -823,6 +823,17 @@ body.is-mobile-chat.phase-room .room-player-slot {
   gap: 0.4rem;
 }
 
+body.is-mobile-chat.phase-room .room-player-grid.is-teams {
+  grid-template-columns: 1fr;
+  gap: 0.55rem;
+}
+
+@media (min-width: 520px) {
+  body.is-mobile-chat.phase-room .room-player-grid.is-teams {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 body.is-mobile-chat.phase-room .room-slot-nick {
   font-size: 0.95rem;
   min-width: 0;

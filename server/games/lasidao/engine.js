@@ -49,6 +49,7 @@ const {
 } = require('./environmentEffects');
 
 const WIN_SCORE = 10;
+const TEAM_WIN_SCORE = 15;
 const START_VILLAGERS = 3;
 const START_HOUSES = 2;
 /** 每间房子可容纳的村民数 */
@@ -868,30 +869,85 @@ function playerScore(p, game) {
   return s;
 }
 
+function isTeamMode(game) {
+  return Boolean(game && (game.teamMode || game.mode === 'h2h'));
+}
+
+function winScoreOf(game) {
+  return isTeamMode(game) ? TEAM_WIN_SCORE : WIN_SCORE;
+}
+
+function playerTeam(p) {
+  return p && (p.team === 'B' ? 'B' : p.team === 'A' ? 'A' : null);
+}
+
+function areTeammates(game, idA, idB) {
+  if (!isTeamMode(game) || !idA || !idB || idA === idB) return false;
+  const a = playerById(game, idA);
+  const b = playerById(game, idB);
+  const ta = playerTeam(a);
+  return Boolean(ta && ta === playerTeam(b));
+}
+
+function teamScore(game, team) {
+  const t = team === 'B' ? 'B' : team === 'A' ? 'A' : null;
+  if (!t) return 0;
+  let s = 0;
+  for (const p of alivePlayers(game)) {
+    if (playerTeam(p) === t) s += playerScore(p, game);
+  }
+  return s;
+}
+
 function checkWin(game) {
   if (game.over) return true;
+  const need = winScoreOf(game);
+  if (isTeamMode(game)) {
+    let winTeam = null;
+    const cur = playerById(game, game.currentPlayerId);
+    if (cur && !cur.left && teamScore(game, playerTeam(cur)) >= need) {
+      winTeam = playerTeam(cur);
+    } else {
+      for (const team of ['A', 'B']) {
+        if (teamScore(game, team) >= need) {
+          winTeam = team;
+          break;
+        }
+      }
+    }
+    if (!winTeam) return false;
+    const winners = alivePlayers(game).filter((p) => playerTeam(p) === winTeam);
+    game.over = true;
+    game.phase = 'over';
+    game.winners = winners.map((p) => p.id);
+    pushLog(
+      game,
+      `队伍${winTeam} 达到 ${need} 分，游戏结束！胜者：${winners.map((p) => p.name).join('、')}`
+    );
+    return true;
+  }
   // 建造等阶段按回合顺序结算：先达到胜利分的唯一玩家立刻获胜
   let winner = null;
   const cur = playerById(game, game.currentPlayerId);
-  if (cur && !cur.left && playerScore(cur, game) >= WIN_SCORE) {
+  if (cur && !cur.left && playerScore(cur, game) >= need) {
     winner = cur;
   } else {
-  for (const p of alivePlayers(game)) {
-      if (playerScore(p, game) >= WIN_SCORE) {
+    for (const p of alivePlayers(game)) {
+      if (playerScore(p, game) >= need) {
         winner = p;
         break;
-  }
+      }
     }
   }
   if (!winner) return false;
-    game.over = true;
-    game.phase = 'over';
+  game.over = true;
+  game.phase = 'over';
   game.winners = [winner.id];
   pushLog(
     game,
-    `有玩家达到 ${WIN_SCORE} 分，游戏结束！胜者：${winner.name}`
+    `有玩家达到 ${need} 分，游戏结束！胜者：${winner.name}`
   );
-    return true;
+  return true;
 }
 
 // ─── 板块摆放 ───────────────────────────────────────────
@@ -1180,6 +1236,7 @@ function drawEnvironmentBoard(game) {
       drawOne,
       alivePlayers,
       playerScore,
+      syncResourceHandPending,
       pushProduceFx: (payload) => pushProduceFx(game, payload),
     });
     environments[num] = env;
@@ -1245,6 +1302,8 @@ function restoreEnvironmentNeutrals(game) {
       addNeutral(game, 'resource', num, 3);
     } else if (setup === 'neutral2') {
       addNeutral(game, 'resource', num, 2);
+    } else if (setup === 'neutral1') {
+      addNeutral(game, 'resource', num, 1);
     } else if (setup === 'neutralEachSlot' && !restoredEachSlot) {
       addNeutralEachSlot(game);
       restoredEachSlot = true;
@@ -1482,9 +1541,9 @@ function publicLastSettle(report, viewerId) {
   };
 }
 
-function publicBuilding(b, isMe) {
-  // 未建造建筑仅持有者可见；已建造建筑对所有人公开
-  if (!isMe && !b.built) {
+function publicBuilding(b, reveal) {
+  // 未建造建筑仅持有者及队友可见；已建造建筑对所有人公开
+  if (!reveal && !b.built) {
     return {
       id: b.id,
       faceDown: true,
@@ -1520,11 +1579,22 @@ function publicBuilding(b, isMe) {
 
 function createGameState(room) {
   resetUid(1);
+  const mode = room && room.gameMode === 'h2h' ? 'h2h' : 'standard';
+  const teamMode = mode === 'h2h';
   const players = room.players.map((p, i) => ({
     id: p.id,
     name: p.name,
     tag: p.tag || null,
     seat: i,
+    team: teamMode
+      ? p.team === 'B'
+        ? 'B'
+        : p.team === 'A'
+          ? 'A'
+          : i < 2
+            ? 'A'
+            : 'B'
+      : null,
     left: false,
     villagers: START_VILLAGERS,
     houses: START_HOUSES,
@@ -1562,6 +1632,8 @@ function createGameState(room) {
 
   const game = {
     type: 'lasidao',
+    mode,
+    teamMode,
     phase: 'init_announce', // init_announce | produce | settle | build | over
     round: 1,
     over: false,
@@ -5092,7 +5164,18 @@ function actUseFunc(game, player, payload) {
 
   // 时机校验
   const produceOnly = ['remoteDice', 'exile', 'banditRaid'];
-  const buildOnly = ['harvest', 'robbery', 'illegalBuild', 'redraw', 'expand', 'enhance', 'recruit', 'caravan', 'shelter', 'welfareHouse'];
+  const buildOnly = [
+    'harvest',
+    'robbery',
+    'illegalBuild',
+    'redraw',
+    'expand',
+    'enhance',
+    'recruit',
+    'caravan',
+    'shelter',
+    'welfareHouse',
+  ];
 
   if (produceOnly.includes(ft)) {
     if (game.phase !== 'produce') {
@@ -5130,6 +5213,8 @@ function actUseFunc(game, player, payload) {
   else if (ft === 'enhance') result = useEnhance(game, player, payload);
   else if (ft === 'recruit') result = useRecruit(game, player, payload);
   else if (ft === 'caravan') result = useCaravan(game, player, payload);
+  else if (ft === 'welfareHouse') result = useWelfareHouse(game, player, payload);
+  else if (ft === 'shelter') result = useShelter(game, player, payload);
   else if (ft === 'robbery') {
     if (!hasRobberyTarget(game, payload.mode)) {
       return {
@@ -6001,6 +6086,22 @@ function useWelfareHouse(game, player, _payload) {
   return { ok: true };
 }
 
+/** 收留：建造阶段使用；免费 +1 村民（不耗小麦；无住房空位则不可用） */
+function useShelter(game, player, _payload) {
+  if (freeHousesFor(player) <= 0) {
+    return {
+      ok: false,
+      error: `没有住房空位（容量 ${villagerCapacityFor(player)} / 村民 ${player.villagers}）`,
+    };
+  }
+  player.villagers = (Number(player.villagers) || 0) + 1;
+  pushLog(
+    game,
+    `${player.name} 发动收留：村民 ${player.villagers}（空位 ${freeHousesFor(player)}）`
+  );
+  return { ok: true };
+}
+
 /** 商队来临：建造阶段使用；本回合结束前可按 1:1 兑换；已建至少 2 座集市则 +1 胜利点 */
 function useCaravan(game, player, _payload) {
   if (player.caravanPending) {
@@ -6368,6 +6469,8 @@ function publicGameState(game, viewerId) {
 
   return {
     type: 'lasidao',
+    mode: game.mode || 'standard',
+    teamMode: isTeamMode(game),
     phase: game.phase,
     round: game.round,
     over: game.over,
@@ -6384,7 +6487,7 @@ function publicGameState(game, viewerId) {
     maxBuildings: MAX_BUILDINGS,
     maxVillagers: MAX_VILLAGERS,
     maxEnhancedDice: MAX_ENHANCED_DICE,
-    winScore: WIN_SCORE,
+    winScore: winScoreOf(game),
     villagersPerHouse: VILLAGERS_PER_HOUSE,
     buildHouseCost: { ...BUILD_HOUSE_COST },
     buyFuncCost: { ...BUY_FUNC_COST },
@@ -6552,20 +6655,25 @@ function publicGameState(game, viewerId) {
         }
       : null,
     pendingRobberyPick: game.pendingRobberyPick
-      ? {
-          actorId: game.pendingRobberyPick.actorId,
-          actorName: game.pendingRobberyPick.actorName,
-          targetId: game.pendingRobberyPick.targetId,
-          targetName: game.pendingRobberyPick.targetName,
-          forMe:
+      ? (() => {
+          const pick = game.pendingRobberyPick;
+          const teammateReveal =
             Boolean(viewerId) &&
-            game.pendingRobberyPick.targetId === viewerId,
-          isActor:
-            Boolean(viewerId) &&
-            game.pendingRobberyPick.actorId === viewerId,
-          options:
-            viewerId === game.pendingRobberyPick.targetId
-              ? (game.pendingRobberyPick.options || []).map((o) => ({
+            areTeammates(game, pick.actorId, pick.targetId) &&
+            (viewerId === pick.actorId || viewerId === pick.targetId);
+          const showOptions =
+            viewerId === pick.targetId ||
+            (viewerId === pick.actorId && teammateReveal);
+          return {
+            actorId: pick.actorId,
+            actorName: pick.actorName,
+            targetId: pick.targetId,
+            targetName: pick.targetName,
+            forMe: Boolean(viewerId) && pick.targetId === viewerId,
+            isActor: Boolean(viewerId) && pick.actorId === viewerId,
+            teammateReveal,
+            options: showOptions
+              ? (pick.options || []).map((o) => ({
                   id: o.id,
                   kind: o.kind,
                   source: o.source,
@@ -6578,8 +6686,9 @@ function publicGameState(game, viewerId) {
                   faceDown: false,
                 }))
               : null,
-          optionCount: (game.pendingRobberyPick.options || []).length,
-        }
+            optionCount: (pick.options || []).length,
+          };
+        })()
       : null,
     roundProduceBegun: Boolean(game.roundProduceBegun),
     pendingEventChoice: (() => {
@@ -6659,12 +6768,19 @@ function publicGameState(game, viewerId) {
     availableTitles: availableStackTitles(game),
     players: game.players.map((p) => {
       const isMe = p.id === viewerId;
+      const revealHand = isMe || areTeammates(game, viewerId, p.id);
+      const team = playerTeam(p);
       return {
         id: p.id,
         name: p.name,
         tag: p.tag || null,
         left: Boolean(p.left),
         seat: p.seat,
+        team,
+        isTeammate: Boolean(
+          viewerId && p.id !== viewerId && areTeammates(game, viewerId, p.id)
+        ),
+        teamScore: isTeamMode(game) ? teamScore(game, team) : playerScore(p, game),
         villagers: p.villagers,
         houses: Number(p.houses) || 0,
         freeHouses: freeHousesFor(p),
@@ -6688,8 +6804,8 @@ function publicGameState(game, viewerId) {
         funcCount: p.funcCards.length,
         stealableCount: stealableHandCount(p),
         builtBuildingCount: countBuiltBuildings(p),
-        // 功能手牌仅本人可见；他人只看数量（始终暗置）
-        funcCards: isMe
+        // 功能手牌仅本人与队友可见；他人只看数量（始终暗置）
+        funcCards: revealHand
           ? p.funcCards.map((c) => ({
               id: c.id,
               funcType: c.funcType,
@@ -6697,7 +6813,7 @@ function publicGameState(game, viewerId) {
               faceDown: false,
             }))
           : [],
-        buildings: p.buildings.map((b) => publicBuilding(b, isMe)),
+        buildings: p.buildings.map((b) => publicBuilding(b, revealHand)),
         expandSlots: Number(p.expandSlots) || 0,
         expandFuncSlots: Number(p.expandFuncSlots) || 0,
         expandResSlots: Number(p.expandResSlots) || 0,
@@ -7313,6 +7429,13 @@ module.exports = {
   physicalDiceOnSlot,
   slotPlayerDieCounts,
   playerScore,
+  isTeamMode,
+  winScoreOf,
+  areTeammates,
+  teamScore,
+  checkWin,
+  TEAM_WIN_SCORE,
+  WIN_SCORE,
   exchangeCostN,
   effectiveExchangeCost,
   caravanExchangeActive,

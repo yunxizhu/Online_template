@@ -5622,6 +5622,50 @@ button.las-exile-player.color-neutral {
   font-weight: 700;
 }
 
+.las-produce-idle-chip.is-teammate {
+  box-shadow: 0 0 0 1px rgba(90, 180, 120, 0.7);
+}
+
+.las-teammate-badge,
+.las-team-badge {
+  display: inline-block;
+  margin-left: calc(0.22 * var(--las-rem));
+  padding: 0 calc(0.28 * var(--las-rem));
+  border-radius: calc(0.2 * var(--las-rem));
+  font-size: calc(0.62 * var(--las-rem));
+  line-height: 1.4;
+  vertical-align: middle;
+}
+
+.las-teammate-badge {
+  border: 1px solid rgba(90, 180, 120, 0.7);
+  background: rgba(50, 120, 80, 0.28);
+  color: #b7e7c6;
+}
+
+.las-team-badge.las-team-a {
+  border: 1px solid rgba(90, 150, 210, 0.7);
+  background: rgba(40, 80, 130, 0.3);
+  color: #c5ddf5;
+}
+
+.las-team-badge.las-team-b {
+  border: 1px solid rgba(210, 110, 90, 0.7);
+  background: rgba(120, 50, 40, 0.3);
+  color: #f3c8bc;
+}
+
+.las-pboard.is-teammate {
+  box-shadow: inset 0 0 0 1px rgba(90, 180, 120, 0.35);
+}
+
+.las-other-info-res {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(0.18 * var(--las-rem));
+}
+
 .las-produce-idle-name {
   max-width: calc(6.5 * var(--las-rem));
   overflow: hidden;

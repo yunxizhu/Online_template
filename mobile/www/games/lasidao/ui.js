@@ -161,6 +161,7 @@ window.LasidaoUi = (function () {
     expand: 'lasidao.func.expand',
     freeExpand: 'lasidao.func.freeExpand',
     welfareHouse: 'lasidao.func.welfareHouse',
+    shelter: 'lasidao.func.shelter',
     caravan: 'lasidao.func.caravan',
     robbery: 'lasidao.func.robbery',
     illegalBuild: 'lasidao.func.illegalBuild',
@@ -175,6 +176,7 @@ window.LasidaoUi = (function () {
     'expand',
     'freeExpand',
     'welfareHouse',
+    'shelter',
     'caravan',
     'enhance',
     'recruit',
@@ -209,6 +211,18 @@ window.LasidaoUi = (function () {
         return (game.players || []).some(
           (p) => !p.left && countBuiltBuildingsUi(p) > 0
         );
+      }
+      if (funcType === 'shelter') {
+        const free =
+          me && me.freeHouses != null
+            ? Number(me.freeHouses)
+            : Math.max(
+                0,
+                ((me && me.houses != null ? Number(me.houses) : 2) *
+                  (Number(game && game.villagersPerHouse) || 2) -
+                  (Number(me && me.villagers) || 0))
+              );
+        if (free <= 0) return false;
       }
       return BUILD_FUNC.has(funcType);
     }
@@ -2600,6 +2614,19 @@ window.LasidaoUi = (function () {
       const chip = document.createElement('div');
       chip.className = 'las-produce-idle-chip color-' + color;
       if (p.id === game.currentPlayerId) chip.classList.add('is-current');
+      if (p.team === 'A' || p.team === 'B') {
+        const teamMark = document.createElement('span');
+        teamMark.className = 'las-team-badge las-team-' + p.team.toLowerCase();
+        teamMark.textContent = t('lasidao.team' + p.team);
+        chip.appendChild(teamMark);
+      }
+      if (p.isTeammate) {
+        chip.classList.add('is-teammate');
+        const mark = document.createElement('span');
+        mark.className = 'las-teammate-badge';
+        mark.textContent = t('lasidao.teammate');
+        chip.appendChild(mark);
+      }
       const swatch = document.createElement('span');
       swatch.className = 'las-die-swatch color-' + color;
       chip.appendChild(swatch);
@@ -5557,17 +5584,20 @@ window.LasidaoUi = (function () {
       p.left ? 1 : 0,
       p.id === game.currentPlayerId ? 1 : 0,
       p.score,
+      p.teamScore,
+      p.team || '',
+      p.isTeammate ? 1 : 0,
       p.villagers,
       p.houses,
       p.freeHouses,
       JSON.stringify(p.resources || {}),
-      funcCards.map((c) => c.id + (c.hidden ? ':h' : '')).join(','),
+      funcCards.map((c) => c.id + (c.hidden ? ':h' : '') + (c.label || '')).join(','),
       buildings
         .map(
           (b) =>
             `${b.id}:${b.built ? 1 : 0}:${b.slot}:${b.workers || 0}:${
               b.faceDown ? 1 : 0
-            }`
+            }:${b.label || ''}`
         )
         .join(','),
       p.pendingDiscardBuild ? 1 : 0,
@@ -7291,7 +7321,7 @@ window.LasidaoUi = (function () {
     funcsEl.innerHTML = '';
 
     let filled = 0;
-    if (isMe) {
+    if (isMe || opts.reveal) {
       const visible = (cards || []).filter((c) => !c.hidden);
       for (const c of visible) {
         const discardMode =
@@ -7980,8 +8010,8 @@ window.LasidaoUi = (function () {
     return Boolean(b && !isMe && !b.built);
   }
 
-  function makeBoardBuildingCard(game, meId, p, b, isMe) {
-    const hidden = buildingHiddenFromViewer(b, isMe);
+  function makeBoardBuildingCard(game, meId, p, b, isMe, reveal) {
+    const hidden = buildingHiddenFromViewer(b, Boolean(isMe || reveal));
     // 持有者始终明示；仅他人看到未建/隐藏卡背
     const display = hidden
       ? { faceDown: true, id: b.id }
@@ -8074,6 +8104,12 @@ window.LasidaoUi = (function () {
       (isMe ? ' <span class="you">(' + t('lasidao.youMark') + ')</span>' : '');
     playerCell.appendChild(title);
     appendPlayerTitleBadges(playerCell, p);
+    if (p.team === 'A' || p.team === 'B') {
+      const teamMark = document.createElement('span');
+      teamMark.className = 'las-team-badge las-team-' + p.team.toLowerCase();
+      teamMark.textContent = t('lasidao.team' + p.team);
+      playerCell.appendChild(teamMark);
+    }
     infoGrid.appendChild(playerCell);
 
     const capsCell = document.createElement('div');
@@ -8145,6 +8181,18 @@ window.LasidaoUi = (function () {
         : escapeHtml(p.name);
     playerCell.appendChild(title);
     appendPlayerTitleBadges(playerCell, p);
+    if (p.team === 'A' || p.team === 'B') {
+      const teamMark = document.createElement('span');
+      teamMark.className = 'las-team-badge las-team-' + p.team.toLowerCase();
+      teamMark.textContent = t('lasidao.team' + p.team);
+      playerCell.appendChild(teamMark);
+    }
+    if (p.isTeammate) {
+      const mark = document.createElement('span');
+      mark.className = 'las-teammate-badge';
+      mark.textContent = t('lasidao.teammate');
+      playerCell.appendChild(mark);
+    }
     infoGrid.appendChild(playerCell);
 
     const statsCell = document.createElement('div');
@@ -8156,6 +8204,20 @@ window.LasidaoUi = (function () {
     capsCell.className = 'las-other-info-caps';
     capsCell.textContent = t('lasidao.playerStatsLine2', statsPayload);
     infoGrid.appendChild(capsCell);
+
+    if (p.isTeammate) {
+      const labels = getResLabels(game);
+      const resCell = document.createElement('div');
+      resCell.className = 'las-other-info-res las-me-info-res';
+      for (const [k, v] of Object.entries(p.resources || {})) {
+        const span = document.createElement('span');
+        span.className = 'badge';
+        span.dataset.res = k;
+        span.textContent = (labels[k] || k) + ' ' + v;
+        resCell.appendChild(span);
+      }
+      infoGrid.appendChild(resCell);
+    }
 
     parent.appendChild(infoGrid);
     return infoGrid;
@@ -8192,6 +8254,7 @@ window.LasidaoUi = (function () {
     for (const p of players) {
       seenIds.add(p.id);
       const isMe = !spectator && Boolean(meId && p.id === meId);
+      const isTeammate = Boolean(p.isTeammate);
       const panelHash = playerBoardContentHash(p, game, meId);
       const panelHost = isMe && meHost ? meHost : host;
       let existing = panelHost.querySelector('[data-pid="' + p.id + '"]');
@@ -8250,7 +8313,10 @@ window.LasidaoUi = (function () {
       const buildN = occupiedBuildSlotKeys(p).size;
 
       const board = document.createElement('section');
-      board.className = 'las-pboard' + (isMe ? ' is-me' : '');
+      board.className =
+        'las-pboard' +
+        (isMe ? ' is-me' : '') +
+        (isTeammate ? ' is-teammate' : '');
       board.dataset.pid = p.id;
       if (p.left) board.classList.add('is-left');
       if (p.id === game.currentPlayerId) board.classList.add('is-current');
@@ -8259,7 +8325,8 @@ window.LasidaoUi = (function () {
       }
 
       const statsPayload = {
-        score: p.score,
+        score:
+          game.teamMode && p.teamScore != null ? p.teamScore : p.score,
         villagers: p.villagers,
         houses: p.houses != null ? p.houses : 3,
         freeHouses:
@@ -8311,7 +8378,14 @@ window.LasidaoUi = (function () {
           cell.style.setProperty('--stack-n', String(ordered.length));
         }
         ordered.forEach((b, i) => {
-          const card = makeBoardBuildingCard(game, meId, p, b, isMe);
+          const card = makeBoardBuildingCard(
+            game,
+            meId,
+            p,
+            b,
+            isMe,
+            isTeammate
+          );
           if (ordered.length > 1) {
             card.style.setProperty('--stack-i', String(i));
           }
@@ -8374,7 +8448,9 @@ window.LasidaoUi = (function () {
         const cards = document.createElement('div');
         cards.className = 'las-cards';
         for (const b of unplaced) {
-          cards.appendChild(makeBoardBuildingCard(game, meId, p, b, isMe));
+          cards.appendChild(
+            makeBoardBuildingCard(game, meId, p, b, isMe, isTeammate)
+          );
         }
         hand.appendChild(cards);
         unplacedHand = hand;
@@ -8385,6 +8461,7 @@ window.LasidaoUi = (function () {
       fillFuncHandRow(funcs, {
         cards: p.funcCards,
         isMe,
+        reveal: isTeammate,
         interactive:
           isMe &&
           (game.phase === 'produce' ||
@@ -9057,7 +9134,9 @@ window.LasidaoUi = (function () {
       .filter(Boolean);
 
     const iAmWinner = Boolean(meId && winners.has(meId));
-    if (iAmWinner && winners.size === 1) {
+    if (iAmWinner && winners.size > 1) {
+      titleEl.textContent = t('lasidao.victoryYouWinTeam');
+    } else if (iAmWinner && winners.size === 1) {
       titleEl.textContent = t('lasidao.victoryYouWin');
     } else if (winnerNames.length === 1) {
       titleEl.textContent = t('lasidao.victoryWin', { name: winnerNames[0] });
@@ -11695,6 +11774,18 @@ window.LasidaoUi = (function () {
     label.className = 'las-exile-player-label';
     label.textContent = makeExilePlayerLabel(p, pid, count);
     btn.appendChild(label);
+    if (p && (p.team === 'A' || p.team === 'B')) {
+      const teamMark = document.createElement('span');
+      teamMark.className = 'las-team-badge las-team-' + p.team.toLowerCase();
+      teamMark.textContent = t('lasidao.team' + p.team);
+      btn.appendChild(teamMark);
+    }
+    if (p && p.isTeammate) {
+      const mateMark = document.createElement('span');
+      mateMark.className = 'las-teammate-badge';
+      mateMark.textContent = t('lasidao.teammate');
+      btn.appendChild(mateMark);
+    }
     if (resourceTotal != null) {
       const resBadge = document.createElement('span');
       resBadge.className = 'las-robbery-player-res';
@@ -12382,7 +12473,21 @@ window.LasidaoUi = (function () {
       renderRobberyModal(game, null);
       return true;
     }
-    if (robberyStep === 'give' && !pending) {
+    if (
+      pending &&
+      pending.isActor &&
+      pending.teammateReveal &&
+      Array.isArray(pending.options)
+    ) {
+      robberyStep = 'give-watch';
+      setRobberyModalOpen(true);
+      renderRobberyModal(game, null);
+      return true;
+    }
+    if (
+      (robberyStep === 'give' || robberyStep === 'give-watch') &&
+      !pending
+    ) {
       robberyGiveSubmitting = false;
       setRobberyModalOpen(false);
     }
@@ -12480,7 +12585,7 @@ window.LasidaoUi = (function () {
     }
 
     const pending = game && game.pendingRobberyPick;
-    if ((pending && pending.forMe) || robberyStep === 'give') {
+    if (pending && pending.forMe) {
       robberyStep = 'give';
       title.textContent = t('lasidao.robberyGiveCardTitle', {
         name: (pending && pending.actorName) || '?',
@@ -12494,6 +12599,32 @@ window.LasidaoUi = (function () {
       confirmBtn.hidden = false;
       confirmBtn.disabled = !robberyGiveSelectedId || robberyGiveSubmitting;
       confirmBtn.textContent = t('lasidao.robberyGiveConfirm');
+      return;
+    }
+    if (
+      pending &&
+      pending.isActor &&
+      pending.teammateReveal &&
+      Array.isArray(pending.options)
+    ) {
+      robberyStep = 'give-watch';
+      title.textContent = t('lasidao.robberyGiveWatchTitle', {
+        name: pending.targetName || '?',
+      });
+      if (headHint) {
+        headHint.hidden = false;
+        headHint.textContent = t('lasidao.robberyGiveWatchHint');
+      }
+      renderRobberyPickOptions(body, pending);
+      const wrap = body.querySelector('.las-robbery-card-backs');
+      if (wrap) {
+        wrap.querySelectorAll('button').forEach((btn) => {
+          btn.disabled = true;
+          btn.onclick = null;
+        });
+      }
+      cancelBtn.hidden = true;
+      confirmBtn.hidden = true;
       return;
     }
 

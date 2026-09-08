@@ -156,6 +156,7 @@
     codeModalMode: 'join', // 'join' | 'spectate'
     isSpectator: false,
     passiveMode: false,
+    roomSeatMoveFrom: null,
     roomCtxTarget: null,
     chatChannel: 'all',
     chatAll: [],
@@ -2371,21 +2372,32 @@
       el.gameHint.textContent = t('create.hintIncanFull');
     } else if (g.id === 'lasidao') {
       el.maxPlayersWrap.hidden = false;
-      const cur = el.roomMax.value;
-      // 仅保留 2–5；勿在每次 lobby:update 时强制写回默认 4
-      el.roomMax.innerHTML = '';
-      for (let n = 2; n <= 5; n++) {
+      const modeId = el.gameMode ? el.gameMode.value : 'standard';
+      if (modeId === 'h2h') {
+        el.roomMax.innerHTML = '';
         const opt = document.createElement('option');
-        opt.value = String(n);
-        opt.textContent = String(n);
+        opt.value = '4';
+        opt.textContent = '4';
         el.roomMax.appendChild(opt);
-      }
-      if ([...el.roomMax.options].some((o) => o.value === cur)) {
-        el.roomMax.value = cur;
-      } else {
         el.roomMax.value = '4';
+        el.gameHint.textContent = t('create.hintLasidaoH2h');
+      } else {
+        const cur = el.roomMax.value;
+        // 仅保留 2–5；勿在每次 lobby:update 时强制写回默认 4
+        el.roomMax.innerHTML = '';
+        for (let n = 2; n <= 5; n++) {
+          const opt = document.createElement('option');
+          opt.value = String(n);
+          opt.textContent = String(n);
+          el.roomMax.appendChild(opt);
+        }
+        if ([...el.roomMax.options].some((o) => o.value === cur)) {
+          el.roomMax.value = cur;
+        } else {
+          el.roomMax.value = '4';
+        }
+        el.gameHint.textContent = t('create.hintLasidaoFull');
       }
-      el.gameHint.textContent = t('create.hintLasidaoFull');
     } else if (g.id === 'sgs') {
       el.maxPlayersWrap.hidden = false;
       const modeId = el.gameMode ? el.gameMode.value : 'identity';
@@ -3046,26 +3058,30 @@
     el.memberList.innerHTML = '';
     const maxSlots = room.maxPlayers || (room.players || []).length || 0;
     const players = room.players || [];
-    for (let i = 0; i < maxSlots; i++) {
-      const p = players[i];
-      const slot = document.createElement('div');
-      slot.className = 'room-player-slot' + (p ? '' : ' is-empty');
+    const isSpectator =
+      state.me &&
+      (room.observers || []).some((o) => o.id === state.me.id);
+    const isHost = state.me && room.hostId === state.me.id && !isSpectator;
+    const teamRoom =
+      room.gameType === 'lasidao' && room.gameMode === 'h2h';
+
+    function fillRoomSlot(slot, p, teamKey, slotIdx) {
       if (p) {
         if (p.left) slot.classList.add('is-left');
         slot.dataset.speakerKey = memberSpeakerKey(p);
         const isMe = state.me && p.id === state.me.id;
-        const isHost = p.id === room.hostId;
+        const hostHere = p.id === room.hostId;
         const nick = document.createElement('span');
         nick.className = 'room-slot-nick';
         nick.innerHTML =
           nickHtml(p.name, p.tag) +
           (isMe ? ' <span class="you">(' + t('common.you') + ')</span>' : '') +
-          (isHost ? ' <span class="badge">' + t('room.host') + '</span>' : '');
+          (hostHere ? ' <span class="badge">' + t('room.host') + '</span>' : '');
         nick.title = window.PlayerNick.fullLabel(p.name, p.tag);
         const status = document.createElement('span');
         status.className = 'muted room-slot-status';
         if (p.left) status.textContent = t('room.left');
-        else if (isHost) status.textContent = t('room.host');
+        else if (hostHere) status.textContent = t('room.host');
         else status.textContent = t('room.seated');
         slot.appendChild(nick);
         slot.appendChild(status);
@@ -3075,7 +3091,101 @@
         empty.textContent = t('room.emptySeat');
         slot.appendChild(empty);
       }
-      el.memberList.appendChild(slot);
+      if (teamRoom && isHost && room.status !== 'playing') {
+        slot.classList.add('is-team-movable');
+        if (p) slot.draggable = true;
+        const key = teamKey + ':' + slotIdx;
+        if (
+          state.roomSeatMoveFrom &&
+          state.roomSeatMoveFrom.team === teamKey &&
+          Number(state.roomSeatMoveFrom.slot) === slotIdx
+        ) {
+          slot.classList.add('is-seat-selected');
+        }
+        slot.addEventListener('dragstart', (ev) => {
+          if (!p) {
+            ev.preventDefault();
+            return;
+          }
+          state.roomSeatMoveFrom = { team: teamKey, slot: slotIdx };
+          try {
+            ev.dataTransfer.setData('text/plain', key);
+            ev.dataTransfer.effectAllowed = 'move';
+          } catch (_) {}
+        });
+        slot.addEventListener('dragover', (ev) => {
+          ev.preventDefault();
+          slot.classList.add('is-drag-over');
+        });
+        slot.addEventListener('dragleave', () => {
+          slot.classList.remove('is-drag-over');
+        });
+        slot.addEventListener('drop', (ev) => {
+          ev.preventDefault();
+          slot.classList.remove('is-drag-over');
+          const from = state.roomSeatMoveFrom;
+          state.roomSeatMoveFrom = null;
+          if (!from || !net.moveRoomSeat) return;
+          net.moveRoomSeat(from, { team: teamKey, slot: slotIdx });
+        });
+        slot.addEventListener('click', () => {
+          if (!state.roomSeatMoveFrom) {
+            if (!p) return;
+            state.roomSeatMoveFrom = { team: teamKey, slot: slotIdx };
+            renderRoom();
+            return;
+          }
+          const from = state.roomSeatMoveFrom;
+          state.roomSeatMoveFrom = null;
+          if (net.moveRoomSeat) {
+            net.moveRoomSeat(from, { team: teamKey, slot: slotIdx });
+          } else {
+            renderRoom();
+          }
+        });
+      }
+    }
+
+    if (teamRoom) {
+      el.memberList.classList.add('is-teams');
+      const byTeam = { A: [null, null], B: [null, null] };
+      for (const p of players) {
+        if (!p) continue;
+        const team = p.team === 'B' ? 'B' : 'A';
+        const idx = Number(p.teamSlot) === 1 ? 1 : 0;
+        if (!byTeam[team][idx]) byTeam[team][idx] = p;
+        else if (!byTeam[team][0]) byTeam[team][0] = p;
+        else if (!byTeam[team][1]) byTeam[team][1] = p;
+      }
+      for (const team of ['A', 'B']) {
+        const group = document.createElement('div');
+        group.className = 'room-team room-team-' + team.toLowerCase();
+        const title = document.createElement('h4');
+        title.className = 'room-team-title';
+        title.textContent = t('room.team' + team);
+        group.appendChild(title);
+        const slotsWrap = document.createElement('div');
+        slotsWrap.className = 'room-team-slots';
+        for (let i = 0; i < 2; i++) {
+          const p = byTeam[team][i];
+          const slot = document.createElement('div');
+          slot.className = 'room-player-slot' + (p ? '' : ' is-empty');
+          fillRoomSlot(slot, p, team, i);
+          slotsWrap.appendChild(slot);
+        }
+        group.appendChild(slotsWrap);
+        el.memberList.appendChild(group);
+      }
+    } else {
+      el.memberList.classList.remove('is-teams');
+      state.roomSeatMoveFrom = null;
+      for (let i = 0; i < maxSlots; i++) {
+        const p = players[i];
+        const slot = document.createElement('div');
+        slot.className = 'room-player-slot' + (p ? '' : ' is-empty');
+        fillRoomSlot(slot, p, null, i);
+        el.memberList.appendChild(slot);
+      }
     }
 
     const observers = room.observers || [];
@@ -3119,12 +3229,11 @@
       cur: seated,
       max: need,
     });
+    if (teamRoom && isHost && room.status !== 'playing') {
+      el.roomStartHint.textContent += ' ' + t('room.teamMoveHint');
+    }
 
-    const isSpectator =
-      state.me &&
-      (room.observers || []).some((o) => o.id === state.me.id);
     state.isSpectator = Boolean(isSpectator);
-    const isHost = state.me && room.hostId === state.me.id && !isSpectator;
     el.btnStart.hidden = !isHost;
     el.btnStart.disabled = seated < need;
     if (el.btnEditRoom) {

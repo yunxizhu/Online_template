@@ -1003,6 +1003,10 @@ window.GameNet = (function () {
     ensureSocket().emit('room:start');
   }
 
+  function moveRoomSeat(from, to) {
+    ensureSocket().emit('room:moveSeat', { from, to });
+  }
+
   function inviteLobby() {
     ensureSocket().emit('room:inviteLobby');
   }
@@ -1073,6 +1077,7 @@ window.GameNet = (function () {
     announceLeave,
     setReady,
     startGame,
+    moveRoomSeat,
     inviteLobby,
     quitGame,
     sendChat,

@@ -278,6 +278,12 @@ function setupEnvironmentOnBoard(game, env, number, helpers) {
         helpers.pushLog(game, `「${env.label}」：资源格 ${number} 放置 2 枚中立骰`);
       }
       break;
+    case 'neutral1':
+      addNeutral(game, 'resource', number, 1);
+      if (helpers && helpers.pushLog) {
+        helpers.pushLog(game, `「${env.label}」：资源格 ${number} 放置 1 枚中立骰`);
+      }
+      break;
     case 'neutralEachSlot':
       addNeutralEachSlot(game);
       if (helpers && helpers.pushLog) {
@@ -361,18 +367,19 @@ function setupEnvironmentOnBoard(game, env, number, helpers) {
       let count = 2;
       if (game.round >= 7) count = 4;
       else if (game.round >= 4) count = 3;
-      if (!game.pendingWelfareMinimumQueue) game.pendingWelfareMinimumQueue = [];
+      const grantLogs = [];
       for (const p of lows) {
-        game.pendingWelfareMinimumQueue.push({
-          playerId: p.id,
-          envType: env.envType,
-          label: env.label,
-          envNumber: number,
-          envId: env.id,
-          needChoice: 'pickTwoResources',
-          resume: 'welfareSetup',
-          count,
-        });
+        const got = grantRandomResources(p, count);
+        if (helpers && typeof helpers.syncResourceHandPending === 'function') {
+          helpers.syncResourceHandPending(p, game);
+        }
+        const gotText =
+          got.detail && got.detail.length
+            ? got.detail
+                .map((d) => `${d.amount} ${RESOURCE_LABELS[d.resource]}`)
+                .join('、')
+            : '无';
+        grantLogs.push(`${p.name}（${min} 分）随机获得 ${gotText}`);
       }
       if (helpers && typeof helpers.pushProduceFx === 'function') {
         helpers.pushProduceFx({
@@ -383,11 +390,8 @@ function setupEnvironmentOnBoard(game, env, number, helpers) {
           label: env.label,
         });
       }
-      if (helpers && helpers.pushLog && lows.length) {
-        helpers.pushLog(
-          game,
-          `「${env.label}」：${lows.map((p) => p.name).join('、')}（${min} 分）请选择 ${count} 个资源`
-        );
+      if (helpers && helpers.pushLog && grantLogs.length) {
+        helpers.pushLog(game, `「${env.label}」：${grantLogs.join('；')}`);
       }
       break;
     }
@@ -504,6 +508,22 @@ function applyEnvironmentOnDispatch(game, ctx) {
         playerId: player.id,
         count: Math.max(1, Number(ctx.count) || 1),
       };
+
+    case 'prisonersDilemma': {
+      addNeutral(game, 'resource', num, 1);
+      if (ctx.pushLog) {
+        ctx.pushLog(
+          game,
+          `${player.name} 触发「${env.label}」：本格额外放置 1 枚中立骰`
+        );
+      }
+      return {
+        envType: env.envType,
+        label: env.label,
+        number: num,
+        addedNeutral: 1,
+      };
+    }
 
     case 'enterFray': {
       const n = neutralCountOn(game, 'resource', num);
@@ -1045,6 +1065,7 @@ module.exports = {
   isBarrenSlot,
   grantOne,
   grantMap,
+  grantRandomResources,
   addNeutral,
   addNeutralEachSlot,
   addNeutralAdjacentSlots,

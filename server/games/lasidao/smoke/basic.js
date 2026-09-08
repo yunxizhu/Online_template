@@ -1021,6 +1021,7 @@ const mod = require('../index');
 assert.strictEqual(mod.id, 'lasidao');
 assert.strictEqual(mod.minPlayers, 2);
 assert.strictEqual(mod.maxPlayers, 5);
+assert.ok((mod.modes || []).some((m) => m.id === 'h2h' && (m.seats || [])[0] === 4));
 
 if (game.round >= 2) {
   const n = game.round - 1;
@@ -3336,6 +3337,95 @@ console.log('— recruit grants temp villagers next produce —');
   console.log('✓ recruit temp villagers');
 }
 
+console.log('— welfare house and shelter —');
+{
+  const { playerScore } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p0 = g.players[0];
+  const startHouses = p0.houses;
+  const startScore = playerScore(p0, g);
+  p0.funcCards = [
+    { id: 'fn_wh', kind: 'function', funcType: 'welfareHouse', label: '福利房' },
+    { id: 'fn_sh', kind: 'function', funcType: 'shelter', label: '收留' },
+    { id: 'fn_full', kind: 'function', funcType: 'shelter', label: '收留' },
+  ];
+  g.phase = 'build';
+  g.currentPlayerId = p0.id;
+  g.buildPassed = {};
+  p0.villagers = startHouses * 2;
+  const failFull = applyAction(g, p0.id, {
+    type: 'useFunc',
+    payload: { cardId: 'fn_full' },
+  });
+  assert.ok(!failFull.ok, '住房已满时收留应不可用');
+  ok(applyAction(g, p0.id, { type: 'useFunc', payload: { cardId: 'fn_wh' } }));
+  assert.strictEqual(p0.houses, startHouses + 1, '福利房应+1 房子');
+  assert.strictEqual(p0.welfareHouses, 1);
+  assert.strictEqual(playerScore(p0, g), startScore, '福利房不加分');
+  ok(applyAction(g, p0.id, { type: 'useFunc', payload: { cardId: 'fn_sh' } }));
+  assert.strictEqual(p0.villagers, startHouses * 2 + 1, '有住房空位时收留应+1 村民');
+  const raw = require('../decks').buildFunctionDeck();
+  assert.strictEqual(
+    raw.filter((c) => c.funcType === 'welfareHouse').length,
+    4
+  );
+  assert.strictEqual(raw.filter((c) => c.funcType === 'shelter').length, 4);
+  console.log('✓ welfare house and shelter');
+}
+
+console.log('— shelter then breed —');
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p = g.players[0];
+  p.resources = { wood: 20, stone: 20, food: 20, iron: 20 };
+  p.funcCards = [
+    { id: 'fn_sh', kind: 'function', funcType: 'shelter', label: '收留' },
+  ];
+  g.phase = 'build';
+  g.buildPassed = {};
+  g.currentPlayerId = p.id;
+  const startVil = p.villagers;
+  const startHouses = p.houses;
+  assert.ok(startVil < 15, '人口上限应充足');
+  ok(applyAction(g, p.id, { type: 'useFunc', payload: { cardId: 'fn_sh' } }));
+  assert.strictEqual(p.villagers, startVil + 1);
+  assert.strictEqual(p.roundBred, false, '收留不应占用本回合繁殖次数');
+  assert.notStrictEqual(g.currentPlayerId, null, '收留后应仍可行动');
+  const afterShelter = applyAction(g, p.id, { type: 'breedPermanent' });
+  if (startVil + 1 >= startHouses * 2) {
+    assert.ok(
+      !afterShelter.ok,
+      '开局住房被收留占满后，繁殖仍受住房空位限制'
+    );
+    ok(applyAction(g, p.id, { type: 'buildHousePermanent' }));
+    ok(applyAction(g, p.id, { type: 'breedPermanent' }));
+    assert.strictEqual(p.villagers, startVil + 2, '补住房后可继续繁殖');
+  } else {
+    assert.ok(afterShelter.ok, afterShelter.error);
+    assert.strictEqual(p.villagers, startVil + 2);
+  }
+
+  const g2 = createGameState(room(2));
+  finishInit(g2);
+  const p2 = g2.players[0];
+  p2.resources = { wood: 20, stone: 20, food: 20, iron: 20 };
+  p2.houses = 3;
+  p2.villagers = 3;
+  p2.funcCards = [
+    { id: 'fn_sh2', kind: 'function', funcType: 'shelter', label: '收留' },
+  ];
+  g2.phase = 'build';
+  g2.buildPassed = {};
+  g2.currentPlayerId = p2.id;
+  ok(applyAction(g2, p2.id, { type: 'useFunc', payload: { cardId: 'fn_sh2' } }));
+  ok(applyAction(g2, p2.id, { type: 'breedPermanent' }));
+  assert.strictEqual(p2.villagers, 5, '住房有空位时收留后应能继续繁殖');
+  assert.strictEqual(p2.roundBred, true);
+  console.log('✓ shelter then breed');
+}
+
 console.log('— next round production starts with first finisher —');
 {
   const g = createGameState(room(2));
@@ -3659,7 +3749,8 @@ console.log('— event prisoners dilemma neutrals —');
     envType: 'prisonersDilemma',
     label: '囚徒困境',
     trigger: 'settle',
-    setup: 'neutral2',
+    dispatchAlso: true,
+    setup: 'neutral1',
     number: 6,
   };
   setupEnvironmentOnBoard(g, g.board.resource.environments[6], 6, {
@@ -3667,24 +3758,77 @@ console.log('— event prisoners dilemma neutrals —');
   });
   assert.strictEqual(
     neutralCountOn(g, 'resource', 6),
-    2,
-    '上场应放置 2 枚中立骰'
+    1,
+    '上场应放置 1 枚中立骰'
   );
   g.phase = 'produce';
   g.produceOrderStartId = g.players[0].id;
   beginProduce(g);
   assert.strictEqual(
     neutralCountOn(g, 'resource', 6),
-    2,
-    'beginProduce 清空后须补回 2 枚中立骰'
+    1,
+    'beginProduce 清空后须补回 1 枚中立骰'
   );
   const pub = publicGameState(g, 'p0');
   assert.strictEqual(
     (pub.board.resource.workers[6] || {})[NEUTRAL_WORKER_ID],
-    2,
-    '公开状态应可见 2 枚中立骰'
+    1,
+    '公开状态应可见 1 枚中立骰'
   );
   console.log('✓ event prisoners dilemma neutrals');
+}
+
+console.log('— event prisoners dilemma dispatch adds 1 neutral —');
+{
+  const {
+    applyEnvironmentOnDispatch,
+    setupEnvironmentOnBoard,
+    neutralCountOn,
+  } = require('../environmentEffects');
+  const g = createGameState(room(2));
+  g.currentPlayerId = 'p0';
+  g.phase = 'produce';
+  g.board.resource.environments[6] = {
+    id: 'env_prisoner_d',
+    kind: 'environment',
+    envType: 'prisonersDilemma',
+    label: '囚徒困境',
+    trigger: 'settle',
+    dispatchAlso: true,
+    setup: 'neutral1',
+    number: 6,
+  };
+  g.board.resource.workers[6] = {};
+  setupEnvironmentOnBoard(g, g.board.resource.environments[6], 6, {
+    pushLog: () => {},
+  });
+  assert.strictEqual(neutralCountOn(g, 'resource', 6), 1);
+  const p0 = g.players[0];
+  applyEnvironmentOnDispatch(g, {
+    player: p0,
+    area: 'resource',
+    number: 6,
+    count: 3,
+    pushLog: () => {},
+  });
+  assert.strictEqual(
+    neutralCountOn(g, 'resource', 6),
+    2,
+    '派遣时应额外放 1 枚中立骰（与本次派遣数量无关）'
+  );
+  applyEnvironmentOnDispatch(g, {
+    player: p0,
+    area: 'resource',
+    number: 6,
+    count: 1,
+    pushLog: () => {},
+  });
+  assert.strictEqual(
+    neutralCountOn(g, 'resource', 6),
+    3,
+    '每次派遣各 +1 枚中立骰'
+  );
+  console.log('✓ event prisoners dilemma dispatch adds 1 neutral');
 }
 
 console.log('— prisoners dilemma discard uses physical dice count —');
@@ -3699,7 +3843,8 @@ console.log('— prisoners dilemma discard uses physical dice count —');
     envType: 'prisonersDilemma',
     label: '囚徒困境',
     trigger: 'settle',
-    setup: 'neutral2',
+    dispatchAlso: true,
+    setup: 'neutral1',
     number: 6,
   };
   g.board.resource.tiles = [
@@ -3745,7 +3890,8 @@ console.log('— prisoners dilemma last place not fewest dice —');
     envType: 'prisonersDilemma',
     label: '囚徒困境',
     trigger: 'settle',
-    setup: 'neutral2',
+    dispatchAlso: true,
+    setup: 'neutral1',
     number: 6,
   };
   g.board.resource.tiles = [
@@ -3968,6 +4114,20 @@ console.log('— event welfare minimum lowest score —');
 {
   const { playerScore } = require('../engine');
   const { setupEnvironmentOnBoard } = require('../environmentEffects');
+  const resTotal = (p) =>
+    (p.resources.wood || 0) +
+    (p.resources.stone || 0) +
+    (p.resources.food || 0) +
+    (p.resources.iron || 0);
+  const clearRes = (p) => {
+    p.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+  };
+  const helpersOf = (g, fx) => ({
+    pushLog: () => {},
+    alivePlayers: () => g.players.filter((p) => !p.left),
+    playerScore,
+    pushProduceFx: fx ? (payload) => fx.push(payload) : () => {},
+  });
   const g = createGameState(room(3));
   const p0 = g.players[0];
   const p1 = g.players[1];
@@ -3989,28 +4149,23 @@ console.log('— event welfare minimum lowest score —');
       setup: 'lowestScoreTwo',
     },
     5,
-    {
-      pushLog: () => {},
-      alivePlayers: () => g.players.filter((p) => !p.left),
-      playerScore,
-      pushProduceFx: (payload) => fx.push(payload),
-    }
+    helpersOf(g, fx)
   );
-  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 1);
-  assert.strictEqual(g.pendingWelfareMinimumQueue[0].playerId, p0.id);
-  assert.strictEqual(g.pendingWelfareMinimumQueue[0].count, 2, '第1轮应选2个资源');
+  assert.strictEqual(
+    (g.pendingWelfareMinimumQueue || []).length,
+    0,
+    '随机发放后不应再排队选牌'
+  );
+  assert.strictEqual(resTotal(p0), 2, '第1轮最低分应随机获得2个资源');
+  assert.strictEqual(resTotal(p1), 0);
+  assert.strictEqual(resTotal(p2), 0);
   assert.strictEqual(fx.length, 1);
   assert.strictEqual(fx[0].type, 'envReveal');
   assert.strictEqual(fx[0].envType, 'welfareMinimum');
-  const total0 =
-    (p0.resources.wood || 0) +
-    (p0.resources.stone || 0) +
-    (p0.resources.food || 0) +
-    (p0.resources.iron || 0);
-  assert.strictEqual(total0, 0, '亮卡前不应直接发资源');
 
   p1.houseScore = 0;
-  g.pendingWelfareMinimumQueue = [];
+  clearRes(p0);
+  clearRes(p1);
   setupEnvironmentOnBoard(
     g,
     {
@@ -4020,19 +4175,14 @@ console.log('— event welfare minimum lowest score —');
       setup: 'lowestScoreTwo',
     },
     6,
-    {
-      pushLog: () => {},
-      alivePlayers: () => g.players.filter((p) => !p.left),
-      playerScore,
-      pushProduceFx: () => {},
-    }
+    helpersOf(g)
   );
-  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 2, '并列最低分都应入队');
-  assert.ok(g.pendingWelfareMinimumQueue.some((x) => x.playerId === p0.id));
-  assert.ok(g.pendingWelfareMinimumQueue.some((x) => x.playerId === p1.id));
+  assert.strictEqual(resTotal(p0), 2, '并列最低分都应随机获得');
+  assert.strictEqual(resTotal(p1), 2, '并列最低分都应随机获得');
+  assert.strictEqual(resTotal(p2), 0);
 
   p1.houseScore = 5;
-  g.pendingWelfareMinimumQueue = [];
+  clearRes(p0);
   g.round = 5;
   setupEnvironmentOnBoard(
     g,
@@ -4043,17 +4193,11 @@ console.log('— event welfare minimum lowest score —');
       setup: 'lowestScoreTwo',
     },
     5,
-    {
-      pushLog: () => {},
-      alivePlayers: () => g.players.filter((p) => !p.left),
-      playerScore,
-      pushProduceFx: () => {},
-    }
+    helpersOf(g)
   );
-  assert.strictEqual(g.pendingWelfareMinimumQueue.length, 1);
-  assert.strictEqual(g.pendingWelfareMinimumQueue[0].count, 3, '第5轮应选3个资源');
+  assert.strictEqual(resTotal(p0), 3, '第5轮应随机获得3个资源');
 
-  g.pendingWelfareMinimumQueue = [];
+  clearRes(p0);
   g.round = 9;
   setupEnvironmentOnBoard(
     g,
@@ -4064,14 +4208,9 @@ console.log('— event welfare minimum lowest score —');
       setup: 'lowestScoreTwo',
     },
     5,
-    {
-      pushLog: () => {},
-      alivePlayers: () => g.players.filter((p) => !p.left),
-      playerScore,
-      pushProduceFx: () => {},
-    }
+    helpersOf(g)
   );
-  assert.strictEqual(g.pendingWelfareMinimumQueue[0].count, 4, '第9轮应选4个资源');
+  assert.strictEqual(resTotal(p0), 4, '第9轮应随机获得4个资源');
 
   const g5 = createGameState(room(3));
   const q0 = g5.players[0];
@@ -4095,29 +4234,23 @@ console.log('— event welfare minimum lowest score —');
   ];
   g5.environmentDiscard = [];
   ok(finishInitAnnounce(g5));
-  assert.strictEqual(g5.pendingWelfareMinimumQueue.length, 0, '入队后应立刻转为待选');
-  assert.ok(
-    g5.pendingWelfareMinimumChoices && g5.pendingWelfareMinimumChoices[q0.id],
-    '最低分玩家应进入选资源'
+  assert.strictEqual(
+    (g5.pendingWelfareMinimumQueue || []).length,
+    0,
+    '不应再排队选牌'
   );
-  assert.strictEqual(g5.pendingWelfareMinimumChoices[q0.id].count, 3);
+  assert.ok(
+    !g5.pendingWelfareMinimumChoices ||
+      !g5.pendingWelfareMinimumChoices[q0.id],
+    '不应进入选资源'
+  );
   assert.ok(g5.lastProduceFx, '开局低保户应先亮事件卡');
   assert.strictEqual(g5.lastProduceFx.type, 'envReveal');
   assert.strictEqual(g5.lastProduceFx.envType, 'welfareMinimum');
-  const totalQ0 =
-    (q0.resources.wood || 0) +
-    (q0.resources.stone || 0) +
-    (q0.resources.food || 0) +
-    (q0.resources.iron || 0);
-  assert.strictEqual(totalQ0, 0, '选资源前不应直接发牌');
-  ok(
-    applyAction(g5, q0.id, {
-      type: 'eventPickTwoResources',
-      payload: { amounts: { wood: 3 } },
-    })
-  );
-  assert.strictEqual(q0.resources.wood, 3);
-  assert.strictEqual(g5.phase, 'produce', '选完后进入生产');
+  assert.strictEqual(resTotal(q0), 3, '第5轮最低分应立刻随机获得3个资源');
+  assert.strictEqual(resTotal(q1), 0);
+  assert.strictEqual(resTotal(q2), 0);
+  assert.strictEqual(g5.phase, 'produce', '发放后进入生产');
   console.log('✓ event welfare minimum lowest score');
 }
 
@@ -6726,6 +6859,229 @@ console.log('— workshop master title: ≥5 built workshops —');
   assert.strictEqual(scoreOf(p0, g), 0, 'p0 失去工坊主后分数归 0');
 
   console.log('✓ workshop master title + steal');
+}
+
+console.log('— 2v2 team mode score and visibility —');
+{
+  const {
+    createGameState,
+    publicGameState,
+    checkWin,
+    playerScore,
+    teamScore,
+    TEAM_WIN_SCORE,
+    WIN_SCORE,
+    applyAction,
+  } = require('../engine');
+  const { NEUTRAL_WORKER_ID } = require('../decks');
+  const roomH2h = {
+    gameMode: 'h2h',
+    players: [
+      { id: 'p0', name: '甲1', team: 'A', teamSlot: 0 },
+      { id: 'p1', name: '甲2', team: 'A', teamSlot: 1 },
+      { id: 'p2', name: '乙1', team: 'B', teamSlot: 0 },
+      { id: 'p3', name: '乙2', team: 'B', teamSlot: 1 },
+    ],
+  };
+  const g = createGameState(roomH2h);
+  finishInit(g);
+  assert.strictEqual(g.mode, 'h2h');
+  assert.strictEqual(g.teamMode, true);
+  assert.strictEqual(g.players[0].team, 'A');
+  assert.strictEqual(g.players[2].team, 'B');
+  const pub = publicGameState(g, 'p0');
+  assert.strictEqual(pub.winScore, TEAM_WIN_SCORE);
+  assert.strictEqual(pub.teamMode, true);
+  const ally = pub.players.find((p) => p.id === 'p1');
+  const foe = pub.players.find((p) => p.id === 'p2');
+  assert.strictEqual(ally.isTeammate, true);
+  assert.strictEqual(foe.isTeammate, false);
+
+  g.players[0].funcCards = [
+    { id: 'f_ally', funcType: 'harvest', label: '丰收' },
+  ];
+  g.players[1].funcCards = [
+    { id: 'f_me_see', funcType: 'enhance', label: '强化' },
+  ];
+  g.players[2].funcCards = [
+    { id: 'f_foe', funcType: 'harvest', label: '丰收' },
+  ];
+  g.players[1].buildings = [
+    {
+      id: 'b_unbuilt',
+      label: '集市',
+      buildType: 'exchange',
+      built: false,
+      slot: 1,
+    },
+  ];
+  g.players[2].buildings = [
+    {
+      id: 'b_foe',
+      label: '宫殿',
+      buildType: 'score2',
+      built: false,
+      slot: 1,
+    },
+  ];
+  const pub2 = publicGameState(g, 'p0');
+  const ally2 = pub2.players.find((p) => p.id === 'p1');
+  const foe2 = pub2.players.find((p) => p.id === 'p2');
+  assert.strictEqual((ally2.funcCards || [])[0] && ally2.funcCards[0].label, '强化');
+  assert.strictEqual((ally2.buildings || [])[0] && ally2.buildings[0].faceDown, false);
+  assert.strictEqual((foe2.funcCards || []).length, 0);
+  assert.strictEqual((foe2.buildings || [])[0] && foe2.buildings[0].faceDown, true);
+
+  g.players[0].bonusScore = 7;
+  g.players[1].bonusScore = 7;
+  const { checkWin: winFn } = require('../engine');
+  assert.strictEqual(winFn(g), false, '队伍 14 分不应获胜');
+  g.players[1].bonusScore = 8;
+  assert.strictEqual(winFn(g), true, '队伍 15 分应获胜');
+  assert.deepStrictEqual(g.winners.slice().sort(), ['p0', 'p1']);
+
+  const g2 = createGameState(roomH2h);
+  finishInit(g2);
+  g2.players[0].bonusScore = 10;
+  assert.strictEqual(require('../engine').checkWin(g2), false, '2v2 个人 10 分不应获胜');
+  g2.players[0].bonusScore = 15;
+  assert.strictEqual(require('../engine').checkWin(g2), true, '2v2 个人 15 分使队伍达标');
+  console.log('✓ 2v2 team score and teammate card visibility');
+}
+
+console.log('— 2v2 robbery teammate cards face-up —');
+{
+  const { createGameState, publicGameState, applyAction } = require('../engine');
+  const g = createGameState({
+    gameMode: 'h2h',
+    players: [
+      { id: 'p0', name: '甲1', team: 'A', teamSlot: 0 },
+      { id: 'p1', name: '甲2', team: 'A', teamSlot: 1 },
+      { id: 'p2', name: '乙1', team: 'B', teamSlot: 0 },
+      { id: 'p3', name: '乙2', team: 'B', teamSlot: 1 },
+    ],
+  });
+  finishInit(g);
+  g.phase = 'build';
+  g.currentPlayerId = 'p0';
+  const actor = g.players[0];
+  const ally = g.players[1];
+  actor.funcCards = [{ id: 'rob1', funcType: 'robbery', label: '抢劫' }];
+  ally.funcCards = [{ id: 'fn1', funcType: 'harvest', label: '丰收' }];
+  ok(
+    applyAction(g, 'p0', {
+      type: 'useFunc',
+      payload: { cardId: 'rob1', mode: 'cards', targetId: 'p1' },
+    }),
+    '可抢劫队友卡牌'
+  );
+  assert.ok(g.pendingRobberyPick, '应进入交牌');
+  const pubActor = publicGameState(g, 'p0');
+  const pubAlly = publicGameState(g, 'p1');
+  const pubFoe = publicGameState(g, 'p2');
+  assert.ok(
+    pubActor.pendingRobberyPick &&
+      pubActor.pendingRobberyPick.teammateReveal &&
+      (pubActor.pendingRobberyPick.options || []).some((o) => o.label === '丰收'),
+    '抢劫队友时发动者应看到明示卡面'
+  );
+  assert.ok(
+    pubAlly.pendingRobberyPick &&
+      (pubAlly.pendingRobberyPick.options || []).some((o) => o.label === '丰收')
+  );
+  assert.strictEqual(
+    pubFoe.pendingRobberyPick && pubFoe.pendingRobberyPick.options,
+    null,
+    '对手不应看到交牌明示'
+  );
+  console.log('✓ 2v2 robbery teammate cards face-up');
+}
+
+console.log('— 2v2 teammates still cancel on settle —');
+{
+  const { createGameState, startSettle } = require('../engine');
+  const g = createGameState({
+    gameMode: 'h2h',
+    players: [
+      { id: 'p0', name: '甲1', team: 'A', teamSlot: 0 },
+      { id: 'p1', name: '甲2', team: 'A', teamSlot: 1 },
+      { id: 'p2', name: '乙1', team: 'B', teamSlot: 0 },
+      { id: 'p3', name: '乙2', team: 'B', teamSlot: 1 },
+    ],
+  });
+  finishInit(g);
+  g.board.resource.tiles = [
+    {
+      id: 'res_t1',
+      kind: 'resource',
+      resource: 'wood',
+      large: 3,
+      small: 1,
+      number: 1,
+      label: '木材',
+    },
+  ];
+  g.board.resource.workers = {
+    1: { p0: 2, p1: 2, p2: 1 },
+    2: {},
+    3: {},
+    4: {},
+    5: {},
+    6: {},
+  };
+  g.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  startSettle(g);
+  const slot = (g.lastSettle.slots || []).find((s) => s.number === 1);
+  assert.ok(slot);
+  assert.strictEqual((slot.remain || {}).p0 || 0, 0, '同队相同数量应对撞抵消');
+  assert.strictEqual((slot.remain || {}).p1 || 0, 0, '同队相同数量应对撞抵消');
+  assert.ok((slot.remain || {}).p2 > 0, '对方骰子应留下');
+  assert.strictEqual(
+    (slot.gains || [])[0] && slot.gains[0].pid,
+    'p2',
+    '对撞后应由对方取得本格'
+  );
+  console.log('✓ 2v2 teammates still cancel on settle');
+}
+
+console.log('— 2v2 room team seat move —');
+{
+  const { RoomManager } = require('../../../rooms');
+  const rm = new RoomManager();
+  rm.registerPlayer('h0', '房主');
+  rm.registerPlayer('a1', '甲2');
+  rm.registerPlayer('b1', '乙1');
+  rm.registerPlayer('b2', '乙2');
+  const created = rm.createRoom('h0', {
+    gameType: 'lasidao',
+    gameMode: 'h2h',
+    maxPlayers: 4,
+  });
+  assert.ok(created.ok, created.error);
+  const roomId = created.room.id;
+  assert.strictEqual(created.room.players[0].team, 'A');
+  assert.strictEqual(created.room.players[0].teamSlot, 0);
+  ok(rm.joinRoom('a1', roomId), 'a1 join');
+  ok(rm.joinRoom('b1', roomId), 'b1 join');
+  ok(rm.joinRoom('b2', roomId), 'b2 join');
+  const room = rm.getRoom(roomId);
+  assert.strictEqual(room.players.filter((p) => p.team === 'A').length, 2);
+  assert.strictEqual(room.players.filter((p) => p.team === 'B').length, 2);
+  const fromP = room.players.find((p) => p.id === 'a1');
+  const toP = room.players.find((p) => p.id === 'b1');
+  const moved = rm.moveTeamSeat('h0', {
+    team: fromP.team,
+    slot: fromP.teamSlot,
+  }, {
+    team: toP.team,
+    slot: toP.teamSlot,
+  });
+  assert.ok(moved.ok, moved.error);
+  const afterA1 = room.players.find((p) => p.id === 'a1');
+  const afterB1 = room.players.find((p) => p.id === 'b1');
+  assert.strictEqual(afterA1.team, 'B');
+  assert.strictEqual(afterB1.team, 'A');
+  console.log('✓ 2v2 room team seat move');
 }
 
 console.log('全部通过');

@@ -1112,6 +1112,61 @@ button.secondary:hover {
   border: 1px solid rgba(106, 78, 50, 0.55);
 }
 
+.room-player-grid.is-teams {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.7rem;
+  padding: 0.55rem;
+}
+
+.room-team {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.45rem 0.5rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid rgba(106, 78, 50, 0.45);
+  background: rgba(20, 14, 10, 0.35);
+}
+
+.room-team-a {
+  border-color: rgba(70, 140, 200, 0.55);
+  background: rgba(30, 50, 80, 0.25);
+}
+
+.room-team-b {
+  border-color: rgba(200, 90, 70, 0.55);
+  background: rgba(70, 30, 24, 0.25);
+}
+
+.room-team-title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: rgba(230, 210, 180, 0.9);
+}
+
+.room-team-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.room-player-slot.is-team-movable {
+  cursor: grab;
+}
+
+.room-player-slot.is-seat-selected {
+  outline: 2px solid rgba(240, 200, 90, 0.85);
+  outline-offset: 1px;
+}
+
+.room-player-slot.is-drag-over {
+  border-color: rgba(240, 200, 90, 0.8);
+  background: rgba(80, 60, 20, 0.45);
+}
+
 .room-player-slot {
   position: relative;
   overflow: visible;

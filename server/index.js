@@ -1596,6 +1596,15 @@ io.on('connection', (socket) => {
     scheduleLasidaoInitAnnounce(result.room);
   });
 
+  socket.on('room:moveSeat', (data = {}) => {
+    const result = rooms.moveTeamSeat(socket.id, data.from, data.to);
+    if (!result.ok) {
+      socket.emit('room:error', { message: result.error });
+      return;
+    }
+    emitRoomUpdate(result.room);
+  });
+
   socket.on('room:updateSettings', (data = {}) => {
     const result = rooms.updateSettings(socket.id, {
       name: data.name,

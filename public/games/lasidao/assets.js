@@ -9,7 +9,7 @@ window.LasidaoAssets = (function () {
   const RES = '/games/lasidao/res';
   const PIC = RES + '/picture';
   /** 换图后改这个数字，可绕过浏览器旧缓存（曾 max-age=7d） */
-  const ASSET_VER = '20260906b';
+  const ASSET_VER = '20260908a';
 
   function remoteAssetRoot() {
     try {
@@ -88,8 +88,8 @@ window.LasidaoAssets = (function () {
     illegalBuild: 'gongnengka_chaiqian.png',
     enhance: 'gongnengka_qianghua.png',
     recruit: 'gongnengka_zhengzhao.png',
-    shelter: 'gongnengka_shouliu.png',
     welfareHouse: 'gongnengka_fulifang.png',
+    shelter: 'gongnengka_shouliu.png',
   };
 
   /** 建筑卡面（buildType / resource+tier → 文件名） */

@@ -307,9 +307,10 @@ const ENVIRONMENT_CATALOG = [
     envType: 'prisonersDilemma',
     label: '囚徒困境',
     trigger: 'settle',
-    setup: 'neutral2',
+    dispatchAlso: true,
+    setup: 'neutral1',
     count: 1,
-    desc: '上场在本格放置 2 枚中立骰。结算抵消后：最后一名玩家（可并列；未放置者固定为最后一名）各弃 n 张资源卡，n=第一名骰子数；该弃牌在个人产出（含许愿井）后、建造前进行',
+    desc: '上场在本格放置 1 枚中立骰。派遣时：额外在本格放置 1 枚中立骰。结算抵消后：最后一名玩家（可并列；未放置者固定为最后一名）各弃 n 张资源卡，n=第一名骰子数；该弃牌在个人产出（含许愿井）后、建造前进行',
   },
   {
     envType: 'barrenHarvest',
@@ -370,7 +371,7 @@ const ENVIRONMENT_CATALOG = [
     trigger: 'dispatch',
     setup: 'stashResources',
     count: 2,
-    desc: '第 1–4/5–8/9+ 轮从资源牌堆抽出 3/5/7 张暗置在事件旁（不明示）；玩家在本格放置满 2/3/4 个村民时获得这些资源（每事件仅一份）',
+    desc: '第 1–3/4–6/7+ 轮从资源牌堆抽出 3/5/7 张暗置在事件旁（不明示）；玩家在本格放置满 2/3/4 个村民时获得这些资源（每事件仅一份）',
   },
   {
     envType: 'welfareMinimum',
@@ -378,7 +379,7 @@ const ENVIRONMENT_CATALOG = [
     trigger: 'setup',
     setup: 'lowestScoreTwo',
     count: 2,
-    desc: '出现时：当前分数最低的玩家各任选 2 个资源（可并列、可重复）',
+    desc: '出现时：当前分数最低的玩家各随机获得 2/3/4 个资源（第 1–3/4–6/7+ 轮；可并列、可重复）',
   },
   {
     envType: 'recall',
@@ -430,7 +431,7 @@ function environmentCopyCount(def) {
 }
 
 function makeEnvironmentFromDef(def) {
-  return {
+  const card = {
     id: nextId('env'),
     kind: 'environment',
     label: def.label,
@@ -439,6 +440,8 @@ function makeEnvironmentFromDef(def) {
     desc: def.desc,
     setup: def.setup || null,
   };
+  if (def.dispatchAlso) card.dispatchAlso = true;
+  return card;
 }
 
 function environmentDeckSize() {
