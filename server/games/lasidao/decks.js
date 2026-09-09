@@ -127,17 +127,15 @@ function buildFunctionDeckRaw() {
   const cards = [];
   for (let i = 0; i < 4; i++) cards.push(makeFunc('harvest')); // 丰收
   for (let i = 0; i < 4; i++) cards.push(makeFunc('remoteDice')); // 遥控骰子
-  for (let i = 0; i < 4; i++) cards.push(makeFunc('exile')); // 驱逐
+  for (let i = 0; i < 5; i++) cards.push(makeFunc('exile')); // 驱逐
   for (let i = 0; i < 4; i++) cards.push(makeFunc('redraw')); // 重抽
-  for (let i = 0; i < 4; i++) cards.push(makeFunc('banditRaid')); // 强盗来袭
-  for (let i = 0; i < 4; i++) cards.push(makeFunc('robbery')); // 抢劫
-  for (let i = 0; i < 4; i++) cards.push(makeFunc('illegalBuild')); // 拆迁
-//  for (let i = 0; i < 2; i++) cards.push(makeFunc('freeExpand')); // 免费扩建
-//  for (let i = 0; i < 2; i++) cards.push(makeFunc('welfareHouse')); // 福利房
-  for (let i = 0; i < 3; i++) cards.push(makeFunc('welfareHouse')); // 福利房
+  for (let i = 0; i < 5; i++) cards.push(makeFunc('banditRaid')); // 强盗来袭
+  for (let i = 0; i < 6; i++) cards.push(makeFunc('robbery')); // 抢劫
+  for (let i = 0; i < 6; i++) cards.push(makeFunc('illegalBuild')); // 拆迁
+  for (let i = 0; i < 4; i++) cards.push(makeFunc('welfareHouse')); // 福利房
   for (let i = 0; i < 4; i++) cards.push(makeFunc('caravan')); // 商队来临
   for (let i = 0; i < 4; i++) cards.push(makeFunc('enhance')); // 强化
-  for (let i = 0; i < 4; i++) cards.push(makeFunc('recruit')); // 征召
+  for (let i = 0; i < 5; i++) cards.push(makeFunc('recruit')); // 征召
   for (let i = 0; i < 4; i++) cards.push(makeFunc('shelter')); // 收留
   return cards;
 }
@@ -266,22 +264,19 @@ function makeMixer() {
 
 function buildBuildingDeckRaw() {
   const cards = [];
-  for (const res of ['wood', 'stone', 'food',]) {
+  for (const res of ['wood', 'stone', 'food','iron',]) {
+    cards.push(makeProduceBuild(res, false));
+    cards.push(makeProduceBuild(res, false));
     cards.push(makeProduceBuild(res, false));
     cards.push(makeProduceBuild(res, false));
     cards.push(makeProduceBuild(res, false));
     cards.push(makeProduceBuild(res, false));
     cards.push(makeProduceBuild(res, false));
   }
-  cards.push(makeProduceBuild('iron', false));
-  cards.push(makeProduceBuild('iron', false));
-  cards.push(makeProduceBuild('iron', false));
-  cards.push(makeProduceBuild('iron', false));
-  cards.push(makeProduceBuild('iron', false));
-  for (let i = 0; i < 4; i++) cards.push(makeScore2());
-  for (let i = 0; i < 6; i++) cards.push(makeScore1());
+  for (let i = 0; i < 5; i++) cards.push(makeScore2());
+  for (let i = 0; i < 8; i++) cards.push(makeScore1());
   for (let i = 0; i < 5; i++) cards.push(makeExchange());
-  for (let i = 0; i < 5; i++) cards.push(makeWishWell());
+  for (let i = 0; i < 7; i++) cards.push(makeWishWell());
   // for (let i = 0; i < 2; i++) cards.push(makeMixer());
   // for (let i = 0; i < 2; i++) cards.push(makeEternalThrone());
   return cards;
@@ -468,7 +463,7 @@ function getEnvironmentDef(envType) {
 const BUILD_HOUSE_COST = { wood: 2, stone: 2, iron: 1 };
 
 /** 常驻「购买功能卡」造价 */
-const BUY_FUNC_COST = { wood: 1, stone: 1, iron: 2 };
+const BUY_FUNC_COST = { wood: 1, stone: 1, food: 1, iron: 1 };
 
 /** 常驻「繁殖村民」：小麦消耗 = 当前村民数量 × 该系数 */
 const BREED_FOOD_PER_VILLAGER = 1;

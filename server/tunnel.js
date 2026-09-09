@@ -4,7 +4,6 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const http = require('http');
-const dns = require('dns').promises;
 const { spawn } = require('child_process');
 const { pipeline } = require('stream/promises');
 const { createWriteStream } = require('fs');
@@ -40,6 +39,9 @@ function vendoredCloudflaredFilesFor(platform) {
 }
 const URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i;
 
+/** 轻量探活路径（公网/本机都打这个，避免拉首页） */
+const HEALTH_PATH = '/healthz';
+
 /** 公网地址探活间隔（进程仍在但 trycloudflare 域名已死时靠此换新） */
 const HEALTH_INTERVAL_MS = Math.max(
   5000,
@@ -50,101 +52,109 @@ const HEALTH_WARMUP_MS = Math.max(
   0,
   Number(process.env.TUNNEL_HEALTH_WARMUP_MS) || 25000
 );
-/** 连续探活失败几次后强制换隧道（DNS 不再一票否决） */
+/** 连续公网探活失败几次后才考虑换隧道（对局/多人房会跳过） */
 const HEALTH_FAILS = Math.max(
   1,
-  Number(process.env.TUNNEL_HEALTH_FAILS) || 4
+  Number(process.env.TUNNEL_HEALTH_FAILS) || 8
 );
 const HEALTH_TIMEOUT_MS = Math.max(
   2000,
-  Number(process.env.TUNNEL_HEALTH_TIMEOUT_MS) || 8000
+  Number(process.env.TUNNEL_HEALTH_TIMEOUT_MS) || 15000
+);
+const LOCAL_HEALTH_TIMEOUT_MS = Math.max(
+  500,
+  Number(process.env.TUNNEL_LOCAL_HEALTH_TIMEOUT_MS) || 2000
 );
 
-/**
- * 本机 DNS 对 trycloudflare 经常假阴性；系统解析失败时再用公共 DNS 复核。
- */
-function resolveHostname(hostname) {
-  return dns.lookup(hostname).then(
-    () => ({ ok: true, via: 'system' }),
-    async (err) => {
-      try {
-        const resolver = new dns.Resolver();
-        resolver.setServers(['1.1.1.1', '8.8.8.8']);
-        await resolver.resolve4(hostname);
-        return { ok: true, via: 'public-dns' };
-      } catch (err2) {
-        const code =
-          (err2 && err2.code) || (err && err.code) || 'ENOTFOUND';
-        return {
-          ok: false,
-          code,
-          reason: `dns:${code}`,
-        };
-      }
+function publicHealthUrl(urlString) {
+  try {
+    const u = new URL(urlString);
+    u.pathname = HEALTH_PATH;
+    u.search = '';
+    u.hash = '';
+    return u.href;
+  } catch (_) {
+    return '';
+  }
+}
+
+function httpGetStatus(href, timeoutMs, headers) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    let u;
+    try {
+      u = new URL(href);
+    } catch (_) {
+      done({ ok: false, reason: 'bad-url', fatal: true });
+      return;
     }
-  );
+    if (!u.hostname) {
+      done({ ok: false, reason: 'bad-url', fatal: true });
+      return;
+    }
+    const getter = u.protocol === 'https:' ? https : http;
+    const req = getter.get(
+      href,
+      {
+        timeout: timeoutMs,
+        headers: headers || { 'User-Agent': 'lianji-tunnel-health' },
+      },
+      (res) => {
+        res.resume();
+        // 任意 HTTP 状态（含 502/530）都说明边缘/本机还在回包
+        done({ ok: true, status: res.statusCode, fatal: false });
+      }
+    );
+    req.on('timeout', () => {
+      req.destroy();
+      done({ ok: false, reason: 'timeout', fatal: false });
+    });
+    req.on('error', (err) => {
+      const code = (err && err.code) || '';
+      done({
+        ok: false,
+        reason: code || (err && err.message) || 'http-error',
+        fatal: false,
+      });
+    });
+  });
 }
 
 /**
  * 探测公网隧道是否仍可达。
- * - HTTPS 任意响应（含 502/530）→ 域名仍在边缘，视为存活
- * - DNS / 超时 / 连接失败 → 可累计后换址（不再把 ENOTFOUND 当 fatal）
+ * 只打 /healthz，不做 DNS 预检（国内对 trycloudflare 假阴性极高）。
+ * HTTPS 任意响应（含 502/530）→ 域名仍在边缘，视为存活。
  */
 function probeTunnelUrl(urlString, ops = {}) {
   const opts = ops || {};
   const timeoutMs = Math.max(1000, Number(opts.timeoutMs) || HEALTH_TIMEOUT_MS);
-  let hostname;
-  let href;
-  try {
-    const u = new URL(urlString);
-    hostname = u.hostname;
-    href = u.href;
-  } catch (_) {
+  const href = publicHealthUrl(urlString);
+  if (!href) {
     return Promise.resolve({ ok: false, reason: 'bad-url', fatal: true });
   }
-  if (!hostname) {
-    return Promise.resolve({ ok: false, reason: 'bad-url', fatal: true });
-  }
+  return httpGetStatus(href, timeoutMs, {
+    'User-Agent': 'lianji-tunnel-health',
+  });
+}
 
-  return resolveHostname(hostname).then((dnsResult) => {
-    if (!dnsResult.ok) {
-      return {
-        ok: false,
-        reason: dnsResult.reason || 'dns:ENOTFOUND',
-        fatal: false,
-      };
-    }
-    return new Promise((resolve) => {
-      const getter = href.startsWith('https') ? https : http;
-      const req = getter.get(
-        href,
-        {
-          timeout: timeoutMs,
-          headers: { 'User-Agent': 'lianji-tunnel-health' },
-        },
-        (res) => {
-          res.resume();
-          // 边缘还能回状态码 ⇒ 域名未作废（本地服务挂了也可能 502）
-          resolve({
-            ok: true,
-            status: res.statusCode,
-            dnsVia: dnsResult.via,
-          });
-        }
-      );
-      req.on('timeout', () => {
-        req.destroy();
-        resolve({ ok: false, reason: 'timeout', fatal: false });
-      });
-      req.on('error', (err) => {
-        const code = (err && err.code) || '';
-        resolve({
-          ok: false,
-          reason: code || (err && err.message) || 'http-error',
-          fatal: false,
-        });
-      });
-    });
+/** 本机 origin 探活：通了说明不是本地服务挂了 */
+function probeLocalOrigin(port, ops = {}) {
+  const opts = ops || {};
+  const n = Number(port);
+  if (!n) {
+    return Promise.resolve({ ok: false, reason: 'bad-port', fatal: false });
+  }
+  const timeoutMs = Math.max(
+    500,
+    Number(opts.timeoutMs) || LOCAL_HEALTH_TIMEOUT_MS
+  );
+  return httpGetStatus(`http://127.0.0.1:${n}${HEALTH_PATH}`, timeoutMs, {
+    'User-Agent': 'lianji-tunnel-health-local',
   });
 }
 
@@ -336,10 +346,23 @@ class QuickTunnel {
     this._healthTimer = null;
     this._healthFails = 0;
     this._healthRunning = false;
+    this._protectedSkipLogs = 0;
     this.onUrl = typeof opts.onUrl === 'function' ? opts.onUrl : null;
     this.onLost = typeof opts.onLost === 'function' ? opts.onLost : null;
     this._probe =
       typeof opts.probe === 'function' ? opts.probe : probeTunnelUrl;
+    this._probeLocal =
+      typeof opts.probeLocal === 'function' ? opts.probeLocal : probeLocalOrigin;
+    this.shouldProtect =
+      typeof opts.shouldProtect === 'function' ? opts.shouldProtect : () => false;
+  }
+
+  _isProtected() {
+    try {
+      return Boolean(this.shouldProtect && this.shouldProtect());
+    } catch (_) {
+      return false;
+    }
   }
 
   /** @returns {Promise<string>} public https URL */
@@ -527,7 +550,19 @@ class QuickTunnel {
     const url = this.publicUrl;
     if (!url || !this.proc) return;
     this._healthRunning = true;
+    let local = { ok: true };
     let result;
+    try {
+      local = await this._probeLocal(this._port, {
+        timeoutMs: LOCAL_HEALTH_TIMEOUT_MS,
+      });
+    } catch (err) {
+      local = {
+        ok: false,
+        reason: (err && err.message) || 'local-probe-error',
+        fatal: false,
+      };
+    }
     try {
       result = await this._probe(url, { timeoutMs: HEALTH_TIMEOUT_MS });
     } catch (err) {
@@ -544,13 +579,39 @@ class QuickTunnel {
 
     if (result && result.ok) {
       this._healthFails = 0;
+      this._protectedSkipLogs = 0;
+      this._scheduleHealthTick();
+      return;
+    }
+
+    const reason = (result && result.reason) || 'unknown';
+    const fatal = Boolean(result && result.fatal);
+
+    // 本机都打不通：是本地服务问题，不归咎隧道、不换址
+    if (!local || !local.ok) {
+      console.warn(
+        `[tunnel] 本机探活失败，不换隧道: ${
+          (local && local.reason) || 'local-down'
+        }（公网旁证: ${reason}）`
+      );
+      this._scheduleHealthTick();
+      return;
+    }
+
+    // 对局中 / 房内已有多人：公网失败只记日志，禁止误杀隧道
+    if (!fatal && this._isProtected()) {
+      this._healthFails = 0;
+      this._protectedSkipLogs += 1;
+      if (this._protectedSkipLogs === 1 || this._protectedSkipLogs % 8 === 0) {
+        console.warn(
+          `[tunnel] 公网探活失败（已保护，不换址 x${this._protectedSkipLogs}）: ${reason}`
+        );
+      }
       this._scheduleHealthTick();
       return;
     }
 
     this._healthFails += 1;
-    const reason = (result && result.reason) || 'unknown';
-    const fatal = Boolean(result && result.fatal);
     console.warn(
       `[tunnel] 公网探活失败 (${this._healthFails}/${HEALTH_FAILS}` +
         `${fatal ? ', fatal' : ''}): ${reason}`
@@ -563,9 +624,9 @@ class QuickTunnel {
   }
 
   /**
-   * 进程可能仍在，但 trycloudflare 域名已死：杀进程、立刻换新隧道。
+   * 空闲时公网域名僵死才杀进程换新隧道。
+   * 对局中不会走到这里（_runHealthTick 已保护）。
    * 对局房间仍留在本机内存；MQTT 心跳由 onLost → markTunnelLost 续上。
-   * （_killProc 会抬高 _gen，exit 回调不会再走 onLost/_scheduleRestart）
    */
   _forceRotate(reason) {
     if (this._stopped) return;
@@ -651,6 +712,11 @@ module.exports = {
   QuickTunnel,
   ensureCloudflared,
   probeTunnelUrl,
+  probeLocalOrigin,
+  publicHealthUrl,
+  HEALTH_PATH,
+  HEALTH_FAILS,
+  HEALTH_TIMEOUT_MS,
   downloadFile,
   TOOLS_DIR,
   VENDORED_CLOUDFLARED_FILES,

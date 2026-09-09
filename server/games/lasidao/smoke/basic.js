@@ -670,9 +670,7 @@ console.log('— buy func card permanent —');
     label: '强化·购弃2',
   };
   g.specialDeck.unshift(dropCard2, dropCard, keepCard);
-  p.resources.wood = 1;
-  p.resources.stone = 1;
-  p.resources.iron = 2;
+  p.resources = { wood: 1, stone: 1, food: 1, iron: 1 };
   g.phase = 'build';
   g.currentPlayerId = p.id;
   g.buildPassed = {};
@@ -681,6 +679,7 @@ console.log('— buy func card permanent —');
   assert.ok(p.buildTurnUsedBuyFunc, '翻开待选时即应记录已购买功能卡');
   assert.strictEqual(p.resources.wood, 0);
   assert.strictEqual(p.resources.stone, 0);
+  assert.strictEqual(p.resources.food, 0);
   assert.strictEqual(p.resources.iron, 0);
   ok(
     applyAction(g, p.id, {
@@ -727,7 +726,7 @@ console.log('— buy func score1 instant —');
     label: '征召·弃',
   };
   g.specialDeck.unshift(drop2, drop1, school);
-  p.resources = { wood: 1, stone: 1, food: 0, iron: 2 };
+  p.resources = { wood: 1, stone: 1, food: 1, iron: 1 };
   p.bonusScore = 0;
   g.phase = 'build';
   g.currentPlayerId = p.id;
@@ -1410,6 +1409,7 @@ console.log('— face-down only visible to claimer —');
     '他人不可见功能手牌'
   );
 
+  g.phase = 'settle';
   g.lastSettle = {
     at: Date.now(),
     round: 1,
@@ -1441,6 +1441,12 @@ console.log('— face-down only visible to claimer —');
   assert.ok(settleOwner.label, '结算动画：获得者可见');
   assert.strictEqual(settleOwner.faceDown, false, '结算动画：获得者明示');
   assert.ok(settleOther.faceDown && !settleOther.label, '结算动画：他人仍暗置');
+  g.phase = 'produce';
+  const settleStub = publicGameState(g, p0.id).lastSettle;
+  assert.ok(
+    settleStub && settleStub.at && !settleStub.slots,
+    '非结算阶段只下发 lastSettle stub'
+  );
 }
 
 console.log('— voluntary discard + replace slot —');
@@ -3368,7 +3374,7 @@ console.log('— welfare house and shelter —');
   const raw = require('../decks').buildFunctionDeck();
   assert.strictEqual(
     raw.filter((c) => c.funcType === 'welfareHouse').length,
-    3
+    4
   );
   assert.strictEqual(raw.filter((c) => c.funcType === 'shelter').length, 4);
   console.log('✓ welfare house and shelter');

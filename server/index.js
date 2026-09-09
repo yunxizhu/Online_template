@@ -49,11 +49,25 @@ app.use((req, res, next) => {
   next();
 });
 
+/** 隧道探活用轻量接口，必须在 static 之前，避免被首页拖慢 */
+app.get('/healthz', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(200).json({ ok: true, t: Date.now() });
+});
+
 const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
-  // 本机多开/后台标签页定时器被节流时，适当放宽避免误断线
-  pingInterval: 25000,
-  pingTimeout: 60000,
+  // 隧道上优先靠 WebSocket；压缩大包 game:state，避免轮询把操作拖成数秒
+  pingInterval: 10000,
+  pingTimeout: 25000,
+  maxHttpBufferSize: 8 * 1024 * 1024,
+  httpCompression: { threshold: 256 },
+  perMessageDeflate: { threshold: 256 },
+  connectTimeout: 20000,
+  connectionStateRecovery: {
+    maxDisconnectionDuration: 2 * 60 * 1000,
+    skipMiddlewares: true,
+  },
 });
 
 const rooms = new RoomManager();
@@ -532,8 +546,28 @@ function nudgeStaleTunnelPlayers() {
   }
 }
 
+/** 对局中或房内已有多人时，禁止因公网探活误杀隧道 */
+function tunnelIsProtected() {
+  try {
+    for (const room of rooms.rooms.values()) {
+      if (!room || room.pendingLobby) continue;
+      if (room.status === 'playing') return true;
+      const seated = (room.players || []).filter(
+        (p) => p && !p.left && !p.offline
+      );
+      if (seated.length >= 2) return true;
+      const observers = (room.observers || []).filter((o) => o && !o.offline);
+      if (seated.length >= 1 && observers.length >= 1) return true;
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  return false;
+}
+
 function attachTunnelHooks(t) {
   if (!t) return t;
+  t.shouldProtect = tunnelIsProtected;
   let tunnelHadLost = false;
   t.onUrl = (url) => {
     const oldHost =
@@ -1656,6 +1690,10 @@ io.on('connection', (socket) => {
       room.game && room.game.lastPlayReveal
         ? room.game.lastPlayReveal.id
         : null;
+    const prevFxId =
+      room.game && room.game.lastProduceFx
+        ? room.game.lastProduceFx.id
+        : null;
     const result = mod.applyAction(room.game, socket.id, {
       type: data.type,
       payload: data.payload,
@@ -1669,10 +1707,22 @@ io.on('connection', (socket) => {
     handleAbandonedPlayers(room);
     // 服务端接受的操作视为有效操作，刷新思考时间
     syncTurnTimer(room, { onTimeout: handleTurnTimeout });
-    // 若有新的卡片使用展示，先即时广播轻量事件，让其他玩家立刻看到动画
-    const newReveal = room.game && room.game.lastPlayReveal;
+    // 轻量 pulse 先于全量状态：隧道上大包 game:state 可能晚到数秒
+    const g = room.game;
+    const newReveal = g && g.lastPlayReveal;
+    const newFx = g && g.lastProduceFx;
     if (newReveal && newReveal.id && newReveal.id !== prevRevealId) {
       io.to(room.id).emit('game:play-reveal', { reveal: newReveal });
+    }
+    if (g) {
+      io.to(room.id).emit('game:pulse', {
+        type: data.type,
+        actorId: socket.id,
+        phase: g.phase,
+        currentPlayerId: g.currentPlayerId || null,
+        lastPlacerId: g.lastPlacerId || null,
+        fx: newFx && newFx.id && newFx.id !== prevFxId ? newFx : null,
+      });
     }
     emitGameState(room);
     // 对局刚结束：立刻刷新房间状态并广播

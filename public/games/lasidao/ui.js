@@ -9696,7 +9696,7 @@ window.LasidaoUi = (function () {
           if (selectedPermanent === 'expand' && !ok) selectedPermanent = null;
         }
         if (buyFuncBtn) {
-          const buyCost = game.buyFuncCost || { wood: 1, stone: 1, iron: 2 };
+          const buyCost = game.buyFuncCost || { wood: 1, stone: 1, food: 1, iron: 1 };
           const canBuy = canPay(me.resources || {}, buyCost);
           const ok = myBuildTurn && canBuy && !mustDiscard;
           buyFuncBtn.disabled = !ok;

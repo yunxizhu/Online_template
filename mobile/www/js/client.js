@@ -291,6 +291,7 @@ window.GameNet = (function () {
       'room:verifyPassword:result',
       'game:started',
       'game:state',
+      'game:pulse',
       'game:play-reveal',
       'game:error',
       'game:player-left',
@@ -347,14 +348,15 @@ window.GameNet = (function () {
       const s = io(target, {
         autoConnect: true,
         forceNew: true,
-        // trycloudflare 上直连 websocket 偶发握手失败；先 polling 再升级更稳
-        transports: ['polling', 'websocket'],
+        // 隧道上 HTTP 长轮询会把一次操作拖成数秒；先 WebSocket，失败再轮询
+        transports: ['websocket', 'polling'],
         upgrade: true,
+        rememberUpgrade: true,
         reconnection: true,
         reconnectionAttempts: Infinity,
-        reconnectionDelay: 500,
-        reconnectionDelayMax: 5000,
-        timeout: 20000,
+        reconnectionDelay: 400,
+        reconnectionDelayMax: 4000,
+        timeout: 12000,
       });
       socket = s;
       bindServerEvents(s);

@@ -1541,6 +1541,22 @@ function publicLastSettle(report, viewerId) {
   };
 }
 
+/** 非结算管道只下发 stub，避免每次派遣都带上整份结算动画包 */
+function lastSettleForPublic(game, viewerId) {
+  const report = game && game.lastSettle;
+  if (!report) return null;
+  const phase = game.phase;
+  const needFull =
+    phase === 'settle' ||
+    phase === 'settle_act' ||
+    phase === 'wish_well' ||
+    phase === 'event_discard';
+  if (!needFull) {
+    return { at: report.at, round: report.round };
+  }
+  return publicLastSettle(report, viewerId);
+}
+
 function publicBuilding(b, reveal) {
   // 未建造建筑仅持有者及队友可见；已建造建筑对所有人公开
   if (!reveal && !b.built) {
@@ -6167,12 +6183,12 @@ function actBuyFuncCardPermanent(game, player) {
   const block = rejectIfBuildPhaseCardDiscardPending(player);
   if (block) return block;
   if (!canPay(player.resources, BUY_FUNC_COST)) {
-    return { ok: false, error: '需要 1 木 1 石 2 铁' };
+    return { ok: false, error: '需要 1 木 1 石 1 小麦 1 铁' };
   }
   pay(player.resources, BUY_FUNC_COST);
   const result = startDrawPickOne(game, player, {
     source: 'buyFunc',
-    logText: `${player.name} 购买功能卡（-1 木 -1 石 -2 铁）：翻开 ${SPECIAL_DRAW_PICK_COUNT} 张，请选择 1 张保留`,
+    logText: `${player.name} 购买功能卡（-1 木 -1 石 -1 小麦 -1 铁）：翻开 ${SPECIAL_DRAW_PICK_COUNT} 张，请选择 1 张保留`,
   });
   if (!result.ok) {
     for (const k of RESOURCES) {
@@ -6540,7 +6556,7 @@ function publicGameState(game, viewerId) {
         game.remoteDiceMode &&
         game.currentPlayerId === viewerId
     ),
-    lastSettle: publicLastSettle(game.lastSettle, viewerId),
+    lastSettle: lastSettleForPublic(game, viewerId),
     lastProduceFx: game.lastProduceFx ? { ...game.lastProduceFx } : null,
     lastPlayReveal: game.lastPlayReveal ? { ...game.lastPlayReveal } : null,
     settleAnimUntil:

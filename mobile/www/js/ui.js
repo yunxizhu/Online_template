@@ -284,10 +284,8 @@
     if (!gameState || !gameState.over) return;
     if (state._guestExitingOver || leavingToLocal) return;
     state._guestExitingOver = true;
-    showToast('对局结束，正在返回…');
-    leaveAndReturnLocal().catch(() => {
-      tryNavigateGuestReturn();
-    });
+    showToast('对局结束，可点击胜利弹窗下方按钮返回大厅');
+    // 不再自动跳转，让用户看完胜利弹窗后手动离开
   }
 
   /** 被动服务端/隧道断开：代开端回自己的网页端（短延迟避免闪断） */
@@ -3382,6 +3380,41 @@
     });
   }
 
+  /** 非结算阶段服务端只下发 lastSettle stub，动画中途不要把 slots 冲掉 */
+  function mergeIncomingGameState(next) {
+    const prev = state.game;
+    if (!next || !prev) return next;
+    const incoming = next.lastSettle;
+    const kept = prev.lastSettle;
+    if (
+      incoming &&
+      kept &&
+      incoming.at === kept.at &&
+      (!incoming.slots || !incoming.slots.length) &&
+      Array.isArray(kept.slots) &&
+      kept.slots.length
+    ) {
+      next.lastSettle = kept;
+    }
+    return next;
+  }
+
+  function applyGamePulse(data) {
+    if (!data || !state.game) return;
+    const g = state.game;
+    if (data.phase) g.phase = data.phase;
+    if (Object.prototype.hasOwnProperty.call(data, 'currentPlayerId')) {
+      g.currentPlayerId = data.currentPlayerId;
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'lastPlacerId')) {
+      g.lastPlacerId = data.lastPlacerId;
+    }
+    if (data.fx && data.fx.id) {
+      g.lastProduceFx = data.fx;
+    }
+    scheduleRenderGame(true);
+  }
+
   function renderGame() {
     const game = state.game;
     if (!game) return;
@@ -5148,13 +5181,12 @@
       seatId,
       phase: data && data.state ? data.state.phase : null,
     });
-    // 被动无人值守：对局结束立刻离席回大厅，锁定不解除
+    // 被动无人值守：对局结束也保留状态，让用户看完胜利弹窗
     if (state.passiveMode && data && data.state && data.state.over) {
-      try {
-        net.leaveRoom();
-      } catch (_) {
-        /* ignore */
-      }
+      applyPassiveLockUi(true);
+      syncPassiveExitButton();
+      showView('game');
+      scheduleRenderGame(true);
       return;
     }
     if (
@@ -5171,7 +5203,7 @@
     maybeGuestExitAfterGameOver(data && data.state);
   });
   net.on('game:state', async (data) => {
-    state.game = data.state;
+    state.game = mergeIncomingGameState(data.state);
     if (data && data.spectator) state.isSpectator = true;
     if (data && data.state && data.state.over) {
       clearActivePlay();
@@ -5188,11 +5220,11 @@
       phase: data && data.state ? data.state.phase : null,
     });
     if (state.passiveMode && data && data.state && data.state.over) {
-      try {
-        net.leaveRoom();
-      } catch (_) {
-        /* ignore */
-      }
+      applyPassiveLockUi(true);
+      syncPassiveExitButton();
+      showView('game');
+      syncSpectatorsWatchUi();
+      scheduleRenderGame(true);
       return;
     }
     const firstLasidaoFrame =
@@ -5211,6 +5243,9 @@
     syncSpectatorsWatchUi();
     scheduleRenderGame();
     maybeGuestExitAfterGameOver(data && data.state);
+  });
+  net.on('game:pulse', (data) => {
+    applyGamePulse(data);
   });
   net.on('game:play-reveal', (data) => {
     if (
@@ -5249,8 +5284,8 @@
           if (data && p.id === data.playerId) p.left = true;
         }
       }
-      scheduleRenderGame();
     }
+    scheduleRenderGame();
   });
   net.on('game:quit-ok', () => {
     bounceToLocalLobby(t('toast.quitBack')).catch(() => {});
