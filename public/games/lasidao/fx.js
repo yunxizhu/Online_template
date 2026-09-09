@@ -1384,63 +1384,69 @@ window.LasidaoFx = (function () {
     return srcEl;
   }
 
+  function envRevealActorName(opts) {
+    if (opts && opts.actorName) return String(opts.actorName);
+    const pid =
+      (opts && (opts.actorId || opts.claimPid)) ||
+      (opts &&
+        opts.rewards &&
+        opts.rewards[0] &&
+        opts.rewards[0].pid);
+    const game = opts && opts.game;
+    if (!game || !pid) return '';
+    const p = (game.players || []).find((x) => x && x.id === pid);
+    return (p && p.name) || '';
+  }
+
+  function envRevealPayload(opts) {
+    opts = opts || {};
+    const label = opts.label || '';
+    const actorName = envRevealActorName(opts);
+    const actorId =
+      opts.actorId ||
+      opts.claimPid ||
+      (opts.rewards && opts.rewards[0] && opts.rewards[0].pid) ||
+      null;
+    return {
+      id:
+        'env-' +
+        String(opts.envId || opts.envType || 'x') +
+        '-' +
+        String(opts.number || '') +
+        '-' +
+        Date.now(),
+      kind: 'environment',
+      actorId,
+      actorName,
+      card: {
+        id: opts.envId || opts.envType,
+        kind: 'environment',
+        label,
+        envType: opts.envType,
+      },
+      stepText: actorName
+        ? `${actorName} 触发「${label}」`
+        : `触发「${label}」`,
+      forceAll: true,
+    };
+  }
+
   async function presentEnvCard(opts) {
     opts = opts || {};
     const gen = settleGen;
-    const layer = ensureLayer();
-    if (!layer) return;
     throwIfSettleAborted(gen);
-
-    const srcEl = envBoardTileEl(opts.envId, opts.number);
-    const srcCenter = rectCenter(srcEl);
-    if (!srcCenter) {
-      await sleep(600);
+    const Ui = window.LasidaoUi;
+    const reveal = envRevealPayload(opts);
+    if (Ui && typeof Ui.presentPlayRevealAndWait === 'function') {
+      await Ui.presentPlayRevealAndWait(reveal);
       throwIfSettleAborted(gen);
       return;
     }
-
-    const displayEl = document.createElement('div');
-    displayEl.className = 'las-fx-env-card-display';
-    displayEl.style.width = '160px';
-    displayEl.style.aspectRatio = '60 / 97';
-    displayEl.style.left = srcCenter.x - 80 + 'px';
-    displayEl.style.top = srcCenter.y - 130 + 'px';
-    displayEl.style.borderRadius = '8px';
-    displayEl.style.background = '#1a1f26';
-    displayEl.style.border = '2px solid #4a90a4';
-    displayEl.style.boxShadow = '0 8px 32px rgba(0,0,0,0.5)';
-    displayEl.style.position = 'fixed';
-    displayEl.style.zIndex = '200';
-    displayEl.style.opacity = '0';
-    displayEl.style.transform = 'translate(-50%, -50%) scale(0.85)';
-    displayEl.style.transition = 'opacity 250ms ease, transform 250ms ease';
-
-    if (srcEl) {
-      const srcArt = srcEl.querySelector('.las-tile-art');
-      if (srcArt && srcArt.style && srcArt.style.backgroundImage) {
-        displayEl.style.backgroundImage = srcArt.style.backgroundImage;
-        displayEl.style.backgroundSize = 'cover';
-        displayEl.style.backgroundPosition = 'center';
-      }
+    if (Ui && typeof Ui.showPlayReveal === 'function') {
+      Ui.showPlayReveal(reveal);
+      await sleep(2000);
+      throwIfSettleAborted(gen);
     }
-
-    const lab = document.createElement('div');
-    lab.className = 'las-fx-env-card-label';
-    lab.textContent = opts.label || '';
-    displayEl.appendChild(lab);
-
-    layer.appendChild(displayEl);
-    void displayEl.offsetWidth;
-    displayEl.style.opacity = '1';
-    displayEl.style.transform = 'translate(-50%, -50%) scale(1)';
-
-    await sleep(1000);
-    throwIfSettleAborted(gen);
-    displayEl.style.opacity = '0';
-    displayEl.style.transform = 'translate(-50%, -50%) scale(0.85)';
-    await sleep(250);
-    throwIfSettleAborted(gen);
-    if (displayEl.parentNode) displayEl.remove();
   }
 
   async function flyEnvSideCard(opts) {

@@ -94,39 +94,39 @@ const enFlow =
   '<p>At any time, reaching <strong>10</strong> VP wins immediately (some events such as Resist Barbarians can end the game at <strong>15</strong> VP).</p>';
 
 const zhPermanent =
-  '<p>建造阶段。开局每人 <strong>3 村民、2 间房子</strong>（每房容纳 2 村民），无初始资源。建造房子、繁殖村民、扩建各 <strong>每回合限 1 次</strong>；兑换与购买功能卡不限次数。</p>' +
+  '<p>建造阶段。开局每人 <strong>3 村民、2 间房子</strong>（每房容纳 2 村民），无初始资源。开局上限：资源手牌 <strong>8</strong>、建筑格 <strong>2</strong>、功能卡 <strong>2</strong>。建造房子、繁殖村民各 <strong>每回合限 1 次</strong>；扩建、兑换与购买功能卡不限次数。</p>' +
   '<dl class="las-rules-dl">' +
   '<dt>建造房子</dt><dd>每回合限 1 次。支付 3 木 3 石 1 铁，房子 +1、+1 分。</dd>' +
   '<dt>繁殖村民</dt><dd>每回合限 1 次。消耗 <strong>等于当前村民数</strong> 的小麦，村民 +1（上限 15）。需至少 1 个空位（空位 = 住房容量 − 村民数）。</dd>' +
   '<dt>购买功能卡</dt><dd>支付 1 木 1 石 1 小麦 1 铁：从功能/建筑合堆顶抽 3 张，选 1 保留；合堆不足 3 张时洗混弃牌堆合并后再抽。超出手牌/建筑上限须先弃置。</dd>' +
-  '<dt>扩建</dt><dd>每回合限 1 次。消耗 <strong>各 1 木 1 石 1 麦 1 铁</strong>（固定，不随次数增加）。三选一：建筑格 / 功能卡格 / 资源卡位（资源手牌上限 +4）。功能卡「免费扩建」效果相同但无资源消耗，且不占用常驻扩建次数。</dd>' +
+  '<dt>扩建</dt><dd>不限次数。消耗 <strong>1 木 1 石</strong>（固定，不随次数增加）。三选一：建筑格 / 功能卡格 / 资源卡位（资源手牌上限 +2）。功能卡「免费扩建」效果相同但无资源消耗。</dd>' +
   '<dt>集市兑换</dt><dd>随时可用：默认银行 4:1；已建集市提升比例（1 座→3:1，2 座→2:1，≥3 座→1:1，最多按 3 座计）。</dd>' +
   '</dl>';
 
 const enPermanent =
-  '<p>Build phase. Start with <strong>3 villagers, 2 houses</strong> (2 villagers per house), no resources. Build House, Breed, and Expand are each <strong>once per turn</strong>; Exchange and Buy Function Card are unlimited.</p>' +
+  '<p>Build phase. Start with <strong>3 villagers, 2 houses</strong> (2 villagers per house), no resources. Starting caps: <strong>8</strong> resource cards, <strong>2</strong> building slots, <strong>2</strong> function cards. Build House and Breed are each <strong>once per turn</strong>; Expand, Exchange and Buy Function Card are unlimited.</p>' +
   '<dl class="las-rules-dl">' +
   '<dt>Build House</dt><dd>Once per turn. Pay 3W 3S 1I; +1 house and +1 VP.</dd>' +
   '<dt>Breed Villagers</dt><dd>Once per turn. Pay wheat = <strong>current villager count</strong>; +1 villager (max 15). Needs 1 free housing slot.</dd>' +
   '<dt>Buy Function Card</dt><dd>Pay 1 wood 1 stone 1 wheat 1 iron: draw 3 from merged deck top, keep 1; reshuffle discard into deck if fewer than 3. Discard if over hand/building cap.</dd>' +
-  '<dt>Capacity</dt><dd>Once per turn. Cost <strong>1 each</strong> wood, stone, food &amp; iron (fixed). Pick one: building slot, function hand, or resource slot (+4 cap). Free Expand function card does the same for free and does not use the permanent Expand limit.</dd>' +
+  '<dt>Capacity</dt><dd>Unlimited uses. Cost <strong>1 wood and 1 stone</strong> (fixed). Pick one: building slot, function hand, or resource slot (+2 cap). Free Expand function card does the same for free.</dd>' +
   '<dt>Market trade</dt><dd>Anytime: default bank 4:1; Markets improve rate (1→3:1, 2→2:1, ≥3→1:1, counts at most 3).</dd>' +
   '</dl>';
 
 const zhResource =
   '<p>资源板块共 4 种：木、石、小麦、铁。木/石/小麦各有丰/贫两档；铁矿仅贫档。</p>' +
   '<dl class="las-rules-dl">' +
-  '<dt>丰</dt><dd>大份 3、小份 2。每轮个人产出阶段，已建成对应资源建筑自动产出 2 个该资源。</dd>' +
-  '<dt>贫</dt><dd>大份 2、小份 1。每轮个人产出阶段，已建成对应资源建筑自动产出 1 个该资源。</dd>' +
-  '<dt>铁矿·贫</dt><dd>大份 2、小份 1。资源建筑造价 1 木 1 石 1 铁，产出 1 铁。</dd>' +
+  '<dt>丰</dt><dd>大份 3、小份 2。每轮个人产出阶段，已建成对应资源建筑自动产出 2 个该资源。同格叠放产量为卡面产量×(1+2+…+n)。</dd>' +
+  '<dt>贫</dt><dd>大份 2、小份 1。每轮个人产出阶段，已建成对应资源建筑自动产出 1 个该资源。同格叠放产量为 1+2+…+n（叠 1/2/3 座→1/3/6）。</dd>' +
+  '<dt>铁矿·贫</dt><dd>大份 2、小份 1。资源建筑造价 1 木 1 石 1 铁，产出 1 铁。同格叠放产量同上。</dd>' +
   '</dl>';
 
 const enResource =
   '<p>Resources come in four types: wood, stone, wheat, and iron. Wood/stone/wheat have rich/poor tiers; iron is only poor.</p>' +
   '<dl class="las-rules-dl">' +
-  '<dt>Rich</dt><dd>Large share 3, small share 2. Built resource buildings auto-produce 2/round.</dd>' +
-  '<dt>Poor</dt><dd>Large share 2, small share 1. Built resource buildings auto-produce 1/round.</dd>' +
-  '<dt>Iron · Poor</dt><dd>Cost 1W 1S 1I, produces 1 iron/round.</dd>' +
+  '<dt>Rich</dt><dd>Large share 3, small share 2. Built resource buildings auto-produce 2/round. Same-slot stack yield = face value × (1+2+…+n).</dd>' +
+  '<dt>Poor</dt><dd>Large share 2, small share 1. Built resource buildings auto-produce 1/round. Same-slot stack yield is 1+2+…+n (1/2/3 buildings → 1/3/6).</dd>' +
+  '<dt>Iron · Poor</dt><dd>Cost 1W 1S 1I, produces 1 iron/round. Same-slot stacking as poor buildings.</dd>' +
   '</dl>';
 
 const zhFunc =
@@ -165,23 +165,23 @@ const enFunc =
 
 const zhBuild =
   '<dl class="las-rules-dl">' +
-  '<dt data-las-cards="build:wood:rich build:stone:rich build:food:rich">资源建筑·富（木/石/小麦各 2）</dt><dd>木：2 石 3 小麦 2 铁，每轮自动产出 2 木。石：2 木 3 小麦 2 铁，产出 2 石。小麦：3 木 3 石 1 铁，产出 2 小麦。</dd>' +
-  '<dt data-las-cards="build:wood:poor build:stone:poor build:food:poor build:iron:poor">资源建筑·贫</dt><dd>木/石/小麦（各 3）：贫档造价见卡面，产出 1。铁（3）：1 木 1 石 1 铁，产出 1 铁。建成后每轮个人产出阶段自动产出，无需工人。</dd>' +
+  '<dt data-las-cards="build:wood:rich build:stone:rich build:food:rich">资源建筑·富（木/石/小麦各 2）</dt><dd>木：2 石 3 小麦 2 铁，每轮自动产出 2 木。石：2 木 3 小麦 2 铁，产出 2 石。小麦：3 木 3 石 1 铁，产出 2 小麦。同格叠放产量为卡面产量×(1+2+…+n)。</dd>' +
+  '<dt data-las-cards="build:wood:poor build:stone:poor build:food:poor build:iron:poor">资源建筑·贫</dt><dd>木/石/小麦（各 3）：贫档造价见卡面，产出 1。铁（3）：1 木 1 石 1 铁，产出 1 铁。建成后每轮个人产出阶段自动产出，无需工人。同格叠放产量为 1+2+…+n（叠 1/2/3 座→1/3/6）。</dd>' +
   '<dt data-las-card="build:score2">宫殿（+2）（4）</dt><dd>造价 2 木 2 石 1 小麦 1 铁。建成即 +2 分，无需工人。分数跟随宫殿：拆迁或未建造后不再计该分；被弃置也不再计分。</dd>' +
   '<dt data-las-card="build:score1">学堂（+1）（7）</dt><dd>入手即 +1 胜利点并置入弃牌堆，无需建造、不占建筑格。</dd>' +
   '<dt data-las-card="build:exchange">集市（5）</dt><dd>造价 1 木 1 石 1 小麦。建成后提升兑换比例（默认银行 3:1，1 座→2:1，≥2 座→1:1；兑换最多计 2 座）。相同建筑可叠放同一建筑格。</dd>' +
-  '<dt data-las-card="build:wishWell">许愿井（3）</dt><dd>造价 1 木 1 石 1 小麦 1 铁。每建成一座：个人产出阶段可选任意 1 种资源 +1（多座可叠或分配）。无需工人。</dd>' +
+  '<dt data-las-card="build:wishWell">许愿井（3）</dt><dd>造价 1 木 1 石 1 小麦 1 铁。个人产出阶段可选任意资源；同格叠放次数为 1+2+…+n（叠 1/2/3 座→1/3/6）。无需工人。</dd>' +
   '<dt data-las-card="build:eternalThrone">永恒王座（2）</dt><dd>造价 3 木 3 石 3 小麦 3 铁。每建成一座：每个建造回合结束时 +1 胜利点。已获得的分数永久保留（与宫殿不同）；拆迁后该座停止继续得分，再次建成后可重新开始获得。</dd>' +
   '</dl><p>任意同类型建筑建成 3 座：额外 +2 胜利点（例：3 座集市→「商业巨擎」；3 座许愿井→「灯灵本灵」；3 座同资源工坊→「××管理者」）。</p>';
 
 const enBuild =
   '<dl class="las-rules-dl">' +
-  '<dt data-las-cards="build:wood:rich build:stone:rich build:food:rich">Resource building · Rich (×2 each)</dt><dd>Wood: 2S 3 wheat 2I → 2 wood/round. Stone: 2W 3 wheat 2I → 2 stone. Wheat: 3W 3S 1I → 2 wheat.</dd>' +
-  '<dt data-las-cards="build:wood:poor build:stone:poor build:food:poor build:iron:poor">Resource building · Poor</dt><dd>Wood/Stone/Wheat×3: poor costs on card, produce 1. Iron×3: 1W 1S 1I → 1 iron. Auto-produce in personal production step.</dd>' +
+  '<dt data-las-cards="build:wood:rich build:stone:rich build:food:rich">Resource building · Rich (×2 each)</dt><dd>Wood: 2S 3 wheat 2I → 2 wood/round. Stone: 2W 3 wheat 2I → 2 stone. Wheat: 3W 3S 1I → 2 wheat. Same-slot stack yield = face value × (1+2+…+n).</dd>' +
+  '<dt data-las-cards="build:wood:poor build:stone:poor build:food:poor build:iron:poor">Resource building · Poor</dt><dd>Wood/Stone/Wheat×3: poor costs on card, produce 1. Iron×3: 1W 1S 1I → 1 iron. Auto-produce in personal production step. Same-slot stack yield is 1+2+…+n (1/2/3 buildings → 1/3/6).</dd>' +
   '<dt data-las-card="build:score2">Palace (+2) (4)</dt><dd>Cost 2W 2S 1 wheat 1I. +2 when built. Score follows the Palace: lost if demolished or unbuilt.</dd>' +
   '<dt data-las-card="build:score1">School (+1) (3)</dt><dd>Cost 1W 1S 1 wheat 1I. +1 when built.</dd>' +
   '<dt data-las-card="build:exchange">Market (5)</dt><dd>Cost 1W 1S 1 wheat. Trade rate: default bank 3:1, 1→2:1, ≥2→1:1 (rate counts at most 2). Same-type buildings may stack.</dd>' +
-  '<dt data-las-card="build:wishWell">Wish Well (3)</dt><dd>Cost 1W 1S 1 wheat 1I. Personal production: +1 any resource per well.</dd>' +
+  '<dt data-las-card="build:wishWell">Wish Well (3)</dt><dd>Cost 1W 1S 1 wheat 1I. Personal production: choose any resources; same-slot stack count is 1+2+…+n (1/2/3 wells → 1/3/6). No workers.</dd>' +
   '<dt data-las-card="build:eternalThrone">Eternal Throne (2)</dt><dd>Cost 3W 3S 3 wheat 3I. Each built throne: +1 VP at the end of each build turn. Earned VP is kept forever (unlike Palace); demolition stops further income from that throne until rebuilt.</dd>' +
   '</dl><p>Build 3 of the same type: +2 VP each (e.g. 3 markets→Commerce Tycoon; 3 wish wells→Lamp Spirit; 3 same workshops→×× Manager).</p>';
 

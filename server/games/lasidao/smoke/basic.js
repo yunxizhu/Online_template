@@ -877,7 +877,7 @@ console.log('— redraw overflow func hand —');
   const g = createGameState(room(2));
   finishInit(g);
   const p = g.players[0];
-  const max = 3;
+  const max = 2;
   for (let i = 0; i < max; i++) {
     p.funcCards.push({
       id: 'fn_fill_' + i,
@@ -1527,8 +1527,6 @@ assert.strictEqual(p11.buildings.find((b) => b.id === 'rep_b').slot, 'none:1');
   assert.deepStrictEqual(expandPermanentCost(p), {
     wood: 1,
     stone: 1,
-    food: 1,
-    iron: 1,
   });
   // 扩建卡：三选一
   p.funcCards.push({
@@ -1576,8 +1574,6 @@ assert.strictEqual(p11.buildings.find((b) => b.id === 'rep_b').slot, 'none:1');
   assert.deepStrictEqual(expandPermanentCost(p), {
     wood: 1,
     stone: 1,
-    food: 1,
-    iron: 1,
   });
   p.resources.wood = 1;
   p.resources.stone = 1;
@@ -1590,28 +1586,33 @@ assert.strictEqual(p11.buildings.find((b) => b.id === 'rep_b').slot, 'none:1');
     }),
     '常驻扩建成功'
   );
-  assert.strictEqual(p.roundExpanded, true);
-  const usedExpand = applyAction(g, p.id, {
-    type: 'expandPermanent',
-    payload: { direction: 'building' },
-  });
-  assert.ok(!usedExpand.ok, '本回合已扩建不可再扩建');
   assert.strictEqual(p.resources.wood, 0);
   assert.strictEqual(p.resources.stone, 0);
-  assert.strictEqual(p.resources.food, 0);
-  assert.strictEqual(p.resources.iron, 0);
-  assert.strictEqual(p.expandSlots, 1);
+  assert.strictEqual(p.resources.food, 1, '扩建不再消耗小麦');
+  assert.strictEqual(p.resources.iron, 1, '扩建不再消耗铁矿');
+  p.resources.wood = 1;
+  p.resources.stone = 1;
+  ok(
+    applyAction(g, p.id, {
+      type: 'expandPermanent',
+      payload: { direction: 'building' },
+    }),
+    '同回合可再次扩建'
+  );
+  assert.strictEqual(p.resources.wood, 0);
+  assert.strictEqual(p.resources.stone, 0);
+  assert.strictEqual(p.expandSlots, 2);
   assert.strictEqual(p.expandFuncSlots, 1);
   assert.strictEqual(p.expandResSlots, 1);
-  assert.strictEqual(maxResourceHandFor(p), 12 + 4, '手牌资源上限 +4');
+  assert.strictEqual(maxResourceHandFor(p), 8 + 2, '手牌资源上限 +2');
   const pub = publicGameState(g, p.id);
   const me = pub.players.find((x) => x.id === p.id);
-  assert.strictEqual(me.expandSlots, 1);
+  assert.strictEqual(me.expandSlots, 2);
   assert.strictEqual(me.expandFuncSlots, 1);
   assert.strictEqual(me.expandResSlots, 1);
-  assert.strictEqual(me.maxResourceHand, 16);
+  assert.strictEqual(me.maxResourceHand, 10);
   assert.strictEqual(me.maxBuildings, 4);
-  assert.strictEqual(me.maxFuncHand, 4);
+  assert.strictEqual(me.maxFuncHand, 3);
   p.buildings.push({
     id: 'ex_b1',
     label: '集市A',
@@ -2382,8 +2383,7 @@ console.log('— demolition overflow: stay on slot vs burst —');
     victim.expandSlots = 0;
     victim.buildings = [
       bld('u1', { buildType: 'produce', resource: 'wood', rich: false, label: '木屋', built: false, slot: 'none' }),
-      bld('u2', { buildType: 'produce', resource: 'stone', rich: false, label: '石屋', built: false, slot: 'none:1' }),
-      bld('b1', { buildType: 'score2', label: '宫殿', score: 2, built: true, slot: 'none:2' }),
+      bld('b1', { buildType: 'score2', label: '宫殿', score: 2, built: true, slot: 'none:1' }),
     ];
     actor.funcCards.push({
       id: 'ib_stay',
@@ -2405,9 +2405,9 @@ console.log('— demolition overflow: stay on slot vs burst —');
     );
     const pal = victim.buildings.find((b) => b.id === 'b1');
     assert.ok(pal && !pal.built, '独占格被拆后仍为未建造');
-    assert.strictEqual(String(pal.slot), 'none:2', '独占格被拆后留在原格');
-    assert.ok(!victim.pendingDiscardBuild, '3 格 2 未建 + 1 已建被拆不爆牌');
-    assert.strictEqual(occupiedBuildSlotCount(victim), 3);
+    assert.strictEqual(String(pal.slot), 'none:1', '独占格被拆后留在原格');
+    assert.ok(!victim.pendingDiscardBuild, '2 格 1 未建 + 1 已建被拆不爆牌');
+    assert.strictEqual(occupiedBuildSlotCount(victim), 2);
   }
 
   {
@@ -2422,9 +2422,8 @@ console.log('— demolition overflow: stay on slot vs burst —');
     victim.expandSlots = 0;
     victim.buildings = [
       bld('u1', { buildType: 'produce', resource: 'wood', rich: false, label: '木屋', built: false, slot: 'none' }),
-      bld('u2', { buildType: 'produce', resource: 'stone', rich: false, label: '石屋', built: false, slot: 'none:1' }),
-      bld('ex1', { buildType: 'exchange', label: '集市甲', built: true, slot: 'none:2' }),
-      bld('ex2', { buildType: 'exchange', label: '集市乙', built: true, slot: 'none:2' }),
+      bld('ex1', { buildType: 'exchange', label: '集市甲', built: true, slot: 'none:1' }),
+      bld('ex2', { buildType: 'exchange', label: '集市乙', built: true, slot: 'none:1' }),
     ];
     actor.funcCards.push({
       id: 'ib_burst',
@@ -2449,11 +2448,11 @@ console.log('— demolition overflow: stay on slot vs burst —');
     assert.strictEqual(victim.pendingDiscardBuild.newCard.id, 'ex1');
     assert.ok(!victim.buildings.find((b) => b.id === 'ex1'), '被拆卡暂离板面');
     assert.strictEqual(
-      victim.buildings.filter((b) => String(b.slot) === 'none:2').length,
+      victim.buildings.filter((b) => String(b.slot) === 'none:1').length,
       1,
       '剩余已建集市仍占原格'
     );
-    assert.strictEqual(occupiedBuildSlotCount(victim), 3);
+    assert.strictEqual(occupiedBuildSlotCount(victim), 2);
 
     const pub = publicGameState(g, actor.id);
     assert.ok(
@@ -2485,7 +2484,7 @@ console.log('— demolition overflow: stay on slot vs burst —');
     assert.ok(placed && !placed.built, '被拆建筑应回到板面且未建造');
     assert.strictEqual(String(placed.slot), 'none', '应占用刚腾出的空位');
     assert.ok(!victim.buildings.find((b) => b.id === 'u1'));
-    assert.strictEqual(occupiedBuildSlotCount(victim), 3);
+    assert.strictEqual(occupiedBuildSlotCount(victim), 2);
   }
 
   {
@@ -2496,7 +2495,7 @@ console.log('— demolition overflow: stay on slot vs burst —');
     g.phase = 'build';
     g.currentPlayerId = actor.id;
     g.buildPassed = {};
-    victim.expandSlots = 0;
+    victim.expandSlots = 1;
     victim.buildings = [
       bld('u1', { buildType: 'produce', resource: 'wood', rich: false, label: '木屋', built: false, slot: 'none' }),
       bld('ex1', { buildType: 'exchange', label: '集市甲', built: true, slot: 'none:1' }),
@@ -2537,9 +2536,8 @@ console.log('— demolition overflow: stay on slot vs burst —');
     victim.expandSlots = 0;
     victim.buildings = [
       bld('u1', { buildType: 'produce', resource: 'wood', rich: false, label: '木屋', built: false, slot: 'none' }),
-      bld('u2', { buildType: 'produce', resource: 'stone', rich: false, label: '石屋', built: false, slot: 'none:1' }),
-      bld('ex1', { buildType: 'exchange', label: '集市甲', built: true, slot: 'none:2' }),
-      bld('ex2', { buildType: 'exchange', label: '集市乙', built: true, slot: 'none:2' }),
+      bld('ex1', { buildType: 'exchange', label: '集市甲', built: true, slot: 'none:1' }),
+      bld('ex2', { buildType: 'exchange', label: '集市乙', built: true, slot: 'none:1' }),
     ];
     actor.funcCards.push({
       id: 'ib_drop',
@@ -2569,7 +2567,7 @@ console.log('— demolition overflow: stay on slot vs burst —');
       g.specialDiscard.some((c) => c.id === 'ex1'),
       '被拆建筑进入弃牌堆'
     );
-    assert.strictEqual(occupiedBuildSlotCount(victim), 3);
+    assert.strictEqual(occupiedBuildSlotCount(victim), 2);
   }
 
   {
@@ -2583,9 +2581,8 @@ console.log('— demolition overflow: stay on slot vs burst —');
     victim.expandSlots = 0;
     victim.buildings = [
       bld('u1', { buildType: 'produce', resource: 'wood', rich: false, label: '木屋', built: false, slot: 'none' }),
-      bld('u2', { buildType: 'produce', resource: 'stone', rich: false, label: '石屋', built: false, slot: 'none:1' }),
-      bld('ex1', { buildType: 'exchange', label: '集市甲', built: true, slot: 'none:2' }),
-      bld('ex2', { buildType: 'exchange', label: '集市乙', built: true, slot: 'none:2' }),
+      bld('ex1', { buildType: 'exchange', label: '集市甲', built: true, slot: 'none:1' }),
+      bld('ex2', { buildType: 'exchange', label: '集市乙', built: true, slot: 'none:1' }),
     ];
     actor.funcCards.push({
       id: 'ib_to',
@@ -3001,7 +2998,7 @@ console.log('— settle act discard order + pending build queue —');
   const g = createGameState(room(2));
   finishInit(g);
   const p0 = g.players[0];
-  p0.resources = { wood: 13, stone: 0, food: 0, iron: 0 };
+  p0.resources = { wood: 9, stone: 0, food: 0, iron: 0 };
   p0.pendingDiscardRes = true;
   p0.funcCards = [
     { id: 'fn_over', kind: 'function', funcType: 'harvest', label: '丰收' },
@@ -3116,7 +3113,7 @@ console.log('— wish well after produce —');
   console.log('✓ wish well after produce');
 }
 
-console.log('— resource hand limit 12 —');
+console.log('— resource hand limit 8 —');
 {
   const { finishSettleAnimForce, maxResourceHandFor } = require('../engine');
   const g = createGameState(room(2));
@@ -3142,7 +3139,7 @@ console.log('— resource hand limit 12 —');
     '弃置后应降至上限以内'
   );
   assert.strictEqual(g.phase, 'build', '弃牌完成后应进入建造阶段');
-  console.log('✓ resource hand limit 12');
+  console.log('✓ resource hand limit 8');
 }
 
 console.log('— building produce ignores resource overcap —');
@@ -3151,7 +3148,7 @@ console.log('— building produce ignores resource overcap —');
   const g = createGameState(room(2));
   finishInit(g);
   const p = g.players[0];
-  p.resources = { wood: 11, stone: 0, food: 0, iron: 0 };
+  p.resources = { wood: 7, stone: 0, food: 0, iron: 0 };
   g.phase = 'settle';
   g.lastSettle = {
     at: Date.now(),
@@ -3168,7 +3165,7 @@ console.log('— building produce ignores resource overcap —');
     ],
   };
   ok(finishSettleAnimForce(g));
-  assert.strictEqual(p.resources.wood, 13, '应先完成弃牌阶段再个人产出');
+  assert.strictEqual(p.resources.wood, 9, '应先完成弃牌阶段再个人产出');
   assert.strictEqual(g.phase, 'build', '个人产出后超上限不应再进入弃牌');
   assert.ok(!p.pendingDiscardRes, '个人产出后不应标记待弃资源');
   console.log('✓ building produce ignores resource overcap');
@@ -6040,7 +6037,7 @@ console.log('— exchange stack same slot —');
   const g = createGameState(room(2));
   finishInit(g);
   const p = g.players[0];
-  p.expandSlots = 2; // 格：none / none:1 / none:2；上限 5
+  p.expandSlots = 3; // 格：none … none:4；上限 5
   p.buildings = [
     {
       id: 'prod1',
@@ -6269,13 +6266,159 @@ console.log('— wish well merge on construct —');
   console.log('✓ wish well merge on construct');
 }
 
+console.log('— stacked produce triangular yield —');
+{
+  const {
+    startSettle,
+    stackedSlotYield,
+    wishWellProduceCount,
+  } = require('../engine');
+  assert.strictEqual(stackedSlotYield(0), 0);
+  assert.strictEqual(stackedSlotYield(1), 1);
+  assert.strictEqual(stackedSlotYield(2), 3);
+  assert.strictEqual(stackedSlotYield(3), 6);
+  assert.strictEqual(stackedSlotYield(4), 10);
+  assert.strictEqual(stackedSlotYield(1, 2), 2, '富档单卡仍为 2');
+  assert.strictEqual(stackedSlotYield(2, 2), 6, '富档叠 2 座为 2×(1+2)');
+  assert.strictEqual(stackedSlotYield(3, 2), 12);
+
+  const g = createGameState(room(2));
+  finishInit(g);
+  const p = g.players[0];
+  p.expandSlots = 1;
+  p.buildings = [
+    {
+      id: 'pw1',
+      buildType: 'produce',
+      resource: 'wood',
+      rich: false,
+      produce: 1,
+      built: true,
+      slot: 'none',
+      label: '木建筑·贫',
+    },
+    {
+      id: 'pw2',
+      buildType: 'produce',
+      resource: 'wood',
+      rich: false,
+      produce: 1,
+      built: true,
+      slot: 'none',
+      label: '木建筑·贫',
+    },
+    {
+      id: 'pw3',
+      buildType: 'produce',
+      resource: 'wood',
+      rich: false,
+      produce: 1,
+      built: true,
+      slot: 'none',
+      label: '木建筑·贫',
+    },
+  ];
+  startSettle(g);
+  const wood = (g.lastSettle.buildings || []).filter((x) => x.resource === 'wood');
+  assert.strictEqual(wood.length, 1, '同格同类型应合并为一条产出');
+  assert.strictEqual(wood[0].amount, 6, '叠 3 座贫档产量 1+2+3=6');
+  assert.strictEqual(wood[0].stack, 3);
+
+  const gSplit = createGameState(room(2));
+  finishInit(gSplit);
+  const s = gSplit.players[0];
+  s.expandSlots = 1;
+  s.buildings = [
+    {
+      id: 's1',
+      buildType: 'produce',
+      resource: 'stone',
+      rich: false,
+      produce: 1,
+      built: true,
+      slot: 'none',
+      label: '石建筑·贫',
+    },
+    {
+      id: 's2',
+      buildType: 'produce',
+      resource: 'stone',
+      rich: false,
+      produce: 1,
+      built: true,
+      slot: 'none:1',
+      label: '石建筑·贫',
+    },
+  ];
+  startSettle(gSplit);
+  const stoneAmt = (gSplit.lastSettle.buildings || [])
+    .filter((x) => x.resource === 'stone')
+    .reduce((a, x) => a + x.amount, 0);
+  assert.strictEqual(stoneAmt, 2, '不同格不叠加，各产 1');
+
+  const gRich = createGameState(room(2));
+  finishInit(gRich);
+  const r = gRich.players[0];
+  r.buildings = [
+    {
+      id: 'rw1',
+      buildType: 'produce',
+      resource: 'wood',
+      rich: true,
+      produce: 2,
+      built: true,
+      slot: 'none',
+      label: '木建筑·富',
+    },
+    {
+      id: 'rw2',
+      buildType: 'produce',
+      resource: 'wood',
+      rich: true,
+      produce: 2,
+      built: true,
+      slot: 'none',
+      label: '木建筑·富',
+    },
+  ];
+  startSettle(gRich);
+  const richWood = (gRich.lastSettle.buildings || []).find(
+    (x) => x.resource === 'wood'
+  );
+  assert.strictEqual(richWood && richWood.amount, 6, '富档叠 2 座产量 6');
+
+  const gWw = createGameState(room(2));
+  finishInit(gWw);
+  const w = gWw.players[0];
+  w.buildings = [
+    {
+      id: 'ww1',
+      buildType: 'wishWell',
+      built: true,
+      slot: 'none',
+      label: '许愿井',
+    },
+    {
+      id: 'ww2',
+      buildType: 'wishWell',
+      built: true,
+      slot: 'none',
+      label: '许愿井',
+    },
+  ];
+  assert.strictEqual(wishWellProduceCount(w), 3);
+  startSettle(gWw);
+  assert.strictEqual(w.pendingWishWellBonus, 3, '叠 2 座许愿井可选 3 个资源');
+  console.log('✓ stacked produce triangular yield');
+}
+
 console.log('— unbuilt never stacks onto built; overflow discard —');
 {
   const { assignBuildingSlot, occupiedBuildSlotCount } = require('../engine');
   const g = createGameState(room(2));
   finishInit(g);
   const p = g.players[0];
-  // 默认上限 3 格：两座已建许愿井叠在一格，另两格也已占用 → 无空位
+  // 默认上限 2 格：两座已建许愿井叠在一格，另一格也已占用 → 无空位
   p.expandSlots = 0;
   p.buildings = [
     {
@@ -6305,17 +6448,8 @@ console.log('— unbuilt never stacks onto built; overflow discard —');
       workers: 0,
       cost: {},
     },
-    {
-      id: 'ex_fill2',
-      buildType: 'exchange',
-      label: '集市填2',
-      slot: 'none:2',
-      built: true,
-      workers: 0,
-      cost: {},
-    },
   ];
-  assert.strictEqual(occupiedBuildSlotCount(p), 3);
+  assert.strictEqual(occupiedBuildSlotCount(p), 2);
   const neu = {
     id: 'ww_c',
     buildType: 'wishWell',
@@ -6333,8 +6467,8 @@ console.log('— unbuilt never stacks onto built; overflow discard —');
   assert.strictEqual(neu.slot, null);
 
   // 有空位时仍独占空位
-  p.buildings = p.buildings.filter((b) => b.id !== 'ex_fill2');
-  assert.strictEqual(occupiedBuildSlotCount(p), 2);
+  p.buildings = p.buildings.filter((b) => b.id !== 'ex_fill1');
+  assert.strictEqual(occupiedBuildSlotCount(p), 1);
   const neu2 = {
     id: 'ww_d',
     buildType: 'wishWell',
@@ -6345,12 +6479,12 @@ console.log('— unbuilt never stacks onto built; overflow discard —');
     cost: {},
   };
   assert.ok(assignBuildingSlot(p, neu2), '有空位应独占');
-  assert.strictEqual(neu2.slot, 'none:2');
+  assert.strictEqual(neu2.slot, 'none:1');
   assert.notStrictEqual(String(neu2.slot), 'none');
 
   // 满格入手 → 仅标记建筑格弃牌 pending，不进入 settle_act
   p.buildings.push(neu2);
-  assert.strictEqual(occupiedBuildSlotCount(p), 3);
+  assert.strictEqual(occupiedBuildSlotCount(p), 2);
   const beforePhase = g.phase;
   const neuE = {
     id: 'ww_e',

@@ -18,7 +18,7 @@ window.LasidaoUi = (function () {
   function noneSlotKeysFor(p) {
     const max =
       (p && p.maxBuildings) ||
-      3 + (Number(p && p.expandSlots) || 0);
+      2 + (Number(p && p.expandSlots) || 0);
     const out = [];
     for (let i = 0; i < max; i++) {
       out.push(i === 0 ? 'none' : 'none:' + i);
@@ -55,6 +55,18 @@ window.LasidaoUi = (function () {
       return 'produce:' + b.resource + ':' + (b.rich ? 'rich' : 'poor');
     }
     return String(b.buildType || '');
+  }
+
+  function triangularNumber(n) {
+    const k = Math.max(0, Math.floor(Number(n) || 0));
+    return (k * (k + 1)) / 2;
+  }
+
+  function stackedSlotYield(n, unit) {
+    const count = Math.max(0, Math.floor(Number(n) || 0));
+    if (count <= 0) return 0;
+    const u = Math.max(1, Math.floor(Number(unit) || 1));
+    return triangularNumber(count) * u;
   }
 
   function canStackBuildingOnSlot(_p, _slot, _building) {
@@ -286,7 +298,7 @@ window.LasidaoUi = (function () {
     let effect = '';
     if (b.buildType === 'produce') {
       const res = resLabels[b.resource] || b.resource;
-      effect = `产出${b.produce}${res}`;
+      effect = `产出${b.produce}${res}；同格叠放产量 1+2+…+n`;
       if (b.needsWorker) effect += '（需工人）';
     } else if (b.buildType === 'score2') {
       effect = `建成+${b.score}分（分数跟随宫殿）`;
@@ -295,7 +307,7 @@ window.LasidaoUi = (function () {
     } else if (b.buildType === 'exchange') {
       effect = '无需工人，改善兑换比例';
     } else if (b.buildType === 'wishWell') {
-      effect = '无需工人，生产阶段结束后可选任意资源+1';
+      effect = '无需工人，同格叠放可选资源次数为 1+2+…+n';
     }
 
     return `消耗：${costText}` + (effect ? `\n${effect}` : '');
@@ -783,6 +795,12 @@ window.LasidaoUi = (function () {
       if (reveal.kind === 'building') {
         return `${reveal.actorName} 建造了「${reveal.card.label}」`;
       }
+      if (reveal.kind === 'environment') {
+        return `${reveal.actorName} 触发「${reveal.card.label}」`;
+      }
+    }
+    if (reveal.kind === 'environment' && reveal.card && reveal.card.label) {
+      return `触发「${reveal.card.label}」`;
     }
     return reveal.actorName || '';
   }
@@ -817,7 +835,10 @@ window.LasidaoUi = (function () {
     }
 
     const hasCard =
-      (reveal.kind === 'building' || reveal.kind === 'function') && reveal.card;
+      (reveal.kind === 'building' ||
+        reveal.kind === 'function' ||
+        reveal.kind === 'environment') &&
+      reveal.card;
 
     el.classList.remove('is-in', 'is-out', 'has-card');
     el.innerHTML = '';
@@ -845,6 +866,17 @@ window.LasidaoUi = (function () {
       PLAY_REVEAL_FADE_IN_MS + PLAY_REVEAL_HOLD_MS
     );
     return true;
+  }
+
+  function presentPlayRevealAndWait(reveal, meId) {
+    const shown = showPlayReveal(reveal, meId == null ? lastMeId : meId);
+    if (!shown) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      setTimeout(
+        () => resolve(true),
+        PLAY_REVEAL_FADE_IN_MS + PLAY_REVEAL_HOLD_MS
+      );
+    });
   }
 
   function maybeShowPlayRevealFromState(game, prev, meId) {
@@ -927,7 +959,8 @@ window.LasidaoUi = (function () {
     if (
       reveal.kind === 'step' ||
       reveal.kind === 'building' ||
-      reveal.kind === 'function'
+      reveal.kind === 'function' ||
+      reveal.kind === 'environment'
     ) {
       return logActorIsOther(logText, game, meId);
     }
@@ -2974,7 +3007,7 @@ window.LasidaoUi = (function () {
             text = demolition
               ? t('lasidao.illegalBuildOverflowSelf')
               : t('lasidao.discardBuildTip', {
-                  n: overflowP.maxBuildings || game.maxBuildings || 3,
+                  n: overflowP.maxBuildings || game.maxBuildings || 2,
                 });
           } else {
             text = t('lasidao.illegalBuildOverflowAwait', {
@@ -7296,7 +7329,7 @@ window.LasidaoUi = (function () {
     }, 800);
   }
 
-  const MAX_FUNC_HAND_UI = 3;
+  const MAX_FUNC_HAND_UI = 2;
 
   function makeEmptyFuncSlot() {
     const slot = document.createElement('div');
@@ -7535,7 +7568,7 @@ window.LasidaoUi = (function () {
         ? game.me.maxResourceHand
         : me.maxResourceHand != null
           ? me.maxResourceHand
-          : 12;
+          : 8;
     const total = Object.values(me.resources || {}).reduce((a, b) => a + b, 0);
     const need = Math.max(0, total - max);
     if (need <= 0) {
@@ -7643,7 +7676,7 @@ window.LasidaoUi = (function () {
   function appendBuildDiscardChoiceUi(parent, game, meId, me) {
     const pending = me && me.pendingDiscardBuild;
     if (!pending || !pending.newCard || !parent) return;
-    const maxB = me.maxBuildings || game.maxBuildings || 3;
+    const maxB = me.maxBuildings || game.maxBuildings || 2;
     const unbuiltExisting = (me.buildings || []).filter((b) => !b.built);
     const demolition = pending.source === 'demolition';
 
@@ -7727,7 +7760,7 @@ window.LasidaoUi = (function () {
           hint.textContent = me.pendingDiscardFunc
             ? t('lasidao.discardFuncTip')
             : t('lasidao.discardBuildTip', {
-                n: me.maxBuildings || game.maxBuildings || 3,
+                n: me.maxBuildings || game.maxBuildings || 2,
               });
         } else {
         hint.textContent = '';
@@ -8296,14 +8329,14 @@ window.LasidaoUi = (function () {
       const funcHost = isMe ? $('las-pcell-func') : null;
       const maxB =
         p.maxBuildings ||
-        (game.maxBuildings || 3) + (Number(p.expandSlots) || 0);
+        (game.maxBuildings || 2) + (Number(p.expandSlots) || 0);
       const maxFunc = p.maxFuncHand || MAX_FUNC_HAND_UI;
       const maxRes =
         p.maxResourceHand != null
           ? p.maxResourceHand
           : isMe && game.me && game.me.maxResourceHand != null
             ? game.me.maxResourceHand
-            : 12;
+            : 8;
       const totalRes = Object.values(p.resources || {}).reduce(
         (a, b) => a + b,
         0
@@ -8399,7 +8432,21 @@ window.LasidaoUi = (function () {
             const builtBadge = document.createElement('span');
             builtBadge.className = 'las-pboard-stack-badge is-built';
             builtBadge.textContent = String(builtN);
-            builtBadge.title = t('lasidao.stackBuiltCount', { n: builtN });
+            const sample = ordered.find((b) => b.built) || ordered[0];
+            if (sample && sample.buildType === 'produce') {
+              const unit = Math.max(1, Number(sample.produce) || 1);
+              builtBadge.title = t('lasidao.stackProduceTip', {
+                n: builtN,
+                amt: stackedSlotYield(builtN, unit),
+              });
+            } else if (sample && sample.buildType === 'wishWell') {
+              builtBadge.title = t('lasidao.stackWishWellTip', {
+                n: builtN,
+                amt: stackedSlotYield(builtN, 1),
+              });
+            } else {
+              builtBadge.title = t('lasidao.stackBuiltCount', { n: builtN });
+            }
             badges.appendChild(builtBadge);
             cell.appendChild(badges);
           }
@@ -8691,7 +8738,7 @@ window.LasidaoUi = (function () {
         ? game.me.maxResourceHand
         : me.maxResourceHand != null
           ? me.maxResourceHand
-          : 12;
+          : 8;
     const total = Object.values(me.resources || {}).reduce((a, b) => a + b, 0);
     return Math.max(0, total - max);
   }
@@ -8756,7 +8803,7 @@ window.LasidaoUi = (function () {
               ? game.me.maxResourceHand
               : me.maxResourceHand != null
                 ? me.maxResourceHand
-                : 12;
+                : 8;
           const total = Object.values(me.resources || {}).reduce(
             (a, b) => a + b,
             0
@@ -8801,7 +8848,7 @@ window.LasidaoUi = (function () {
     }
     if (kind === 'build') {
       const pending = me.pendingDiscardBuild;
-      const maxB = me.maxBuildings || game.maxBuildings || 3;
+      const maxB = me.maxBuildings || game.maxBuildings || 2;
       const unbuiltExisting = (me.buildings || []).filter((b) => !b.built);
       if (hintEl) {
         hintEl.textContent = unbuiltExisting.length
@@ -9160,10 +9207,10 @@ window.LasidaoUi = (function () {
       const isMe = Boolean(meId && p.id === meId);
       const maxB =
         p.maxBuildings ||
-        (game.maxBuildings || 3) + (Number(p.expandSlots) || 0);
+        (game.maxBuildings || 2) + (Number(p.expandSlots) || 0);
       const maxFunc = p.maxFuncHand || MAX_FUNC_HAND_UI;
       const maxRes =
-        p.maxResourceHand != null ? p.maxResourceHand : 12;
+        p.maxResourceHand != null ? p.maxResourceHand : 8;
       const totalRes = Object.values(p.resources || {}).reduce(
         (a, b) => a + b,
         0
@@ -9595,7 +9642,6 @@ window.LasidaoUi = (function () {
           const canHouse = canPay(me.resources || {}, houseCost);
         const usedHouse = Boolean(me.roundBuiltHouse);
         const usedBreed = Boolean(me.roundBred);
-        const usedExpand = Boolean(me.roundExpanded);
         if (buildHouseBtn) {
           const ok = myBuildTurn && canHouse && !mustDiscard && !usedHouse;
           buildHouseBtn.disabled = !ok;
@@ -9678,13 +9724,11 @@ window.LasidaoUi = (function () {
         if (expandPermBtn) {
           const expandCost = expandCostPayload(game);
           const canExpand = canPay(me.resources || {}, expandCost);
-          const ok = myBuildTurn && canExpand && !mustDiscard && !usedExpand;
+          const ok = myBuildTurn && canExpand && !mustDiscard;
           expandPermBtn.disabled = !ok;
           markAffordable(expandPermBtn, ok);
           let expandCostTip;
-          if (usedExpand) {
-            expandCostTip = t('lasidao.permanentUsedThisTurn');
-          } else if (canExpand) {
+          if (canExpand) {
             expandCostTip = t('lasidao.expandPermanentTip', expandCost);
           } else {
             expandCostTip = t('lasidao.expandPermanentLack', expandCost);
@@ -11549,12 +11593,10 @@ window.LasidaoUi = (function () {
   function expandCostPayload(game) {
     const c =
       (game && game.me && game.me.expandPermanentCost) ||
-      { wood: 1, stone: 1, food: 1, iron: 1 };
+      { wood: 1, stone: 1 };
     return {
       wood: c.wood,
       stone: c.stone,
-      food: c.food,
-      iron: c.iron,
       n: (game && game.me && game.me.expandCount) || 0,
     };
   }
@@ -13591,6 +13633,8 @@ window.LasidaoUi = (function () {
     resetSession,
     bindButtons,
     onPlayReveal,
+    showPlayReveal,
+    presentPlayRevealAndWait,
     onGameError,
     showSettleObtain,
     appendGameLogLine,

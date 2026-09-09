@@ -231,7 +231,7 @@ function makeExchange() {
   };
 }
 
-/** 每建成一座：生产阶段结束后可选任意一种资源 +1 */
+/** 许愿井：生产阶段结束后可选任意资源；同格叠放次数为 1+2+…+n */
 function makeWishWell() {
   return {
     id: nextId('bld'),

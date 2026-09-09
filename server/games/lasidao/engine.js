@@ -55,9 +55,9 @@ const START_HOUSES = 2;
 /** 每间房子可容纳的村民数 */
 const VILLAGERS_PER_HOUSE = 2;
 const MAX_VILLAGERS = 15;
-const MAX_FUNC_HAND = 3;
-const MAX_BUILDINGS = 3;
-const MAX_RESOURCE_HAND = 12;
+const MAX_FUNC_HAND = 2;
+const MAX_BUILDINGS = 2;
+const MAX_RESOURCE_HAND = 8;
 /** 每位玩家最多拥有的强化骰数量 */
 const MAX_ENHANCED_DICE = 5;
 /** 开局每位玩家自带的强化骰数量 */
@@ -68,7 +68,7 @@ const ENHANCED_DIE_STRENGTH = 1.5;
 const SPECIAL_DRAW_PICK_COUNT = 3;
 /** 征召：下一轮生产临时村民数量 */
 const RECRUIT_TEMP_VILLAGERS = 2;
-const EXPAND_RESOURCE_BONUS = 4;
+const EXPAND_RESOURCE_BONUS = 2;
 /** 资源板块摆放上限（1–3 格各 3 张，4–6 格各 2 张） */
 const MAX_RESOURCE_BOARD_TILES = 15;
 /** 事件牌堆总量；每轮洗混后抽 3 张摆到 4/5/6 号格 */
@@ -140,6 +140,35 @@ function buildingStackKey(b) {
     return `produce:${b.resource}:${b.rich ? 'rich' : 'poor'}`;
   }
   return String(b.buildType || '');
+}
+
+/** 1+2+…+n */
+function triangularNumber(n) {
+  const k = Math.max(0, Math.floor(Number(n) || 0));
+  return (k * (k + 1)) / 2;
+}
+
+/**
+ * 同格叠放产量：1+2+…+n；unit 为单卡产量（贫档/许愿井 1，富档 2）。
+ * 叠 1/2/3 座且 unit=1 → 1/3/6。
+ */
+function stackedSlotYield(n, unit = 1) {
+  const count = Math.max(0, Math.floor(Number(n) || 0));
+  if (count <= 0) return 0;
+  const u = Math.max(1, Math.floor(Number(unit) || 1));
+  return triangularNumber(count) * u;
+}
+
+function wishWellProduceCount(p) {
+  const bySlot = new Map();
+  for (const b of p.buildings || []) {
+    if (!b.built || b.buildType !== 'wishWell') continue;
+    const slot = String(b.slot);
+    bySlot.set(slot, (bySlot.get(slot) || 0) + 1);
+  }
+  let total = 0;
+  for (const n of bySlot.values()) total += stackedSlotYield(n, 1);
+  return total;
 }
 
 function isHomogeneousStackSlot(player, slot) {
@@ -279,9 +308,9 @@ function expandCountFor(player) {
   );
 }
 
-/** 常驻扩建造价：固定各 1，不随次数增加 */
+/** 常驻扩建造价：固定 1 木 1 石，不随次数增加、不限每回合次数 */
 function expandPermanentCost(_player) {
-  return { wood: 1, stone: 1, food: 1, iron: 1 };
+  return { wood: 1, stone: 1 };
 }
 
 const EXPAND_DIRECTIONS = ['building', 'function', 'resource'];
@@ -396,9 +425,7 @@ function addRes(have, gain) {
 }
 
 function countBuiltWishWell(p) {
-  return (p.buildings || []).filter(
-    (b) => b.built && b.buildType === 'wishWell'
-  ).length;
+  return wishWellProduceCount(p);
 }
 
 function countWishWell(p) {
@@ -609,6 +636,8 @@ function beginMercenaryPhase(game) {
     envId: cur.envId || null,
     number: cur.envNumber,
     label: cur.label,
+    actorId: cur.playerId,
+    actorName: (playerById(game, cur.playerId) || {}).name || '',
   });
   pushLog(
     game,
@@ -1641,7 +1670,7 @@ function createGameState(room) {
     pendingWishWellBonus: 0, // 本轮许愿井待选取资源次数
     expandSlots: 0, // 扩建建筑格后增加的无数字格数量
     expandFuncSlots: 0, // 扩建功能卡格后增加的上限
-    expandResSlots: 0, // 扩建资源卡位次数（每次 +4 手牌资源上限）
+    expandResSlots: 0, // 扩建资源卡位次数（每次 +2 手牌资源上限）
     buildTurnUsedBuyFunc: false, // 本建造回合已购买功能卡（不可重置）
     buildTurnUsedRedraw: false, // 本建造回合已使用重抽（不可重置）
   }));
@@ -1984,16 +2013,32 @@ function afterProduceAction(game, playerId) {
 
 function collectSettleBuildingReport(game, report) {
   for (const p of alivePlayers(game)) {
-    for (const b of p.buildings) {
-      if (!b.built || b.buildType !== 'produce') continue;
-      const amt = b.produce || 0;
+    const groups = new Map();
+    for (const b of p.buildings || []) {
+      if (!b.built || b.buildType !== 'produce' || !b.resource) continue;
+      const key = `${String(b.slot)}|${buildingStackKey(b)}`;
+      let g = groups.get(key);
+      if (!g) {
+        g = {
+          label: b.label,
+          resource: b.resource,
+          unit: Math.max(1, Number(b.produce) || 1),
+          count: 0,
+        };
+        groups.set(key, g);
+      }
+      g.count += 1;
+    }
+    for (const g of groups.values()) {
+      const amt = stackedSlotYield(g.count, g.unit);
       if (amt <= 0) continue;
       report.buildings.push({
         pid: p.id,
         name: p.name,
-        label: b.label,
-        resource: b.resource,
+        label: g.count > 1 ? `${g.label}×${g.count}` : g.label,
+        resource: g.resource,
         amount: amt,
+        stack: g.count,
       });
     }
   }
@@ -2274,12 +2319,12 @@ function startSettle(game) {
   game.pendingMercenaryQueue = game.pendingMercenaryQueue || [];
 
   for (const p of alivePlayers(game)) {
-    const n = countBuiltWishWell(p);
+    const n = wishWellProduceCount(p);
     if (n > 0) {
       p.pendingWishWellBonus = n;
       pushLog(
         game,
-        `${p.name} 许愿井：生产阶段结束后可选择任意资源 +1 ×${n}`
+        `${p.name} 许愿井：生产阶段结束后可选择任意资源共 +${n}`
       );
     }
   }
@@ -5968,14 +6013,11 @@ function actBreedPermanent(game, player) {
 function actExpandPermanent(game, player, payload) {
   const block = rejectIfBuildPhaseCardDiscardPending(player);
   if (block) return block;
-  if (player.roundExpanded) {
-    return { ok: false, error: '本回合已扩建' };
-  }
   const cost = expandPermanentCost(player);
   if (!canPay(player.resources, cost)) {
     return {
       ok: false,
-      error: '需要各 1 木 1 石 1 麦 1 铁',
+      error: '需要 1 木 1 石',
     };
   }
   pay(player.resources, cost);
@@ -5986,17 +6028,16 @@ function actExpandPermanent(game, player, payload) {
     }
     return result;
   }
-  player.roundExpanded = true;
   const stepText = pickActionLogText(game, game.log.length - 2);
   pushLog(
     game,
-    `${player.name} 常驻扩建（-1 木 -1 石 -1 麦 -1 铁）`
+    `${player.name} 常驻扩建（-1 木 -1 石）`
   );
   pushPlayReveal(game, {
     kind: 'step',
     actorId: player.id,
     actorName: player.name,
-    stepText: stepText || `${player.name} 常驻扩建（-1 木 -1 石 -1 麦 -1 铁）`,
+    stepText: stepText || `${player.name} 常驻扩建（-1 木 -1 石）`,
   });
   if (checkWin(game)) return { ok: true };
   game.lastBuilderId = player.id;
@@ -6483,6 +6524,8 @@ function publicGameState(game, viewerId) {
     neutralWorkerId: NEUTRAL_WORKER_ID,
     neutralWorkerName: NEUTRAL_WORKER_NAME,
     maxBuildings: MAX_BUILDINGS,
+    maxFuncHand: MAX_FUNC_HAND,
+    maxResourceHand: MAX_RESOURCE_HAND,
     maxVillagers: MAX_VILLAGERS,
     maxEnhancedDice: MAX_ENHANCED_DICE,
     winScore: winScoreOf(game),
@@ -7485,6 +7528,8 @@ module.exports = {
   ENVIRONMENT_DRAW_PER_ROUND,
   ENVIRONMENT_SLOT_NUMBERS,
   MAX_RESOURCE_HAND,
+  MAX_FUNC_HAND,
+  MAX_BUILDINGS,
   MAX_ENHANCED_DICE,
   START_ENHANCED_DICE,
   ENHANCED_DIE_STRENGTH,
@@ -7495,6 +7540,9 @@ module.exports = {
   expandPermanentCost,
   maxBuildingsFor,
   occupiedBuildSlotCount,
+  triangularNumber,
+  stackedSlotYield,
+  wishWellProduceCount,
   assignBuildingSlot,
   takeBuildingCard,
   buildingStackKey,
