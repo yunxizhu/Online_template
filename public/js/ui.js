@@ -2328,6 +2328,8 @@
     return state.games.find((g) => g.id === id) || null;
   }
 
+  let lastCreateGameId = null;
+
   function updateCreateForm() {
     const g = selectedGameMeta();
     if (!g) {
@@ -2335,14 +2337,17 @@
       return;
     }
 
-    // 三国杀为多模式；其他游戏仅「标准模式」（由各游戏 modes 下发，缺省则兜底）
+    // 由各游戏 modes 下发；缺省则兜底为「标准模式」。切换游戏时落到该游戏的默认模式。
     const modes =
       g.modes && g.modes.length
         ? g.modes
         : [{ id: 'standard', label: t('create.modeStandard') }];
+    const gameChanged = lastCreateGameId !== g.id;
+    lastCreateGameId = g.id;
     if (el.gameModeWrap) el.gameModeWrap.hidden = false;
     if (el.gameMode) {
-      const cur = el.gameMode.value;
+      let cur = el.gameMode.value;
+      if (g.id === 'lasidao' && (cur === 'standard' || cur === 'solo')) cur = 'melee';
       el.gameMode.innerHTML = '';
       for (const m of modes) {
         const opt = document.createElement('option');
@@ -2350,8 +2355,17 @@
         opt.textContent = modeLabelOf(m.id, m.label);
         el.gameMode.appendChild(opt);
       }
-      if ([...el.gameMode.options].some((o) => o.value === cur)) {
+      const defaultMode = modes.find((m) => m.default) || modes[0];
+      if (
+        !gameChanged &&
+        [...el.gameMode.options].some((o) => o.value === cur)
+      ) {
         el.gameMode.value = cur;
+      } else if (
+        defaultMode &&
+        [...el.gameMode.options].some((o) => o.value === defaultMode.id)
+      ) {
+        el.gameMode.value = defaultMode.id;
       } else {
         el.gameMode.value = modes[0].id;
       }
@@ -2370,30 +2384,31 @@
       el.gameHint.textContent = t('create.hintIncanFull');
     } else if (g.id === 'lasidao') {
       el.maxPlayersWrap.hidden = false;
-      const modeId = el.gameMode ? el.gameMode.value : 'standard';
-      if (modeId === 'h2h') {
-        el.roomMax.innerHTML = '';
+      const modeId = el.gameMode ? el.gameMode.value : 'melee';
+      const mode = (g.modes || []).find((m) => m.id === modeId) || g.modes[0];
+      const seats = (mode && mode.seats) || [2, 3, 4, 5];
+      const cur = el.roomMax.value;
+      const fallback = seats.includes(Number(mode && mode.defaultSeat))
+        ? Number(mode.defaultSeat)
+        : seats[0];
+      el.roomMax.innerHTML = '';
+      for (const n of seats) {
         const opt = document.createElement('option');
-        opt.value = '4';
-        opt.textContent = '4';
+        opt.value = String(n);
+        opt.textContent = String(n);
         el.roomMax.appendChild(opt);
-        el.roomMax.value = '4';
+      }
+      if (
+        !gameChanged &&
+        [...el.roomMax.options].some((o) => o.value === cur)
+      ) {
+        el.roomMax.value = cur;
+      } else {
+        el.roomMax.value = String(fallback);
+      }
+      if (modeId === 'h2h') {
         el.gameHint.textContent = t('create.hintLasidaoH2h');
       } else {
-        const cur = el.roomMax.value;
-        // 仅保留 2–5；勿在每次 lobby:update 时强制写回默认 4
-        el.roomMax.innerHTML = '';
-        for (let n = 2; n <= 5; n++) {
-          const opt = document.createElement('option');
-          opt.value = String(n);
-          opt.textContent = String(n);
-          el.roomMax.appendChild(opt);
-        }
-        if ([...el.roomMax.options].some((o) => o.value === cur)) {
-          el.roomMax.value = cur;
-        } else {
-          el.roomMax.value = '4';
-        }
         el.gameHint.textContent = t('create.hintLasidaoFull');
       }
     } else if (g.id === 'sgs') {
@@ -3722,8 +3737,12 @@
     }
     updateCreateForm();
     if (el.gameMode && room.gameMode) {
-      if ([...el.gameMode.options].some((o) => o.value === room.gameMode)) {
-        el.gameMode.value = room.gameMode;
+      let mode = room.gameMode;
+      if (room.gameType === 'lasidao' && (mode === 'standard' || mode === 'solo')) {
+        mode = 'melee';
+      }
+      if ([...el.gameMode.options].some((o) => o.value === mode)) {
+        el.gameMode.value = mode;
         updateCreateForm();
       }
     }

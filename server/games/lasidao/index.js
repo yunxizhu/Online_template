@@ -8,8 +8,8 @@ module.exports = {
   minPlayers: 2,
   maxPlayers: 5,
   modes: [
-    { id: 'standard', label: '标准模式' },
-    { id: 'h2h', label: '2V2', seats: [4] },
+    { id: 'h2h', label: '组队模式', seats: [4] },
+    { id: 'melee', label: '各自为战', seats: [2, 3, 4, 5], default: true, defaultSeat: 3 },
   ],
   client: {
     styles: ['/games/lasidao/style.css'],

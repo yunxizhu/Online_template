@@ -160,7 +160,8 @@
     "joining": "Joining room…",
     "joinTimeout": "Join timed out, please retry",
     "hintIncanFull": "Incan Gold: 3–8 players; choose together, reveal after all lock.",
-    "hintLasidaoFull": "Kalastan: 2–5 players; produce → cancel settle → build; first to 10 wins (sole winner).",
+    "hintLasidaoH2h": "Kalastan Team: 2v2 only; shared teammate hands; team reaches 15 points to win.",
+    "hintLasidaoFull": "Kalastan Free-for-all: 2–5 players; produce → cancel settle → build; first to 10 wins (sole winner).",
     "hintSgsH2h": "Sanguosha 2v2: 4 players, shared teammate hands, ban then pick.",
     "hintSgs1v2": "Sanguosha 1v2: 3 players, landlord mode.",
     "hintSgsXianzhu": "Sanguosha Xianzhu mode: 5/8 players.",
@@ -208,7 +209,8 @@
     "lasidao": "Kalastan",
     "modes": {
       "identity": "Identity",
-      "standard": "Standard"
+      "standard": "Standard",
+      "melee": "Free-for-all"
     }
   },
   "incan": {

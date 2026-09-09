@@ -89,12 +89,22 @@ function resolveRoomConfig({
   );
 
   if (game.modes && game.modes.length) {
-    const mode = game.modes.find((m) => m.id === gameMode) || game.modes[0];
+    let requested = gameMode;
+    if (type === 'lasidao' && (requested === 'standard' || requested === 'solo')) {
+      requested = 'melee';
+    }
+    const mode =
+      game.modes.find((m) => m.id === requested) ||
+      game.modes.find((m) => m.default) ||
+      game.modes[0];
     modeId = mode.id;
     modeLabel = mode.label;
     if (mode.seats && mode.seats.length) {
       const seat = Number(maxPlayers);
-      max = mode.seats.includes(seat) ? seat : mode.seats[0];
+      const fallback = mode.seats.includes(Number(mode.defaultSeat))
+        ? Number(mode.defaultSeat)
+        : mode.seats[0];
+      max = mode.seats.includes(seat) ? seat : fallback;
       min = max;
     }
   } else {
@@ -1525,7 +1535,7 @@ class RoomManager {
       const need = Number(room.maxPlayers) || min;
       const seated = (room.players || []).filter((p) => !p.left).length;
       if (isTeamSeatRoom(room) && seated >= need) {
-        return { ok: false, error: '2V2 需要队伍 A、B 各 2 人才能开始' };
+        return { ok: false, error: '组队模式需要队伍 A、B 各 2 人才能开始' };
       }
       return {
         ok: false,
