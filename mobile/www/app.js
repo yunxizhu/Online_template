@@ -3,12 +3,34 @@
   'use strict';
 
   const APP = 'lianji';
-  const BROKER = 'wss://broker.emqx.io:8084/mqtt';
+  /** 启动按序探测，停在第一个可用；大厅可手动切换 */
+  const BROKER_SLOTS = [
+    { id: 'hivemq', name: 'HiveMQ', url: 'wss://broker.hivemq.com:8884/mqtt' },
+    { id: 'tyckr', name: 'Tyckr', url: 'wss://mqtt.tyckr.io:8081' },
+    {
+      id: 'dashboard',
+      name: 'Dashboard',
+      url: 'wss://mqtt-dashboard.com:8884/mqtt',
+    },
+    {
+      id: 'mosquitto',
+      name: 'Mosquitto',
+      url: 'wss://test.mosquitto.org:8081/mqtt',
+    },
+    {
+      id: 'shiftr',
+      name: 'Shiftr',
+      url: 'wss://public.cloud.shiftr.io',
+      username: 'public',
+      password: 'public',
+    },
+    { id: 'emqx', name: 'EMQX', url: 'wss://broker.emqx.io:8084/mqtt' },
+  ];
   /** 与电脑端默认频道一致，加入端不提供切换 */
   const DEFAULT_CHANNEL = 'xiyun_lianjidating_public';
-  const LOGIN_HB_MS = 10000;
-  const ROOM_OFFLINE_MS = 15000;
-  const LOGIN_OFFLINE_MS = 25000;
+  const LOGIN_HB_MS = 5000;
+  const ROOM_OFFLINE_MS = 12000;
+  const LOGIN_OFFLINE_MS = 12000;
   const STALE_CLEAR_MS = 120000;
   const STORAGE_NICK = 'lianji.nick';
   const STORAGE_TAG = 'lianji.tag';
@@ -43,6 +65,9 @@
     btnCreateRoom: document.getElementById('btn-create-room'),
     btnJoin: document.getElementById('btn-toggle-join'),
     peersLabel: document.getElementById('peers-label'),
+    btnMqttBroker: document.getElementById('btn-mqtt-broker'),
+    mqttBrokerModal: document.getElementById('mqtt-broker-modal'),
+    mqttBrokerList: document.getElementById('mqtt-broker-list'),
     roomList: document.getElementById('room-list'),
     roomEmpty: document.getElementById('room-list-empty'),
     roomListPlaying: document.getElementById('room-list-playing'),
@@ -90,8 +115,14 @@
   const logins = new Map();
 
   let client = null;
+  let activeBrokerId = '';
+  let activeBrokerName = '';
+  let mqttOpLock = false;
+  let mqttIntentionalDetach = false;
+  let mqttAllDownAlerted = false;
   let pruneTimer = null;
   let loginTimer = null;
+  const ephemeralSeen = new Map();
   let entered = false;
   let playerName = '';
   let playerTag = '';
@@ -210,11 +241,56 @@
     });
   }
 
+  function mqttConnected() {
+    return Boolean(client && client.connected);
+  }
+
+  function publishAllMqtt(topic, payload, opts) {
+    if (!mqttConnected()) return false;
+    try {
+      client.publish(topic, payload, opts || {});
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function noteEphemeral(key, ttlMs) {
+    const now = Date.now();
+    const ttl = ttlMs || 8000;
+    for (const [k, t] of ephemeralSeen) {
+      if (now - t > ttl) ephemeralSeen.delete(k);
+    }
+    if (ephemeralSeen.has(key)) return true;
+    ephemeralSeen.set(key, now);
+    return false;
+  }
+
+  function updateBrokerButton() {
+    if (!el.btnMqttBroker) return;
+    el.btnMqttBroker.hidden = false;
+    const name = activeBrokerName || (mqttConnected() ? '…' : '—');
+    el.btnMqttBroker.textContent = '服务器：' + name;
+    el.btnMqttBroker.disabled = Boolean(mqttOpLock);
+  }
+
+  function updatePeersLabel() {
+    if (!el.peersLabel) return;
+    updateBrokerButton();
+    if (!mqttConnected()) {
+      el.peersLabel.textContent = mqttAllDownAlerted
+        ? '广播：所有服务器都无法使用'
+        : '广播：连接中…';
+      return;
+    }
+    el.peersLabel.textContent = '广播：已连接';
+  }
+
   function publishLeave(roomId) {
     const id = roomId ? String(roomId).toUpperCase() : '';
     if (!id || !playerName) return false;
     rememberExplicitLeave(id);
-    if (!client || !client.connected) return false;
+    if (!mqttConnected()) return false;
     const payload = {
       app: APP,
       kind: 'leave',
@@ -225,11 +301,10 @@
       at: Date.now(),
     };
     try {
-      client.publish(prefix() + '/leave', JSON.stringify(payload), {
+      return publishAllMqtt(prefix() + '/leave', JSON.stringify(payload), {
         qos: 1,
         retain: false,
       });
-      return true;
     } catch (_) {
       return false;
     }
@@ -1360,13 +1435,21 @@
 
   function clearPeerRoomBeacon(peerInstanceId) {
     const id = String(peerInstanceId || '').trim();
-    if (!client || !client.connected || !id || id === instanceId) return;
+    if (!mqttConnected() || !id || id === instanceId) return;
     try {
-      client.publish(prefix() + '/room/' + id, '', { qos: 1, retain: true });
+      publishAllMqtt(prefix() + '/room/' + id, '', { qos: 1, retain: true });
     } catch (_) {}
   }
 
   function onPeerLoginCleared(id) {
+    const existing = logins.get(id);
+    if (
+      existing &&
+      existing.updateTime &&
+      Date.now() - existing.updateTime < LOGIN_OFFLINE_MS
+    ) {
+      return;
+    }
     logins.delete(id);
     rooms.delete(id);
     clearPeerRoomBeacon(id);
@@ -1405,9 +1488,9 @@
     try {
       if (sessionStorage.getItem(PLAY_JOIN_KEY)) return;
     } catch (_) {}
-    if (!client || !client.connected || !instanceId) return;
+    if (!mqttConnected() || !instanceId) return;
     try {
-      client.publish(prefix() + '/login/' + instanceId, '', {
+      publishAllMqtt(prefix() + '/login/' + instanceId, '', {
         qos: 0,
         retain: true,
       });
@@ -1415,7 +1498,7 @@
   }
 
   function publishLoginExtra(status, roomId) {
-    if (!client || !client.connected || !entered) return;
+    if (!mqttConnected() || !entered) return;
     const payload = {
       app: APP,
       instanceId,
@@ -1436,14 +1519,15 @@
       loginAt,
       updateTime: Date.now(),
     };
-    client.publish(prefix() + '/login/' + instanceId, JSON.stringify(payload), {
-      qos: 1,
-      retain: true,
-    });
+    publishAllMqtt(
+      prefix() + '/login/' + instanceId,
+      JSON.stringify(payload),
+      { qos: 1, retain: true }
+    );
   }
 
   function publishLogin() {
-    if (!client || !client.connected || !entered) return;
+    if (!mqttConnected() || !entered) return;
     const payload = {
       app: APP,
       instanceId,
@@ -1464,10 +1548,11 @@
       loginAt,
       updateTime: Date.now(),
     };
-    client.publish(prefix() + '/login/' + instanceId, JSON.stringify(payload), {
-      qos: 1,
-      retain: true,
-    });
+    publishAllMqtt(
+      prefix() + '/login/' + instanceId,
+      JSON.stringify(payload),
+      { qos: 1, retain: true }
+    );
   }
 
   function handleMessage(topic, buf) {
@@ -1479,6 +1564,14 @@
         const p = JSON.parse(raw);
         if (!p || p.app !== APP || p.kind !== 'chat') return;
         if (p.instanceId && p.instanceId === instanceId) return;
+        const key =
+          'chat:' +
+          (p.instanceId || '') +
+          ':' +
+          (p.at || '') +
+          ':' +
+          String(p.text || '');
+        if (noteEphemeral(key)) return;
         appendChat(p);
       } catch (_) {}
       return;
@@ -1496,9 +1589,12 @@
       try {
         const p = JSON.parse(raw);
         if (!p || p.app !== APP) return;
+        const updateTime = Number(p.updateTime) || Date.now();
+        const prev = logins.get(id);
+        if (prev && prev.updateTime && updateTime < prev.updateTime) return;
         logins.set(id, {
           ...p,
-          updateTime: Number(p.updateTime) || Date.now(),
+          updateTime,
         });
         renderPeople();
       } catch (_) {}
@@ -1509,6 +1605,14 @@
       const id = topic.slice(roomPrefix.length);
       if (!id) return;
       if (!raw.trim()) {
+        const existing = rooms.get(id);
+        if (
+          existing &&
+          existing.updateTime &&
+          Date.now() - existing.updateTime < ROOM_OFFLINE_MS
+        ) {
+          return;
+        }
         rooms.delete(id);
         renderRooms();
         return;
@@ -1516,6 +1620,9 @@
       try {
         const p = JSON.parse(raw);
         if (!p || p.app !== APP || !p.host || !p.id) return;
+        const updateTime = Number(p.updateTime) || Date.now();
+        const prev = rooms.get(id);
+        if (prev && prev.updateTime && updateTime < prev.updateTime) return;
         rooms.set(id, {
           instanceId: id,
           id: String(p.id),
@@ -1535,11 +1642,24 @@
           playerTags: Array.isArray(p.playerTags) ? p.playerTags : [],
           canJoin: p.canJoin,
           canSpectate: p.canSpectate,
-          updateTime: Number(p.updateTime) || Date.now(),
+          updateTime,
         });
         renderRooms();
       } catch (_) {}
     }
+  }
+
+  function detachMqttClient(c, force) {
+    if (!c) return;
+    try {
+      c.removeAllListeners();
+    } catch (_) {}
+    try {
+      c.on('error', () => {});
+    } catch (_) {}
+    try {
+      c.end(force !== false);
+    } catch (_) {}
   }
 
   function disconnectMqtt() {
@@ -1552,12 +1672,237 @@
       loginTimer = null;
     }
     clearLoginBeacon();
-    if (client) {
-      try {
-        client.end(true);
-      } catch (_) {}
-      client = null;
+    mqttIntentionalDetach = true;
+    detachMqttClient(client, true);
+    client = null;
+    mqttIntentionalDetach = false;
+    updatePeersLabel();
+  }
+
+  function tryConnectBroker(slot, timeoutMs) {
+    const mqttLib =
+      typeof mqtt !== 'undefined'
+        ? mqtt
+        : typeof window !== 'undefined'
+          ? window.mqtt
+          : null;
+    if (!mqttLib || !mqttLib.connect || !slot) {
+      return Promise.reject(new Error('MQTT 库未加载'));
     }
+    const ms = timeoutMs || 10000;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const connectOpts = {
+        clientId:
+          'lianji-and-' +
+          String(instanceId || 'x').slice(0, 8) +
+          '-' +
+          slot.id +
+          '-' +
+          Math.random().toString(36).slice(2, 6),
+        protocolVersion: 4,
+        clean: true,
+        keepalive: 60,
+        reconnectPeriod: 0,
+        connectTimeout: ms,
+        will: {
+          topic: prefix() + '/login/' + instanceId,
+          payload: '',
+          qos: 1,
+          retain: true,
+        },
+      };
+      if (slot.username) {
+        connectOpts.username = slot.username;
+        connectOpts.password = slot.password || '';
+      }
+      const c = mqttLib.connect(slot.url, connectOpts);
+      const finish = (err, ok) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (ok) resolve(c);
+        else {
+          detachMqttClient(c, true);
+          reject(err || new Error('连接失败'));
+        }
+      };
+      const timer = setTimeout(() => finish(new Error('连接超时'), false), ms + 500);
+      c.on('connect', () => finish(null, true));
+      c.on('error', (err) => {
+        if (settled) return;
+        finish(err, false);
+      });
+    });
+  }
+
+  function adoptMqttClient(c, slot) {
+    mqttIntentionalDetach = true;
+    const prev = client;
+    client = null;
+    if (prev) detachMqttClient(prev, false);
+    mqttIntentionalDetach = false;
+
+    // 新连接只认新节点数据
+    rooms.clear();
+    logins.clear();
+    renderRooms();
+    renderPeople();
+
+    client = c;
+    activeBrokerId = slot.id;
+    activeBrokerName = slot.name;
+    c.on('message', handleMessage);
+    c.on('error', () => {});
+    c.on('close', () => {
+      if (mqttIntentionalDetach) return;
+      if (client !== c) return;
+      client = null;
+      updatePeersLabel();
+      recoverMqttAll('disconnect').catch(() => {});
+    });
+    const base = prefix();
+    c.subscribe(
+      [base + '/login/+', base + '/room/+', base + '/chat/all'],
+      { qos: 1 },
+      (err) => {
+        if (err) return;
+        updatePeersLabel();
+        publishLogin();
+        flushPersistedLeaves();
+        hideBootSplash();
+      }
+    );
+    updatePeersLabel();
+  }
+
+  async function connectExclusive(opts) {
+    opts = opts || {};
+    if (mqttOpLock) return { ok: false, message: '正在切换服务器，请稍候' };
+    mqttOpLock = true;
+    updateBrokerButton();
+    try {
+      let order = BROKER_SLOTS.slice();
+      if (opts.onlyId) {
+        order = BROKER_SLOTS.filter((s) => s.id === opts.onlyId);
+      }
+      for (let i = 0; i < order.length; i++) {
+        const slot = order[i];
+        try {
+          const c = await tryConnectBroker(slot, 10000);
+          adoptMqttClient(c, slot);
+          mqttAllDownAlerted = false;
+          return { ok: true, broker: { id: slot.id, name: slot.name, url: slot.url } };
+        } catch (_) {
+          /* try next */
+        }
+      }
+      return {
+        ok: false,
+        message: opts.onlyId ? '该服务器无法连接' : '所有服务器都无法使用',
+      };
+    } finally {
+      mqttOpLock = false;
+      updateBrokerButton();
+    }
+  }
+
+  async function recoverMqttAll() {
+    const result = await connectExclusive({});
+    if (!result.ok) {
+      if (!mqttAllDownAlerted) {
+        mqttAllDownAlerted = true;
+        window.alert(result.message || '所有服务器都无法使用');
+      }
+      updatePeersLabel();
+    }
+    return result;
+  }
+
+  function setMqttBrokerModalOpen(open) {
+    if (!el.mqttBrokerModal) return;
+    el.mqttBrokerModal.hidden = !open;
+    if (open) renderMqttBrokerList();
+  }
+
+  function renderMqttBrokerList() {
+    if (!el.mqttBrokerList) return;
+    el.mqttBrokerList.innerHTML = '';
+    for (const slot of BROKER_SLOTS) {
+      const li = document.createElement('li');
+      const isActive = slot.id === activeBrokerId;
+      if (isActive) li.classList.add('is-active');
+      const info = document.createElement('div');
+      const nameEl = document.createElement('div');
+      nameEl.className = 'mqtt-broker-name';
+      nameEl.textContent = slot.name;
+      info.appendChild(nameEl);
+      if (isActive) {
+        const meta = document.createElement('div');
+        meta.className = 'mqtt-broker-meta';
+        meta.textContent = '当前';
+        info.appendChild(meta);
+      }
+      li.appendChild(info);
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      if (isActive) btn.className = 'secondary';
+      btn.textContent = isActive ? '当前' : '使用';
+      btn.disabled = Boolean(mqttOpLock) || isActive;
+      btn.addEventListener('click', () => {
+        switchMqttTo(slot.id).catch(() => {});
+      });
+      li.appendChild(btn);
+      el.mqttBrokerList.appendChild(li);
+    }
+  }
+
+  async function switchMqttTo(targetId) {
+    const next = BROKER_SLOTS.find((s) => s.id === targetId);
+    if (!next) return;
+    if (next.id === activeBrokerId && mqttConnected()) {
+      setMqttBrokerModalOpen(false);
+      showToast('已在 ' + next.name);
+      return;
+    }
+    const prevId = activeBrokerId;
+    // 换服务器：立刻清空列表，只等新节点心跳
+    rooms.clear();
+    logins.clear();
+    renderRooms();
+    renderPeople();
+    showToast('正在切换服务器…');
+    renderMqttBrokerList();
+    const result = await connectExclusive({ onlyId: next.id });
+    if (result.ok) {
+      setMqttBrokerModalOpen(false);
+      showToast('已切换至 ' + next.name);
+      renderMqttBrokerList();
+      return;
+    }
+    window.alert('该服务器无法连接');
+    rooms.clear();
+    logins.clear();
+    renderRooms();
+    renderPeople();
+    let restored = { ok: false };
+    if (prevId && prevId !== next.id) {
+      restored = await connectExclusive({ onlyId: prevId });
+    }
+    if (!restored.ok) {
+      restored = await connectExclusive({});
+    }
+    if (restored.ok && restored.broker) {
+      showToast('已回到可用服务器 ' + restored.broker.name);
+    }
+    renderMqttBrokerList();
+  }
+
+  async function switchMqttToNext() {
+    let idx = BROKER_SLOTS.findIndex((s) => s.id === activeBrokerId);
+    if (idx < 0) idx = 0;
+    const next = BROKER_SLOTS[(idx + 1) % BROKER_SLOTS.length];
+    return switchMqttTo(next.id);
   }
 
   function connectMqtt() {
@@ -1583,48 +1928,20 @@
     if (bootSplashPending && el.bootSplashText) {
       el.bootSplashText.textContent = '正在连接广播…';
     }
-    client = mqttLib.connect(BROKER, {
-      clientId: 'lianji-and-' + instanceId.slice(0, 8),
-      protocolVersion: 4,
-      clean: true,
-      keepalive: 60,
-      reconnectPeriod: 8000,
-      connectTimeout: 12000,
-      will: {
-        topic: prefix() + '/login/' + instanceId,
-        payload: '',
-        qos: 1,
-        retain: true,
-      },
-    });
+    updateBrokerButton();
 
-    client.on('connect', () => {
-      const base = prefix();
-      client.subscribe(
-        [base + '/login/+', base + '/room/+', base + '/chat/all'],
-        { qos: 1 },
-        (err) => {
-          if (err) {
-            if (el.peersLabel) el.peersLabel.textContent = '广播：订阅失败';
-            hideBootSplash();
-            return;
-          }
-          if (el.peersLabel) el.peersLabel.textContent = '广播：已连接';
-          publishLogin();
-          flushPersistedLeaves();
+    connectExclusive({})
+      .then((result) => {
+        if (!result.ok) {
+          mqttAllDownAlerted = true;
+          window.alert(result.message || '所有服务器都无法使用');
           hideBootSplash();
+          updatePeersLabel();
         }
-      );
-    });
-    client.on('message', handleMessage);
-    client.on('error', () => {
-      if (el.peersLabel) el.peersLabel.textContent = '广播：连接异常';
-    });
-    client.on('close', () => {
-      if (entered && el.peersLabel) {
-        el.peersLabel.textContent = '广播：已断开，重连中…';
-      }
-    });
+      })
+      .catch(() => {
+        hideBootSplash();
+      });
 
     pruneTimer = setInterval(prune, 5000);
     loginTimer = setInterval(publishLogin, LOGIN_HB_MS);
@@ -1722,7 +2039,7 @@
       return;
     }
     lastChatAt = now;
-    if (!client || !client.connected) {
+    if (!mqttConnected()) {
       showToast('广播未连接，无法发送');
       return;
     }
@@ -1738,7 +2055,7 @@
       text: body,
       at: now,
     };
-    client.publish(prefix() + '/chat/all', JSON.stringify(msg), {
+    publishAllMqtt(prefix() + '/chat/all', JSON.stringify(msg), {
       qos: 0,
       retain: false,
     });
@@ -1883,6 +2200,15 @@
         showToast('已刷新大厅列表');
       });
     }
+    if (el.btnMqttBroker) {
+      el.btnMqttBroker.addEventListener('click', () => {
+        if (mqttOpLock) return;
+        setMqttBrokerModalOpen(true);
+      });
+    }
+    document.querySelectorAll('[data-close="mqtt-broker"]').forEach((node) => {
+      node.addEventListener('click', () => setMqttBrokerModalOpen(false));
+    });
     if (el.chatForm) {
       el.chatForm.addEventListener('submit', (ev) => {
         ev.preventDefault();

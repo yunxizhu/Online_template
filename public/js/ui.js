@@ -42,7 +42,10 @@
     createRoomModal: document.getElementById('create-room-modal'),
     joinCodeModal: document.getElementById('join-code-modal'),
     peersLabel: document.getElementById('peers-label'),
-    btnMqttReconnect: document.getElementById('btn-mqtt-reconnect'),
+    btnMqttBroker: document.getElementById('btn-mqtt-broker'),
+    mqttBrokerModal: document.getElementById('mqtt-broker-modal'),
+    mqttBrokerList: document.getElementById('mqtt-broker-list'),
+    btnCloseMqttBroker: document.getElementById('btn-close-mqtt-broker'),
     lobbyPeopleAside: document.getElementById('lobby-people-aside'),
     chatDock: document.getElementById('chat-dock'),
     chatDragHandle: document.getElementById('chat-drag-handle'),
@@ -150,6 +153,9 @@
     ctxTarget: null,
     mqttBulletin: false,
     mqttConnected: false,
+    mqttBroker: null,
+    mqttBrokers: [],
+    mqttAllBrokersDown: false,
     mqttHintShown: false,
     createModalMode: 'create', // 'create' | 'edit' | 'create-on-host'
     createOnHostTarget: null,
@@ -192,6 +198,8 @@
   let lobbyRefreshTimer = null;
   let mqttAutoRecoverTimer = null;
   let mqttReconnecting = false;
+  let mqttSwitching = false;
+  let mqttAllDownAlerted = false;
   let remoteRecoverTimer = null;
   let remoteRecovering = false;
   let roomReloadBusy = false;
@@ -2801,17 +2809,33 @@
     }
   }
 
+  function renderMqttBrokerButton() {
+    if (!el.btnMqttBroker) return;
+    if (!state.mqttBulletin) {
+      el.btnMqttBroker.hidden = true;
+      return;
+    }
+    el.btnMqttBroker.hidden = false;
+    const name =
+      (state.mqttBroker && state.mqttBroker.name) ||
+      (state.mqttConnected ? '…' : '—');
+    el.btnMqttBroker.textContent = t('lobby.mqttServerBtn', { name });
+    el.btnMqttBroker.disabled = Boolean(mqttSwitching);
+    el.btnMqttBroker.title = t('lobby.mqttSwitchHint');
+  }
+
   function renderPeers(peers) {
     if (!el.peersLabel) return;
     const list = peers || [];
     const n = list.length;
     const mqttN = list.filter((p) => String(p.via || '').includes('mqtt')).length;
+    renderMqttBrokerButton();
     if (state.mqttBulletin && state.mqttConnected === false) {
-      el.peersLabel.textContent = t('lobby.peersMqttDisconnected');
-      if (el.btnMqttReconnect) el.btnMqttReconnect.hidden = false;
+      el.peersLabel.textContent = state.mqttAllBrokersDown
+        ? t('lobby.mqttAllDown')
+        : t('lobby.peersMqttDisconnected');
       return;
     }
-    if (el.btnMqttReconnect) el.btnMqttReconnect.hidden = true;
     if (n === 0) {
       el.peersLabel.textContent =
         state.mqttBulletin
@@ -2827,10 +2851,10 @@
   }
 
   async function requestMqttReconnect({ silent } = {}) {
-    if (!state.mqttBulletin || mqttReconnecting) return;
+    if (!state.mqttBulletin || mqttReconnecting || mqttSwitching) return;
     if (typeof net.reconnectMqtt !== 'function') return;
     mqttReconnecting = true;
-    if (el.btnMqttReconnect) el.btnMqttReconnect.disabled = true;
+    renderMqttBrokerButton();
     if (!silent) showToast(t('lobby.mqttReconnecting'));
     try {
       const result = await net.reconnectMqtt();
@@ -2844,7 +2868,117 @@
       if (!silent) showToast(err.message || t('lobby.mqttReconnectFail'));
     } finally {
       mqttReconnecting = false;
-      if (el.btnMqttReconnect) el.btnMqttReconnect.disabled = false;
+      renderMqttBrokerButton();
+    }
+  }
+
+  async function requestMqttSwitch(brokerId) {
+    if (!state.mqttBulletin || mqttSwitching) return;
+    if (typeof net.switchMqttBroker !== 'function') return;
+    const id = String(brokerId || '').trim();
+    if (!id) return;
+    if (state.mqttBroker && state.mqttBroker.id === id && state.mqttConnected) {
+      setMqttBrokerModalOpen(false);
+      showToast(t('lobby.mqttSwitchOk', { name: state.mqttBroker.name || id }));
+      return;
+    }
+    mqttSwitching = true;
+    // 本地先清掉非本机条目，等新服务器心跳再填
+    clearRemoteLobbyView();
+    renderMqttBrokerButton();
+    renderMqttBrokerList();
+    showToast(t('lobby.mqttSwitching'));
+    try {
+      const result = await net.switchMqttBroker(id);
+      if (result && result.broker) {
+        state.mqttBroker = result.broker;
+      }
+      if (Array.isArray(result && result.brokers)) {
+        state.mqttBrokers = result.brokers;
+      }
+      state.mqttConnected = Boolean(result && result.mqttConnected);
+      renderMqttBrokerButton();
+      renderMqttBrokerList();
+      if (result && result.ok) {
+        const name = (result.broker && result.broker.name) || '';
+        setMqttBrokerModalOpen(false);
+        showToast(t('lobby.mqttSwitchOk', { name }));
+        requestLobbyRefresh();
+        return;
+      }
+      window.alert(t('lobby.mqttSwitchFail'));
+      if (result && result.restored && result.broker && result.broker.name) {
+        showToast(t('lobby.mqttRestored', { name: result.broker.name }));
+      }
+      requestLobbyRefresh();
+    } catch (err) {
+      window.alert((err && err.message) || t('lobby.mqttSwitchFail'));
+    } finally {
+      mqttSwitching = false;
+      renderMqttBrokerButton();
+      renderMqttBrokerList();
+    }
+  }
+
+  /** 切换服务器时清空远端大厅视图（保留本机房间/人员） */
+  function clearRemoteLobbyView() {
+    const localRooms = (state.lobbyRooms || []).filter((r) => r && r.local);
+    const localPeople = (state.people || []).filter((p) => p && p.local);
+    state.lobbyRooms = localRooms;
+    renderLobbyRooms(localRooms);
+    renderLobbyPeople(localPeople);
+    renderPeers([]);
+  }
+
+  function setMqttBrokerModalOpen(open) {
+    if (!el.mqttBrokerModal) return;
+    el.mqttBrokerModal.hidden = !open;
+    if (open) renderMqttBrokerList();
+  }
+
+  function renderMqttBrokerList() {
+    if (!el.mqttBrokerList) return;
+    const list =
+      (Array.isArray(state.mqttBrokers) && state.mqttBrokers.length
+        ? state.mqttBrokers
+        : null) ||
+      [
+        { id: 'hivemq', name: 'HiveMQ' },
+        { id: 'tyckr', name: 'Tyckr' },
+        { id: 'dashboard', name: 'Dashboard' },
+        { id: 'mosquitto', name: 'Mosquitto' },
+        { id: 'shiftr', name: 'Shiftr' },
+        { id: 'emqx', name: 'EMQX' },
+      ];
+    const activeId = (state.mqttBroker && state.mqttBroker.id) || '';
+    el.mqttBrokerList.innerHTML = '';
+    for (const broker of list) {
+      if (!broker || !broker.id) continue;
+      const li = document.createElement('li');
+      const isActive = broker.id === activeId || broker.active;
+      if (isActive) li.classList.add('is-active');
+      const info = document.createElement('div');
+      const nameEl = document.createElement('div');
+      nameEl.className = 'mqtt-broker-name';
+      nameEl.textContent = broker.name || broker.id;
+      info.appendChild(nameEl);
+      if (isActive) {
+        const meta = document.createElement('div');
+        meta.className = 'mqtt-broker-meta';
+        meta.textContent = t('lobby.mqttCurrent');
+        info.appendChild(meta);
+      }
+      li.appendChild(info);
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = isActive ? 'secondary' : '';
+      btn.textContent = isActive ? t('lobby.mqttCurrent') : t('lobby.mqttUse');
+      btn.disabled = Boolean(mqttSwitching) || isActive;
+      btn.addEventListener('click', () => {
+        requestMqttSwitch(broker.id).catch(() => {});
+      });
+      li.appendChild(btn);
+      el.mqttBrokerList.appendChild(li);
     }
   }
 
@@ -4200,11 +4334,15 @@
       showToast(t('lobby.refreshingPeople'));
     });
   }
-  if (el.btnMqttReconnect) {
-    el.btnMqttReconnect.addEventListener('click', () => {
-      requestMqttReconnect().catch(() => {});
+  if (el.btnMqttBroker) {
+    el.btnMqttBroker.addEventListener('click', () => {
+      if (!state.mqttBulletin || mqttSwitching) return;
+      setMqttBrokerModalOpen(true);
     });
   }
+  document.querySelectorAll('[data-close="mqtt-broker"]').forEach((node) => {
+    node.addEventListener('click', () => setMqttBrokerModalOpen(false));
+  });
 
   document.querySelectorAll('[data-close="create"]').forEach((node) => {
     node.addEventListener('click', () => setCreatePanelOpen(false));
@@ -4221,6 +4359,10 @@
       return;
     }
     if (el.rejoinModal && !el.rejoinModal.hidden) {
+      return;
+    }
+    if (el.mqttBrokerModal && !el.mqttBrokerModal.hidden) {
+      setMqttBrokerModalOpen(false);
       return;
     }
     if (el.createRoomModal && !el.createRoomModal.hidden) {
@@ -4912,6 +5054,25 @@
     }
     if (data && Object.prototype.hasOwnProperty.call(data, 'mqttConnected')) {
       state.mqttConnected = Boolean(data.mqttConnected);
+    }
+    if (data && data.mqttBroker) {
+      state.mqttBroker = data.mqttBroker;
+    }
+    if (data && Array.isArray(data.mqttBrokers)) {
+      state.mqttBrokers = data.mqttBrokers;
+    }
+    if (data && Object.prototype.hasOwnProperty.call(data, 'mqttAllBrokersDown')) {
+      state.mqttAllBrokersDown = Boolean(data.mqttAllBrokersDown);
+      if (state.mqttAllBrokersDown) {
+        if (!mqttAllDownAlerted && state.inLobby) {
+          mqttAllDownAlerted = true;
+          window.alert(
+            data.mqttAllBrokersDownMessage || t('lobby.mqttAllDown')
+          );
+        }
+      } else {
+        mqttAllDownAlerted = false;
+      }
     }
     const editing =
       state.createModalMode === 'edit' &&

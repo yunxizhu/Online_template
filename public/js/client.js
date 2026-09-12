@@ -599,6 +599,27 @@ window.GameNet = (function () {
     });
   }
 
+  /** 切换 MQTT 服务器：传 brokerId 或省略表示切到下一个 */
+  function switchMqttBroker(brokerId) {
+    return new Promise((resolve) => {
+      const s = ensureSocket();
+      const timer = setTimeout(() => {
+        s.off('lobby:mqtt-switch-result', onResult);
+        resolve({ ok: false, message: '切换服务器超时' });
+      }, 45000);
+      function onResult(data) {
+        clearTimeout(timer);
+        s.off('lobby:mqtt-switch-result', onResult);
+        resolve(data || { ok: false });
+      }
+      s.on('lobby:mqtt-switch-result', onResult);
+      s.emit(
+        'lobby:mqtt-switch',
+        brokerId ? { brokerId: String(brokerId) } : {}
+      );
+    });
+  }
+
   function renamePlayer(playerName, opts = {}) {
     ensureSocket().emit('player:rename', {
       playerName,
@@ -1061,6 +1082,7 @@ window.GameNet = (function () {
     joinLobbyAndWait,
     refreshLobby,
     reconnectMqtt,
+    switchMqttBroker,
     renamePlayer,
     createRoom,
     createRoomOnHost,

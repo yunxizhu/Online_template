@@ -84,7 +84,10 @@
                 <button id="btn-create-room" type="button" aria-disabled="true">创建房间</button>
                 <button id="btn-toggle-join" type="button" class="secondary">房间码加入</button>
               </div>
-              <p id="peers-label" class="muted">广播：连接中…</p>
+              <div class="lobby-mqtt-row">
+                <p id="peers-label" class="muted">广播：连接中…</p>
+                <button id="btn-mqtt-broker" type="button" class="secondary" title="点击切换广播服务器">服务器：—</button>
+              </div>
               <p id="lobby-refresh-hint" class="muted lobby-refresh-hint">公开房间与人员来自 MQTT 广播</p>
             </div>
 
@@ -191,6 +194,25 @@
   <div id="joining-overlay" class="joining-overlay" hidden aria-live="polite" aria-busy="true">
     <div class="joining-panel panel">
       <p id="joining-message" class="joining-message">正在加入…</p>
+    </div>
+  </div>
+
+  <div class="modal" id="mqtt-broker-modal" hidden>
+    <div class="modal-backdrop" data-close="mqtt-broker"></div>
+    <div class="modal-dialog panel panel-narrow" role="dialog" aria-labelledby="mqtt-broker-title">
+      <div class="row panel-head">
+        <h2 id="mqtt-broker-title">选择广播服务器</h2>
+        <button
+          id="btn-close-mqtt-broker"
+          type="button"
+          class="icon-btn"
+          data-close="mqtt-broker"
+          title="关闭"
+          aria-label="关闭"
+        >×</button>
+      </div>
+      <p class="muted mqtt-broker-hint">请选择要连接的服务器；切换时会先探测是否可用。</p>
+      <ul id="mqtt-broker-list" class="mqtt-broker-list" role="listbox"></ul>
     </div>
   </div>
 

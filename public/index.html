@@ -212,7 +212,7 @@
               </label>
               <div class="lobby-mqtt-row">
                 <p id="peers-label" class="muted" data-i18n="lobby.peersSearching">广播：搜索中…</p>
-                <button id="btn-mqtt-reconnect" type="button" class="secondary" hidden data-i18n="lobby.mqttReconnect">重连广播</button>
+                <button id="btn-mqtt-broker" type="button" class="secondary" hidden data-i18n-attr="title:lobby.mqttSwitchHint">服务器：—</button>
               </div>
               <p id="lobby-refresh-hint" class="muted lobby-refresh-hint" data-i18n="lobby.refreshHint">大厅列表每 3 秒自动刷新</p>
             </div>
@@ -410,6 +410,26 @@
         />
       </label>
       <button id="btn-join-code" type="button" data-i18n="join.confirm">加入</button>
+    </div>
+  </div>
+
+  <div class="modal" id="mqtt-broker-modal" hidden>
+    <div class="modal-backdrop" data-close="mqtt-broker"></div>
+    <div class="modal-dialog panel panel-narrow" role="dialog" aria-labelledby="mqtt-broker-title">
+      <div class="row panel-head">
+        <h2 id="mqtt-broker-title" data-i18n="lobby.mqttPickTitle">选择广播服务器</h2>
+        <button
+          id="btn-close-mqtt-broker"
+          type="button"
+          class="icon-btn"
+          data-close="mqtt-broker"
+          data-i18n-attr="title:create.close,aria-label:create.close"
+          title="关闭"
+          aria-label="关闭"
+        >×</button>
+      </div>
+      <p class="muted mqtt-broker-hint" data-i18n="lobby.mqttPickHint">请选择要连接的服务器；切换时会先探测是否可用。</p>
+      <ul id="mqtt-broker-list" class="mqtt-broker-list" role="listbox"></ul>
     </div>
   </div>
 

@@ -9,7 +9,7 @@ const { Server } = require('socket.io');
 const { RoomManager, fullRoomView } = require('./rooms');
 const { listGames, getGame } = require('./games');
 const { syncTurnTimer, clearTurnTimer } = require('./turnTimer');
-const { MqttBulletin } = require('./mqttBulletin');
+const { MqttBulletin, ROOM_OFFLINE_MS } = require('./mqttBulletin');
 const { QuickTunnel } = require('./tunnel');
 const crypto = require('crypto');
 const pathRoot = path.join(__dirname, '..');
@@ -201,6 +201,13 @@ function buildLobbyPayload() {
     localHost,
     mqttBulletin: Boolean(mqttBulletin && mqttBulletin.enabled),
     mqttConnected: mqttBulletin ? mqttBulletin.isConnected() : false,
+    mqttBroker: mqttBulletin ? mqttBulletin.getBrokerInfo() : null,
+    mqttBrokers: mqttBulletin ? mqttBulletin.listBrokers() : [],
+    mqttAllBrokersDown: Boolean(
+      mqttBulletin && mqttBulletin.getStatus().allBrokersDown
+    ),
+    mqttAllBrokersDownMessage:
+      (mqttBulletin && mqttBulletin.getStatus().allBrokersDownMessage) || '',
     publicUrl,
     games: listGames(),
     passiveMode: Boolean(
@@ -1064,7 +1071,41 @@ io.on('connection', (socket) => {
       ok: Boolean(result && result.ok),
       message: (result && result.message) || null,
       mqttConnected: mqttBulletin.isConnected(),
+      broker: mqttBulletin.getBrokerInfo(),
     });
+    emitLobbyUpdate();
+  });
+
+  socket.on('lobby:mqtt-switch', async (data = {}) => {
+    if (!mqttBulletin || !mqttBulletin.enabled) {
+      socket.emit('lobby:mqtt-switch-result', {
+        ok: false,
+        message: 'MQTT 广播未启用',
+      });
+      return;
+    }
+    try {
+      const result =
+        data && data.brokerId
+          ? await mqttBulletin.switchBroker(String(data.brokerId))
+          : await mqttBulletin.switchToNextBroker();
+      socket.emit('lobby:mqtt-switch-result', {
+        ok: Boolean(result && result.ok),
+        message: (result && result.message) || null,
+        restored: Boolean(result && result.restored),
+        broker: (result && result.broker) || mqttBulletin.getBrokerInfo(),
+        brokers: mqttBulletin.listBrokers(),
+        mqttConnected: mqttBulletin.isConnected(),
+      });
+    } catch (err) {
+      socket.emit('lobby:mqtt-switch-result', {
+        ok: false,
+        message: (err && err.message) || '切换服务器失败',
+        broker: mqttBulletin.getBrokerInfo(),
+        brokers: mqttBulletin.listBrokers(),
+        mqttConnected: mqttBulletin.isConnected(),
+      });
+    }
     emitLobbyUpdate();
   });
 
@@ -1859,8 +1900,9 @@ server.listen(PORT, '0.0.0.0', () => {
   const localUrl = `http://localhost:${PORT}`;
   console.log(`联机服务已启动: ${localUrl}`);
   if (mqttBulletin && mqttBulletin.enabled) {
+    const offlineSec = Math.round(ROOM_OFFLINE_MS / 1000);
     console.log(
-      `跨网广播: MQTT 已启用（固定地址 broker.emqx.io，频道 ${mqttBulletin.channel}；登录心跳 10s，房间心跳 5s，房间失效判定 15s）`
+      `跨网广播: MQTT 已启用（单节点自动选择，大厅可切换；频道 ${mqttBulletin.channel}；登录/房间心跳 5s，失效判定 ${offlineSec}s）`
     );
   }
   if (!(mqttBulletin && mqttBulletin.enabled)) {
