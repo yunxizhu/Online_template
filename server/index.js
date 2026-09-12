@@ -553,23 +553,20 @@ function nudgeStaleTunnelPlayers() {
   }
 }
 
-/** 对局中或房内已有多人时，禁止因公网探活误杀隧道 */
-function tunnelIsProtected() {
+/** 本机仍有未挂起房间时，禁止因公网探活误杀隧道（改由房主确认重开） */
+function hasActiveHostedRoom() {
   try {
     for (const room of rooms.rooms.values()) {
-      if (!room || room.pendingLobby) continue;
-      if (room.status === 'playing') return true;
-      const seated = (room.players || []).filter(
-        (p) => p && !p.left && !p.offline
-      );
-      if (seated.length >= 2) return true;
-      const observers = (room.observers || []).filter((o) => o && !o.offline);
-      if (seated.length >= 1 && observers.length >= 1) return true;
+      if (room && !room.pendingLobby) return true;
     }
   } catch (_) {
     /* ignore */
   }
   return false;
+}
+
+function tunnelIsProtected() {
+  return hasActiveHostedRoom();
 }
 
 function attachTunnelHooks(t) {
@@ -578,7 +575,9 @@ function attachTunnelHooks(t) {
   let tunnelHadLost = false;
   t.onUrl = (url) => {
     const oldHost =
-      (mqttBulletin && mqttBulletin.getLastKnownHost && mqttBulletin.getLastKnownHost()) ||
+      (mqttBulletin &&
+        mqttBulletin.getLastKnownHost &&
+        mqttBulletin.getLastKnownHost()) ||
       '';
     if (mqttBulletin && mqttBulletin.enabled) {
       // 新隧道到手：立刻把本机对局挂到新地址并重发心跳
@@ -595,7 +594,19 @@ function attachTunnelHooks(t) {
       mqttBulletin.markTunnelLost();
     }
     tunnelHadLost = true;
-    io.emit('tunnel:status', { recovering: true });
+    io.emit('tunnel:status', {
+      recovering: true,
+      wasLost: true,
+      needsReopen: hasActiveHostedRoom(),
+    });
+  };
+  t.onDegraded = () => {
+    if (!hasActiveHostedRoom()) return;
+    io.emit('tunnel:status', {
+      recovering: true,
+      needsReopen: true,
+      reason: 'degraded',
+    });
   };
   return t;
 }
@@ -1330,6 +1341,175 @@ io.on('connection', (socket) => {
     }
   });
 
+  /**
+   * 房主确认「房间状态错误，是否重开」：
+   * 立刻换隧道 → 解散旧房并清 MQTT → 建新房 → 广播转移通知。
+   */
+  socket.on('room:reopenTunnel', async () => {
+    const me = rooms.getPlayer(socket.id);
+    if (!me || !me.roomId) {
+      socket.emit('room:error', { message: '你不在房间中' });
+      return;
+    }
+    const oldRoom = rooms.getRoom(me.roomId);
+    if (!oldRoom) {
+      socket.emit('room:error', { message: '房间不存在' });
+      return;
+    }
+    if (oldRoom.hostId !== socket.id) {
+      socket.emit('room:error', { message: '仅房主可重开房间' });
+      return;
+    }
+
+    const oldRoomId = oldRoom.id;
+    const settings = {
+      name: oldRoom.name,
+      hasPassword: Boolean(oldRoom.hasPassword),
+      password: oldRoom.password || '',
+      maxPlayers: oldRoom.maxPlayers,
+      gameType: oldRoom.gameType,
+      gameMode: oldRoom.gameMode,
+      turnTimeSec: oldRoom.turnTimeSec,
+    };
+    const targets = [];
+    for (const p of oldRoom.players || []) {
+      if (!p || p.id === socket.id || p.left) continue;
+      targets.push({
+        name: p.name,
+        tag: p.tag || null,
+        sessionId: p.sessionId || null,
+      });
+    }
+    for (const o of oldRoom.observers || []) {
+      if (!o || o.id === socket.id || o.passiveHost) continue;
+      targets.push({
+        name: o.name,
+        tag: o.tag || null,
+        sessionId: o.sessionId || null,
+      });
+    }
+
+    const progress = (message) =>
+      socket.emit('room:creating', { message, roomId: oldRoomId });
+
+    try {
+      progress('正在重建公网隧道…');
+      if (!tunnel) tunnel = attachTunnelHooks(new QuickTunnel());
+      let publicUrl = '';
+      if (typeof tunnel.forceRotateAndWait === 'function') {
+        publicUrl = await tunnel.forceRotateAndWait('host-reopen');
+      } else {
+        publicUrl = await ensurePublicTunnelUrl();
+      }
+      if (!publicUrl) throw new Error('未能获得新的公网地址');
+
+      // 先清旧房心跳，再解散本机房间
+      mqttClearRoomOnDissolve();
+      const dissolved = rooms.dissolveRoom(oldRoomId, socket.id);
+      if (dissolved.leftRoomId) {
+        socket.leave(dissolved.leftRoomId);
+        for (const aid of dissolved.affectedPlayerIds || []) {
+          const as = io.sockets.sockets.get(aid);
+          if (as) {
+            as.leave(dissolved.leftRoomId);
+            as.emit('room:kicked', {
+              reason: 'tunnel-reopen',
+              message: '房主正在重开房间',
+            });
+          }
+        }
+      }
+      emitLobbyUpdate();
+      mqttOnLogin();
+
+      progress('正在创建新房间…');
+      const created = rooms.createRoom(socket.id, settings);
+      if (!created.ok) {
+        throw new Error(created.error || '创建新房间失败');
+      }
+      const room = created.room;
+      socket.join(room.id);
+      joinHallChat(socket);
+      mqttOnLogin();
+
+      if (mqttBulletin && mqttBulletin.enabled) {
+        progress('正在准备公网隧道…');
+        const ready = await mqttBulletin.waitForInfrastructureReady({
+          timeoutMs: 90000,
+        });
+        if (!ready.ok) {
+          throw new Error(ready.message || '隧道未就绪');
+        }
+      }
+
+      const fresh = rooms.clearPendingLobby(room.id);
+      if (!fresh) throw new Error('房间创建失败');
+      mqttOnLogin();
+
+      if (mqttBulletin && mqttBulletin.enabled) {
+        progress('正在广播新房间…');
+        const beacon = await mqttBulletin.waitForRoomBeacon(
+          fresh.id,
+          () => {
+            const list = hostedBeaconRooms();
+            return (
+              list.find(
+                (r) =>
+                  String(r.id).toUpperCase() === String(fresh.id).toUpperCase()
+              ) || null
+            );
+          },
+          { timeoutMs: 90000 }
+        );
+        if (!beacon.ok) {
+          throw new Error(beacon.message || '房间广播失败');
+        }
+      } else {
+        mqttAfterRoomChange();
+      }
+
+      const hostUrl = String(
+        (tunnel && tunnel.getPublicUrl()) || publicUrl || ''
+      ).replace(/\/$/, '');
+      const transferMsg = {
+        kind: 'roomTransfer',
+        oldRoomId: String(oldRoomId).toUpperCase(),
+        roomId: String(fresh.id).toUpperCase(),
+        host: hostUrl,
+        name: fresh.name || '',
+        gameType: fresh.gameType || '',
+        gameLabel: fresh.gameLabel || '',
+        gameMode: fresh.gameMode || '',
+        gameModeLabel: fresh.gameModeLabel || '',
+        status: fresh.status || 'waiting',
+        targets,
+        at: Date.now(),
+      };
+      if (mqttBulletin && mqttBulletin.enabled) {
+        mqttBulletin.publishRoomTransfer(transferMsg);
+      }
+      io.emit('room:transfer', transferMsg);
+
+      emitRoomUpdate(fresh);
+      emitLobbyUpdate();
+      socket.emit('room:reopenDone', {
+        oldRoomId: transferMsg.oldRoomId,
+        roomId: transferMsg.roomId,
+        host: hostUrl,
+      });
+      console.log(
+        `[tunnel] 房主重开房间 ${oldRoomId} → ${fresh.id} @ ${hostUrl}`
+      );
+    } catch (err) {
+      mqttOnLogin();
+      mqttAfterRoomChange();
+      emitLobbyUpdate();
+      socket.emit('room:error', {
+        message: (err && err.message) || '重开房间失败',
+      });
+    }
+  });
+
   socket.on('room:spectate', (data = {}) => {
     if (!rooms.getPlayer(socket.id)) {
       rooms.registerPlayer(socket.id, data.playerName || '玩家', playerRegisterOpts(data));
@@ -1848,6 +2028,9 @@ mqttBulletin = new MqttBulletin({
   },
   onReload: (msg) => {
     io.emit('room:reload', msg);
+  },
+  onRoomTransfer: (msg) => {
+    io.emit('room:transfer', msg);
   },
   onLeave: (msg) => {
     try {

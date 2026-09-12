@@ -336,8 +336,12 @@ window.LasidaoUi = (function () {
   const AUTO_PRODUCE_ROLL_MS = 1500;
   let autoProduceRollTimer = null;
   let autoProduceRollKey = null;
+  /** 同一轮「等待投掷」窗口内只自动发送一次，防止状态延迟时重复开计时器 */
+  let autoProduceRollSentKey = null;
   let autoProduceRollEndsAt = 0;
   let autoProduceRollCountdownTimer = null;
+  /** 同一投掷结果只播一次动画（含旁观/本人路径切换） */
+  let lastAnimatedRollKey = null;
 
   let robberyCardId = null;
   /** @type {'mode'|'target'|'confirm'|'give'|null} */
@@ -395,6 +399,7 @@ window.LasidaoUi = (function () {
   /** ?????? */
   let diceAnim = {
     key: null,
+    actorId: null,
     stage: 'idle', // idle | rolling | grouping | ready
     timers: [],
     intervals: [],
@@ -603,6 +608,7 @@ window.LasidaoUi = (function () {
   function resetDiceAnim() {
     clearDiceTimers();
     diceAnim.key = null;
+    diceAnim.actorId = null;
     diceAnim.stage = 'idle';
     diceAnim.finalDice = [];
     diceAnim.finalBoosted = [];
@@ -657,6 +663,8 @@ window.LasidaoUi = (function () {
     clearAutoProduceRoll();
     mercenaryRollAnimKey = null;
     mercenaryRollAnimDoneKey = null;
+    lastAnimatedRollKey = null;
+    autoProduceRollSentKey = null;
     mercenaryToastKey = null;
     neutralToastKey = null;
     banditCardId = null;
@@ -3335,6 +3343,27 @@ window.LasidaoUi = (function () {
     updateProduceRollButtonLabel(lastGame, lastMeId);
   }
 
+  function produceRollAnimKey(round, actorId, dice) {
+    return (
+      String(round || 0) +
+      ':' +
+      String(actorId || '') +
+      ':' +
+      (dice || []).join(',')
+    );
+  }
+
+  function isDiceMultisetSubset(next, prev) {
+    if (!next || !prev || next.length > prev.length) return false;
+    const pool = prev.slice();
+    for (let i = 0; i < next.length; i++) {
+      const idx = pool.indexOf(next[i]);
+      if (idx < 0) return false;
+      pool.splice(idx, 1);
+    }
+    return true;
+  }
+
   function autoRollKind(game, meId) {
     if (!game || game.over) return null;
     if (isMercenaryRollMode(game, meId)) return 'mercenary';
@@ -3358,6 +3387,15 @@ window.LasidaoUi = (function () {
           : null;
     if (!kind) {
       clearAutoProduceRoll();
+      // 离开等待投掷后，允许下一轮再自动投
+      if (!isAwaitingRoll(game) && !isMercenaryRollMode(game, meId)) {
+        autoProduceRollSentKey = null;
+      }
+      return;
+    }
+    // 已经为这一轮等待窗口发过投掷：绝不开第二个计时器
+    if (autoProduceRollSentKey === key) {
+      updateProduceRollButtonLabel(game, meId);
       return;
     }
     if (autoProduceRollKey === key && autoProduceRollTimer) {
@@ -3376,11 +3414,21 @@ window.LasidaoUi = (function () {
       const g = lastGame;
       const id = lastMeId;
       if (!netRef || !g || autoRollKind(g, id) !== kind) return;
+      if (autoProduceRollSentKey === key) return;
+      autoProduceRollSentKey = key;
+      const rollBtn = $('btn-las-produce-roll');
+      if (rollBtn && rollBtn.dataset.lasRollBusy === '1') return;
+      if (rollBtn) rollBtn.dataset.lasRollBusy = '1';
       if (kind === 'mercenary') {
         netRef.sendAction('mercenaryRoll', {});
-        return;
+      } else {
+        netRef.sendAction('produceRoll', {});
       }
-      netRef.sendAction('produceRoll', {});
+      if (rollBtn) {
+        setTimeout(() => {
+          rollBtn.dataset.lasRollBusy = '';
+        }, 800);
+      }
     }, AUTO_PRODUCE_ROLL_MS);
   }
 
@@ -5611,6 +5659,9 @@ window.LasidaoUi = (function () {
     const isMe = Boolean(meId && p.id === meId);
     const funcCards = p.funcCards || [];
     const buildings = p.buildings || [];
+    const funcN =
+      p.funcCount != null ? p.funcCount : funcCards.length;
+    const maxFunc = p.maxFuncHand != null ? p.maxFuncHand : '';
     return [
       p.id,
       p.seat,
@@ -5621,9 +5672,14 @@ window.LasidaoUi = (function () {
       p.team || '',
       p.isTeammate ? 1 : 0,
       p.villagers,
+      p.enhancedDice,
       p.houses,
       p.freeHouses,
       JSON.stringify(p.resources || {}),
+      // 他人看不到 funcCards 内容，必须用 funcCount 驱动刷新，否则用卡后暗置位不更新
+      funcN,
+      maxFunc,
+      p.stealableCount != null ? p.stealableCount : '',
       funcCards.map((c) => c.id + (c.hidden ? ':h' : '') + (c.label || '')).join(','),
       buildings
         .map(
@@ -6313,11 +6369,23 @@ window.LasidaoUi = (function () {
   }
 
   function startDiceAnimation(finalDice, meId, boostFlags) {
+    const nextBoost = (boostFlags || []).slice();
+    const sameRunning =
+      (diceAnim.stage === 'rolling' || diceAnim.stage === 'grouping') &&
+      (diceAnim.finalDice || []).join(',') === finalDice.join(',') &&
+      (diceAnim.finalBoosted || [])
+        .map((b) => (b ? '1' : '0'))
+        .join('') === nextBoost.map((b) => (b ? '1' : '0')).join('');
+    if (sameRunning) return;
+
     clearDiceTimers();
     resetDiceSelection();
+    const animGen = (Number(diceAnim._animGen) || 0) + 1;
+    diceAnim._animGen = animGen;
+    diceAnim.actorId = meId;
     diceAnim.stage = 'rolling';
     diceAnim.finalDice = finalDice.slice();
-    diceAnim.finalBoosted = (boostFlags || []).slice();
+    diceAnim.finalBoosted = nextBoost;
 
     const wrap = $('las-dice-wrap');
     const diceEl = $('las-dice');
@@ -6406,12 +6474,13 @@ window.LasidaoUi = (function () {
     diceAnim.timers.push(t2);
 
     const t3 = setTimeout(() => {
+      if (diceAnim._animGen !== animGen) return;
       diceAnim.stage = 'ready';
       renderGroupedDice();
       updateDiceHint();
       updateDispatchPreview();
-      renderBoard(lastGame, meId);
-      renderDice(lastGame, lastMeId);
+      // 勿再调 renderDice：全量重入可能把同一次结果再播一遍投掷动画
+      if (lastGame) renderBoard(lastGame, meId);
     }, 1800);
     diceAnim.timers.push(t3);
   }
@@ -7030,22 +7099,32 @@ window.LasidaoUi = (function () {
     const actor = (game.players || []).find((p) => p.id === actorId);
     const actorName = actor ? actor.name : '';
 
-    // ??????????????????????
+    // 轮到自己且尚未投掷：收起骰区（若动画过期则强制中断）
     if (myTurn && isAwaitingRoll(game)) {
+      lastAnimatedRollKey = null;
+      if (diceAnim.stage === 'rolling' || diceAnim.stage === 'grouping') {
+        // 如果动画是为上一个玩家播放的（或任何过期状态），强制中断
+        if (diceAnim.actorId && diceAnim.actorId !== game.currentPlayerId) {
+          resetDiceAnim();
+        } else {
+          // 同玩家动画未结束但状态已要求等待投掷：以最新状态为准
+          resetDiceAnim();
+        }
+      }
       if (diceAnim.stage !== 'idle') resetDiceAnim();
       if (produceFuncConfirmActive(game, meId)) {
-    wrap.hidden = false;
+        wrap.hidden = false;
         if (produceActions) produceActions.hidden = false;
-      const diceEl = $('las-dice');
-      const groupsEl = $('las-dice-groups');
-      if (diceEl) {
+        const diceEl = $('las-dice');
+        const groupsEl = $('las-dice-groups');
+        if (diceEl) {
           diceEl.hidden = true;
           diceEl.innerHTML = '';
-      }
-      if (groupsEl) {
-        groupsEl.hidden = true;
-        groupsEl.innerHTML = '';
-      }
+        }
+        if (groupsEl) {
+          groupsEl.hidden = true;
+          groupsEl.innerHTML = '';
+        }
         updateDispatchPreview();
         updateDiceHint();
       } else {
@@ -7054,8 +7133,17 @@ window.LasidaoUi = (function () {
       return;
     }
 
-    // 他人回合且尚未投掷：不展示等待提示
+    // 他人回合且尚未投掷：不展示等待提示（动画中忽略过期的 awaiting 包，避免重播）
     if (!myTurn && active && active.awaitingRoll) {
+      if (diceAnim.stage === 'rolling' || diceAnim.stage === 'grouping') {
+        // 如果动画是为上一个玩家播放的，强制中断并回到 idle 以继续正常渲染
+        if (diceAnim.actorId && diceAnim.actorId !== actorId) {
+          resetDiceAnim();
+        } else {
+          updateDiceHint();
+          return;
+        }
+      }
       if (diceAnim.stage !== 'idle') resetDiceAnim();
       wrap.hidden = true;
       return;
@@ -7155,7 +7243,15 @@ window.LasidaoUi = (function () {
           dice.length > 0;
 
         if (isFreshRoll && !(active && active.remoteDiceMode)) {
-          startSpectatorDiceAnimation(dice, color, actorName, boostFlags);
+          const specRollKey = produceRollAnimKey(game.round, actorId, dice);
+          if (lastAnimatedRollKey === specRollKey) {
+            diceAnim.stage = 'ready';
+            diceAnim.finalBoosted = boostFlags.slice();
+            renderSpectatorDice(dice, color, boostFlags);
+          } else {
+            lastAnimatedRollKey = specRollKey;
+            startSpectatorDiceAnimation(dice, color, actorName, boostFlags);
+          }
         } else {
           diceAnim.stage = 'ready';
           diceAnim.finalBoosted = boostFlags.slice();
@@ -7184,16 +7280,61 @@ window.LasidaoUi = (function () {
       boostFlags.map((b) => (b ? '1' : '0')).join('');
 
     if (diceAnim.key !== key) {
+      const prevFinal = (diceAnim.finalDice || []).slice();
+      const prevStage = diceAnim.stage;
+      const rollKey = produceRollAnimKey(game.round, meId, dice);
       diceAnim.key = key;
       resetDiceSelection();
       if (remote) {
         diceAnim.stage = 'ready';
         diceAnim.finalDice = dice.slice();
         diceAnim.finalBoosted = boostFlags.slice();
+        lastAnimatedRollKey = rollKey;
         renderRemoteDice(game, meId);
         updateDispatchPreview();
         updateDiceHint();
+      } else if (lastAnimatedRollKey === rollKey) {
+        // 同一次投掷结果已播过（含自动投后状态连到两次）：只展示
+        diceAnim.stage = 'ready';
+        diceAnim.finalDice = dice.slice();
+        diceAnim.finalBoosted = boostFlags.slice();
+        renderGroupedDice();
+        updateDispatchPreview();
+        updateDiceHint();
+      } else if (
+        prevStage === 'ready' &&
+        prevFinal.length > 0 &&
+        dice.length > 0 &&
+        dice.length < prevFinal.length &&
+        isDiceMultisetSubset(dice, prevFinal)
+      ) {
+        // 派遣后剩余骰：只刷新分组，不要再播一遍投掷动画
+        diceAnim.stage = 'ready';
+        diceAnim.finalDice = dice.slice();
+        diceAnim.finalBoosted = boostFlags.slice();
+        lastAnimatedRollKey = rollKey;
+        renderGroupedDice();
+        updateDispatchPreview();
+        updateDiceHint();
+      } else if (
+        (prevStage === 'rolling' || prevStage === 'grouping') &&
+        prevFinal.join(',') === dice.join(',')
+      ) {
+        // 同一次投掷结果（如强化标记晚到）：接着播，勿重启
+        diceAnim.finalBoosted = boostFlags.slice();
+        lastAnimatedRollKey = rollKey;
+        updateDiceHint();
+      } else if (prevStage === 'rolling' || prevStage === 'grouping') {
+        clearDiceTimers();
+        diceAnim.stage = 'ready';
+        diceAnim.finalDice = dice.slice();
+        diceAnim.finalBoosted = boostFlags.slice();
+        lastAnimatedRollKey = rollKey;
+        renderGroupedDice();
+        updateDispatchPreview();
+        updateDiceHint();
       } else {
+        lastAnimatedRollKey = rollKey;
         startDiceAnimation(dice, meId, boostFlags);
       }
       return;
@@ -8361,6 +8502,7 @@ window.LasidaoUi = (function () {
         score:
           game.teamMode && p.teamScore != null ? p.teamScore : p.score,
         villagers: p.villagers,
+        enhanced: Number(p.enhancedDice) || 0,
         houses: p.houses != null ? p.houses : 3,
         freeHouses:
           p.freeHouses != null
@@ -8677,12 +8819,13 @@ window.LasidaoUi = (function () {
           source: t('lasidao.wishWellTitle'),
           maxCount: need,
           action: 'wishWell',
+          canCancel: false,
         });
       } else {
         updateHarvestModalHead();
+        const harvestCancel = $('btn-las-harvest-cancel');
+        if (harvestCancel) harvestCancel.hidden = true;
       }
-      const harvestCancel = $('btn-las-harvest-cancel');
-      if (harvestCancel) harvestCancel.hidden = true;
     } else if (harvestAction === 'wishWell') {
       setHarvestModalOpen(false);
     }
@@ -9361,27 +9504,22 @@ window.LasidaoUi = (function () {
       if (title) title.textContent = choice.label || t('lasidao.environmentSlot');
       if (choice.needChoice === 'pickResource') {
         modal.hidden = true;
-      openHarvestModal({
-        source: choice.label || t('lasidao.environmentSlot'),
-        maxCount: 1,
-      });
-      const harvestCancel = $('btn-las-harvest-cancel');
-      if (harvestCancel) harvestCancel.hidden = false;
+        openHarvestModal({
+          source: choice.label || t('lasidao.environmentSlot'),
+          maxCount: 1,
+          canCancel: false,
+        });
         return;
       } else if (choice.needChoice === 'pickTwoResources') {
         modal.hidden = true;
         const pickCount = choice.count || 2;
-      openHarvestModal({
-        source: choice.label || t('lasidao.environmentSlot'),
-        maxCount: pickCount,
-      });
-        const harvestCancel = $('btn-las-harvest-cancel');
-      if (harvestCancel) {
-        harvestCancel.hidden =
-          choice.resume === 'welfareSetup' || choice.resume === 'keepOverflow';
+        openHarvestModal({
+          source: choice.label || t('lasidao.environmentSlot'),
+          maxCount: pickCount,
+          canCancel: false,
+        });
+        return;
       }
-      return;
-    }
   }
 
   function maybeShowVictoryModal(game, meId) {
@@ -11655,7 +11793,8 @@ window.LasidaoUi = (function () {
           const url = Assets.cardBackImageUrl(kind);
           if (url) {
             back.style.backgroundImage = 'url("' + url + '")';
-            back.style.backgroundSize = 'cover';
+            back.style.backgroundSize = 'contain';
+            back.style.backgroundRepeat = 'no-repeat';
             back.style.backgroundPosition = 'center';
           }
         });
@@ -12369,6 +12508,15 @@ window.LasidaoUi = (function () {
     harvestAction = opts.action || null;
     harvestCounts = { wood: 0, stone: 0, food: 0, iron: 0 };
     setHarvestModalOpen(true);
+    // 强制获得资源（事件/许愿井等）不可取消；功能卡「丰收」可取消
+    const harvestCancel = $('btn-las-harvest-cancel');
+    if (harvestCancel) {
+      const canCancel =
+        opts.canCancel != null
+          ? !!opts.canCancel
+          : Boolean(opts.cardId) && opts.action !== 'wishWell';
+      harvestCancel.hidden = !canCancel;
+    }
     updateHarvestModalHead();
     renderHarvestModal();
   }
@@ -13117,12 +13265,27 @@ window.LasidaoUi = (function () {
     if (rollBtn) {
       rollBtn.onclick = () => {
         if (!net) return;
+        if (rollBtn.dataset.lasRollBusy === '1') return;
+        rollBtn.dataset.lasRollBusy = '1';
+        const awaitKey =
+          lastGame && lastMeId
+            ? `${lastGame.round || 0}:${lastMeId}:${lastGame.currentPlayerId || ''}:await`
+            : null;
+        if (awaitKey) autoProduceRollSentKey = awaitKey;
         clearAutoProduceRoll();
-        if (lastGame && isMercenaryRollMode(lastGame, lastMeId)) {
-          net.sendAction('mercenaryRoll', {});
-          return;
+        try {
+          if (lastGame && isMercenaryRollMode(lastGame, lastMeId)) {
+            const mercKey = `merc:${lastGame.round || 0}:${lastMeId}:${lastGame.currentPlayerId || ''}`;
+            autoProduceRollSentKey = mercKey;
+            net.sendAction('mercenaryRoll', {});
+            return;
+          }
+          net.sendAction('produceRoll', {});
+        } finally {
+          setTimeout(() => {
+            rollBtn.dataset.lasRollBusy = '';
+          }, 800);
         }
-        net.sendAction('produceRoll', {});
       };
     }
     const remoteBtn = $('btn-las-remote-dice');
@@ -13461,7 +13624,8 @@ window.LasidaoUi = (function () {
     const harvestCancel = $('btn-las-harvest-cancel');
     if (harvestCancel) {
       harvestCancel.onclick = () => {
-        if (harvestAction === 'wishWell') return;
+        // 仅功能卡「丰收」可取消；事件/许愿井强制选资源不可关闭
+        if (!harvestCardId || harvestAction === 'wishWell') return;
         setHarvestModalOpen(false);
       };
     }

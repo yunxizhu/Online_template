@@ -134,12 +134,35 @@ async function main() {
   await t3._runHealthTick();
   assert.strictEqual(lost, 1, 'fatal 应立刻换址');
 
+  // ENOTFOUND：用更低阈值换址（不必等满 HEALTH_FAILS）
+  const { DNS_HEALTH_FAILS } = require('./tunnel');
+  lost = 0;
+  let dnsEnsure = 0;
+  const tDns = stubTunnel({
+    probe: async () => ({ ok: false, reason: 'ENOTFOUND', fatal: false }),
+  });
+  tDns.onLost = () => {
+    lost += 1;
+  };
+  tDns.ensure = async () => {
+    dnsEnsure += 1;
+    tDns.publicUrl = 'https://dns-fresh.trycloudflare.com';
+    tDns.proc = { kill() {}, killed: false };
+    return tDns.publicUrl;
+  };
+  await ticks(tDns, Math.max(1, DNS_HEALTH_FAILS - 1));
+  assert.strictEqual(lost, 0, 'ENOTFOUND 未达 DNS 阈值前不应换址');
+  await tDns._runHealthTick();
+  assert.strictEqual(lost, 1, 'ENOTFOUND 达 DNS 阈值应换址');
+  assert.ok(DNS_HEALTH_FAILS < HEALTH_FAILS, 'DNS 阈值应严于普通探活');
+
   t.stop();
   tProtect.stop();
   tLocal.stop();
   tReset.stop();
   t3.stop();
-  console.log('✓ tunnel health P0 protect / local / consecutive fails');
+  tDns.stop();
+  console.log('✓ tunnel health P0 protect / local / consecutive fails / dns');
 }
 
 main().catch((err) => {

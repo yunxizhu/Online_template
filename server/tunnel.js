@@ -47,6 +47,11 @@ const HEALTH_INTERVAL_MS = Math.max(
   5000,
   Number(process.env.TUNNEL_HEALTH_MS) || 15000
 );
+/** 公网探活已失败时的重试间隔（加快确认/换址） */
+const HEALTH_FAIL_INTERVAL_MS = Math.max(
+  1000,
+  Number(process.env.TUNNEL_HEALTH_FAIL_MS) || 4000
+);
 /** 拿到新 URL 后多久再开始探活（给 DNS 传播留时间） */
 const HEALTH_WARMUP_MS = Math.max(
   0,
@@ -56,6 +61,14 @@ const HEALTH_WARMUP_MS = Math.max(
 const HEALTH_FAILS = Math.max(
   1,
   Number(process.env.TUNNEL_HEALTH_FAILS) || 8
+);
+/**
+ * DNS 解析失败（ENOTFOUND）时更快换址。
+ * trycloudflare 偶发分配到本机解析不了的域名，等满 HEALTH_FAILS 会空等很久。
+ */
+const DNS_HEALTH_FAILS = Math.max(
+  1,
+  Number(process.env.TUNNEL_DNS_HEALTH_FAILS) || 2
 );
 const HEALTH_TIMEOUT_MS = Math.max(
   2000,
@@ -76,6 +89,16 @@ function publicHealthUrl(urlString) {
   } catch (_) {
     return '';
   }
+}
+
+/** trycloudflare 域名 DNS 未解析到（ENOTFOUND）→ 更快换隧道 */
+function isDnsNotFoundReason(reason) {
+  const r = String(reason || '').toUpperCase();
+  return r === 'ENOTFOUND' || r === 'ENODATA';
+}
+
+function healthFailLimitForReason(reason) {
+  return isDnsNotFoundReason(reason) ? DNS_HEALTH_FAILS : HEALTH_FAILS;
 }
 
 function httpGetStatus(href, timeoutMs, headers) {
@@ -349,12 +372,15 @@ class QuickTunnel {
     this._protectedSkipLogs = 0;
     this.onUrl = typeof opts.onUrl === 'function' ? opts.onUrl : null;
     this.onLost = typeof opts.onLost === 'function' ? opts.onLost : null;
+    this.onDegraded =
+      typeof opts.onDegraded === 'function' ? opts.onDegraded : null;
     this._probe =
       typeof opts.probe === 'function' ? opts.probe : probeTunnelUrl;
     this._probeLocal =
       typeof opts.probeLocal === 'function' ? opts.probeLocal : probeLocalOrigin;
     this.shouldProtect =
       typeof opts.shouldProtect === 'function' ? opts.shouldProtect : () => false;
+    this._degradedNotified = false;
   }
 
   _isProtected() {
@@ -535,13 +561,14 @@ class QuickTunnel {
     if (typeof this._healthTimer.unref === 'function') this._healthTimer.unref();
   }
 
-  _scheduleHealthTick() {
+  _scheduleHealthTick(failing) {
     this._clearHealth();
     if (this._stopped || !this.publicUrl || !this.proc) return;
+    const ms = failing ? HEALTH_FAIL_INTERVAL_MS : HEALTH_INTERVAL_MS;
     this._healthTimer = setTimeout(() => {
       this._healthTimer = null;
       this._runHealthTick();
-    }, HEALTH_INTERVAL_MS);
+    }, ms);
     if (typeof this._healthTimer.unref === 'function') this._healthTimer.unref();
   }
 
@@ -580,7 +607,8 @@ class QuickTunnel {
     if (result && result.ok) {
       this._healthFails = 0;
       this._protectedSkipLogs = 0;
-      this._scheduleHealthTick();
+      this._degradedNotified = false;
+      this._scheduleHealthTick(false);
       return;
     }
 
@@ -594,7 +622,7 @@ class QuickTunnel {
           (local && local.reason) || 'local-down'
         }（公网旁证: ${reason}）`
       );
-      this._scheduleHealthTick();
+      this._scheduleHealthTick(true);
       return;
     }
 
@@ -607,29 +635,45 @@ class QuickTunnel {
           `[tunnel] 公网探活失败（已保护，不换址 x${this._protectedSkipLogs}）: ${reason}`
         );
       }
-      this._scheduleHealthTick();
+      if (
+        !this._degradedNotified &&
+        typeof this.onDegraded === 'function'
+      ) {
+        this._degradedNotified = true;
+        try {
+          this.onDegraded({ reason });
+        } catch (_) {
+          /* ignore */
+        }
+      }
+      this._scheduleHealthTick(true);
       return;
     }
 
     this._healthFails += 1;
+    const failLimit = healthFailLimitForReason(reason);
     console.warn(
-      `[tunnel] 公网探活失败 (${this._healthFails}/${HEALTH_FAILS}` +
-        `${fatal ? ', fatal' : ''}): ${reason}`
+      `[tunnel] 公网探活失败 (${this._healthFails}/${failLimit}` +
+        `${fatal ? ', fatal' : ''}` +
+        `${isDnsNotFoundReason(reason) ? ', dns' : ''}): ${reason}`
     );
-    if (fatal || this._healthFails >= HEALTH_FAILS) {
+    if (fatal || this._healthFails >= failLimit) {
       this._forceRotate(reason);
       return;
     }
-    this._scheduleHealthTick();
+    this._scheduleHealthTick(true);
   }
 
   /**
    * 空闲时公网域名僵死才杀进程换新隧道。
    * 对局中不会走到这里（_runHealthTick 已保护）。
    * 对局房间仍留在本机内存；MQTT 心跳由 onLost → markTunnelLost 续上。
+   * @param {string} [reason]
+   * @param {{ silent?: boolean }} [opts] silent=true 时不触发 onLost（房主主动重开会自己清房间）
    */
-  _forceRotate(reason) {
+  _forceRotate(reason, opts) {
     if (this._stopped) return;
+    const silent = Boolean(opts && opts.silent);
     const dead = this.publicUrl;
     console.warn(
       `[tunnel] 公网地址失效，强制换新` +
@@ -641,7 +685,7 @@ class QuickTunnel {
     this._healthFails = 0;
     this._backoffMs = Math.min(this._backoffMs || 200, 200);
     this._killProc();
-    if (typeof this.onLost === 'function') {
+    if (!silent && typeof this.onLost === 'function') {
       try {
         this.onLost();
       } catch (_) {
@@ -649,6 +693,27 @@ class QuickTunnel {
       }
     }
     this._scheduleRestart();
+  }
+
+  /**
+   * 房主确认重开：立刻杀隧道并等到新公网地址（绕过 protect，不走 markTunnelLost）。
+   */
+  async forceRotateAndWait(reason) {
+    if (this._stopped) throw new Error('tunnel stopped');
+    const port = this._port;
+    if (!port) throw new Error('隧道未绑定端口');
+    const prev = this.publicUrl;
+    this._forceRotate(reason || 'host-reopen', { silent: true });
+    const start = Date.now();
+    const timeoutMs = 90000;
+    while (Date.now() - start < timeoutMs) {
+      if (this._stopped) throw new Error('tunnel stopped');
+      if (this.publicUrl && this.publicUrl !== prev && this.proc) {
+        return this.publicUrl;
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    throw new Error('隧道换址超时');
   }
 
   _scheduleRestart() {
@@ -716,7 +781,12 @@ module.exports = {
   publicHealthUrl,
   HEALTH_PATH,
   HEALTH_FAILS,
+  DNS_HEALTH_FAILS,
+  HEALTH_INTERVAL_MS,
+  HEALTH_FAIL_INTERVAL_MS,
   HEALTH_TIMEOUT_MS,
+  isDnsNotFoundReason,
+  healthFailLimitForReason,
   downloadFile,
   TOOLS_DIR,
   VENDORED_CLOUDFLARED_FILES,

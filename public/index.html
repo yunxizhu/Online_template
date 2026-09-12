@@ -447,6 +447,34 @@
     </div>
   </div>
 
+  <div class="modal" id="tunnel-reopen-modal" hidden>
+    <div class="modal-backdrop"></div>
+    <div class="modal-dialog panel" role="dialog" aria-labelledby="tunnel-reopen-title" aria-modal="true">
+      <div class="row panel-head">
+        <h2 id="tunnel-reopen-title" data-i18n="tunnelReopen.title">房间状态错误</h2>
+      </div>
+      <p id="tunnel-reopen-message" class="invite-message" data-i18n="tunnelReopen.message">房间状态错误，是否重开？</p>
+      <div class="row">
+        <button id="btn-tunnel-reopen-yes" type="button" data-i18n="tunnelReopen.yes">是</button>
+        <button id="btn-tunnel-reopen-no" type="button" class="secondary" data-i18n="tunnelReopen.no">否</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="room-transfer-modal" hidden>
+    <div class="modal-backdrop"></div>
+    <div class="modal-dialog panel" role="dialog" aria-labelledby="room-transfer-title" aria-modal="true">
+      <div class="row panel-head">
+        <h2 id="room-transfer-title" data-i18n="roomTransfer.title">房间已转移</h2>
+      </div>
+      <p id="room-transfer-message" class="invite-message" data-i18n="roomTransfer.message">房间已转移，是否跳转到新房间？</p>
+      <div class="row">
+        <button id="btn-room-transfer-yes" type="button" data-i18n="roomTransfer.yes">是</button>
+        <button id="btn-room-transfer-no" type="button" class="secondary" data-i18n="roomTransfer.no">否</button>
+      </div>
+    </div>
+  </div>
+
   <div id="people-ctx" class="ctx-menu" hidden>
     <button type="button" data-action="join-their-room" data-i18n="lobby.joinTheirRoom">加入其房间</button>
     <button type="button" data-action="create-on-host">在此开房</button>

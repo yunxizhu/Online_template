@@ -730,43 +730,24 @@ function applyEnvironmentOnSettleSlot(game, ctx) {
       const alive = (ctx.alivePlayers && ctx.alivePlayers(game)) || [];
       if (!alive.length) break;
 
-      // 计算弃牌数 n：先看板上所有实体（含中立）抵消后的名次，取第一名的骰子数
-      const entries = Object.entries(physical).filter(([, c]) => c > 0);
-      const byCount = new Map();
-      for (const [pid, c] of entries) {
-        if (!byCount.has(c)) byCount.set(c, []);
-        byCount.get(c).push(pid);
-      }
-      const physicalRemain = {};
-      for (const [c, pids] of byCount) {
-        if (pids.length === 1) physicalRemain[pids[0]] = c;
-      }
-      const physicalRanked = Object.entries(physicalRemain)
-        .map(([pid, count]) => ({
-          pid,
-          count,
-          dice: Number(physical[pid]) || 0,
-        }))
-        .sort((a, b) => b.count - a.count);
-
-      const top = physicalRanked[0];
+      // 名次与资源结算一致：按派遣强度抵消后的 ranked/remain（勿用物理骰数重做抵消，
+      // 否则「2 强化骰 vs 2 中立」强度胜出拿第一、物理同数却被误消成 n=0）
+      const top = ranked[0];
       const n = top
         ? Number(top.dice) || physicalDiceOnSlot(physical, top.pid)
         : 0;
 
-      // 确定受害者：看所有玩家中谁的“抵消后物理骰子数”最少（含没放的 0）
-      // 中立骰只用来参与抵消，本身不进入受害者判定
+      // 最后一名：全体存活玩家中，强度抵消后剩余最少者（未放置=0；可并列）
       const playerCounts = alive.map((p) => ({
         pid: p.id,
-        count: physicalRemain[p.id] || 0,
+        count: Number(remain[p.id]) || 0,
       }));
       if (playerCounts.length <= 1) break; // 只有一人不罚
       const minCount = Math.min(...playerCounts.map((pc) => pc.count));
       const maxCount = Math.max(...playerCounts.map((pc) => pc.count));
 
-      // 若所有玩家抵消后骰子数相同，则人人都是最后一名
       const victims = alive.filter((p) => {
-        const count = physicalRemain[p.id] || 0;
+        const count = Number(remain[p.id]) || 0;
         if (minCount === maxCount) return true;
         return count === minCount;
       });

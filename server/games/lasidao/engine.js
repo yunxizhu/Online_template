@@ -4484,12 +4484,12 @@ function isStackAchievementKey(key) {
 const EXCHANGE_TITLE_NEED = STACK_ACHIEVEMENT_NEED;
 const EXCHANGE_TITLE_SCORE = STACK_ACHIEVEMENT_SCORE;
 const EXCHANGE_TITLE_ID = 'commerceTycoon';
-const EXCHANGE_TITLE_LABEL = '商业巨擎';
+const EXCHANGE_TITLE_LABEL = '商业巨擘';
 const WISH_WELL_TITLE_ID = 'lampSpirit';
 const WISH_WELL_TITLE_LABEL = '灯灵本灵';
 const BOOSTED_TYCOON_STACK_KEY = 'boostedTycoon';
 const BOOSTED_TYCOON_ID = 'boostedTycoon';
-const BOOSTED_TYCOON_LABEL = '你被强化了！';
+const BOOSTED_TYCOON_LABEL = '强化军团';
 const BOOSTED_TYCOON_NEED = 3;
 const BOOSTED_TYCOON_SCORE = 2;
 const WORKSHOP_MASTER_STACK_KEY = 'workshopMaster';
@@ -4498,10 +4498,10 @@ const WORKSHOP_MASTER_LABEL = '工坊主';
 const WORKSHOP_MASTER_NEED = 3;
 const WORKSHOP_MASTER_SCORE = 2;
 
-// 新称号：想要啥就拿啥（集市 + 许愿井 >= 3）
+// 独占称号：商业巨擘（集市 >= 3）
 const WHAT_YOU_WANT_STACK_KEY = 'whatYouWant';
 const WHAT_YOU_WANT_ID = 'whatYouWant';
-const WHAT_YOU_WANT_LABEL = '想要啥就拿啥';
+const WHAT_YOU_WANT_LABEL = '商业巨擘';
 const WHAT_YOU_WANT_NEED = 3;
 const WHAT_YOU_WANT_SCORE = 2;
 
@@ -4663,6 +4663,20 @@ function totalBuiltWorkshops(player) {
   return n;
 }
 
+/** 工坊主判定：工坊 + 许愿井 */
+function totalBuiltWorkshopsAndWishWell(player) {
+  let n = 0;
+  for (const b of player.buildings || []) {
+    if (
+      b.built &&
+      (b.buildType === 'produce' || b.buildType === 'wishWell')
+    ) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
 function hasWorkshopMaster(player, game) {
   return Boolean(
     game && player && !player.left && game.workshopMasterPlayerId === player.id
@@ -4675,15 +4689,19 @@ function workshopMasterScore(player, game) {
 
 function workshopMasterEligiblePlayers(game) {
   return alivePlayers(game).filter(
-    (p) => totalBuiltWorkshops(p) >= WORKSHOP_MASTER_NEED
+    (p) => totalBuiltWorkshopsAndWishWell(p) >= WORKSHOP_MASTER_NEED
   );
 }
 
 function pickWorkshopMasterHolder(game) {
   const eligible = workshopMasterEligiblePlayers(game);
   if (!eligible.length) return null;
-  const maxW = Math.max(...eligible.map((p) => totalBuiltWorkshops(p)));
-  const top = eligible.filter((p) => totalBuiltWorkshops(p) === maxW);
+  const maxW = Math.max(
+    ...eligible.map((p) => totalBuiltWorkshopsAndWishWell(p))
+  );
+  const top = eligible.filter(
+    (p) => totalBuiltWorkshopsAndWishWell(p) === maxW
+  );
   const prevId = game.workshopMasterPlayerId || null;
   if (prevId && top.some((p) => p.id === prevId)) return prevId;
   top.sort((a, b) => (a.seat || 0) - (b.seat || 0));
@@ -4702,12 +4720,12 @@ function resolveWorkshopMaster(game) {
   if (next && !prev) {
     pushLog(
       game,
-      `${next.name} 获得称号「${WORKSHOP_MASTER_LABEL}」（已建成工坊 ≥${WORKSHOP_MASTER_NEED}，+${WORKSHOP_MASTER_SCORE} 分）`
+      `${next.name} 获得称号「${WORKSHOP_MASTER_LABEL}」（工坊+许愿井 ≥${WORKSHOP_MASTER_NEED}，+${WORKSHOP_MASTER_SCORE} 分）`
     );
   } else if (next && prev) {
     pushLog(
       game,
-      `${next.name} 抢走称号「${WORKSHOP_MASTER_LABEL}」（工坊数量 ${totalBuiltWorkshops(next)} > ${totalBuiltWorkshops(prev)}，+${WORKSHOP_MASTER_SCORE} 分）`
+      `${next.name} 抢走称号「${WORKSHOP_MASTER_LABEL}」（工坊+许愿井 ${totalBuiltWorkshopsAndWishWell(next)} > ${totalBuiltWorkshopsAndWishWell(prev)}，+${WORKSHOP_MASTER_SCORE} 分）`
     );
   } else if (!next && prev) {
     pushLog(game, `${prev.name} 失去称号「${WORKSHOP_MASTER_LABEL}」`);
@@ -4715,12 +4733,9 @@ function resolveWorkshopMaster(game) {
   return true;
 }
 
+/** @deprecated 旧：集市+许愿井合计；商业巨擘现仅计集市 */
 function totalBuiltExchangeAndWishWell(player) {
-  let n = 0;
-  for (const b of player.buildings || []) {
-    if (b.built && (b.buildType === 'exchange' || b.buildType === 'wishWell')) n += 1;
-  }
-  return n;
+  return countBuiltExchanges(player) + countWishWell(player);
 }
 
 function hasWhatYouWant(player, game) {
@@ -4735,15 +4750,15 @@ function whatYouWantScore(player, game) {
 
 function whatYouWantEligiblePlayers(game) {
   return alivePlayers(game).filter(
-    (p) => totalBuiltExchangeAndWishWell(p) >= WHAT_YOU_WANT_NEED
+    (p) => countBuiltExchanges(p) >= WHAT_YOU_WANT_NEED
   );
 }
 
 function pickWhatYouWantHolder(game) {
   const eligible = whatYouWantEligiblePlayers(game);
   if (!eligible.length) return null;
-  const maxN = Math.max(...eligible.map((p) => totalBuiltExchangeAndWishWell(p)));
-  const top = eligible.filter((p) => totalBuiltExchangeAndWishWell(p) === maxN);
+  const maxN = Math.max(...eligible.map((p) => countBuiltExchanges(p)));
+  const top = eligible.filter((p) => countBuiltExchanges(p) === maxN);
   const prevId = game.whatYouWantPlayerId || null;
   if (prevId && top.some((p) => p.id === prevId)) return prevId;
   top.sort((a, b) => (a.seat || 0) - (b.seat || 0));
@@ -4762,12 +4777,12 @@ function resolveWhatYouWant(game) {
   if (next && !prev) {
     pushLog(
       game,
-      `${next.name} 获得称号「${WHAT_YOU_WANT_LABEL}」（集市+许愿井 ≥${WHAT_YOU_WANT_NEED}，+${WHAT_YOU_WANT_SCORE} 分）`
+      `${next.name} 获得称号「${WHAT_YOU_WANT_LABEL}」（集市 ≥${WHAT_YOU_WANT_NEED}，+${WHAT_YOU_WANT_SCORE} 分）`
     );
   } else if (next && prev) {
     pushLog(
       game,
-      `${next.name} 抢走称号「${WHAT_YOU_WANT_LABEL}」（${totalBuiltExchangeAndWishWell(next)} > ${totalBuiltExchangeAndWishWell(prev)}，+${WHAT_YOU_WANT_SCORE} 分）`
+      `${next.name} 抢走称号「${WHAT_YOU_WANT_LABEL}」（集市 ${countBuiltExchanges(next)} > ${countBuiltExchanges(prev)}，+${WHAT_YOU_WANT_SCORE} 分）`
     );
   } else if (!next && prev) {
     pushLog(game, `${prev.name} 失去称号「${WHAT_YOU_WANT_LABEL}」`);
@@ -7502,6 +7517,7 @@ module.exports = {
   BOOSTED_TYCOON_ID,
   BOOSTED_TYCOON_LABEL,
   totalBuiltWorkshops,
+  totalBuiltWorkshopsAndWishWell,
   hasWorkshopMaster,
   workshopMasterScore,
   resolveWorkshopMaster,

@@ -182,6 +182,7 @@ class MqttBulletin {
     onInvite,
     onLeave,
     onReload,
+    onRoomTransfer,
   }) {
     const opt = loadOptions(rootDir || process.cwd());
     this.enabled = !opt.disabled;
@@ -199,6 +200,7 @@ class MqttBulletin {
     this.onInvite = onInvite || (() => {});
     this.onLeave = onLeave || (() => {});
     this.onReload = onReload || (() => {});
+    this.onRoomTransfer = onRoomTransfer || (() => {});
     this.loginAt = Date.now();
     /** @type {import('mqtt').MqttClient|null} */
     this.client = null;
@@ -1121,6 +1123,55 @@ class MqttBulletin {
     }
   }
 
+  /**
+   * 房主隧道重开：通知旧房间成员跳到新房间码/新公网地址。
+   * 走 reload 频道，kind=roomTransfer。
+   */
+  publishRoomTransfer(msg) {
+    if (!this.enabled || !this._started) return false;
+    if (!this.#mqttUp()) return false;
+    const oldRoomId = String((msg && msg.oldRoomId) || '').toUpperCase();
+    const roomId = String((msg && msg.roomId) || '').toUpperCase();
+    const host = String((msg && msg.host) || '').replace(/\/$/, '');
+    if (!oldRoomId || !roomId || !host) return false;
+    const targets = Array.isArray(msg && msg.targets)
+      ? msg.targets
+          .filter((t) => t && (t.sessionId || t.name))
+          .slice(0, 12)
+          .map((t) => ({
+            name: String(t.name || '').trim().slice(0, 24),
+            tag: t.tag ? String(t.tag).slice(0, 12) : null,
+            sessionId: t.sessionId ? String(t.sessionId).slice(0, 64) : null,
+          }))
+      : [];
+    const payload = {
+      app: APP_SIGNATURE,
+      kind: 'roomTransfer',
+      instanceId: this.instanceId,
+      oldRoomId,
+      roomId,
+      host,
+      name: String((msg && msg.name) || '').slice(0, 40),
+      gameType: String((msg && msg.gameType) || ''),
+      gameLabel: String((msg && msg.gameLabel) || ''),
+      gameMode: String((msg && msg.gameMode) || ''),
+      gameModeLabel: String((msg && msg.gameModeLabel) || ''),
+      status: String((msg && msg.status) || 'waiting'),
+      targets,
+      at: Date.now(),
+    };
+    try {
+      return this.#publishAll(
+        this.#reloadTopic(),
+        JSON.stringify(payload),
+        { qos: 1, retain: false }
+      );
+    } catch (err) {
+      this.#warn(err);
+      return false;
+    }
+  }
+
   /** 隧道换址前的上一跳公网地址（恢复中仍指向旧址） */
   getLastKnownHost() {
     return String(this._lastKnownHost || this._lastTunnelUrl || '').replace(
@@ -1395,8 +1446,46 @@ class MqttBulletin {
       if (!raw.trim()) return;
       try {
         const p = JSON.parse(raw);
-        if (!p || p.app !== APP_SIGNATURE || p.kind !== 'reload') return;
+        if (!p || p.app !== APP_SIGNATURE) return;
         if (p.instanceId && p.instanceId === this.instanceId) return;
+        if (p.kind === 'roomTransfer') {
+          const oldRoomId = String(p.oldRoomId || '').toUpperCase();
+          const roomId = String(p.roomId || '').toUpperCase();
+          const host = String(p.host || '').replace(/\/$/, '');
+          if (!oldRoomId || !roomId || !host) return;
+          const dedupeKey = `xfer:${p.instanceId || ''}:${oldRoomId}:${roomId}:${host}:${p.at || ''}`;
+          if (this.#noteEphemeral(dedupeKey)) return;
+          const targets = Array.isArray(p.targets)
+            ? p.targets
+                .filter((t) => t && (t.sessionId || t.name))
+                .slice(0, 12)
+                .map((t) => ({
+                  name: String(t.name || '').trim().slice(0, 24),
+                  tag: t.tag ? String(t.tag).slice(0, 12) : null,
+                  sessionId: t.sessionId
+                    ? String(t.sessionId).slice(0, 64)
+                    : null,
+                }))
+            : [];
+          this.onRoomTransfer({
+            app: APP_SIGNATURE,
+            kind: 'roomTransfer',
+            instanceId: p.instanceId || null,
+            oldRoomId,
+            roomId,
+            host,
+            name: String(p.name || ''),
+            gameType: String(p.gameType || ''),
+            gameLabel: String(p.gameLabel || ''),
+            gameMode: String(p.gameMode || ''),
+            gameModeLabel: String(p.gameModeLabel || ''),
+            status: String(p.status || 'waiting'),
+            targets,
+            at: Number(p.at) || Date.now(),
+          });
+          return;
+        }
+        if (p.kind !== 'reload') return;
         const roomId = String(p.roomId || '').toUpperCase();
         const host = String(p.host || '').replace(/\/$/, '');
         if (!roomId || !host) return;

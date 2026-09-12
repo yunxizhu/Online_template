@@ -3955,6 +3955,68 @@ console.log('— prisoners dilemma last place not fewest dice —');
   console.log('✓ prisoners dilemma last place is global minimum');
 }
 
+console.log('— prisoners dilemma strength rank vs physical tie with neutrals —');
+{
+  const { startSettle } = require('../engine');
+  const { NEUTRAL_WORKER_ID } = require('../decks');
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.board.resource.environments[6] = {
+    id: 'env_pd_boost',
+    kind: 'environment',
+    envType: 'prisonersDilemma',
+    label: '囚徒困境',
+    trigger: 'settle',
+    dispatchAlso: true,
+    setup: 'neutral1',
+    number: 6,
+  };
+  g.board.resource.tiles = [
+    {
+      id: 'res_pd_boost',
+      kind: 'resource',
+      resource: 'wood',
+      large: 2,
+      small: 1,
+      number: 6,
+      label: '木材',
+    },
+  ];
+  const p0 = g.players[0];
+  const p1 = g.players[1];
+  // 第一名 2 骰（1 强化+1 普通，强度 2.5），中立 2 普通（强度 2）；物理同数勿误消
+  g.board.resource.workers = {
+    1: {},
+    2: {},
+    3: {},
+    4: {},
+    5: {},
+    6: { [p0.id]: 2, [NEUTRAL_WORKER_ID]: 2 },
+  };
+  g.board.resource.boosts = {
+    1: {},
+    2: {},
+    3: {},
+    4: {},
+    5: {},
+    6: { [p0.id]: 1 },
+  };
+  startSettle(g);
+  assert.strictEqual(
+    Number((g.pendingPrisonerDiscards || {})[p0.id]) || 0,
+    0,
+    '第一名不应弃牌'
+  );
+  assert.strictEqual(
+    Number((g.pendingPrisonerDiscards || {})[p1.id]) || 0,
+    2,
+    '未放置者应弃第一名物理骰数 2（非因与中立物理同数而 n=0）'
+  );
+  const woodGain = ((p0.resources && p0.resources.wood) || 0);
+  assert.ok(woodGain >= 2, '强度胜出应对第一名发大份');
+  console.log('✓ prisoners dilemma uses strength rank for n with boost vs neutrals');
+}
+
 console.log('— event wei qi rescue zhao —');
 {
   const { beginProduce } = require('../engine');
@@ -6824,7 +6886,7 @@ console.log('— exile picks enhanced die —');
   console.log('✓ exile picks enhanced die');
 }
 
-console.log('— exclusive title: 想要啥就拿啥 (exchange+wishWell >=3) +2 VP —');
+console.log('— exclusive title: 商业巨擘 (exchange >=3) +2 VP —');
 {
   const { playerScore: scoreOf, resolveWhatYouWant } = require('../engine');
   const g = createGameState(room(2));
@@ -6835,9 +6897,10 @@ console.log('— exclusive title: 想要啥就拿啥 (exchange+wishWell >=3) +2 
   g.buildPassed = {};
   g.produceFinishOrder = [p.id, g.players[1].id];
   p.resources = { wood: 10, stone: 10, food: 10, iron: 10 };
-  // 放 2 座集市 + 1 座许愿井
+  // 放 3 座集市（许愿井不计入）
   p.buildings.push({ id: 'ex_0', kind: 'building', buildType: 'exchange', label: '集市', cost: { wood: 1, stone: 1, food: 1 }, produce: 0, score: 0, needsWorker: false, functionalOnly: true, built: false, workers: 0, slot: 1, faceDown: false });
   p.buildings.push({ id: 'ex_1', kind: 'building', buildType: 'exchange', label: '集市', cost: { wood: 1, stone: 1, food: 1 }, produce: 0, score: 0, needsWorker: false, functionalOnly: true, built: false, workers: 0, slot: 1, faceDown: false });
+  p.buildings.push({ id: 'ex_2', kind: 'building', buildType: 'exchange', label: '集市', cost: { wood: 1, stone: 1, food: 1 }, produce: 0, score: 0, needsWorker: false, functionalOnly: true, built: false, workers: 0, slot: 1, faceDown: false });
   p.buildings.push({ id: 'ww_0', kind: 'building', buildType: 'wishWell', label: '许愿井', cost: { wood: 1, stone: 1, food: 1, iron: 1 }, produce: 0, score: 0, needsWorker: false, functionalOnly: true, built: false, workers: 0, slot: 2, faceDown: false });
 
   const base = scoreOf(p);
@@ -6846,24 +6909,27 @@ console.log('— exclusive title: 想要啥就拿啥 (exchange+wishWell >=3) +2 
   assert.strictEqual(scoreOf(p), base, '2集市不加称号分');
   ok(applyAction(g, p.id, { type: 'construct', payload: { buildingId: 'ww_0' } }));
   resolveWhatYouWant(g);
-  assert.strictEqual(scoreOf(p, g), base + 2, '集市+许愿井=3 获得称号 +2 分');
+  assert.strictEqual(scoreOf(p, g), base, '2集市+1许愿井不应获得商业巨擘');
+  ok(applyAction(g, p.id, { type: 'construct', payload: { buildingId: 'ex_2' } }));
+  resolveWhatYouWant(g);
+  assert.strictEqual(scoreOf(p, g), base + 2, '3集市获得商业巨擘 +2 分');
   const mePub = publicGameState(g, p.id).players.find((x) => x.id === p.id);
-  assert.ok((mePub.titles || []).some((t) => t.id === 'whatYouWant'), '应有 whatYouWant 称号');
+  assert.ok((mePub.titles || []).some((t) => t.id === 'whatYouWant' && t.label === '商业巨擘'), '应有商业巨擘称号');
   // 拆迁掉一座集市，称号应收回
   const built = p.buildings.find((b) => b.built && b.buildType === 'exchange');
   p.buildings = p.buildings.filter((b) => b.id !== built.id);
   resolveWhatYouWant(g);
-  assert.strictEqual(scoreOf(p, g), base, '不足3座时称号分应收回');
+  assert.strictEqual(scoreOf(p, g), base, '不足3座集市时称号分应收回');
   assert.ok(
     !(publicGameState(g, p.id).players.find((x) => x.id === p.id).titles || []).some(
       (t) => t.id === 'whatYouWant'
     ),
-    '不足3座时称号应消失'
+    '不足3座集市时称号应消失'
   );
   console.log('✓ whatYouWant exclusive title +2 VP');
 }
 
-console.log('— exclusive title: 想要啥就拿啥 stolen and tie not stolen —');
+console.log('— exclusive title: 商业巨擘 stolen and tie not stolen —');
 {
   const {
     playerScore: scoreOf,
@@ -6874,25 +6940,22 @@ console.log('— exclusive title: 想要啥就拿啥 stolen and tie not stolen �
   const p0 = g.players[0];
   const p1 = g.players[1];
   const p2 = g.players[2];
-  // p0: 2 集市 + 1 许愿井 = 3（先获称号）
-  for (let i = 0; i < 2; i++) {
+  // p0: 3 集市（先获称号候选）
+  for (let i = 0; i < 3; i++) {
     p0.buildings.push({ id: 'ex0_' + i, kind: 'building', buildType: 'exchange', label: '集市', cost: {}, produce: 0, score: 0, needsWorker: false, functionalOnly: true, built: true, workers: 0, slot: 1, faceDown: false });
   }
-  p0.buildings.push({ id: 'ww0_0', kind: 'building', buildType: 'wishWell', label: '许愿井', cost: {}, produce: 0, score: 0, needsWorker: false, functionalOnly: true, built: true, workers: 0, slot: 2, faceDown: false });
-  // p1: 3 集市 = 3（并列不应抢走）
+  // p1: 3 集市（并列不应抢走）
   for (let i = 0; i < 3; i++) {
     p1.buildings.push({ id: 'ex1_' + i, kind: 'building', buildType: 'exchange', label: '集市', cost: {}, produce: 0, score: 0, needsWorker: false, functionalOnly: true, built: true, workers: 0, slot: 1, faceDown: false });
   }
-  // p2: 4 集市 = 4（严格超过，应抢走）
+  // p2: 4 集市（严格超过，应抢走）
   for (let i = 0; i < 4; i++) {
     p2.buildings.push({ id: 'ex2_' + i, kind: 'building', buildType: 'exchange', label: '集市', cost: {}, produce: 0, score: 0, needsWorker: false, functionalOnly: true, built: true, workers: 0, slot: 1, faceDown: false });
   }
   resolveWhatYouWant(g);
-  assert.strictEqual(scoreOf(p0, g), 0, 'p0 先获称号时 0 基础分（无其他分）');
+  assert.strictEqual(scoreOf(p0, g), 0, 'p0 未持有时 0 基础分');
   assert.strictEqual(scoreOf(p1, g), 0, 'p1 并列，不应有称号分');
-  assert.strictEqual(scoreOf(p2, g), 2, 'p2 数量=4>p0=3，首次即抢到称号');
-  // 实际上 resolveWhatYouWant 按 maxE+W 排序，p2=4 最大，应从 p0 抢走
-  // 重新确认：当前持有者是 p0，p2 严格超过，因此 p2 抢走
+  assert.strictEqual(scoreOf(p2, g), 2, 'p2 数量=4 最大，首次即抢到称号');
   resolveWhatYouWant(g);
   assert.strictEqual(g.whatYouWantPlayerId, p2.id, 'p2 应抢走称号');
   assert.strictEqual(scoreOf(p0, g), 0, '失去称号后 p0 为 0');
@@ -6943,7 +7006,7 @@ console.log('— stack achievement: 3 food workshops no stack achievement —');
   console.log('✓ produce workshops no longer give stack achievement');
 }
 
-console.log('— workshop master title: ≥5 built workshops —');
+console.log('— workshop master title: workshops+wishWell >=3 —');
 {
   const {
     playerScore: scoreOf,
@@ -6961,13 +7024,10 @@ console.log('— workshop master title: ≥5 built workshops —');
   p0.resources = { wood: 20, stone: 20, food: 20, iron: 20 };
   p1.resources = { wood: 20, stone: 20, food: 20, iron: 20 };
 
-  // p0 建 5 个工坊（2 木 + 1 石 + 1 小麦 + 1 铁）
+  // p0: 2 工坊 + 1 许愿井 = 3
   const ws0 = [
     { r: 'wood', id: 'wm0' },
-    { r: 'wood', id: 'wm1' },
-    { r: 'stone', id: 'wm2' },
-    { r: 'food', id: 'wm3' },
-    { r: 'iron', id: 'wm4' },
+    { r: 'stone', id: 'wm1' },
   ];
   for (const w of ws0) {
     p0.buildings.push({
@@ -6984,14 +7044,25 @@ console.log('— workshop master title: ≥5 built workshops —');
       faceDown: false,
     });
   }
+  p0.buildings.push({
+    id: 'wm_ww0',
+    kind: 'building',
+    buildType: 'wishWell',
+    label: '许愿井',
+    cost: { wood: 1 },
+    score: 0,
+    built: true,
+    slot: 1,
+    faceDown: false,
+  });
   resolveWorkshopMaster(g);
-  assert.strictEqual(g.workshopMasterPlayerId, p0.id, '≥5 工坊应获得工坊主');
+  assert.strictEqual(g.workshopMasterPlayerId, p0.id, '工坊+许愿井≥3 应获得工坊主');
   assert.strictEqual(scoreOf(p0, g), 2, '工坊主 +2 分');
   const mePub0 = publicGameState(g, p0.id).players.find((x) => x.id === p0.id);
   assert.ok((mePub0.titles || []).some((t) => t.label === '工坊主'), '称号列表应含工坊主');
 
-  // p1 建 6 个工坊超过 p0
-  for (let i = 0; i < 6; i++) {
+  // p1: 3 工坊 + 1 许愿井 = 4，超过 p0
+  for (let i = 0; i < 3; i++) {
     p1.buildings.push({
       id: 'wm_p1_' + i,
       kind: 'building',
@@ -7006,9 +7077,20 @@ console.log('— workshop master title: ≥5 built workshops —');
       faceDown: false,
     });
   }
+  p1.buildings.push({
+    id: 'wm_p1_ww',
+    kind: 'building',
+    buildType: 'wishWell',
+    label: '许愿井',
+    cost: { wood: 1 },
+    score: 0,
+    built: true,
+    slot: 1,
+    faceDown: false,
+  });
   resolveWorkshopMaster(g);
-  assert.strictEqual(g.workshopMasterPlayerId, p1.id, '工坊更多应抢走工坊主');
-  assert.strictEqual(scoreOf(p1, g), 2, '抢走工坊主后 p1 总计 +2 分（工坊主+2，produce 建筑无叠放成就）');
+  assert.strictEqual(g.workshopMasterPlayerId, p1.id, '合计更多应抢走工坊主');
+  assert.strictEqual(scoreOf(p1, g), 2, '抢走工坊主后 p1 总计 +2 分');
   const mePub1 = publicGameState(g, p1.id).players.find((x) => x.id === p1.id);
   assert.ok((mePub1.titles || []).some((t) => t.label === '工坊主'));
   assert.strictEqual(scoreOf(p0, g), 0, 'p0 失去工坊主后分数归 0');

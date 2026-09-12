@@ -172,7 +172,7 @@ const zhBuild =
   '<dt data-las-card="build:exchange">集市（5）</dt><dd>造价 1 木 1 石 1 小麦。建成后提升兑换比例（默认银行 3:1，1 座→2:1，≥2 座→1:1；兑换最多计 2 座）。相同建筑可叠放同一建筑格。</dd>' +
   '<dt data-las-card="build:wishWell">许愿井（3）</dt><dd>造价 1 木 1 石 1 小麦 1 铁。个人产出阶段可选任意资源；同格叠放次数为 1+2+…+n（叠 1/2/3 座→1/3/6）。无需工人。</dd>' +
   '<dt data-las-card="build:eternalThrone">永恒王座（2）</dt><dd>造价 3 木 3 石 3 小麦 3 铁。每建成一座：每个建造回合结束时 +1 胜利点。已获得的分数永久保留（与宫殿不同）；拆迁后该座停止继续得分，再次建成后可重新开始获得。</dd>' +
-  '</dl><p>任意同类型建筑建成 3 座：额外 +2 胜利点（例：3 座集市→「商业巨擎」；3 座许愿井→「灯灵本灵」；3 座同资源工坊→「××管理者」）。</p>';
+  '</dl><p>独占称号：「商业巨擘」— 集市 ≥3，+2 分（更多者可抢）；「工坊主」— 工坊+许愿井 ≥3，+2 分（更多者可抢）。同类型宫殿等建筑建成 3 座仍可获叠放成就 +2 分。</p>';
 
 const enBuild =
   '<dl class="las-rules-dl">' +
@@ -183,7 +183,7 @@ const enBuild =
   '<dt data-las-card="build:exchange">Market (5)</dt><dd>Cost 1W 1S 1 wheat. Trade rate: default bank 3:1, 1→2:1, ≥2→1:1 (rate counts at most 2). Same-type buildings may stack.</dd>' +
   '<dt data-las-card="build:wishWell">Wish Well (3)</dt><dd>Cost 1W 1S 1 wheat 1I. Personal production: choose any resources; same-slot stack count is 1+2+…+n (1/2/3 wells → 1/3/6). No workers.</dd>' +
   '<dt data-las-card="build:eternalThrone">Eternal Throne (2)</dt><dd>Cost 3W 3S 3 wheat 3I. Each built throne: +1 VP at the end of each build turn. Earned VP is kept forever (unlike Palace); demolition stops further income from that throne until rebuilt.</dd>' +
-  '</dl><p>Build 3 of the same type: +2 VP each (e.g. 3 markets→Commerce Tycoon; 3 wish wells→Lamp Spirit; 3 same workshops→×× Manager).</p>';
+  '</dl><p>Exclusive titles: Commerce Tycoon — Markets ≥3, +2 VP (stolen by more markets); Workshop Master — Workshops + Wish Wells ≥3, +2 VP (stolen by higher total). Building 3 of the same stackable type (e.g. Palace) still grants a stack achievement +2 VP.</p>';
 
 function apply(lang, flow, permanent, func, build, resource) {
   const p = path.join(ROOT, 'public/i18n', `${lang}.json`);

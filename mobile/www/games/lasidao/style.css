@@ -4264,7 +4264,7 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
   border-color: #e0c56a;
 }
 
-/* Harvest modal — dialog frame unchanged; cards/buttons use --las-rpick-scale (2/3) */
+/* Harvest / discard / void-skip：加大弹框外框；卡牌仍由 --las-rpick-scale 控制 */
 .las-harvest-modal,
 .las-void-skip-modal,
 .las-settle-discard-modal {
@@ -4272,14 +4272,18 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
 }
 
 .las-harvest-dialog {
-  max-width: 1200px;
-  width: min(96vw, 1200px);
-  max-height: min(92vh, 860px);
-  padding: calc(1.5 * var(--las-rem)) calc(2 * var(--las-rem)) calc(1.75 * var(--las-rem));
+  max-width: 1400px;
+  width: min(98vw, 1400px);
+  max-height: min(96vh, 980px);
+  min-height: min(72vh, 720px);
+  padding: calc(2 * var(--las-rem)) calc(2.75 * var(--las-rem)) calc(2.25 * var(--las-rem));
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
 }
 .las-harvest-head {
   text-align: center;
-  margin-bottom: calc(1 * var(--las-rem));
+  margin-bottom: calc(1.35 * var(--las-rem));
 }
 .las-harvest-head h3 {
   margin: 0;
@@ -4297,8 +4301,9 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
 .las-harvest-body {
   display: flex;
   flex-direction: column;
-  gap: calc(1.5 * var(--las-rem));
-  min-height: 280px;
+  gap: calc(1.75 * var(--las-rem));
+  min-height: 360px;
+  flex: 1 1 auto;
   align-items: center;
   justify-content: center;
 }
@@ -4308,8 +4313,8 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
   flex-wrap: nowrap;
   justify-content: center;
   align-items: center;
-  gap: calc(1 * var(--las-rem));
-  margin-top: calc(1 * var(--las-rem));
+  gap: calc(1.25 * var(--las-rem));
+  margin-top: calc(1.35 * var(--las-rem));
 }
 .las-harvest-foot button {
   min-width: calc(9 * var(--las-rem) * var(--las-rpick-scale, 1));
@@ -4321,9 +4326,9 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-template-rows: repeat(2, minmax(0, 1fr));
-  gap: calc(2.2 * var(--las-rem)) calc(3 * var(--las-rem));
+  gap: calc(2.6 * var(--las-rem)) calc(3.6 * var(--las-rem));
   width: 100%;
-  max-width: 900px;
+  max-width: 1080px;
   margin: 0 auto;
 }
 .las-harvest-item {
@@ -4407,7 +4412,14 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
 }
 
 .las-settle-discard-dialog {
-  max-width: 520px;
+  max-width: min(96vw, 920px);
+  width: min(96vw, 920px);
+  min-height: min(64vh, 640px);
+  max-height: min(96vh, 900px);
+  padding: calc(2 * var(--las-rem)) calc(2.5 * var(--las-rem)) calc(2.25 * var(--las-rem));
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
 }
 .las-settle-discard-group {
   width: 100%;
@@ -4438,7 +4450,7 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
 
 /* Expand modal */
 .las-expand-dialog {
-  max-width: 440px;
+  max-width: min(560px, 96vw);
 }
 .las-expand-head {
   text-align: center;
@@ -4454,6 +4466,7 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
   gap: calc(0.75 * var(--las-rem));
   min-height: 100px;
   align-items: center;
+  overflow: visible;
 }
 .las-expand-foot {
   justify-content: center;
@@ -4463,11 +4476,14 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
 .las-expand-options {
   display: flex;
   justify-content: center;
-  gap: calc(1 * var(--las-rem));
+  align-items: flex-start;
+  gap: calc(0.75 * var(--las-rem));
   width: 100%;
+  overflow: visible;
 }
 .las-expand-option {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   max-width: 160px;
   padding: calc(0.5 * var(--las-rem));
   border-radius: 8px;
@@ -4477,11 +4493,12 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
   cursor: pointer;
   text-align: center;
   transition: transform 0.15s, border-color 0.15s, background 0.15s;
-  font-size: calc(0.95 * var(--las-rem));
+  font-size: calc(0.9 * var(--las-rem));
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: calc(0.4 * var(--las-rem));
+  overflow: visible;
 }
 .las-expand-option:hover {
   border-color: #e0c56a;
@@ -4491,10 +4508,13 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
   background: #2a4a62;
 }
 .las-expand-back {
-  width: 90px;
-  height: 120px;
+  width: min(100%, 100px);
+  aspect-ratio: 60 / 97;
+  height: auto;
+  flex: 0 0 auto;
   border-radius: 8px;
-  background-size: cover;
+  background-size: contain;
+  background-repeat: no-repeat;
   background-position: center;
   border: 2px solid transparent;
   transition: transform 0.15s, border-color 0.15s;
@@ -5863,14 +5883,18 @@ button.las-exile-player.color-neutral {
 
 /* Void skip modal */
 .las-void-skip-dialog {
-  max-width: 800px;
-  width: min(92vw, 800px);
-  max-height: min(92vh, 760px);
-  padding: calc(1.25 * var(--las-rem)) calc(1.5 * var(--las-rem)) calc(1.5 * var(--las-rem));
+  max-width: 1100px;
+  width: min(96vw, 1100px);
+  max-height: min(96vh, 920px);
+  min-height: min(68vh, 680px);
+  padding: calc(2 * var(--las-rem)) calc(2.5 * var(--las-rem)) calc(2.25 * var(--las-rem));
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
 }
 .las-void-skip-head {
   text-align: center;
-  margin-bottom: calc(0.75 * var(--las-rem));
+  margin-bottom: calc(1.15 * var(--las-rem));
 }
 .las-void-skip-head h3 {
   margin: 0;
@@ -5881,12 +5905,13 @@ button.las-exile-player.color-neutral {
   font-size: calc(1 * var(--las-rem));
 }
 .las-void-skip-body {
-  min-height: 120px;
+  min-height: 220px;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   justify-content: flex-start;
-  gap: calc(0.75 * var(--las-rem));
+  gap: calc(1.1 * var(--las-rem));
 }
 .las-void-skip-modes {
   display: flex;
@@ -5939,9 +5964,9 @@ button.las-exile-player.color-neutral {
 .las-void-skip-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: calc(1.25 * var(--las-rem)) calc(1.5 * var(--las-rem));
+  gap: calc(1.6 * var(--las-rem)) calc(2 * var(--las-rem));
   width: 100%;
-  max-width: 540px;
+  max-width: 720px;
   margin: 0 auto;
 }
 .las-void-skip-item {

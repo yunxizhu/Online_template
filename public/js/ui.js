@@ -3561,6 +3561,11 @@
     if (data.fx && data.fx.id) {
       g.lastProduceFx = data.fx;
     }
+    // 投掷已发出：立刻清 awaiting，避免全量 state 迟到时又开一轮自动投计时器
+    if (data.type === 'produceRoll' || data.type === 'mercenaryRoll') {
+      g.awaitingProduceRoll = false;
+      if (g.activeProduce) g.activeProduce.awaitingRoll = false;
+    }
     scheduleRenderGame(true);
   }
 

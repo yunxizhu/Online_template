@@ -288,6 +288,9 @@ window.GameNet = (function () {
       'room:probe-result',
       'room:resolved',
       'room:reload',
+      'room:transfer',
+      'room:reopenDone',
+      'room:kicked',
       'room:verifyPassword:result',
       'game:started',
       'game:state',
@@ -636,6 +639,10 @@ window.GameNet = (function () {
       client: clientOf(opts),
       role: roleOf(opts),
     });
+  }
+
+  function reopenTunnelRoom() {
+    ensureSocket().emit('room:reopenTunnel');
   }
 
   function setPassive(on) {
@@ -1085,6 +1092,7 @@ window.GameNet = (function () {
     switchMqttBroker,
     renamePlayer,
     createRoom,
+    reopenTunnelRoom,
     createRoomOnHost,
     setPassive,
     updateRoomSettings,
