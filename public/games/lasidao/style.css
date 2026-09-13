@@ -38,6 +38,36 @@
   box-sizing: border-box;
 }
 
+/* 背景图层（最底，80% 不透明度） */
+.lasidao-panel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url('/games/lasidao/res/picture/youxibeijing.png');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  opacity: 0.8;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* 黑色遮罩层（背景图之上，内容之下） */
+.lasidao-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 1;
+  pointer-events: none;
+}
+
+.lasidao-panel > * {
+  position: relative;
+  z-index: 2;
+}
+
 /* 缩放统一走 --las-ui-scale / --las-rem；不再使用 zoom/transform */
 .lasidao-panel.las-scale-zoom,
 .lasidao-panel.las-scale-transform {
@@ -165,6 +195,7 @@
   text-align: center;
   flex: 0 0 auto;
   box-sizing: border-box;
+  color: #c8d4dc;
 }
 
 .las-status-slot .las-status-line[hidden] {
