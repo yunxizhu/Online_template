@@ -1936,14 +1936,44 @@ io.on('connection', (socket) => {
       io.to(room.id).emit('game:play-reveal', { reveal: newReveal });
     }
     if (g) {
-      io.to(room.id).emit('game:pulse', {
+      const pulse = {
         type: data.type,
         actorId: socket.id,
         phase: g.phase,
         currentPlayerId: g.currentPlayerId || null,
         lastPlacerId: g.lastPlacerId || null,
+        stateSeq: Number(g.stateSeq) || 0,
         fx: newFx && newFx.id && newFx.id !== prevFxId ? newFx : null,
-      });
+      };
+      // 生产阶段：每次操作都带上 awaiting + activeProduce，避免 placeDice 推进回合后
+      // 客户端只改了 currentPlayerId、残留上一玩家骰面，把「下一玩家等待投掷」挡掉
+      if (g.phase === 'produce' && room.gameType === 'lasidao') {
+        const pid = g.currentPlayerId;
+        const produceDice = pid && g.dice && g.dice[pid] ? g.dice[pid] : [];
+        const produceBoost =
+          pid && g.diceBoosted && g.diceBoosted[pid] ? g.diceBoosted[pid] : [];
+        pulse.awaitingProduceRoll = Boolean(g.awaitingProduceRoll);
+        pulse.remoteDiceMode = Boolean(g.remoteDiceMode);
+        pulse.activeProduce = pid
+          ? {
+              playerId: pid,
+              awaitingRoll: Boolean(g.awaitingProduceRoll),
+              remoteDiceMode: Boolean(g.remoteDiceMode),
+              dice: produceDice.slice(),
+              diceBoosted: produceBoost.slice(),
+            }
+          : null;
+        // 投掷结果：行动者顶层 dice（旁观者只看 activeProduce）
+        if (data.type === 'produceRoll' && pid) {
+          pulse.dice = produceDice.slice();
+          pulse.diceBoosted = produceBoost.slice();
+          pulse.actorId = pid;
+        }
+      } else if (data.type === 'mercenaryRoll') {
+        pulse.mercenaryRoll = (g.mercenaryRoll || []).slice();
+        pulse.mercenaryPlaced = (g.mercenaryPlaced || []).slice();
+      }
+      io.to(room.id).emit('game:pulse', pulse);
     }
     emitGameState(room);
     // 对局刚结束：立刻刷新房间状态并广播

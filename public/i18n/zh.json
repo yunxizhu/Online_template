@@ -276,6 +276,8 @@
     "areaSpecial": "功能/建筑板块",
     "yourDice": "你的骰子",
     "confirmDispatch": "确认派遣",
+    "pickTargetFirst": "请先选择点数与目标板块",
+    "noSuchDie": "没有该点数的骰子，请等待同步后重试",
     "confirm": "确认",
     "voidDispatch": "跳过（爆骰换资源）",
     "initRoll": "投骰比大小（先手）",

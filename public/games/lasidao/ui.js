@@ -342,6 +342,8 @@ window.LasidaoUi = (function () {
   let autoProduceRollCountdownTimer = null;
   /** 同一投掷结果只播一次动画（含旁观/本人路径切换） */
   let lastAnimatedRollKey = null;
+  /** 投掷动画卡在 rolling/grouping 时强制进入 ready，避免「看见结果却点不了板块」 */
+  let diceReadyWatchdog = null;
 
   let robberyCardId = null;
   /** @type {'mode'|'target'|'confirm'|'give'|null} */
@@ -401,6 +403,7 @@ window.LasidaoUi = (function () {
     key: null,
     actorId: null,
     stage: 'idle', // idle | rolling | grouping | ready
+    revealed: false,
     timers: [],
     intervals: [],
     finalDice: [],
@@ -607,12 +610,63 @@ window.LasidaoUi = (function () {
 
   function resetDiceAnim() {
     clearDiceTimers();
+    if (diceReadyWatchdog) {
+      clearTimeout(diceReadyWatchdog);
+      diceReadyWatchdog = null;
+    }
     diceAnim.key = null;
     diceAnim.actorId = null;
     diceAnim.stage = 'idle';
+    diceAnim.revealed = false;
     diceAnim.finalDice = [];
     diceAnim.finalBoosted = [];
     resetDiceSelection();
+  }
+
+  /** 投掷动画结束：进入 ready 并立刻刷新板块可点状态（避免只更新骰区、槽位仍 disabled） */
+  function markProduceDiceReady(meId, opts) {
+    const o = opts || {};
+    if (diceReadyWatchdog) {
+      clearTimeout(diceReadyWatchdog);
+      diceReadyWatchdog = null;
+    }
+    diceAnim.stage = 'ready';
+    diceAnim.revealed = true;
+    if (Array.isArray(o.finalDice)) diceAnim.finalDice = o.finalDice.slice();
+    if (Array.isArray(o.finalBoosted)) {
+      diceAnim.finalBoosted = o.finalBoosted.slice();
+    }
+    const wrap = $('las-dice-wrap');
+    if (wrap) wrap.hidden = false;
+    if (o.renderGrouped !== false) {
+      if (o.remote) renderRemoteDice(lastGame, meId || lastMeId);
+      else if (o.spectator) {
+        renderSpectatorDice(
+          diceAnim.finalDice,
+          o.color,
+          diceAnim.finalBoosted
+        );
+      } else {
+        renderGroupedDice();
+      }
+    }
+    updateDispatchPreview();
+    updateDiceHint();
+    const boardMe = meId || lastMeId;
+    if (lastGame && boardMe) renderBoard(lastGame, boardMe);
+    flushDeferredHeavyRender();
+  }
+
+  function armDiceReadyWatchdog(meId) {
+    if (diceReadyWatchdog) clearTimeout(diceReadyWatchdog);
+    diceReadyWatchdog = setTimeout(() => {
+      diceReadyWatchdog = null;
+      if (diceAnim.stage !== 'rolling' && diceAnim.stage !== 'grouping') {
+        return;
+      }
+      console.warn('[lasidao] diceAnim watchdog: force ready');
+      markProduceDiceReady(meId || lastMeId);
+    }, 3200);
   }
 
   function hideOthers() {
@@ -3377,18 +3431,31 @@ window.LasidaoUi = (function () {
     return null;
   }
 
+  /** 含 lastPlacerId：同轮再次轮到自己时 key 必须变，否则会吞掉自动投/投掷区逻辑 */
+  function produceAwaitRollKey(game, meId) {
+    if (!game || !meId) return null;
+    return `${game.round || 0}:${meId}:${game.currentPlayerId || ''}:${game.lastPlacerId || ''}:await`;
+  }
+
   function syncAutoProduceRoll(game, meId) {
     const kind = autoRollKind(game, meId);
     const key =
       kind === 'produce'
-        ? `${game.round || 0}:${meId}:${game.currentPlayerId || ''}:await`
+        ? produceAwaitRollKey(game, meId)
         : kind === 'mercenary'
-          ? `merc:${game.round || 0}:${meId}:${game.currentPlayerId || ''}`
+          ? `merc:${game.round || 0}:${meId}:${game.currentPlayerId || ''}:${game.lastPlacerId || ''}`
           : null;
     if (!kind) {
       clearAutoProduceRoll();
-      // 离开等待投掷后，允许下一轮再自动投
-      if (!isAwaitingRoll(game) && !isMercenaryRollMode(game, meId)) {
+      // 仅在「确有骰面」或已离开生产时清空 sentKey，允许同回合再次轮到时自动投。
+      // pulse 先清 awaiting、骰子尚未到达时绝不能清，否则迟到的 awaiting 快照会二次自动投。
+      if (
+        !game ||
+        game.phase !== 'produce' ||
+        (Array.isArray(game.dice) &&
+          game.dice.length > 0 &&
+          !isAwaitingRoll(game))
+      ) {
         autoProduceRollSentKey = null;
       }
       return;
@@ -3415,9 +3482,9 @@ window.LasidaoUi = (function () {
       const id = lastMeId;
       if (!netRef || !g || autoRollKind(g, id) !== kind) return;
       if (autoProduceRollSentKey === key) return;
-      autoProduceRollSentKey = key;
       const rollBtn = $('btn-las-produce-roll');
       if (rollBtn && rollBtn.dataset.lasRollBusy === '1') return;
+      autoProduceRollSentKey = key;
       if (rollBtn) rollBtn.dataset.lasRollBusy = '1';
       if (kind === 'mercenary') {
         netRef.sendAction('mercenaryRoll', {});
@@ -3555,7 +3622,28 @@ window.LasidaoUi = (function () {
   }
 
   function diceReady() {
-    return diceAnim.stage === 'ready';
+    // 雇佣军：以雇佣骰动画/结果为准
+    if (lastGame && isMercenaryPlaceMode(lastGame, lastMeId)) {
+      if (diceAnim.stage === 'ready' || diceAnim.stage === 'grouping') return true;
+      if (diceAnim.stage === 'rolling' && diceAnim.revealed) return true;
+      return Boolean(diceAnim.finalDice && diceAnim.finalDice.length);
+    }
+    // 生产派遣：必须有服务端确认的骰面。禁止仅凭旁观残留动画解锁（加入端常见：看见旧 2/5 却无法真正派遣）
+    if (
+      !lastGame ||
+      lastGame.phase !== 'produce' ||
+      !lastMeId ||
+      !isMyTurn(lastGame, lastMeId) ||
+      isAwaitingRoll(lastGame)
+    ) {
+      return false;
+    }
+    const serverDice = Array.isArray(lastGame.dice) ? lastGame.dice : [];
+    if (!serverDice.length) return false;
+    if (diceAnim.stage === 'ready' || diceAnim.stage === 'grouping') return true;
+    if (diceAnim.stage === 'rolling' && diceAnim.revealed) return true;
+    // 动画卡死时仍允许：服务端已有骰
+    return true;
   }
 
   function countByFace(dice) {
@@ -3596,9 +3684,32 @@ window.LasidaoUi = (function () {
     return stack;
   }
 
-  /** ????????????????????? 0? */
+  /** 可用点数：生产阶段始终以服务端 dice 为准，动画只负责展示 */
   function availableFaces() {
-    const counts = countByFace(diceAnim.finalDice || []);
+    let source = [];
+    if (lastGame && isMercenaryPlaceMode(lastGame, lastMeId)) {
+      source = diceAnim.finalDice || [];
+    } else if (
+      lastGame &&
+      lastGame.phase === 'produce' &&
+      !isAwaitingRoll(lastGame) &&
+      Array.isArray(lastGame.dice) &&
+      lastGame.dice.length
+    ) {
+      source = lastGame.dice;
+      // 与服务端对齐动画定稿，避免旁观残留点数继续可点
+      const serverKey = source.join(',');
+      const animKey = (diceAnim.finalDice || []).join(',');
+      if (serverKey !== animKey) {
+        diceAnim.finalDice = source.slice();
+        diceAnim.finalBoosted = Array.isArray(lastGame.diceBoosted)
+          ? lastGame.diceBoosted.slice()
+          : [];
+      }
+    } else {
+      source = diceAnim.finalDice || [];
+    }
+    const counts = countByFace(source);
     return Object.keys(counts)
       .map(Number)
       .filter((f) => f >= 1 && f <= 6 && counts[f] > 0);
@@ -5515,7 +5626,11 @@ window.LasidaoUi = (function () {
       'has-barren-marker'
     );
     const slotSelectable = boardSlotSelectable(ix);
-    slot.disabled = !slotSelectable;
+    // 绝不用 native disabled：投掷动画期间会把槽位 disabled，若 ready 回调丢失，
+    // 浏览器会直接吞掉 click，表现为「看得见骰面却无法点板块派遣」，只能刷新。
+    slot.disabled = false;
+    slot.classList.toggle('is-inert-slot', !slotSelectable);
+    slot.setAttribute('aria-disabled', slotSelectable ? 'false' : 'true');
     if (slotSelectable) {
       slot.classList.add('is-target');
     }
@@ -6384,13 +6499,18 @@ window.LasidaoUi = (function () {
     diceAnim._animGen = animGen;
     diceAnim.actorId = meId;
     diceAnim.stage = 'rolling';
+    diceAnim.revealed = false;
     diceAnim.finalDice = finalDice.slice();
     diceAnim.finalBoosted = nextBoost;
+    armDiceReadyWatchdog(meId);
 
     const wrap = $('las-dice-wrap');
     const diceEl = $('las-dice');
     const groupsEl = $('las-dice-groups');
-    if (!wrap || !diceEl || !groupsEl) return;
+    if (!wrap || !diceEl || !groupsEl) {
+      markProduceDiceReady(meId);
+      return;
+    }
 
     wrap.hidden = false;
     groupsEl.hidden = true;
@@ -6424,6 +6544,7 @@ window.LasidaoUi = (function () {
     diceAnim.intervals.push(spin);
 
     const t1 = setTimeout(() => {
+      if (diceAnim._animGen !== animGen) return;
       clearInterval(spin);
       for (let i = 0; i < n; i++) {
         const el = dieNodes[i];
@@ -6432,7 +6553,10 @@ window.LasidaoUi = (function () {
         if (diceAnim.finalBoosted[i]) el.classList.add('is-boosted');
         el.textContent = String(finalDice[i]);
       }
+      diceAnim.revealed = true;
       updateDiceHint();
+      // 亮面即可点板块，不必等 grouping/ready；并立刻刷掉动画期留下的 inert
+      if (lastGame && meId) renderBoard(lastGame, meId);
     }, 900);
     diceAnim.timers.push(t1);
 
@@ -6475,12 +6599,7 @@ window.LasidaoUi = (function () {
 
     const t3 = setTimeout(() => {
       if (diceAnim._animGen !== animGen) return;
-      diceAnim.stage = 'ready';
-      renderGroupedDice();
-      updateDiceHint();
-      updateDispatchPreview();
-      // 勿再调 renderDice：全量重入可能把同一次结果再播一遍投掷动画
-      if (lastGame) renderBoard(lastGame, meId);
+      markProduceDiceReady(meId);
     }, 1800);
     diceAnim.timers.push(t3);
   }
@@ -7156,6 +7275,23 @@ window.LasidaoUi = (function () {
       ? (game.diceBoosted || []).slice()
       : ((active && active.diceBoosted) || []).slice();
 
+    // 本人回合：服务端骰面与本地动画不一致时，丢弃残留（旁观/失败清空后的脏状态）
+    if (
+      myTurn &&
+      dice.length &&
+      (diceAnim.finalDice || []).length &&
+      dice.join(',') !== (diceAnim.finalDice || []).join(',') &&
+      diceAnim.stage !== 'rolling' &&
+      diceAnim.stage !== 'grouping'
+    ) {
+      lastAnimatedRollKey = null;
+      diceAnim.key = null;
+      diceAnim.finalDice = [];
+      diceAnim.finalBoosted = [];
+      diceAnim.revealed = false;
+      diceAnim.stage = 'idle';
+    }
+
     if (!dice.length) {
       if (diceAnim.stage !== 'idle') resetDiceAnim();
       if (myTurn && produceFuncConfirmActive(game, meId)) {
@@ -7286,21 +7422,18 @@ window.LasidaoUi = (function () {
       diceAnim.key = key;
       resetDiceSelection();
       if (remote) {
-        diceAnim.stage = 'ready';
-        diceAnim.finalDice = dice.slice();
-        diceAnim.finalBoosted = boostFlags.slice();
         lastAnimatedRollKey = rollKey;
-        renderRemoteDice(game, meId);
-        updateDispatchPreview();
-        updateDiceHint();
+        markProduceDiceReady(meId, {
+          finalDice: dice,
+          finalBoosted: boostFlags,
+          remote: true,
+        });
       } else if (lastAnimatedRollKey === rollKey) {
         // 同一次投掷结果已播过（含自动投后状态连到两次）：只展示
-        diceAnim.stage = 'ready';
-        diceAnim.finalDice = dice.slice();
-        diceAnim.finalBoosted = boostFlags.slice();
-        renderGroupedDice();
-        updateDispatchPreview();
-        updateDiceHint();
+        markProduceDiceReady(meId, {
+          finalDice: dice,
+          finalBoosted: boostFlags,
+        });
       } else if (
         prevStage === 'ready' &&
         prevFinal.length > 0 &&
@@ -7309,13 +7442,11 @@ window.LasidaoUi = (function () {
         isDiceMultisetSubset(dice, prevFinal)
       ) {
         // 派遣后剩余骰：只刷新分组，不要再播一遍投掷动画
-        diceAnim.stage = 'ready';
-        diceAnim.finalDice = dice.slice();
-        diceAnim.finalBoosted = boostFlags.slice();
         lastAnimatedRollKey = rollKey;
-        renderGroupedDice();
-        updateDispatchPreview();
-        updateDiceHint();
+        markProduceDiceReady(meId, {
+          finalDice: dice,
+          finalBoosted: boostFlags,
+        });
       } else if (
         (prevStage === 'rolling' || prevStage === 'grouping') &&
         prevFinal.join(',') === dice.join(',')
@@ -7326,13 +7457,11 @@ window.LasidaoUi = (function () {
         updateDiceHint();
       } else if (prevStage === 'rolling' || prevStage === 'grouping') {
         clearDiceTimers();
-        diceAnim.stage = 'ready';
-        diceAnim.finalDice = dice.slice();
-        diceAnim.finalBoosted = boostFlags.slice();
         lastAnimatedRollKey = rollKey;
-        renderGroupedDice();
-        updateDispatchPreview();
-        updateDiceHint();
+        markProduceDiceReady(meId, {
+          finalDice: dice,
+          finalBoosted: boostFlags,
+        });
       } else {
         lastAnimatedRollKey = rollKey;
         startDiceAnimation(dice, meId, boostFlags);
@@ -9652,9 +9781,8 @@ window.LasidaoUi = (function () {
     const deferHeavy = shouldDeferHeavyPanels(game);
     const forceHands = mustRenderHandsNow(game, meId);
 
-    if (!deferHeavy || diceAnim.stage !== 'rolling') {
-      renderDice(game, meId, _prevGame);
-    }
+    // 投掷动画中也要跑 renderDice：否则 pulse/迟到 state 无法落地，会出现「骰面在播但板块永远不可点」
+    renderDice(game, meId, _prevGame);
     if (!deferHeavy) {
       renderProduceIdleBar(game);
     }
@@ -10851,10 +10979,37 @@ window.LasidaoUi = (function () {
     if (isMercenaryPlaceMode(lastGame, lastMeId)) {
       return confirmMercenaryPlace();
     }
-    if (!netRef || !selectedTarget || dispatchBusy) return;
+    if (!netRef) {
+      showTurnToast(t('toast.opFail'), 1800);
+      return;
+    }
+    if (dispatchBusy) return;
+    if (!selectedTarget || selectedFace == null) {
+      showTurnToast(t('lasidao.pickTargetFirst'), 1800);
+      return;
+    }
+
+    // 服务端仍在等待投掷：先补投，再让玩家派遣（加入端隧道丢包时常见）
+    if (
+      lastGame &&
+      lastGame.phase === 'produce' &&
+      isMyTurn(lastGame, lastMeId) &&
+      (isAwaitingRoll(lastGame) ||
+        !Array.isArray(lastGame.dice) ||
+        !lastGame.dice.length)
+    ) {
+      showTurnToast(t('lasidao.produceRoll'), 1600);
+      netRef.sendAction('produceRoll', {});
+      return;
+    }
+
+    const serverDice = (lastGame && lastGame.dice) || [];
     const remote = lastGame && isRemoteMode(lastGame);
     if (remote) {
-      if (!selectedWildCount || selectedFace == null) return;
+      if (!selectedWildCount || selectedFace == null) {
+        showTurnToast(t('lasidao.pickTargetFirst'), 1800);
+        return;
+      }
       const payload = {
         face: selectedFace,
         count: selectedWildCount,
@@ -10862,10 +11017,26 @@ window.LasidaoUi = (function () {
       if (selectedTarget.type === 'area') payload.area = selectedTarget.area;
       else payload.buildingId = selectedTarget.buildingId;
       netRef.sendAction('placeDice', payload);
-      resetDiceAnim();
+      // 等服务端 state 再清骰，避免失败时本地被掏空却点不动
       return;
     }
-    if (selectedFace == null) return;
+
+    if (serverDice.indexOf(Number(selectedFace)) < 0) {
+      showTurnToast(t('lasidao.noSuchDie'), 2200);
+      if (lastGame && lastMeId) {
+        diceAnim.finalDice = serverDice.slice();
+        diceAnim.finalBoosted = Array.isArray(lastGame.diceBoosted)
+          ? lastGame.diceBoosted.slice()
+          : [];
+        diceAnim.stage = 'ready';
+        diceAnim.revealed = true;
+        renderGroupedDice();
+        updateDispatchPreview();
+        renderBoard(lastGame, lastMeId);
+      }
+      return;
+    }
+
     const payload = { face: selectedFace };
     if (selectedTarget.type === 'area') {
       payload.area = selectedTarget.area;
@@ -10873,7 +11044,43 @@ window.LasidaoUi = (function () {
       payload.buildingId = selectedTarget.buildingId;
     }
     netRef.sendAction('placeDice', payload);
-    resetDiceAnim();
+  }
+
+  function onGameError(data) {
+    const msg = (data && data.message) || '';
+    // 投掷未落地：自动补一次投掷
+    if (
+      netRef &&
+      lastGame &&
+      lastMeId &&
+      lastGame.phase === 'produce' &&
+      isMyTurn(lastGame, lastMeId) &&
+      (/投掷|遥控/.test(msg) || isAwaitingRoll(lastGame))
+    ) {
+      if (isAwaitingRoll(lastGame) || !(lastGame.dice && lastGame.dice.length)) {
+        netRef.sendAction('produceRoll', {});
+      }
+    }
+    // 恢复骰区，避免乐观清空后按钮点了没反应
+    if (lastGame && lastMeId && lastGame.phase === 'produce') {
+      const dice = Array.isArray(lastGame.dice) ? lastGame.dice : [];
+      if (dice.length && !isAwaitingRoll(lastGame)) {
+        diceAnim.finalDice = dice.slice();
+        diceAnim.finalBoosted = Array.isArray(lastGame.diceBoosted)
+          ? lastGame.diceBoosted.slice()
+          : [];
+        diceAnim.stage = 'ready';
+        diceAnim.revealed = true;
+        const wrap = $('las-dice-wrap');
+        if (wrap) wrap.hidden = false;
+        renderGroupedDice();
+        updateDispatchPreview();
+        renderBoard(lastGame, lastMeId);
+      } else {
+        renderDice(lastGame, lastMeId);
+        renderBoard(lastGame, lastMeId);
+      }
+    }
   }
 
   function decorateRulesCards(modal) {
@@ -12697,8 +12904,6 @@ window.LasidaoUi = (function () {
     void card;
   }
 
-  function onGameError() {}
-
   function confirmRobberyGive() {
     const pending = lastGame && lastGame.pendingRobberyPick;
     if (
@@ -13267,15 +13472,12 @@ window.LasidaoUi = (function () {
         if (!net) return;
         if (rollBtn.dataset.lasRollBusy === '1') return;
         rollBtn.dataset.lasRollBusy = '1';
-        const awaitKey =
-          lastGame && lastMeId
-            ? `${lastGame.round || 0}:${lastMeId}:${lastGame.currentPlayerId || ''}:await`
-            : null;
+        const awaitKey = produceAwaitRollKey(lastGame, lastMeId);
         if (awaitKey) autoProduceRollSentKey = awaitKey;
         clearAutoProduceRoll();
         try {
           if (lastGame && isMercenaryRollMode(lastGame, lastMeId)) {
-            const mercKey = `merc:${lastGame.round || 0}:${lastMeId}:${lastGame.currentPlayerId || ''}`;
+            const mercKey = `merc:${lastGame.round || 0}:${lastMeId}:${lastGame.currentPlayerId || ''}:${lastGame.lastPlacerId || ''}`;
             autoProduceRollSentKey = mercKey;
             net.sendAction('mercenaryRoll', {});
             return;

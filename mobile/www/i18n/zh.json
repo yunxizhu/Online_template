@@ -203,6 +203,21 @@
     "entering": "正在重新进入游戏…",
     "timeout": "重新进入超时，请稍后刷新大厅再试"
   },
+  "tunnelReopen": {
+    "title": "房间状态错误",
+    "message": "房间状态错误，是否重开？",
+    "yes": "是",
+    "no": "否",
+    "working": "正在重开房间…"
+  },
+  "roomTransfer": {
+    "title": "房间已转移",
+    "message": "房间已转移，是否跳转到新房间？",
+    "yes": "是",
+    "yesCountdown": "是（{n}）",
+    "no": "否",
+    "entering": "正在进入新房间…"
+  },
   "game": {
     "thinkTime": "思考时间",
     "matchTime": "对局",
@@ -261,6 +276,8 @@
     "areaSpecial": "功能/建筑板块",
     "yourDice": "你的骰子",
     "confirmDispatch": "确认派遣",
+    "pickTargetFirst": "请先选择点数与目标板块",
+    "noSuchDie": "没有该点数的骰子，请等待同步后重试",
     "confirm": "确认",
     "voidDispatch": "跳过（爆骰换资源）",
     "initRoll": "投骰比大小（先手）",

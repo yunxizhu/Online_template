@@ -2139,7 +2139,7 @@
   letter-spacing: 0.02em;
 }
 
-.las-slot.is-dispatch-picked:not(:disabled) {
+.las-slot.is-dispatch-picked:not(:disabled):not(.is-inert-slot) {
   outline: none;
 }
 
@@ -2530,20 +2530,21 @@
   border-color: rgba(126, 200, 255, 0.35);
 }
 
-.las-slot:disabled {
+.las-slot:disabled,
+.las-slot.is-inert-slot {
   opacity: 0.92;
 }
 
-.las-slot.is-target:not(:disabled) {
+.las-slot.is-target:not(:disabled):not(.is-inert-slot) {
   animation: las-slot-pulse 1s ease-in-out infinite;
   cursor: pointer;
 }
 
-.las-slot-resource.is-target:not(:disabled) {
+.las-slot-resource.is-target:not(:disabled):not(.is-inert-slot) {
   animation-name: las-slot-pulse-resource;
 }
 
-.las-slot-special.is-target:not(:disabled) {
+.las-slot-special.is-target:not(:disabled):not(.is-inert-slot) {
   animation-name: las-slot-pulse-special;
 }
 
@@ -3702,7 +3703,7 @@
   margin-bottom: calc(0.5 * var(--las-rem));
 }
 
-.las-slot.is-picked:not(:disabled) {
+.las-slot.is-picked:not(:disabled):not(.is-inert-slot) {
   outline: 2px solid #e8d48b;
 }
 

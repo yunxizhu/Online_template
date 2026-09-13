@@ -2478,7 +2478,7 @@
       opt.textContent = t('create.gameOption', { label: gameLabelOf(g.id, g.label), min: g.minPlayers, max: g.maxPlayers });
       el.gameType.appendChild(opt);
     }
-    const preferred = 'sgs';
+    const preferred = 'lasidao';
     if ([...el.gameType.options].some((o) => o.value === current)) {
       el.gameType.value = current;
     } else if ([...el.gameType.options].some((o) => o.value === preferred)) {
@@ -3533,6 +3533,14 @@
   function mergeIncomingGameState(next) {
     const prev = state.game;
     if (!next || !prev) return next;
+
+    // 隧道乱序：丢弃过期全量包（否则主机会被「仍在等待投掷」盖掉 pulse 里的骰面）
+    const prevSeq = Number(prev.stateSeq) || 0;
+    const nextSeq = Number(next.stateSeq) || 0;
+    if (prevSeq > 0 && nextSeq > 0 && nextSeq < prevSeq) {
+      return prev;
+    }
+
     const incoming = next.lastSettle;
     const kept = prev.lastSettle;
     if (
@@ -3545,12 +3553,159 @@
     ) {
       next.lastSettle = kept;
     }
+    // 同一行动者已落骰后，丢弃乱序迟到的「仍在等待投掷」空骰快照。
+    // 必须要求 activeProduce.playerId === currentPlayerId，否则 placeDice 推进到下一玩家时
+    //（pulse 已改 currentPlayerId，但残留上一玩家骰面）会把新的 awaiting 误判成过期包挡掉。
+    if (
+      prev.type === 'lasidao' &&
+      next.type === 'lasidao' &&
+      next.phase === 'produce' &&
+      prev.phase === 'produce' &&
+      prev.round === next.round &&
+      prev.currentPlayerId &&
+      prev.currentPlayerId === next.currentPlayerId
+    ) {
+      const prevDice = Array.isArray(prev.dice) ? prev.dice : [];
+      const nextDice = Array.isArray(next.dice) ? next.dice : [];
+      const prevActive = prev.activeProduce || null;
+      const prevActiveDice =
+        prevActive && Array.isArray(prevActive.dice) ? prevActive.dice : [];
+      const nextActive = next.activeProduce || null;
+      const nextActiveDice =
+        nextActive && Array.isArray(nextActive.dice) ? nextActive.dice : [];
+      const meId = prev.me && prev.me.id;
+      const prevActiveMatches =
+        prevActive &&
+        prevActive.playerId === prev.currentPlayerId &&
+        !prevActive.awaitingRoll &&
+        prevActiveDice.length > 0;
+      const prevSelfRolled =
+        Boolean(meId) &&
+        meId === prev.currentPlayerId &&
+        !prev.awaitingProduceRoll &&
+        prevDice.length > 0;
+      const rolledLocally = prevActiveMatches || prevSelfRolled;
+      const incomingAwaitingEmpty =
+        next.awaitingProduceRoll &&
+        nextDice.length === 0 &&
+        (!nextActive || nextActive.awaitingRoll || nextActiveDice.length === 0);
+      if (rolledLocally && incomingAwaitingEmpty) {
+        next.awaitingProduceRoll = false;
+        if (prevSelfRolled) {
+          next.dice = prevDice.slice();
+          next.diceBoosted = Array.isArray(prev.diceBoosted)
+            ? prev.diceBoosted.slice()
+            : [];
+        }
+        const ap = prevActive || {};
+        const keepDice = (prevActiveDice.length
+          ? prevActiveDice
+          : prevDice
+        ).slice();
+        const keepBoost = (
+          ap.diceBoosted && ap.diceBoosted.length
+            ? ap.diceBoosted
+            : next.diceBoosted || prev.diceBoosted || []
+        ).slice();
+        next.activeProduce = {
+          ...(nextActive || {}),
+          playerId: prev.currentPlayerId,
+          awaitingRoll: false,
+          remoteDiceMode: Boolean(ap.remoteDiceMode),
+          dice: keepDice,
+          diceBoosted: keepBoost,
+        };
+        if (next.me && prev.me && prevSelfRolled) {
+          next.me = {
+            ...next.me,
+            dice: (prev.me.dice && prev.me.dice.length
+              ? prev.me.dice
+              : prevDice
+            ).slice(),
+            awaitingProduceRoll: false,
+          };
+        }
+        if (prevSeq > nextSeq) next.stateSeq = prevSeq;
+      }
+    }
     return next;
+  }
+
+  function applyProducePulseSnapshot(g, data) {
+    const meId = g.me && g.me.id;
+    const curId = data.currentPlayerId || g.currentPlayerId;
+    if (Object.prototype.hasOwnProperty.call(data, 'awaitingProduceRoll')) {
+      g.awaitingProduceRoll = Boolean(data.awaitingProduceRoll);
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'remoteDiceMode')) {
+      g.remoteDiceMode = Boolean(data.remoteDiceMode);
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'activeProduce')) {
+      g.activeProduce = data.activeProduce
+        ? {
+            playerId: data.activeProduce.playerId || curId,
+            awaitingRoll: Boolean(data.activeProduce.awaitingRoll),
+            remoteDiceMode: Boolean(data.activeProduce.remoteDiceMode),
+            dice: Array.isArray(data.activeProduce.dice)
+              ? data.activeProduce.dice.slice()
+              : [],
+            diceBoosted: Array.isArray(data.activeProduce.diceBoosted)
+              ? data.activeProduce.diceBoosted.slice()
+              : [],
+          }
+        : null;
+    }
+    const isActor = Boolean(meId && curId && meId === curId);
+    // 轮到自己：同步顶层 dice；否则清空自己的生产骰，避免残留上一手
+    if (isActor) {
+      if (Array.isArray(data.dice)) {
+        g.dice = data.dice.slice();
+        g.diceBoosted = Array.isArray(data.diceBoosted)
+          ? data.diceBoosted.slice()
+          : [];
+      } else if (
+        g.activeProduce &&
+        g.activeProduce.playerId === meId &&
+        Array.isArray(g.activeProduce.dice)
+      ) {
+        g.dice = g.activeProduce.dice.slice();
+        g.diceBoosted = Array.isArray(g.activeProduce.diceBoosted)
+          ? g.activeProduce.diceBoosted.slice()
+          : [];
+      } else if (g.awaitingProduceRoll) {
+        g.dice = [];
+        g.diceBoosted = [];
+      }
+      if (g.me) {
+        g.me.awaitingProduceRoll = Boolean(g.awaitingProduceRoll);
+        g.me.dice = Array.isArray(g.dice) ? g.dice.slice() : [];
+        g.me.remoteDiceMode = Boolean(g.remoteDiceMode);
+      }
+    } else if (
+      Object.prototype.hasOwnProperty.call(data, 'activeProduce') ||
+      Object.prototype.hasOwnProperty.call(data, 'awaitingProduceRoll')
+    ) {
+      // 旁观：自己不应再挂着已结束回合的 dice
+      g.dice = [];
+      g.diceBoosted = [];
+      if (g.me) {
+        g.me.dice = [];
+        g.me.awaitingProduceRoll = false;
+        g.me.remoteDiceMode = false;
+      }
+    }
   }
 
   function applyGamePulse(data) {
     if (!data || !state.game) return;
     const g = state.game;
+    const pulseSeq = Number(data.stateSeq) || 0;
+    const curSeq = Number(g.stateSeq) || 0;
+    // 过期 pulse 直接丢（乱序时主机曾被旧包打回 awaiting）
+    if (pulseSeq > 0 && curSeq > 0 && pulseSeq < curSeq) return;
+    if (pulseSeq > curSeq) g.stateSeq = pulseSeq;
+
+    const prevCurrentId = g.currentPlayerId;
     if (data.phase) g.phase = data.phase;
     if (Object.prototype.hasOwnProperty.call(data, 'currentPlayerId')) {
       g.currentPlayerId = data.currentPlayerId;
@@ -3561,10 +3716,74 @@
     if (data.fx && data.fx.id) {
       g.lastProduceFx = data.fx;
     }
-    // 投掷已发出：立刻清 awaiting，避免全量 state 迟到时又开一轮自动投计时器
-    if (data.type === 'produceRoll' || data.type === 'mercenaryRoll') {
+
+    if (g.type === 'lasidao' && data.phase === 'produce') {
+      applyProducePulseSnapshot(g, data);
+      // 回合刚切到自己且服务端要求投掷：强制清残留骰，避免「无 awaiting、无骰面」空白卡死
+      const meId = g.me && g.me.id;
+      const turnedToMe =
+        Boolean(meId) &&
+        data.currentPlayerId &&
+        data.currentPlayerId === meId &&
+        data.currentPlayerId !== prevCurrentId;
+      if (turnedToMe && data.awaitingProduceRoll) {
+        g.awaitingProduceRoll = true;
+        g.dice = [];
+        g.diceBoosted = [];
+        if (g.me) {
+          g.me.awaitingProduceRoll = true;
+          g.me.dice = [];
+        }
+        if (!g.activeProduce || g.activeProduce.playerId !== meId) {
+          g.activeProduce = {
+            playerId: meId,
+            awaitingRoll: true,
+            remoteDiceMode: false,
+            dice: [],
+            diceBoosted: [],
+          };
+        } else {
+          g.activeProduce.awaitingRoll = true;
+          g.activeProduce.dice = [];
+          g.activeProduce.diceBoosted = [];
+        }
+      }
+    } else if (data.type === 'produceRoll') {
+      // 兼容旧 pulse：仅投掷包
+      g.awaitingProduceRoll = false;
+      const actorId = data.actorId || g.currentPlayerId;
+      const meId = g.me && g.me.id;
+      const isActor = Boolean(meId && actorId && meId === actorId);
+      if (!g.activeProduce) g.activeProduce = {};
+      g.activeProduce.playerId = actorId || g.activeProduce.playerId;
+      g.activeProduce.awaitingRoll = false;
+      g.activeProduce.remoteDiceMode = false;
+      if (Array.isArray(data.dice)) {
+        if (isActor) {
+          g.dice = data.dice.slice();
+          g.diceBoosted = Array.isArray(data.diceBoosted)
+            ? data.diceBoosted.slice()
+            : [];
+        }
+        g.activeProduce.dice = data.dice.slice();
+        g.activeProduce.diceBoosted = Array.isArray(data.diceBoosted)
+          ? data.diceBoosted.slice()
+          : [];
+      }
+      if (isActor && g.me) {
+        g.me.awaitingProduceRoll = false;
+        if (Array.isArray(data.dice)) g.me.dice = data.dice.slice();
+      }
+    } else if (data.type === 'mercenaryRoll') {
       g.awaitingProduceRoll = false;
       if (g.activeProduce) g.activeProduce.awaitingRoll = false;
+      if (!g.mercenary) g.mercenary = {};
+      if (Array.isArray(data.mercenaryRoll)) {
+        g.mercenary.roll = data.mercenaryRoll.slice();
+      }
+      if (Array.isArray(data.mercenaryPlaced)) {
+        g.mercenary.placed = data.mercenaryPlaced.slice();
+      }
     }
     scheduleRenderGame(true);
   }
@@ -4699,7 +4918,7 @@
     const payload = {
       name: el.roomName.value.trim(),
       ...createPasswordPayload(),
-      gameType: el.gameType.value || 'sgs',
+      gameType: el.gameType.value || 'lasidao',
       gameMode: el.gameMode ? el.gameMode.value : undefined,
       maxPlayers: g ? Number(el.roomMax.value) || g.maxPlayers : 2,
       turnTimeSec: el.roomTurnTime

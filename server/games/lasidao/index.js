@@ -9,7 +9,7 @@ module.exports = {
   maxPlayers: 5,
   modes: [
     { id: 'h2h', label: '组队模式', seats: [4] },
-    { id: 'melee', label: '各自为战', seats: [2, 3, 4, 5], default: true, defaultSeat: 3 },
+    { id: 'melee', label: '各自为战', seats: [2, 3, 4, 5], default: true, defaultSeat: 2 },
   ],
   client: {
     styles: ['/games/lasidao/style.css'],

@@ -203,6 +203,21 @@
     "entering": "Re-entering the game…",
     "timeout": "Re-enter timed out. Refresh the lobby and try again"
   },
+  "tunnelReopen": {
+    "title": "Room error",
+    "message": "Room state error. Reopen the room?",
+    "yes": "Yes",
+    "no": "No",
+    "working": "Reopening room…"
+  },
+  "roomTransfer": {
+    "title": "Room moved",
+    "message": "The room has moved. Jump to the new room?",
+    "yes": "Yes",
+    "yesCountdown": "Yes ({n})",
+    "no": "No",
+    "entering": "Entering the new room…"
+  },
   "game": {
     "thinkTime": "Think time",
     "matchTime": "Match",
@@ -261,6 +276,8 @@
     "areaSpecial": "Function / Building board",
     "yourDice": "Your dice",
     "confirmDispatch": "Confirm dispatch",
+    "pickTargetFirst": "Select a face and a board slot first",
+    "noSuchDie": "No die of that face — wait for sync and try again",
     "confirm": "Confirm",
     "voidDispatch": "Skip (burn 1 die for a resource)",
     "initRoll": "Roll for first player",

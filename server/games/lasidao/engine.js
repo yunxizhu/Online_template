@@ -1719,6 +1719,8 @@ function createGameState(room) {
     diceBoosted: {}, // playerId -> boolean[] 与 dice 对齐
     awaitingProduceRoll: false,
     remoteDiceMode: false,
+    /** 单调递增：客户端用来丢弃隧道乱序的过期 game:state / pulse */
+    stateSeq: 0,
     // 建造阶段
     buildPassed: {}, // playerId -> true 本轮声明跳过
     buildIdleLoops: 0,
@@ -1833,6 +1835,7 @@ function finishInitAnnounce(game) {
   maybeBeginProduceAfterSetup(game);
   game.pendingInitReveal = null;
   game.initAnnounceUntil = 0;
+  bumpStateSeq(game);
   return { ok: true };
 }
 
@@ -2110,6 +2113,7 @@ function completeSettleAfterAnim(game) {
   game.settleAnimUntil = 0;
   game.personalProduceApplied = false;
   advancePostSettlePipeline(game);
+  bumpStateSeq(game);
   return { ok: true };
 }
 
@@ -3632,7 +3636,19 @@ function startNextRound(game) {
 
 // ─── 动作处理 ───────────────────────────────────────────
 
+function bumpStateSeq(game) {
+  if (!game) return 0;
+  game.stateSeq = (Number(game.stateSeq) || 0) + 1;
+  return game.stateSeq;
+}
+
 function applyAction(game, playerId, action) {
+  const result = applyActionInner(game, playerId, action);
+  if (result && result.ok) bumpStateSeq(game);
+  return result;
+}
+
+function applyActionInner(game, playerId, action) {
   if (!game || game.over) return { ok: false, error: '游戏已结束' };
   const player = playerById(game, playerId);
   if (!player || player.left) return { ok: false, error: '玩家无效' };
@@ -6525,6 +6541,7 @@ function publicGameState(game, viewerId) {
     type: 'lasidao',
     mode: game.mode || 'standard',
     teamMode: isTeamMode(game),
+    stateSeq: Number(game.stateSeq) || 0,
     phase: game.phase,
     round: game.round,
     over: game.over,

@@ -1028,7 +1028,7 @@ assert.ok(
       m.id === 'melee' &&
       m.label === '各自为战' &&
       m.default &&
-      m.defaultSeat === 3 &&
+      m.defaultSeat === 2 &&
       Array.isArray(m.seats) &&
       m.seats[0] === 2 &&
       m.seats.includes(3) &&
@@ -7321,7 +7321,7 @@ console.log('— 2v2 room team seat move —');
   console.log('✓ 2v2 room team seat move');
 }
 
-console.log('— lasidao open modes default 各自为战 3 —');
+console.log('— lasidao open modes default 各自为战 2 —');
 {
   const { RoomManager } = require('../../../rooms');
   const rm = new RoomManager();
@@ -7330,7 +7330,7 @@ console.log('— lasidao open modes default 各自为战 3 —');
   assert.ok(def.ok, def.error);
   assert.strictEqual(def.room.gameMode, 'melee');
   assert.strictEqual(def.room.gameModeLabel, '各自为战');
-  assert.strictEqual(def.room.maxPlayers, 3);
+  assert.strictEqual(def.room.maxPlayers, 2);
 
   rm.registerPlayer('d1', '混战房主');
   const melee5 = rm.createRoom('d1', {
@@ -7378,7 +7378,7 @@ console.log('— lasidao open modes default 各自为战 3 —');
   assert.ok(legacySolo.ok, legacySolo.error);
   assert.strictEqual(legacySolo.room.gameMode, 'melee');
   assert.strictEqual(legacySolo.room.maxPlayers, 2);
-  console.log('✓ lasidao open modes default 各自为战 3 / 2–5 / team 2v2');
+  console.log('✓ lasidao open modes default 各自为战 2 / 2–5 / team 2v2');
 }
 
 console.log('全部通过');

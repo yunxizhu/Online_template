@@ -276,6 +276,8 @@
     "areaSpecial": "Function / Building board",
     "yourDice": "Your dice",
     "confirmDispatch": "Confirm dispatch",
+    "pickTargetFirst": "Select a face and a board slot first",
+    "noSuchDie": "No die of that face — wait for sync and try again",
     "confirm": "Confirm",
     "voidDispatch": "Skip (burn 1 die for a resource)",
     "initRoll": "Roll for first player",
