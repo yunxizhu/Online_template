@@ -82,6 +82,8 @@
     roomName: document.getElementById('room-name'),
     roomAllowTrade: document.getElementById('room-allow-trade'),
     roomAllowTradeWrap: document.getElementById('room-allow-trade-wrap'),
+    roomPeacefulDev: document.getElementById('room-peaceful-dev'),
+    roomPeacefulDevWrap: document.getElementById('room-peaceful-dev-wrap'),
     roomHasPassword: document.getElementById('room-has-password'),
     roomPassword: document.getElementById('room-password'),
     roomPasswordWrap: document.getElementById('room-password-wrap'),
@@ -2387,6 +2389,7 @@
       el.roomMax.value = '2';
       el.gameHint.textContent = t('create.hintGomoku');
       if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = true;
+      if (el.roomPeacefulDevWrap) el.roomPeacefulDevWrap.hidden = true;
     } else if (g.id === 'incan') {
       el.maxPlayersWrap.hidden = false;
       restoreMaxOptions();
@@ -2394,6 +2397,7 @@
       if (v < 3) el.roomMax.value = '6';
       el.gameHint.textContent = t('create.hintIncanFull');
       if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = true;
+      if (el.roomPeacefulDevWrap) el.roomPeacefulDevWrap.hidden = true;
     } else if (g.id === 'lasidao') {
       el.maxPlayersWrap.hidden = false;
       const modeId = el.gameMode ? el.gameMode.value : 'melee';
@@ -2424,8 +2428,10 @@
         el.gameHint.textContent = t('create.hintLasidaoFull');
       }
       if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = false;
+      if (el.roomPeacefulDevWrap) el.roomPeacefulDevWrap.hidden = false;
     } else if (g.id === 'sgs') {
       if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = true;
+      if (el.roomPeacefulDevWrap) el.roomPeacefulDevWrap.hidden = true;
       el.maxPlayersWrap.hidden = false;
       const modeId = el.gameMode ? el.gameMode.value : 'identity';
       const mode = (g.modes || []).find((m) => m.id === modeId) || g.modes[0];
@@ -2454,6 +2460,7 @@
       }
     } else {
       if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = true;
+      if (el.roomPeacefulDevWrap) el.roomPeacefulDevWrap.hidden = true;
       el.maxPlayersWrap.hidden = false;
       restoreMaxOptions();
       el.gameHint.textContent = t('create.hintRange', { label: gameLabelOf(g.id, g.label), min: g.minPlayers, max: g.maxPlayers });
@@ -4138,6 +4145,9 @@
     if (el.roomAllowTrade) {
       el.roomAllowTrade.checked = Boolean(room.allowTrade);
     }
+    if (el.roomPeacefulDev) {
+      el.roomPeacefulDev.checked = room.peacefulDev !== false;
+    }
   }
 
   function setCreatePanelOpen(open, mode = 'create') {
@@ -4156,6 +4166,7 @@
         updateCreateForm();
         if (el.roomHasPassword) el.roomHasPassword.checked = false;
         if (el.roomAllowTrade) el.roomAllowTrade.checked = false;
+        if (el.roomPeacefulDev) el.roomPeacefulDev.checked = true;
         if (el.roomPassword) {
           el.roomPassword.value = '';
           el.roomPassword.placeholder =
@@ -4936,6 +4947,7 @@
         ? Number(el.roomTurnTime.value) || 0
         : 0,
       allowTrade: Boolean(el.roomAllowTrade && el.roomAllowTrade.checked),
+      peacefulDev: Boolean(el.roomPeacefulDev && el.roomPeacefulDev.checked),
     };
 
     if (state.createModalMode === 'edit') {

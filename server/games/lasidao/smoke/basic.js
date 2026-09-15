@@ -3474,22 +3474,28 @@ console.log('— environment deck —');
     ENVIRONMENT_DECK_SIZE,
     ENVIRONMENT_DRAW_PER_ROUND,
   } = require('../engine');
-  const { ENVIRONMENT_CATALOG, environmentDeckSize } = require('../decks');
+  const {
+    ENVIRONMENT_CATALOG,
+    environmentDeckSize,
+    PEACEFUL_DECK,
+  } = require('../decks');
   assert.strictEqual(ENVIRONMENT_CATALOG.length, 15);
   assert.ok(
     ENVIRONMENT_CATALOG.every(
       (d) =>
-        Number(d.count) > 0 &&
+        d.envType &&
         (d.trigger === 'dispatch' ||
           d.trigger === 'settle' ||
           d.trigger === 'preSettle' ||
           d.trigger === 'setup')
     )
   );
-  assert.strictEqual(
-    environmentDeckSize(),
-    ENVIRONMENT_CATALOG.reduce((s, d) => s + Number(d.count), 0)
+  const peacefulEnvTotal = Object.values(PEACEFUL_DECK.environment || {}).reduce(
+    (s, n) => s + Math.max(0, Math.floor(Number(n) || 0)),
+    0
   );
+  assert.strictEqual(environmentDeckSize(), peacefulEnvTotal);
+  assert.strictEqual(ENVIRONMENT_DECK_SIZE, peacefulEnvTotal);
   const g = createGameState(room(2));
   finishInit(g);
   // 去重机制可能导致额外重复卡进入弃牌堆，因此剩余牌数 <= 理论值

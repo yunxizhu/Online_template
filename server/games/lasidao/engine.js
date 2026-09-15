@@ -22,6 +22,7 @@ const {
   environmentDeckSize,
   ENVIRONMENT_CATALOG,
   getEnvironmentDef,
+  getDeckProfile,
   BUILD_TYPES,
   BUILD_HOUSE_COST,
   BUY_FUNC_COST,
@@ -1626,6 +1627,9 @@ function createGameState(room) {
   resetUid(1);
   const mode = room && room.gameMode === 'h2h' ? 'h2h' : 'standard';
   const teamMode = mode === 'h2h';
+  // 默认和平发育；仅显式 false 时用非和平牌组
+  const peacefulDev = !(room && room.peacefulDev === false);
+  const deckProfile = getDeckProfile(peacefulDev);
   const players = room.players.map((p, i) => ({
     id: p.id,
     name: p.name,
@@ -1680,14 +1684,16 @@ function createGameState(room) {
     mode,
     teamMode,
     allowTrade: Boolean(room && room.allowTrade),
+    peacefulDev,
+    deckProfileId: deckProfile.id,
     phase: 'init_announce', // init_announce | produce | settle | build | over
     round: 1,
     over: false,
     winners: [],
     players,
-    resourceDeck: buildResourceDeck(),
-    specialDeck: buildSpecialDeck(),
-    environmentDeck: buildEnvironmentDeck(),
+    resourceDeck: buildResourceDeck(deckProfile),
+    specialDeck: buildSpecialDeck(deckProfile),
+    environmentDeck: buildEnvironmentDeck(deckProfile),
     resourceDiscard: [],
     specialDiscard: [],
     environmentDiscard: [],
@@ -6547,6 +6553,8 @@ function publicGameState(game, viewerId) {
     mode: game.mode || 'standard',
     teamMode: isTeamMode(game),
     allowTrade: Boolean(game.allowTrade),
+    peacefulDev: game.peacefulDev !== false,
+    deckProfileId: game.deckProfileId || (game.peacefulDev === false ? 'conflict' : 'peaceful'),
     stateSeq: Number(game.stateSeq) || 0,
     phase: game.phase,
     round: game.round,

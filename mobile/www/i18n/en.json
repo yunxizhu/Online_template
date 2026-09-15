@@ -159,6 +159,7 @@
     "turnUnlimited": "Unlimited",
     "turnSec": "{n} sec",
     "allowTrade": "Allow player trading",
+    "peacefulDev": "Peaceful development",
     "hasPassword": "Password room",
     "password": "Room password",
     "passwordPlaceholder": "Can be empty",
