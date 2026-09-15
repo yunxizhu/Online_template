@@ -8441,6 +8441,7 @@ window.LasidaoUi = (function () {
 
   function canProposePlayerTrade(game, meId, targetId) {
     if (!game || !meId || !targetId || meId === targetId) return false;
+    if (!game.allowTrade) return false;
     if (game.over) return false;
     if (game.pendingTrade || game.pendingEventChoice || game.pendingRedrawChoice || game.pendingIllegalBuild || game.pendingRobberyPick) {
       return false;
@@ -9942,19 +9943,27 @@ window.LasidaoUi = (function () {
         if (tradeBtnAct) {
           const tradeWrap = ensurePermBtnWrap(tradeBtnAct);
           if (tradeWrap) tradeWrap.classList.add('las-perm-trade');
-          const canTrade = listTradeTargets(game, meId).length > 0;
-          tradeBtnAct.disabled = !canTrade;
-          tradeBtnAct.classList.remove('is-selected');
-          markAffordable(tradeBtnAct, canTrade);
-          setPermBtnTip(
-            tradeBtnAct,
-            formatPermanentTip(
-              t('lasidao.tradeBtn'),
-              canTrade
-                ? t('lasidao.permanentNoCost')
-                : t('lasidao.tradeNoTarget')
-            )
-          );
+          const tradeAllowed = Boolean(game.allowTrade);
+          if (tradeWrap) tradeWrap.hidden = !tradeAllowed;
+          tradeBtnAct.hidden = !tradeAllowed;
+          if (!tradeAllowed) {
+            tradeBtnAct.disabled = true;
+            tradeBtnAct.classList.remove('is-selected', 'is-affordable');
+          } else {
+            const canTrade = listTradeTargets(game, meId).length > 0;
+            tradeBtnAct.disabled = !canTrade;
+            tradeBtnAct.classList.remove('is-selected');
+            markAffordable(tradeBtnAct, canTrade);
+            setPermBtnTip(
+              tradeBtnAct,
+              formatPermanentTip(
+                t('lasidao.tradeBtn'),
+                canTrade
+                  ? t('lasidao.permanentNoCost')
+                  : t('lasidao.tradeNoTarget')
+              )
+            );
+          }
         }
         if (breedBtn) {
           const breed = breedCostPayload(game, me);
@@ -11231,7 +11240,7 @@ window.LasidaoUi = (function () {
   }
 
   function openTradeFromPermanent() {
-    if (!lastGame || !lastMeId) return;
+    if (!lastGame || !lastMeId || !lastGame.allowTrade) return;
     const targets = listTradeTargets(lastGame, lastMeId);
     if (!targets.length) return;
     resetTradeProposeSelection();
@@ -13650,6 +13659,7 @@ window.LasidaoUi = (function () {
     const tradeBtn = $('btn-las-trade');
     if (tradeBtn) {
       tradeBtn.onclick = () => {
+        if (!lastGame || !lastGame.allowTrade) return;
         selectedPermanent = null;
         if (lastGame) {
           const me = mePlayer(lastGame, lastMeId);

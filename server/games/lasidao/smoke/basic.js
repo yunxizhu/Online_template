@@ -6654,7 +6654,7 @@ console.log('— resource face-down slots —');
 
 console.log('— player trade propose / accept / reject —');
 {
-  const g = createGameState(room(3));
+  const g = createGameState({ ...room(3), allowTrade: true });
   finishInit(g);
   const a = g.players[0];
   const b = g.players[1];
@@ -6736,6 +6736,33 @@ console.log('— player trade propose / accept / reject —');
   assert.strictEqual(a.resources.wood, 2, '拒绝后发起方资源不变');
 
   console.log('✓ player trade propose / accept / reject');
+}
+
+console.log('— trade disabled by default —');
+{
+  const g = createGameState(room(2));
+  finishInit(g);
+  const a = g.players[0];
+  const b = g.players[1];
+  g.phase = 'build';
+  g.buildPassed = {};
+  g.produceFinishOrder = ['p0', 'p1'];
+  g.currentPlayerId = 'p0';
+  a.resources = { wood: 3, stone: 1, food: 0, iron: 0 };
+  b.resources = { wood: 0, stone: 2, food: 1, iron: 0 };
+  assert.strictEqual(g.allowTrade, false);
+  assert.strictEqual(publicGameState(g, a.id).allowTrade, false);
+  const blocked = applyAction(g, a.id, {
+    type: 'proposeTrade',
+    payload: {
+      targetId: b.id,
+      give: { wood: 1, stone: 0, food: 0, iron: 0 },
+      take: { wood: 0, stone: 0, food: 0, iron: 0 },
+    },
+  });
+  assert.ok(!blocked.ok, '默认不允许交易');
+  assert.ok(!g.pendingTrade);
+  console.log('✓ trade disabled by default');
 }
 
 console.log('— exile moves die between slots —');

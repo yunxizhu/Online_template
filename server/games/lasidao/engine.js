@@ -1679,6 +1679,7 @@ function createGameState(room) {
     type: 'lasidao',
     mode,
     teamMode,
+    allowTrade: Boolean(room && room.allowTrade),
     phase: 'init_announce', // init_announce | produce | settle | build | over
     round: 1,
     over: false,
@@ -3624,9 +3625,10 @@ function startNextRound(game) {
   recycleBoard(game);
   game.round += 1;
   game.personalProduceApplied = false;
-  // 下一轮生产从本轮「最先派遣完毕」的玩家开始（与建造阶段先手一致）
+  // 下一轮生产从本轮「最后一个完成生产」的玩家开始
+  const finishOrder = game.produceFinishOrder || [];
   const nextProduceStart =
-    (game.produceFinishOrder || [])[0] || game.produceOrderStartId;
+    finishOrder[finishOrder.length - 1] || game.produceOrderStartId;
   game.produceFinishOrder = [];
   game.produceOrderStartId = nextProduceStart;
   game.roundProduceBegun = false;
@@ -5012,6 +5014,9 @@ function formatTradeRes(amounts) {
 }
 
 function actProposeTrade(game, player, payload) {
+  if (!game.allowTrade) {
+    return { ok: false, error: '本房间不允许玩家交易' };
+  }
   if (game.pendingTrade) {
     return { ok: false, error: '已有待处理交易' };
   }
@@ -6541,6 +6546,7 @@ function publicGameState(game, viewerId) {
     type: 'lasidao',
     mode: game.mode || 'standard',
     teamMode: isTeamMode(game),
+    allowTrade: Boolean(game.allowTrade),
     stateSeq: Number(game.stateSeq) || 0,
     phase: game.phase,
     round: game.round,

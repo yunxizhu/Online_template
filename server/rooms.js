@@ -208,6 +208,7 @@ function publicRoomView(room) {
     turnTimeSec: Number(room.turnTimeSec) || 0,
     playingStartedAt: room.playingStartedAt || null,
     hasPassword: Boolean(room.hasPassword),
+    allowTrade: Boolean(room.allowTrade),
     passiveHosted: Boolean(room.passiveHosted),
     canJoin: waiting && playerCount < room.maxPlayers,
     canSpectate: (waiting || playing) && !over,
@@ -252,6 +253,7 @@ function fullRoomView(room) {
     turnTimeSec: Number(room.turnTimeSec) || 0,
     playingStartedAt: room.playingStartedAt || null,
     hasPassword: Boolean(room.hasPassword),
+    allowTrade: Boolean(room.allowTrade),
     passiveHosted: Boolean(room.passiveHosted),
   };
 }
@@ -555,6 +557,7 @@ class RoomManager {
       gameType,
       gameMode,
       turnTimeSec,
+      allowTrade = false,
       passiveHost = false,
       operatorId = null,
     } = {}
@@ -603,6 +606,7 @@ class RoomManager {
       gameMode: cfg.modeId,
       gameModeLabel: cfg.modeLabel,
       turnTimeSec: cfg.turnTimeSec,
+      allowTrade: cfg.type === 'lasidao' ? Boolean(allowTrade) : false,
       turnTimer: null,
       game: null,
       createdAt: Date.now(),
@@ -642,7 +646,7 @@ class RoomManager {
    */
   updateSettings(
     playerId,
-    { name, hasPassword, password, maxPlayers, gameType, gameMode, turnTimeSec } = {}
+    { name, hasPassword, password, maxPlayers, gameType, gameMode, turnTimeSec, allowTrade } = {}
   ) {
     const player = this.players.get(playerId);
     if (!player || !player.roomId) {
@@ -692,6 +696,14 @@ class RoomManager {
     room.gameMode = cfg.modeId;
     room.gameModeLabel = cfg.modeLabel;
     room.turnTimeSec = cfg.turnTimeSec;
+    if (allowTrade != null || cfg.type === 'lasidao') {
+      room.allowTrade =
+        cfg.type === 'lasidao'
+          ? allowTrade != null
+            ? Boolean(allowTrade)
+            : Boolean(room.allowTrade)
+          : false;
+    }
     ensureTeamSeats(room);
 
     return { ok: true, room };

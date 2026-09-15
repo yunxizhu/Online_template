@@ -158,6 +158,7 @@
     "turnTime": "Turn think time",
     "turnUnlimited": "Unlimited",
     "turnSec": "{n} sec",
+    "allowTrade": "Allow player trading",
     "hasPassword": "Password room",
     "password": "Room password",
     "passwordPlaceholder": "Can be empty",

@@ -80,6 +80,8 @@
     roomMax: document.getElementById('room-max'),
     maxPlayersWrap: document.getElementById('max-players-wrap'),
     roomName: document.getElementById('room-name'),
+    roomAllowTrade: document.getElementById('room-allow-trade'),
+    roomAllowTradeWrap: document.getElementById('room-allow-trade-wrap'),
     roomHasPassword: document.getElementById('room-has-password'),
     roomPassword: document.getElementById('room-password'),
     roomPasswordWrap: document.getElementById('room-password-wrap'),
@@ -2384,12 +2386,14 @@
       restoreMaxOptions();
       el.roomMax.value = '2';
       el.gameHint.textContent = t('create.hintGomoku');
+      if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = true;
     } else if (g.id === 'incan') {
       el.maxPlayersWrap.hidden = false;
       restoreMaxOptions();
       const v = Number(el.roomMax.value);
       if (v < 3) el.roomMax.value = '6';
       el.gameHint.textContent = t('create.hintIncanFull');
+      if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = true;
     } else if (g.id === 'lasidao') {
       el.maxPlayersWrap.hidden = false;
       const modeId = el.gameMode ? el.gameMode.value : 'melee';
@@ -2419,7 +2423,9 @@
       } else {
         el.gameHint.textContent = t('create.hintLasidaoFull');
       }
+      if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = false;
     } else if (g.id === 'sgs') {
+      if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = true;
       el.maxPlayersWrap.hidden = false;
       const modeId = el.gameMode ? el.gameMode.value : 'identity';
       const mode = (g.modes || []).find((m) => m.id === modeId) || g.modes[0];
@@ -2447,6 +2453,7 @@
         el.gameHint.textContent = t('create.hintSgsIdentity');
       }
     } else {
+      if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = true;
       el.maxPlayersWrap.hidden = false;
       restoreMaxOptions();
       el.gameHint.textContent = t('create.hintRange', { label: gameLabelOf(g.id, g.label), min: g.minPlayers, max: g.maxPlayers });
@@ -4128,6 +4135,9 @@
         el.roomTurnTime.value = v;
       }
     }
+    if (el.roomAllowTrade) {
+      el.roomAllowTrade.checked = Boolean(room.allowTrade);
+    }
   }
 
   function setCreatePanelOpen(open, mode = 'create') {
@@ -4145,6 +4155,7 @@
       } else {
         updateCreateForm();
         if (el.roomHasPassword) el.roomHasPassword.checked = false;
+        if (el.roomAllowTrade) el.roomAllowTrade.checked = false;
         if (el.roomPassword) {
           el.roomPassword.value = '';
           el.roomPassword.placeholder =
@@ -4924,6 +4935,7 @@
       turnTimeSec: el.roomTurnTime
         ? Number(el.roomTurnTime.value) || 0
         : 0,
+      allowTrade: Boolean(el.roomAllowTrade && el.roomAllowTrade.checked),
     };
 
     if (state.createModalMode === 'edit') {

@@ -1231,6 +1231,7 @@ io.on('connection', (socket) => {
       gameType: data.gameType,
       gameMode: data.gameMode,
       turnTimeSec: data.turnTimeSec,
+      allowTrade: data.allowTrade,
       passiveHost: wantPassive && Boolean(operatorId),
       operatorId,
     });
@@ -1370,6 +1371,7 @@ io.on('connection', (socket) => {
       gameType: oldRoom.gameType,
       gameMode: oldRoom.gameMode,
       turnTimeSec: oldRoom.turnTimeSec,
+      allowTrade: Boolean(oldRoom.allowTrade),
     };
     const targets = [];
     for (const p of oldRoom.players || []) {
@@ -1869,6 +1871,7 @@ io.on('connection', (socket) => {
       gameType: data.gameType,
       gameMode: data.gameMode,
       turnTimeSec: data.turnTimeSec,
+      allowTrade: data.allowTrade,
     });
     if (!result.ok) {
       socket.emit('room:error', { message: result.error });

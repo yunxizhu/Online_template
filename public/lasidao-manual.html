@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>卡拉斯坦 · 游戏说明书</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 18mm 16mm 18mm 16mm;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-size: 10.5pt;
+      line-height: 1.75;
+      color: #222;
+      background: #fff;
+      margin: 0;
+      padding: 0;
+    }
+    h1 {
+      font-size: 22pt;
+      text-align: center;
+      margin: 40px 0 8px;
+      letter-spacing: 0.08em;
+      color: #1a1a1a;
+    }
+    .subtitle {
+      text-align: center;
+      font-size: 11pt;
+      color: #666;
+      margin-bottom: 32px;
+    }
+    h2 {
+      font-size: 14pt;
+      margin: 22px 0 10px;
+      padding-bottom: 4px;
+      border-bottom: 2px solid #333;
+      color: #1a1a1a;
+      page-break-after: avoid;
+    }
+    h3 {
+      font-size: 11.5pt;
+      margin: 16px 0 8px;
+      color: #333;
+      page-break-after: avoid;
+    }
+    h4 {
+      font-size: 10.5pt;
+      margin: 12px 0 6px;
+      color: #444;
+      page-break-after: avoid;
+    }
+    p { margin: 6px 0; }
+    ul, ol { margin: 6px 0; padding-left: 22px; }
+    li { margin: 3px 0; }
+    dl { margin: 6px 0; }
+    dt {
+      font-weight: bold;
+      margin: 8px 0 2px;
+      color: #1a1a1a;
+    }
+    dd { margin: 0 0 6px 18px; }
+
+    .cover {
+      page-break-after: always;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 90vh;
+    }
+    .cover h1 {
+      font-size: 32pt;
+      margin-bottom: 12px;
+      border-bottom: none;
+    }
+    .cover .subtitle {
+      font-size: 13pt;
+      color: #555;
+      margin-bottom: 48px;
+    }
+    .cover .meta {
+      font-size: 10pt;
+      color: #888;
+      text-align: center;
+      line-height: 2;
+    }
+
+    .section { page-break-before: always; }
+    .section:first-of-type { page-break-before: auto; }
+
+    .note {
+      background: #f5f5f5;
+      border-left: 3px solid #333;
+      padding: 8px 12px;
+      margin: 10px 0;
+      font-size: 9.5pt;
+      color: #444;
+    }
+    .note strong { color: #222; }
+
+    .two-col {
+      column-count: 2;
+      column-gap: 24px;
+    }
+    .two-col h3, .two-col h4 {
+      column-span: all;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0;
+      font-size: 9.5pt;
+    }
+    th, td {
+      border: 1px solid #bbb;
+      padding: 5px 7px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #f0f0f0;
+      font-weight: bold;
+    }
+    tr:nth-child(even) td { background: #fafafa; }
+
+    .highlight {
+      background: #fffbe6;
+      padding: 1px 4px;
+      border-radius: 2px;
+    }
+    .card-count {
+      font-size: 9pt;
+      color: #666;
+      font-weight: normal;
+    }
+
+    @media print {
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .no-print { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- 封面 -->
+<div class="cover">
+  <h1>卡拉斯坦</h1>
+  <p class="subtitle">Kalastan · 游戏说明书</p>
+  <div class="meta">
+    2–5 人 · 策略经营 · 卡牌 + 骰子<br/>
+    本说明书供打印使用
+  </div>
+</div>
+
+<!-- 一、游戏背景 -->
+<div class="section">
+  <h2>一、游戏背景</h2>
+  <p>你身为帝国册封的男爵，爵位低微、前程未定。为博取皇帝赏识、建功立业、晋升显贵，你亲自率领麾下子民，扬帆远航，奔赴传闻中资源丰饶、未经开垦的卡拉斯坦。</p>
+  <p>你的初衷简单直白：开垦沃土、开采资源、修筑聚落，以一方疆土的繁荣功绩，换取朝堂嘉奖，升官晋爵、光耀部族。</p>
+  <p>可当船队靠岸、踏上海岛的那一刻，你赫然发现——这片沃土并非为你专属预留。数位身份相当的贵族开拓者，同样怀揣建功晋升的野心，早已先后登岛。</p>
+  <p>自此，一场无声的拓荒竞赛正式开启。众人同驻一岛，资源有限、机遇均等。你需要伐木筑路、垦田畜牧、开矿通商，扩张领地、发展城邦，巧妙交易资源、布局势力版图。</p>
+  <p>没有谦让与共存，唯有实力定输赢。率先壮大势力、积攒足够功绩者，便能夺得皇帝青睐，从一众男爵中脱颖而出，登顶卡拉斯坦、进阶高阶爵位，成为这片海岛真正的统治者。</p>
+</div>
+
+<!-- 二、游戏流程 -->
+<div class="section">
+  <h2>二、游戏流程</h2>
+
+  <div class="note">
+    <strong>获胜条件：</strong>任意阶段，有玩家达到 <strong>10</strong> 分即立刻获胜并结束（个别效果可使玩家达到 <strong>15</strong> 分）。
+  </div>
+
+  <h3>1. 第一轮：决定先手</h3>
+  <p>系统为每位玩家自动投掷一枚骰子，点数最高者成为先手。若平局则重投，直至决出唯一先手。</p>
+
+  <h3>2. 准备阶段（每轮开始）</h3>
+  <ul>
+    <li><strong>资源区</strong>：每轮发 <code>6 + n</code> 张资源卡，其中 <code>n = 轮次 − 1</code>。依次填入 1→6 号格并回绕。</li>
+    <li><strong>功能/建筑区</strong>：开局开放 1–2 号格。第 3 轮起，每 2 轮解锁下一格。发牌张数等于已解锁格数，依次填入。</li>
+    <li>事件牌每轮向资源区 1–6 号格各放 1 张；用完抽牌堆后才将弃牌堆洗混再抽。</li>
+  </ul>
+
+  <h3>3. 生产阶段</h3>
+  <p>由上一轮第一个完成生产的玩家开始，按顺序轮流进行：</p>
+  <ol>
+    <li>投掷当前拥有的所有骰子。</li>
+    <li>从结果中选择一个点数，将该点数的<strong>所有骰子</strong>放置到对应数字格的板块上；或选择<strong>跳过</strong>。</li>
+    <li>轮到下一位玩家，循环直到所有玩家都用完骰子。</li>
+  </ol>
+  <div class="note">
+    <strong>跳过放置的两种选择：</strong><br/>
+    ① <strong>爆骰换资源</strong>：爆掉 1 枚骰子，任选获得 1 个资源。<br/>
+    ② <strong>支付弃置</strong>：支付 2 张资源卡跳过（不爆骰）。<br/>
+    骰子用完的玩家自动略过。
+  </div>
+
+  <h3>4. 生产结算</h3>
+  <p>全员放置完毕后，进入结算：</p>
+  <ol>
+    <li><strong>雇佣军等「生产判定前」效果</strong>：在正式结算前处理。</li>
+    <li><strong>抵消</strong>：同一数字格中，同一玩家的同数量骰子相互抵消下场。</li>
+    <li><strong>分发</strong>：按第一名、第二名分发资源/卡牌（大份给第一名，小份给第二名）。</li>
+  </ol>
+
+  <h3>5. 弃牌与个人产出</h3>
+  <ol>
+    <li>检查资源是否超上限，超则弃置多余资源。</li>
+    <li><strong>个人产出</strong>：已建成资源建筑自动产出 + 许愿井选择资源（此步不检查资源上限）。</li>
+    <li>处理「囚徒困境」等事件弃牌（若有）。</li>
+  </ol>
+
+  <h3>6. 建造阶段</h3>
+  <p>由本轮第一个完成生产的玩家开始，每位玩家在自己的回合可以进行以下任意操作：</p>
+  <ul>
+    <li><strong>建造建筑</strong>：支付造价，将建筑卡翻为已建状态。</li>
+    <li><strong>发动功能卡</strong>：消耗功能卡，发动对应效果。</li>
+    <li><strong>常驻功能</strong>：建造房子、繁殖村民、购买功能卡、扩建、兑换等。</li>
+    <li><strong>结束回合</strong>：点击「跳过本轮建造」。跳过后本阶段不再行动。</li>
+  </ul>
+  <p>全员完成后进入下一轮准备阶段。</p>
+
+  <h3>7. 卡牌弃牌（建造阶段结束后）</h3>
+  <p>若功能手牌或建筑格仍超上限则须弃置：</p>
+  <ul>
+    <li>功能手牌超上限：点选一张弃置。</li>
+    <li>建筑格超上限：可弃置一张<strong>未建造</strong>的建筑收下新卡；若均已建造则新卡直接入弃牌堆。</li>
+  </ul>
+</div>
+
+<!-- 三、常驻功能 -->
+<div class="section">
+  <h2>三、常驻功能（建造阶段可用）</h2>
+  <div class="note">
+    <strong>开局配置：</strong>3 村民、2 间房子（每房容纳 2 村民）。上限：资源手牌 <strong>8</strong>、建筑格 <strong>2</strong>、功能卡 <strong>2</strong>。
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>功能</th><th>消耗</th><th>说明</th><th>限制</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>建造房子</strong></td>
+        <td>3 木 3 石 1 铁</td>
+        <td>房子 +1，+1 胜利分</td>
+        <td>每回合限 1 次</td>
+      </tr>
+      <tr>
+        <td><strong>繁殖村民</strong></td>
+        <td>等于当前村民数的 小麦</td>
+        <td>村民 +1（上限 15）</td>
+        <td>每回合限 1 次；需住房空位</td>
+      </tr>
+      <tr>
+        <td><strong>购买功能卡</strong></td>
+        <td>1 木 1 石 1 小麦 1 铁</td>
+        <td>从合堆顶抽 3 张，选 1 保留</td>
+        <td>不限次数；超上限须先弃置</td>
+      </tr>
+      <tr>
+        <td><strong>扩建</strong></td>
+        <td>1 木 1 石（固定）</td>
+        <td>三选一：建筑格 / 功能卡格 / 资源卡位（上限 +2）</td>
+        <td>不限次数</td>
+      </tr>
+      <tr>
+        <td><strong>集市兑换</strong></td>
+        <td>见比例</td>
+        <td>默认银行 4:1；已建集市可提升比例</td>
+        <td>随时可用</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h4>集市兑换比例</h4>
+  <table>
+    <thead>
+      <tr><th>已建集市数</th><th>兑换比例</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>0 座</td><td>4 : 1（默认银行）</td></tr>
+      <tr><td>1 座</td><td>3 : 1</td></tr>
+      <tr><td>2 座</td><td>2 : 1</td></tr>
+      <tr><td>≥3 座</td><td>1 : 1（最多按 3 座计）</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- 四、功能卡效果 -->
+<div class="section">
+  <h2>四、功能卡效果</h2>
+  <p class="note">括号内数字为该卡牌的卡组总数。</p>
+
+  <table>
+    <thead>
+      <tr><th>卡牌名称</th><th>数量</th><th>使用阶段</th><th>效果</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>丰收</strong></td>
+        <td>5</td>
+        <td>建造阶段</td>
+        <td>任选获得 3 个资源（可重复）。</td>
+      </tr>
+      <tr>
+        <td><strong>遥控骰子</strong></td>
+        <td>2</td>
+        <td>生产阶段</td>
+        <td>本回合可指定任意点数派遣骰子（投掷前后均可）。</td>
+      </tr>
+      <tr>
+        <td><strong>驱逐</strong></td>
+        <td>5</td>
+        <td>生产阶段</td>
+        <td>将目标玩家在某数字格的 1 枚骰子移到另一有板块的数字格。</td>
+      </tr>
+      <tr>
+        <td><strong>强化</strong></td>
+        <td>2</td>
+        <td>建造阶段</td>
+        <td>强化 1 枚未强化骰子（最多 5 枚）。强化骰结算计为 1.5（普通骰计 1）。开局自带 1 枚强化骰。</td>
+      </tr>
+      <tr>
+        <td><strong>征召</strong></td>
+        <td>5</td>
+        <td>建造阶段</td>
+        <td>下一轮生产阶段临时村民 +2，可参与投骰与派遣；该生产阶段结束后消失。</td>
+      </tr>
+      <tr>
+        <td><strong>重抽</strong></td>
+        <td>3</td>
+        <td>建造阶段</td>
+        <td>从功能/建筑合堆顶抽 3 张，选 1 保留，其余弃入弃牌堆。合堆不足时洗混弃牌堆再抽。</td>
+      </tr>
+      <tr>
+        <td><strong>强盗来袭</strong></td>
+        <td>5</td>
+        <td>生产阶段</td>
+        <td>在任意板块任意数字格放置 2 枚中立骰；参与抵消并占用名次，不领取收益。</td>
+      </tr>
+      <tr>
+        <td><strong>免费扩建</strong></td>
+        <td>3</td>
+        <td>建造阶段</td>
+        <td>立即扩建一格（建筑格 / 功能卡格 / 资源卡位），<strong>不消耗资源</strong>。</td>
+      </tr>
+      <tr>
+        <td><strong>福利房</strong></td>
+        <td>4</td>
+        <td>建造阶段</td>
+        <td>获得 1 间免费房子（可繁殖村民，但不加分）。</td>
+      </tr>
+      <tr>
+        <td><strong>收留</strong></td>
+        <td>4</td>
+        <td>建造阶段</td>
+        <td>立即获得 1 名村民（不消耗小麦；无住房空位则不可用）。</td>
+      </tr>
+      <tr>
+        <td><strong>商队来临</strong></td>
+        <td>2</td>
+        <td>建造阶段</td>
+        <td>本回合结束前可按 1:1 兑换资源；若已建至少 2 座集市则额外 +1 胜利分。</td>
+      </tr>
+      <tr>
+        <td><strong>抢劫</strong></td>
+        <td>5</td>
+        <td>建造阶段</td>
+        <td>二选一：① 选一名有至少 2 张资源卡的玩家，随机夺取其 2 张资源；② 选一名持有未建造建筑或功能卡的玩家，由其选择 1 张交给你。</td>
+      </tr>
+      <tr>
+        <td><strong>拆迁</strong></td>
+        <td>2</td>
+        <td>建造阶段</td>
+        <td>选择一名已有已建建筑的玩家，由其选择一座已建建筑变为未建造；分数立即消失。若原格无空位安放则爆牌，须弃一张未建造建筑。</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- 五、建筑卡效果 -->
+<div class="section">
+  <h2>五、建筑卡效果</h2>
+
+  <h3>资源建筑</h3>
+  <table>
+    <thead>
+      <tr><th>建筑</th><th>档位</th><th>造价</th><th>产出</th><th>叠放效果</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>木头</td>
+        <td>富</td>
+        <td>2 木 3 小麦 2 铁</td>
+        <td>每轮 2 木</td>
+        <td>产量×(1+2+…+n)，即叠 1/2/3 座→2/6/12</td>
+      </tr>
+      <tr>
+        <td>石头</td>
+        <td>富</td>
+        <td>2 木 3 小麦 2 铁</td>
+        <td>每轮 2 石</td>
+        <td>同上</td>
+      </tr>
+      <tr>
+        <td>小麦</td>
+        <td>富</td>
+        <td>3 木 3 石 1 铁</td>
+        <td>每轮 2 小麦</td>
+        <td>同上</td>
+      </tr>
+      <tr>
+        <td>木头/石头/小麦</td>
+        <td>贫</td>
+        <td>见卡面</td>
+        <td>每轮 1 个</td>
+        <td>1+2+…+n，即叠 1/2/3 座→1/3/6</td>
+      </tr>
+      <tr>
+        <td>铁矿</td>
+        <td>贫</td>
+        <td>1 木 1 石 1 铁</td>
+        <td>每轮 1 铁</td>
+        <td>同上</td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="note">资源建筑建成后每轮个人产出阶段自动产出，<strong>无需工人</strong>。同格叠放产量按层数和计算。</p>
+
+  <h3>特殊建筑</h3>
+  <table>
+    <thead>
+      <tr><th>建筑</th><th>数量</th><th>造价</th><th>效果</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>宫殿（+2）</strong></td>
+        <td>4</td>
+        <td>2 木 2 石 1 小麦 1 铁</td>
+        <td>建成即 +2 分。分数跟随宫殿：拆迁或未建造后不再计分；被弃置也不再计分。</td>
+      </tr>
+      <tr>
+        <td><strong>学堂（+1）</strong></td>
+        <td>7</td>
+        <td>—</td>
+        <td>入手即 +1 胜利分并置入弃牌堆，<strong>无需建造、不占建筑格</strong>。</td>
+      </tr>
+      <tr>
+        <td><strong>集市</strong></td>
+        <td>5</td>
+        <td>1 木 1 石 1 小麦</td>
+        <td>提升兑换比例（见常驻功能）。同类型可叠放。同类型建成 3 座额外 +2 分。</td>
+      </tr>
+      <tr>
+        <td><strong>许愿井</strong></td>
+        <td>3</td>
+        <td>1 木 1 石 1 小麦 1 铁</td>
+        <td>个人产出阶段可选任意 1 种资源 +1。同格叠放次数为 1+2+…+n（叠 1/2/3 座→1/3/6）。无需工人。</td>
+      </tr>
+      <tr>
+        <td><strong>永恒王座</strong></td>
+        <td>2</td>
+        <td>3 木 3 石 3 小麦 3 铁</td>
+        <td>每个建造回合结束时 +1 胜利分。已获分数永久保留；拆迁后停止继续得分，再次建成后可重新开始。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>独占称号</h3>
+  <table>
+    <thead>
+      <tr><th>称号</th><th>条件</th><th>奖励</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>商业巨擘</strong></td>
+        <td>集市 ≥3 座</td>
+        <td>+2 分（更多者可抢走，持平不抢）</td>
+      </tr>
+      <tr>
+        <td><strong>工坊主</strong></td>
+        <td>工坊 + 许愿井 ≥3 座</td>
+        <td>+2 分（更多者可抢走，持平不抢）</td>
+      </tr>
+      <tr>
+        <td><strong>叠放成就</strong></td>
+        <td>同类型建筑建成 3 座</td>
+        <td>+2 分（不足时收回，可再次建满拿回）</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- 六、资源卡说明 -->
+<div class="section">
+  <h2>六、资源卡说明</h2>
+  <p>资源板块共 4 种：木、石、小麦、铁。木/石/小麦各有丰/贫两档；铁矿仅贫档。</p>
+  <table>
+    <thead>
+      <tr><th>资源</th><th>档位</th><th>大份/小份</th><th>建筑产出</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>木头</td><td>丰</td><td>3 / 2</td><td>每轮 2 木</td></tr>
+      <tr><td>木头</td><td>贫</td><td>2 / 1</td><td>每轮 1 木</td></tr>
+      <tr><td>石头</td><td>丰</td><td>3 / 2</td><td>每轮 2 石</td></tr>
+      <tr><td>石头</td><td>贫</td><td>2 / 1</td><td>每轮 1 石</td></tr>
+      <tr><td>小麦</td><td>丰</td><td>3 / 2</td><td>每轮 2 小麦</td></tr>
+      <tr><td>小麦</td><td>贫</td><td>2 / 1</td><td>每轮 1 小麦</td></tr>
+      <tr><td>铁矿</td><td>贫</td><td>2 / 1</td><td>每轮 1 铁</td></tr>
+    </tbody>
+  </table>
+  <div class="note">
+    <strong>大份 / 小份：</strong>生产结算时，同一数字格第一名获得大份资源数量，第二名获得小份资源数量。
+  </div>
+</div>
+
+<!-- 七、事件牌效果 -->
+<div class="section">
+  <h2>七、事件牌效果</h2>
+  <p class="note">触发时机说明：<strong>派遣触发</strong> = 派到该格时立刻结算；<strong>生产判定前</strong> = 全员放置完毕、获资源前；<strong>结算触发</strong> = 骰子抵消后结算。</p>
+
+  <table>
+    <thead>
+      <tr><th>事件牌</th><th>触发时机</th><th>效果</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>囚徒困境</strong></td>
+        <td>上场/派遣/结算</td>
+        <td>上场放 1 枚中立骰。派遣时额外放 1 枚。结算后最后一名玩家弃 n 张资源（n = 第一名骰子数）。在个人产出后、建造前进行。</td>
+      </tr>
+      <tr>
+        <td><strong>颗粒无收</strong></td>
+        <td>派遣</td>
+        <td>成为本格最大者时可放置歉收标记（首次触发）。标记格结算无收获。</td>
+      </tr>
+      <tr>
+        <td><strong>抵抗南蛮</strong></td>
+        <td>结算后</td>
+        <td>结算后本格仍有 ≥2 个骰子的玩家按名次各获得 1 胜利分。有人达到 15 分则立刻结束。</td>
+      </tr>
+      <tr>
+        <td><strong>晴空万里</strong></td>
+        <td>派遣</td>
+        <td>派遣者任选获得与此次派遣数量相同的资源（可重复）。</td>
+      </tr>
+      <tr>
+        <td><strong>以身入局</strong></td>
+        <td>上场/派遣</td>
+        <td>上场放 3 枚中立骰。派遣时将本格与派遣数量相同的中立骰移到任意板块数字格。</td>
+      </tr>
+      <tr>
+        <td><strong>一山不容二虎</strong></td>
+        <td>结算</td>
+        <td>结算抵消后：第二名不获得小份资源，第一名额外获得小份。</td>
+      </tr>
+      <tr>
+        <td><strong>幸运一抽</strong></td>
+        <td>上场/结算</td>
+        <td>上场将合堆顶 1 张暗置。结算后第一名获得该暗置牌。</td>
+      </tr>
+      <tr>
+        <td><strong>渔翁得利</strong></td>
+        <td>派遣/结算</td>
+        <td>派遣：成为最大者时任选 n 个资源（n = 本格骰子归属者数量）。结算：第三名额外获得前两名所得之和。</td>
+      </tr>
+      <tr>
+        <td><strong>先到先得</strong></td>
+        <td>持续</td>
+        <td>1–3/4–6/7+ 轮抽出 3/5/7 张暗置资源。玩家在本格放满 2/3/4 个村民时获得这些资源。</td>
+      </tr>
+      <tr>
+        <td><strong>低保户</strong></td>
+        <td>上场</td>
+        <td>当前分数最低的玩家随机获得 2/3/4 个资源（按轮次）。</td>
+      </tr>
+      <tr>
+        <td><strong>召回</strong></td>
+        <td>派遣</td>
+        <td>将场上自己的 1 枚骰子收回手中（不可召回本次刚放置的）。</td>
+      </tr>
+      <tr>
+        <td><strong>围魏救赵</strong></td>
+        <td>上场/派遣</td>
+        <td>上场在周边数字格各放 1 枚中立骰。派遣时选择有其他中立骰的板块，将其全部集中到本事件格。</td>
+      </tr>
+      <tr>
+        <td><strong>传送</strong></td>
+        <td>派遣</td>
+        <td>成为本格最大者时，将场上任意骰子传送到任意有板块的格子（触发目标格派遣事件）。</td>
+      </tr>
+      <tr>
+        <td><strong>吃不了兜着走</strong></td>
+        <td>上场/结算</td>
+        <td>上场抽出 2 张暗置资源。结算后第一名跳过本轮资源弃牌，并获得这些资源。</td>
+      </tr>
+      <tr>
+        <td><strong>雇佣军</strong></td>
+        <td>生产判定前</td>
+        <td>上场放 2 枚雇佣骰。全员放置后、结算前：唯一第一名投掷并放置雇佣骰，按对应格大份获资源。</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- 八、快速参考 -->
+<div class="section">
+  <h2>八、快速参考</h2>
+
+  <h3>起始配置</h3>
+  <ul>
+    <li>村民：3 人</li>
+    <li>房子：2 间（每间容纳 2 村民）</li>
+    <li>强化骰：1 枚</li>
+    <li>资源手牌上限：8</li>
+    <li>建筑格上限：2</li>
+    <li>功能卡上限：2</li>
+  </ul>
+
+  <h3>关键数值速查</h3>
+  <table>
+    <thead>
+      <tr><th>项目</th><th>数值/说明</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>获胜分数</td><td>10 分（个别效果可达 15 分）</td></tr>
+      <tr><td>村民上限</td><td>15 人</td></tr>
+      <tr><td>强化骰上限</td><td>5 枚</td></tr>
+      <tr><td>建造房子</td><td>3 木 3 石 1 铁 / 每回合限 1 次</td></tr>
+      <tr><td>繁殖村民</td><td>消耗 = 当前村民数 小麦 / 每回合限 1 次</td></tr>
+      <tr><td>购买功能卡</td><td>1 木 1 石 1 小麦 1 铁</td></tr>
+      <tr><td>扩建</td><td>1 木 1 石 / 不限次数</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <strong>提示：</strong>本说明书内容基于卡拉斯坦（Kalastan）游戏规则整理。如有规则更新，请以游戏内最新规则为准。
+  </div>
+</div>
+
+</body>
+</html>
