@@ -1,6 +1,7 @@
 'use strict';
 
 const engine = require('./engine');
+const bot = require('./bot');
 
 module.exports = {
   id: 'lasidao',
@@ -30,4 +31,5 @@ module.exports = {
   finishSettleAnimForce: engine.finishSettleAnimForce,
   INIT_ANNOUNCE_MS: engine.INIT_ANNOUNCE_MS,
   SETTLE_ANIM_MAX_MS: engine.SETTLE_ANIM_MAX_MS,
+  decideBotAction: bot.decideBotAction,
 };

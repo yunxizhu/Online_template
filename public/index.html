@@ -483,6 +483,27 @@
     </div>
   </div>
 
+  <!-- 添加电脑弹窗 -->
+  <div class="modal" id="add-bot-modal" hidden>
+    <div class="modal-backdrop" data-close="add-bot"></div>
+    <div class="modal-dialog panel" role="dialog" aria-labelledby="add-bot-title" aria-modal="true">
+      <div class="row panel-head">
+        <h2 id="add-bot-title" data-i18n="bot.addTitle">添加电脑</h2>
+        <button id="btn-close-add-bot" type="button" class="icon-btn" data-close="add-bot" data-i18n-attr="title:create.close,aria-label:create.close" title="关闭" aria-label="关闭">×</button>
+      </div>
+      <p class="muted" id="add-bot-seat-label" data-i18n="bot.seatLabel">座位 —</p>
+      <label>
+        <span data-i18n="bot.difficulty">难度</span>
+        <select id="bot-difficulty">
+          <option value="easy" data-i18n="bot.easy">简易</option>
+          <option value="normal" selected data-i18n="bot.normal">普通</option>
+          <option value="hard" data-i18n="bot.hard">困难</option>
+        </select>
+      </label>
+      <button id="btn-confirm-add-bot" type="button" data-i18n="bot.confirmAdd">确认添加</button>
+    </div>
+  </div>
+
   <div id="people-ctx" class="ctx-menu" hidden>
     <button type="button" data-action="join-their-room" data-i18n="lobby.joinTheirRoom">加入其房间</button>
     <button type="button" data-action="create-on-host">在此开房</button>

@@ -117,7 +117,25 @@
     "spectatorsBtn": "Spectators",
     "spectatorsTitle": "Spectators",
     "spectatorsEmpty": "No spectators",
-    "spectatorsClose": "Close"
+    "spectatorsClose": "Close",
+    "addBot": "Add computer",
+    "removeBot": "Remove computer",
+    "botSeatLabel": "Seat —",
+    "bot": "Computer"
+  },
+  "bot": {
+    "addTitle": "Add Computer",
+    "seatLabel": "Seat —",
+    "difficulty": "Difficulty",
+    "easy": "Easy",
+    "normal": "Normal",
+    "hard": "Hard",
+    "confirmAdd": "Add",
+    "removeConfirm": "Remove computer",
+    "botPlayer": "Computer player",
+    "diffLabelEasy": "Easy",
+    "diffLabelNormal": "Normal",
+    "diffLabelHard": "Hard"
   },
   "chat": {
     "roomAria": "Chat",

@@ -117,7 +117,25 @@
     "spectatorsBtn": "观战玩家",
     "spectatorsTitle": "观战玩家",
     "spectatorsEmpty": "暂无观战玩家",
-    "spectatorsClose": "关闭"
+    "spectatorsClose": "关闭",
+    "addBot": "添加电脑",
+    "removeBot": "移除电脑",
+    "botSeatLabel": "座位 {seat}",
+    "bot": "电脑"
+  },
+  "bot": {
+    "addTitle": "添加电脑",
+    "seatLabel": "座位 —",
+    "difficulty": "难度",
+    "easy": "简易",
+    "normal": "普通",
+    "hard": "困难",
+    "confirmAdd": "确认添加",
+    "removeConfirm": "移除电脑",
+    "botPlayer": "电脑玩家",
+    "diffLabelEasy": "简易",
+    "diffLabelNormal": "普通",
+    "diffLabelHard": "困难"
   },
   "chat": {
     "roomAria": "聊天室",

@@ -775,6 +775,7 @@ function scheduleLasidaoInitAnnounce(room) {
     mod.finishInitAnnounce(room.game);
     syncTurnTimer(room, { onTimeout: handleTurnTimeout });
     emitGameState(room);
+    scheduleBotTick(room);
   }, delay);
 }
 
@@ -802,6 +803,7 @@ function scheduleLasidaoSettleAnim(room) {
     syncTurnTimer(room, { onTimeout: handleTurnTimeout });
     emitGameState(room);
     afterPlayingMutation(room, { wasOver, wasStatus });
+    scheduleBotTick(room);
   }, delay);
 }
 
@@ -869,6 +871,74 @@ function handleAbandonedPlayers(room) {
   }
 }
 
+/**
+ * 当游戏状态变化后，安排 bot 自动行动（不限时模式下也适用）。
+ */
+function scheduleBotTick(room) {
+  if (!room || room.status !== 'playing' || !room.game || room.game.over) return;
+  const mod = getGame(room.gameType);
+  if (!mod || typeof mod.decideBotAction !== 'function') return;
+
+  const actors = (mod.getActingPlayerIds(room.game) || []).filter((id) => {
+    const seat = (room.players || []).find((p) => p.id === id);
+    return seat && seat.isBot;
+  });
+  if (!actors.length) return;
+
+  const delay = 600 + Math.floor(Math.random() * 600); // 600-1200ms
+  if (room._botTickHandle) clearTimeout(room._botTickHandle);
+  room._botTickHandle = setTimeout(() => {
+    room._botTickHandle = null;
+    if (!room.game || room.game.over) return;
+    const freshActors = (mod.getActingPlayerIds(room.game) || []).filter((id) => {
+      const seat = (room.players || []).find((p) => p.id === id);
+      return seat && seat.isBot;
+    });
+    if (!freshActors.length) return;
+
+    const wasOver = Boolean(room.game.over);
+    const wasStatus = room.status;
+
+    for (const id of freshActors) {
+      const seat = (room.players || []).find((p) => p.id === id);
+      if (!seat || !seat.isBot) continue;
+      try {
+        const botAction = mod.decideBotAction(
+          room.game,
+          id,
+          seat.botDifficulty || 'normal'
+        );
+        if (botAction) {
+          const result = mod.applyAction(room.game, id, botAction);
+          if (!result || !result.ok) {
+            // AI 决策不合法时回退到 forceTimeout
+            if (typeof mod.forceTimeout === 'function') {
+              mod.forceTimeout(room.game, id);
+            }
+          }
+        } else if (typeof mod.forceTimeout === 'function') {
+          mod.forceTimeout(room.game, id);
+        }
+      } catch (_) {
+        try {
+          if (typeof mod.forceTimeout === 'function') {
+            mod.forceTimeout(room.game, id);
+          }
+        } catch (__) {}
+      }
+      if (room.game.over) break;
+    }
+
+    handleAbandonedPlayers(room);
+    syncTurnTimer(room, { onTimeout: handleTurnTimeout });
+    emitGameState(room);
+    afterPlayingMutation(room, { wasOver, wasStatus });
+
+    // 递归：如果 bot 行动后又轮到另一个 bot
+    scheduleBotTick(room);
+  }, delay);
+}
+
 function handleTurnTimeout(room) {
   if (!room || room.status !== 'playing' || !room.game) {
     clearTurnTimer(room);
@@ -895,6 +965,23 @@ function handleTurnTimeout(room) {
     if (!room.game || room.game.over) break;
     const still = (mod.getActingPlayerIds(room.game) || []).includes(id);
     if (!still) continue;
+
+    // Bot 优先走 AI 决策，失败再兜底 forceTimeout
+    const seat = (room.players || []).find((p) => p.id === id);
+    if (seat && seat.isBot && typeof mod.decideBotAction === 'function') {
+      try {
+        const botAction = mod.decideBotAction(
+          room.game,
+          id,
+          seat.botDifficulty || 'normal'
+        );
+        if (botAction) {
+          const result = mod.applyAction(room.game, id, botAction);
+          if (result && result.ok) continue;
+        }
+      } catch (_) {}
+    }
+
     try {
       mod.forceTimeout(room.game, id);
     } catch (_) {
@@ -906,6 +993,9 @@ function handleTurnTimeout(room) {
   syncTurnTimer(room, { onTimeout: handleTurnTimeout });
   emitGameState(room);
   afterPlayingMutation(room, { wasOver, wasStatus });
+
+  // 超时后也可能轮到 bot，继续排程
+  scheduleBotTick(room);
 }
 
 io.on('connection', (socket) => {
@@ -1864,6 +1954,24 @@ io.on('connection', (socket) => {
     emitRoomUpdate(result.room);
   });
 
+  socket.on('room:addBot', (data = {}) => {
+    const result = rooms.addBotPlayer(socket.id, data.seatIndex, data.difficulty);
+    if (!result.ok) {
+      socket.emit('room:error', { message: result.error });
+      return;
+    }
+    emitRoomUpdate(result.room);
+  });
+
+  socket.on('room:removeBot', (data = {}) => {
+    const result = rooms.removeBotPlayer(socket.id, data.seatIndex);
+    if (!result.ok) {
+      socket.emit('room:error', { message: result.error });
+      return;
+    }
+    emitRoomUpdate(result.room);
+  });
+
   socket.on('room:updateSettings', (data = {}) => {
     const result = rooms.updateSettings(socket.id, {
       name: data.name,
@@ -1984,6 +2092,8 @@ io.on('connection', (socket) => {
     emitGameState(room);
     // 对局刚结束：立刻刷新房间状态并广播
     afterPlayingMutation(room, { wasOver, wasStatus });
+    // 玩家行动后，如果轮到 bot，触发自动行动
+    scheduleBotTick(room);
   });
 
   socket.on('chat:send', (data = {}) => {

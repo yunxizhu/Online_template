@@ -236,6 +236,9 @@ function fullRoomView(room) {
       left: Boolean(p.left),
       team: p.team === 'B' ? 'B' : p.team === 'A' ? 'A' : null,
       teamSlot: p.teamSlot === 0 || p.teamSlot === 1 ? p.teamSlot : null,
+      isBot: Boolean(p.isBot),
+      botDifficulty: p.botDifficulty || null,
+      botDifficultyLabel: p.botDifficultyLabel || null,
     })),
     observers: (room.observers || []).map((p) => ({
       id: p.id,
@@ -1523,6 +1526,107 @@ class RoomManager {
       toP.team = fromTeam;
       toP.teamSlot = fromSlot;
     }
+    return { ok: true, room };
+  }
+
+  /**
+   * 为房间添加人机玩家（房主专用）。
+   * @param {string} playerId - 房主ID
+   * @param {number} seatIndex - 目标座位索引（0-based）
+   * @param {string} difficulty - 难度：'easy'|'normal'|'hard'
+   */
+  addBotPlayer(playerId, seatIndex, difficulty) {
+    const player = this.players.get(playerId);
+    if (!player || !player.roomId) {
+      return { ok: false, error: '你不在房间中' };
+    }
+    const room = this.getRoom(player.roomId);
+    if (!room) return { ok: false, error: '房间不存在' };
+    if (room.hostId !== playerId) {
+      return { ok: false, error: '只有房主可以添加电脑' };
+    }
+    if (room.status !== 'waiting') {
+      return { ok: false, error: '对局已开始，无法添加电脑' };
+    }
+
+    const idx = Number(seatIndex);
+    const maxSlots = room.maxPlayers || (room.players || []).length || 0;
+    if (!Number.isFinite(idx) || idx < 0 || idx >= maxSlots) {
+      return { ok: false, error: '座位无效' };
+    }
+
+    // 该位置已被占用（含left标记的）
+    for (const p of room.players || []) {
+      if (!p) continue;
+      if (p.isBot && p.botSeatIndex === idx) {
+        return { ok: false, error: '该座位已有电脑' };
+      }
+      if (!p.left && p.botSeatIndex === idx) {
+        return { ok: false, error: '该座位已被占用' };
+      }
+    }
+
+    const diff = String(difficulty || 'normal').toLowerCase();
+    const diffLabel = diff === 'easy' ? '简易' : diff === 'hard' ? '困难' : '普通';
+    const botNameDiff = diff === 'easy' ? '简单' : diff === 'hard' ? '困难' : '普通';
+    const botId = `bot_${room.id}_${idx}_${Date.now()}`;
+    const botPlayer = {
+      id: botId,
+      name: `电脑(${botNameDiff})`,
+      tag: null,
+      ready: true,
+      isBot: true,
+      botDifficulty: diff,
+      botDifficultyLabel: diffLabel,
+      botSeatIndex: idx,
+      sessionId: null,
+    };
+
+    // 检查是否已有bot，避免座位碎片
+    const existingAt = room.players.find((p) => p && p.isBot && p.botSeatIndex === idx);
+    if (existingAt) {
+      return { ok: false, error: '该座位已有电脑' };
+    }
+
+    // 确保 players 数组长度覆盖到目标索引，将 bot 放到正确位置
+    while (room.players.length <= idx) {
+      room.players.push(null);
+    }
+    room.players[idx] = botPlayer;
+    ensureTeamSeats(room);
+    return { ok: true, room, bot: botPlayer };
+  }
+
+  /**
+   * 移除人机玩家（房主专用）。
+   * @param {string} playerId - 房主ID
+   * @param {number} seatIndex - 目标座位索引（0-based）
+   */
+  removeBotPlayer(playerId, seatIndex) {
+    const player = this.players.get(playerId);
+    if (!player || !player.roomId) {
+      return { ok: false, error: '你不在房间中' };
+    }
+    const room = this.getRoom(player.roomId);
+    if (!room) return { ok: false, error: '房间不存在' };
+    if (room.hostId !== playerId) {
+      return { ok: false, error: '只有房主可以移除电脑' };
+    }
+    if (room.status !== 'waiting') {
+      return { ok: false, error: '对局已开始，无法移除电脑' };
+    }
+
+    const idx = Number(seatIndex);
+    const target = (room.players || [])[idx];
+    if (!target || !target.isBot || Number(target.botSeatIndex) !== idx) {
+      return { ok: false, error: '该座位没有电脑' };
+    }
+    room.players[idx] = null;
+    // 清理尾部多余的 null，但保留中间 null（代表空位）
+    while (room.players.length > 0 && room.players[room.players.length - 1] === null) {
+      room.players.pop();
+    }
+    ensureTeamSeats(room);
     return { ok: true, room };
   }
 
