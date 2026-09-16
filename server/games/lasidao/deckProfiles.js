@@ -87,11 +87,11 @@ const CONFLICT_DECK = {
     banditRaid: 3, // 强盗来袭
     robbery: 3, // 抢劫
     illegalBuild: 3, // 拆迁
-    welfareHouse: 3, // 福利房
+    welfareHouse: 0, // 福利房
     caravan: 3, // 商队来临
     enhance: 5, // 强化
     recruit: 3, // 征召
-    shelter: 3, // 收留
+    shelter: 0, // 收留
   },
   buildings: {
     produce: {

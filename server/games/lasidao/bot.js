@@ -66,13 +66,13 @@ function playerScore(p, game) {
   return s;
 }
 function maxResourceHandFor(player) {
-  return 10 + (Number(player.expandResSlots) || 0) * 2;
+  return 9 + (Number(player.expandResSlots) || 0) * 3;
 }
 function maxFuncHandFor(player) {
-  return 2 + (Number(player.expandFuncSlots) || 0);
+  return 3 + (Number(player.expandFuncSlots) || 0);
 }
 function maxBuildingsFor(player) {
-  return 2 + (Number(player.expandSlots) || 0);
+  return 3 + (Number(player.expandSlots) || 0);
 }
 function countBuiltExchanges(player) {
   return (player.buildings || []).filter((b) => b.built && b.buildType === 'exchange').length;

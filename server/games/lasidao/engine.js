@@ -56,9 +56,9 @@ const START_HOUSES = 2;
 /** 每间房子可容纳的村民数 */
 const VILLAGERS_PER_HOUSE = 2;
 const MAX_VILLAGERS = 15;
-const MAX_FUNC_HAND = 2;
-const MAX_BUILDINGS = 2;
-const MAX_RESOURCE_HAND = 8;
+const MAX_FUNC_HAND = 3;
+const MAX_BUILDINGS = 3;
+const MAX_RESOURCE_HAND = 9;
 /** 每位玩家最多拥有的强化骰数量 */
 const MAX_ENHANCED_DICE = 5;
 /** 开局每位玩家自带的强化骰数量 */
@@ -69,7 +69,7 @@ const ENHANCED_DIE_STRENGTH = 1.5;
 const SPECIAL_DRAW_PICK_COUNT = 3;
 /** 征召：下一轮生产临时村民数量 */
 const RECRUIT_TEMP_VILLAGERS = 2;
-const EXPAND_RESOURCE_BONUS = 2;
+const EXPAND_RESOURCE_BONUS = 3;
 /** 资源板块摆放上限（1–3 格各 3 张，4–6 格各 2 张） */
 const MAX_RESOURCE_BOARD_TILES = 15;
 /** 事件牌堆总量；每轮洗混后抽 3 张摆到 4/5/6 号格 */
@@ -1674,7 +1674,7 @@ function createGameState(room) {
     pendingWishWellBonus: 0, // 本轮许愿井待选取资源次数
     expandSlots: 0, // 扩建建筑格后增加的无数字格数量
     expandFuncSlots: 0, // 扩建功能卡格后增加的上限
-    expandResSlots: 0, // 扩建资源卡位次数（每次 +2 手牌资源上限）
+    expandResSlots: 0, // 扩建资源卡位次数（每次 +3 手牌资源上限）
     buildTurnUsedBuyFunc: false, // 本建造回合已购买功能卡（不可重置）
     buildTurnUsedRedraw: false, // 本建造回合已使用重抽（不可重置）
   }));
