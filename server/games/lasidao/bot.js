@@ -1,21 +1,21 @@
 'use strict';
 
 /**
- * 卡拉斯坦 AI（Bot）决策模块
+ * ???? AI?Bot??????
  *
- * 提供 decideBotAction(game, playerId, difficulty, botState) → { type, payload }|null
- * 由服务端在 bot 玩家需要行动时调用（思考时间超时或专门 tick）。
+ * ?? decideBotAction(game, playerId, difficulty, botState) ??{ type, payload }|null
+ * ??????bot ??????????????????? tick???
  *
- * 难度：
- *   easy   – 简易：优先造房/繁殖，随机派遣，会用已有功能卡但不主动买
- *   normal – 普通：按阶段调整策略，合理兑换，会买功能卡并优先拿分
- *   hard   – 困难：计算性价比，全面使用功能卡，动态阻止领先者，精确资源管理
+ * ????
+ *   easy   ?????????/????????????????????
+ *   normal ?????????????????????????????
+ *   hard   ?????????????????????????????????
  */
 
 const RESOURCES = ['wood', 'stone', 'food', 'iron'];
 const BOARD_AREAS = ['resource', 'special'];
 
-/* ────────── 轻量辅助（从 engine 搬运最小必要逻辑） ────────── */
+/* ?????????? ?????? engine ???????????????????? */
 
 function playerById(game, id) {
   return (game.players || []).find((p) => p.id === id) || null;
@@ -54,6 +54,44 @@ function idleVillagers(player) {
   const n = Number(player.villagers) || 0;
   return Math.max(0, n - (Number(player.dispatched) || 0) - (Number(player.voided) || 0));
 }
+
+/** ???????????????? */
+function remainingDiceCount(player) {
+  const total = Number(player.villagers) || 0;
+  const dispatched = Number(player.dispatched) || 0;
+  const voided = Number(player.voided) || 0;
+  return Math.max(0, total - dispatched - voided);
+}
+
+/** ????????????face ??????
+ * ?????????????0~1)?? ???????? ?????? */
+function rivalCanStillInterfereOnFace(game, player, face) {
+  // ?????????? face ????????
+  let maxRivalRemaining = 0;
+  for (const p of alivePlayers(game)) {
+    if (p.id === player.id || p.left) continue;
+    const rem = remainingDiceCount(p);
+    if (rem > maxRivalRemaining) maxRivalRemaining = rem;
+  }
+
+  // ??????????????????face????????????face
+  // ?????????? rem ???????????????1 ????
+  // = 1 - (5/6)^rem
+  if (maxRivalRemaining <= 0) return 0;
+  const probAtLeastOne = 1 - Math.pow(5 / 6, maxRivalRemaining);
+  return probAtLeastOne;
+}
+
+/** ??????????????????????????? */
+function maxRemainingAmongRivals(game, player) {
+  let max = 0;
+  for (const p of alivePlayers(game)) {
+    if (p.id === player.id || p.left) continue;
+    max = Math.max(max, remainingDiceCount(p));
+  }
+  return max;
+}
+
 function playerScore(p, game) {
   let s = Number(p.houseScore) || 0;
   for (const b of p.buildings || []) {
@@ -96,8 +134,419 @@ function slotWorkers(areaBoard, number) {
 function slotBoosts(areaBoard, number) {
   return (areaBoard && areaBoard.boosts && areaBoard.boosts[number]) || {};
 }
+
+/* ?????????? ????????engine ???????????????????? */
+
+function envOnResourceSlot(game, number) {
+  const envs =
+    (game.board && game.board.resource && game.board.resource.environments) || {};
+  return envs[number] || null;
+}
+
+function neutralCountOn(game, area, number) {
+  const board = game.board && game.board[area];
+  const wk = board && board.workers && board.workers[number];
+  return (wk && wk.__neutral__) || 0;
+}
+
+/** ?? engine ??firstCome ???????????? */
+function firstComeStashCount(round) {
+  const r = Number(round) || 1;
+  if (r >= 7) return 7;
+  if (r >= 4) return 5;
+  return 3;
+}
+function firstComeRequiredWorkers(round) {
+  const r = Number(round) || 1;
+  if (r >= 7) return 4;
+  if (r >= 4) return 3;
+  return 2;
+}
+
+/** ???????????????????? */
+function playerCount(game) {
+  return Math.max(2, (game.players || []).filter(p => !p.left).length);
+}
+
+/** ????????????2??00%, 3??0%, 4??7.5%, 5??5% */
+function rivalsLossFactor(game) {
+  const n = playerCount(game);
+  if (n <= 2) return 1.0;
+  if (n === 3) return 0.50;
+  if (n === 4) return 0.375;
+  return 0.25;
+}
+
+/** ????????????2??00%, 3??15%, 4??30%, 5??45% */
+function selfGainFactor(game) {
+  const n = playerCount(game);
+  if (n <= 2) return 1.0;
+  if (n === 3) return 1.15;
+  if (n === 4) return 1.30;
+  return 1.45;
+}
+
+/**
+ * ??????????????????????????????
+ * @returns number  ????????
+ */
+function estimateEventDispatchGain(game, player, number, count, selfRank) {
+  const env = envOnResourceSlot(game, number);
+  if (!env || env.trigger !== 'dispatch' || !envHasDispatchEffect(env.envType)) return 0;
+
+  switch (env.envType) {
+    case 'clearSky':
+      return count * 8 * selfGainFactor(game);
+
+    case 'prisonersDilemma': {
+      // ????1 ??????????????
+      // ??????????????????????
+      if (selfRank === 0) return 35;
+      if (selfRank === 1) return 20;
+      return 10;
+    }
+
+    case 'enterFray': {
+      const n = neutralCountOn(game, 'resource', number);
+      if (n <= 0) return 0;
+      return _bestEnterFrayMoveValue(game, player, number, count);
+    }
+
+    case 'barrenHarvest': {
+      // ????????????
+      if (selfRank !== 0) return 0;
+      let score = 35;
+      const wk = slotWorkers(game.board && game.board.resource, number);
+      if (wk) {
+        let hasRival = false;
+        for (const [pid, c] of Object.entries(wk)) {
+          if (pid !== '__neutral__' && pid !== player.id && c > 0) hasRival = true;
+        }
+        if (hasRival) {
+          // ???????? = ??????????
+          const tiles = tilesOnNumber(game.board && game.board.resource, number);
+          let large = 0;
+          for (const t of tiles) large += t.large || 0;
+          score += large * 8 * rivalsLossFactor(game); // ???? large ??
+        }
+      }
+      // ??????????????????????
+      if (game.barrenMarkerOwnerId === player.id) {
+        const barrenNum = Number(game.barrenMarkerNumber);
+        if (!isNaN(barrenNum) && barrenNum !== number) {
+          const barrenTiles = tilesOnNumber(game.board && game.board.resource, barrenNum);
+          let myGain = 0;
+          for (const t of barrenTiles) myGain += (t.large || 0) + (t.small || 0);
+          if (myGain > 0) score += myGain * 8 * selfGainFactor(game) + 15;
+        }
+      }
+      return score;
+    }
+
+    case 'fishermanProfit': {
+      if (selfRank !== 0) return 0;
+      const workers = (game.board && game.board.resource && game.board.resource.workers && game.board.resource.workers[number]) || {};
+      const distinctOwners = Object.keys(workers).filter(pid => pid !== '__neutral__' && (workers[pid] || 0) > 0).length;
+      const n = Math.max(1, distinctOwners + (workers[player.id] ? 0 : 1));
+      return n * 8 * selfGainFactor(game); // n * ??????
+    }
+
+    case 'recall': {
+      // ?????????????????? ????????????????????
+      const wk = slotWorkers(game.board && game.board.resource, number);
+      const myPrev = (wk && wk[player.id]) || 0;
+      if (myPrev > 0) return 45; // ????????
+      return 15; // ?????????????????? justPlaced ????????
+    }
+
+    case 'teleport': {
+      if (selfRank !== 0) return 0;
+      let bestVal = _bestTeleportTargetValue(game, player, number);
+      // ?????????????????????????? + ????????
+      for (const area2 of BOARD_AREAS) {
+        for (let num2 = 1; num2 <= 6; num2++) {
+          if (area2 === 'resource' && num2 === number) continue;
+          const board2 = game.board && game.board[area2];
+          const wk2 = board2 && board2.workers && board2.workers[num2];
+          if (!wk2) continue;
+          const myCount2 = wk2[player.id] || 0;
+          let rivalCount = 0;
+          let totalRivals = 0;
+          for (const [pid, c] of Object.entries(wk2)) {
+            if (pid === '__neutral__' || pid === player.id) continue;
+            totalRivals++;
+            if (c > rivalCount) rivalCount = c;
+          }
+          if (area2 === 'resource' && myCount2 === 0 && totalRivals === 1 && rivalCount > 0) {
+            const tiles2 = tilesOnNumber(board2, num2);
+            let large = 0;
+            for (const t of tiles2) large += t.large || 0;
+            bestVal = Math.max(bestVal, large * 8 * rivalsLossFactor(game) + 35);
+          }
+        }
+      }
+      return bestVal;
+    }
+
+    case 'weiQiRescueZhao': {
+      // ??????????????????????????
+      let releaseGain = 0;
+      for (const nr of [1,2,3,4,5,6]) {
+        if (nr === number) continue;
+        const board = game.board && game.board.resource;
+        const wk = board && board.workers && board.workers[nr];
+        if (!wk) continue;
+        const neutral = wk.__neutral__ || 0;
+        const myCount = wk[player.id] || 0;
+        if (neutral <= 0 || myCount <= 0) continue;
+        const tiles = tilesOnNumber(board, nr);
+        if (!tiles.length) continue;
+        let large = 0, small = 0;
+        for (const t of tiles) { large += t.large || 0; small += t.small || 0; }
+        // ??????????small ????????????????large
+        releaseGain += small * 8 * selfGainFactor(game) + Math.min(neutral, myCount) * 8 * selfGainFactor(game);
+        // ????????????????????
+        const env2 = envOnResourceSlot(game, nr);
+        if (env2 && env2.envType === 'prisonersDilemma') releaseGain += 50;
+      }
+      // ??????????????????????
+      const curWk = slotWorkers(game.board && game.board.resource, number);
+      const myCur = (curWk && curWk[player.id]) || 0;
+      const curTiles = tilesOnNumber(game.board && game.board.resource, number);
+      let curLoss = 0;
+      for (const t of curTiles) curLoss += (t.large || 0) + (t.small || 0);
+      const cost = myCur > 0 ? Math.min(myCur, curLoss) * 8 * selfGainFactor(game) : 0;
+      return releaseGain - cost;
+    }
+
+    case 'firstCome': {
+      if (env.stashClaimed) return 0; // ??????
+      const required = env.firstComeRequired != null ? Number(env.firstComeRequired) : firstComeRequiredWorkers(game.round);
+      const stashCards = Array.isArray(env.stashCards) ? env.stashCards.length : firstComeStashCount(game.round);
+      let cardVal = stashCards * 8.5; // ???????? 7 ??
+      // ????????required > ?????????????????
+      // ?? count ????????????diff
+      const extraDice = Math.max(0, required - count);
+      cardVal -= extraDice * 12; // ????1 ????-15 ??
+      // ??????????????????????
+      if (selfRank === 0) cardVal += 15;
+      return Math.max(0, cardVal);
+    }
+
+    default:
+      return 0;
+  }
+}
+
+/**
+ * ????????????????
+ */
+function envHasDispatchEffect(envType) {
+  return [
+    'clearSky',
+    'prisonersDilemma',
+    'enterFray',
+    'barrenHarvest',
+    'fishermanProfit',
+    'recall',
+    'teleport',
+    'weiQiRescueZhao',
+    'firstCome',
+  ].includes(envType);
+}
+
+/**
+ * ?????????????
+ * ????"??????????????????
+ */
+function _bestEnterFrayMoveValue(game, player, fromNumber, count) {
+  const envs =
+    (game.board && game.board.resource && game.board.resource.environments) || {};
+
+  // ??1????????????????????????????
+  for (const num of [1, 2, 3, 4, 5, 6]) {
+    const env = envs[num];
+    if (!env || env.envType !== 'mercenaries') continue;
+    // ????????????????????
+    // ???????????????????????????
+    const wk = slotWorkers(game.board.resource, num);
+    let bestOther = 0;
+    let hasNeutral = false;
+    for (const [pid, c] of Object.entries(wk)) {
+      if (pid === '__neutral__') hasNeutral = true;
+      else if (pid !== player.id && c > bestOther) bestOther = c;
+    }
+    if (bestOther > 0 && !hasNeutral) {
+      // ???????????????????????? ???????
+      return 50;
+    }
+    // ????????????????????????
+    // ??????????/????????????????????
+    return 10;
+  }
+
+  // ??2??????????????????/??????
+  for (const num of [1, 2, 3, 4, 5, 6]) {
+    if (num === fromNumber) continue;
+    const wk = slotWorkers(game.board.resource, num);
+    let bestOther = 0;
+    let bestOtherId = null;
+    for (const [pid, c] of Object.entries(wk)) {
+      if (pid === '__neutral__') continue;
+      if (pid === player.id) continue;
+      if (c > bestOther) { bestOther = c; bestOtherId = pid; }
+    }
+    if (bestOther > 0) {
+      const tiles = tilesOnNumber(game.board.resource, num);
+      let large = 0, small = 0;
+      for (const t of tiles) { large += t.large || 0; small += t.small || 0; }
+      // ??????????????????
+      return (large - small) * 4 * rivalsLossFactor(game) + 10;
+    }
+  }
+
+  // ???????????????????
+  return 10;
+}
+
+/**
+ * ???????????
+ * ?????"???????????"??????????
+ */
+function _bestTeleportTargetValue(game, player, fromNumber) {
+  const envs =
+    (game.board && game.board.resource && game.board.resource.environments) || {};
+  let bestVal = 12; // ????????????????????
+
+  for (const num of [1, 2, 3, 4, 5, 6]) {
+    if (num === fromNumber) continue;
+    const env = envs[num];
+    const wk = slotWorkers(game.board.resource, num);
+    const tiles = tilesOnNumber(game.board.resource, num);
+    if (!tiles.length && !env) continue;
+
+    let val = 0;
+
+    // ???????????? 2 ????????= ?? 2 ??
+    if (env && env.envType === 'mercenaries') {
+      const myCount = wk[player.id] || 0;
+      const bestOther = Math.max(
+        0,
+        ...Object.entries(wk)
+          .filter(([pid]) => pid !== player.id && pid !== '__neutral__')
+          .map(([, c]) => c)
+      );
+      // ??? myCount + 1?????? 2??????vs bestOther
+      if (bestOther > 0) {
+        // ???????? ?????????????+ ??????
+        if (myCount + 3 > bestOther) val = 100 * rivalsLossFactor(game);
+        else if (myCount + 3 === bestOther) val = 40 * rivalsLossFactor(game); // ????????2
+        else val = 20 * selfGainFactor(game);
+      } else {
+        // ??????????= ????????????
+        val = 50 * selfGainFactor(game);
+      }
+    }
+    // ?????dispatch ??????????
+    else if (env && env.trigger === 'dispatch' && envHasDispatchEffect(env.envType)) {
+      val = estimateEventDispatchGain(game, player, num, 1, 0);
+    }
+    // ????????????
+    else {
+      const myCount = wk[player.id] || 0;
+      const bestOther = Math.max(
+        0,
+        ...Object.entries(wk)
+          .filter(([pid]) => pid !== player.id && pid !== '__neutral__')
+          .map(([, c]) => c)
+      );
+      if (bestOther > 0 && myCount + 1 > bestOther) {
+        // ???????? ?????= ???? + ????
+        val = 25;
+      } else if (bestOther === 0 && myCount === 0) {
+        // ??????
+        val = 15;
+      }
+    }
+
+    if (val > bestVal) bestVal = val;
+  }
+
+  return bestVal;
+}
+
+/**
+ * ??????????????????????????????
+ */
+function estimateEventSettleGain(game, player, number, selfRank) {
+  const env = envOnResourceSlot(game, number);
+  if (!env || env.trigger !== 'settle') return 0;
+
+  switch (env.envType) {
+    case 'oneMountain':
+      if (selfRank === 0) return 8 * selfGainFactor(game);
+      if (selfRank === 1) return -8 * selfGainFactor(game);
+      return 0;
+
+    case 'resistBarbarians':
+      if (selfRank <= 1) {
+        const myScore = playerScore(player, game);
+        const maxScore = Math.max(...alivePlayers(game).map((p) => playerScore(p, game)));
+        if (myScore >= maxScore - 3) return 45;
+        return 25;
+      }
+      return 0;
+
+    case 'luckyDraw':
+      if (selfRank === 0) return 30;
+      return 0;
+
+    case 'keepOverflow': {
+      if (selfRank !== 0) return 0;
+      let score = 14; // 2 ?????????2 * 7??
+      // ??????????????????
+      const board = game.board && game.board.resource;
+      const tiles = tilesOnNumber(board, number);
+      let selfGain = 0;
+      for (const t of tiles) selfGain += (t.large || 0) + (t.small || 0);
+      const hand = sumRes(player.resources);
+      const cap = maxResourceHandFor(player);
+      // ??????????????????????
+      if (hand + selfGain > cap) {
+        const wouldDiscard = hand + selfGain - cap;
+        score += wouldDiscard * 12; // ??????????????
+      }
+      // ??????????????
+      if (game.phase === 'settle_end' || game.phase === 'settle') score += 5;
+      return score;
+    }
+
+    case 'fishermanProfit': {
+      // ??????????????
+      if (selfRank === 2) {
+        const board = game.board && game.board.resource;
+        const tiles = tilesOnNumber(board, number);
+        let large = 0, small = 0;
+        for (const t of tiles) { large += t.large || 0; small += t.small || 0; }
+        const sum = large + small; // ????????????
+        return Math.min(sum, 6) * 8 * selfGainFactor(game) + 10; // ??? 6 ????+ ?????
+      }
+      // ??????????????????????
+      if (selfRank === 1) {
+        // ??????????????????????????????
+        // ??????????????
+        return -5;
+      }
+      return 0;
+    }
+
+    default:
+      return 0;
+  }
+}
+
 function breedFoodCost(villagers) {
-  // 与 engine 一致：0→2，1→2，2→2，3→3，4→3，5→4，6→4，...
+  // ??engine ???0????????????????????????????..
   if (villagers <= 2) return 2;
   if (villagers <= 4) return 3;
   return 4;
@@ -112,7 +561,7 @@ function countBuiltByStackKey(player, key) {
   return (player.buildings || []).filter((b) => b.built && buildingStackKey(b) === key).length;
 }
 
-/* ────────── 通用随机工具 ────────── */
+/* ?????????? ?????? ?????????? */
 
 function randInt(n) {
   return Math.floor(Math.random() * n);
@@ -130,11 +579,11 @@ function shuffle(arr) {
   return a;
 }
 
-/* ────────── 生产阶段：测算收益 ────────── */
+/* ?????????? ???????????????????? */
 
 /**
- * 模拟把 count 个骰子（含 boostAdd）放到 area/face 格，返回预估自己获得的资源量
- * 简化模型：不算精确名次，只按 face 与板块 large/small 算。
+ * ????count ??????boostAdd????area/face ??????????????
+ * ???????????????face ????large/small ???
  */
 function estimateProduceGain(game, player, area, face, count, boostAdd) {
   const board = game.board && game.board[area];
@@ -142,29 +591,67 @@ function estimateProduceGain(game, player, area, face, count, boostAdd) {
   const tiles = tilesOnNumber(board, face);
   if (!tiles.length) return { self: 0, rivalsLoss: 0, tileCount: 0 };
   const wk = slotWorkers(board, face);
-  const currentHere = Object.values(wk).reduce((s, v) => s + (Number(v) || 0), 0);
-  // 放置后的总数
-  const totalAfter = currentHere + count + (boostAdd || 0);
-  let selfGain = 0;
-  let rivalsLoss = 0;
-  for (const t of tiles) {
-    const isLarge = totalAfter <= 2; // 大约简化：前2名拿 large
-    const amt = isLarge ? (t.large || 0) : (t.small || 0);
-    selfGain += amt;
-    if (area === 'resource' && t.resource) {
-      // 粗估：如果别人本来能拿到这里，现在可能被挤掉
-      rivalsLoss += isLarge ? (t.small || 0) : 0;
+
+  // ?? ???????????????? totalAfter <= 2 ?????? ??
+
+  // ??????????boost??????????
+  const myPrev = wk[player.id] || 0;
+  const myTotal = myPrev + count;
+  // ??????????????"??????1.5?? myTotal + boostAdd ????
+  const myPower = myTotal + (boostAdd || 0);
+
+  // ?????????????
+  let bestOtherId = null;
+  let bestOtherTotal = 0;
+  for (const [pid, c] of Object.entries(wk)) {
+    if (pid === player.id || pid === '__neutral__') continue;
+    if (c > bestOtherTotal) {
+      bestOtherTotal = c;
+      bestOtherId = pid;
     }
   }
-  // special 区拿功能/建筑卡 -> 折算为"资源等价"
-  if (area === 'special') {
-    selfGain = Math.max(1, tiles.length); // 至少 1 张卡的价值
+
+  // ??????????????????????????????????
+  let myRank = 0;          // 0=????large), 1=????small), 2+=??
+  let rivalDropped = false; // ????????????
+
+  if (bestOtherId) {
+    if (myPower > bestOtherTotal) {
+      myRank = 0;
+      rivalDropped = true; // ?????????
+    } else if (myPower === bestOtherTotal) {
+      myRank = 2;          // ????????????
+    } else {
+      myRank = 1;          // ????
+    }
   }
-  return { self: selfGain, rivalsLoss, tileCount: tiles.length };
+
+  let selfGain = 0;
+  let rivalsLoss = 0;
+
+  for (const t of tiles) {
+    const large = t.large || 0;
+    const small = t.small || 0;
+
+    // ??????????
+    if (myRank === 0) selfGain += large;
+    else if (myRank === 1) selfGain += small;
+
+    // ????????????large)????????small)????
+    if (rivalDropped && area === 'resource') {
+      rivalsLoss += large - small;
+    }
+  }
+
+  if (area === 'special') {
+    selfGain = Math.max(1, tiles.length);
+  }
+
+  return { self: selfGain, rivalsLoss, tileCount: tiles.length, rivalDropped, myRank };
 }
 
 /**
- * 判断 face 上是否有中立工人（会被对冲掉）
+ * ?? face ????????????????
  */
 function hasNeutralOnFace(game, area, face) {
   const board = game.board && game.board[area];
@@ -174,8 +661,8 @@ function hasNeutralOnFace(game, area, face) {
 }
 
 /**
- * 检查放置时是否会产生"对冲"（同一 face 上已有中立骰子，导致自己骰子被抵消）
- * 简化：如果已有中立骰子，且我们放的数量 ≤ 中立骰子数，则会被全部对冲
+ * ?????????????"??? face ??????????????????
+ * ??????????????????? ????????????????
  */
 function wouldCancelWithNeutral(game, area, face, count) {
   const board = game.board && game.board[area];
@@ -186,45 +673,135 @@ function wouldCancelWithNeutral(game, area, face, count) {
 }
 
 /**
- * 生产阶段：对每种合法派遣方案打分
+ * ????????????????
  */
 function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botState) {
-  // 基础分：自己的预估收益
+  // ????????????
   const est = estimateProduceGain(game, player, area, face, count, boostAdd);
-  let score = est.self * 10; // 放大为整数分
+  let score = est.self * 8 * selfGainFactor(game); // ??????
 
-  // 扣除对冲风险：如果会被中立骰子部分/全部抵消，严重扣分
+  // ????????????????????????????
   if (wouldCancelWithNeutral(game, area, face, count)) {
     score -= 200;
   }
 
-  // 扣减自身花费的骰子数（少放=保留更多骰子，但这里所有该 face 骰子都会放）
-  // 默认模式：同 face 的骰子会全部放，所以 count 固定为 matching 数量
+  // ??????????????2?? ?????? 1??=10??
+  const SKIP_BASELINE = Math.round(8 * selfGainFactor(game));
+  if (area === 'special' && count > 1) {
+    score -= (count - 1) * SKIP_BASELINE * 10; // special????????
+  }
 
-  // 困难模式：考虑对手损失、资源利用率
+  // ?????????????????
   if (diff === 'hard') {
     score += est.rivalsLoss * 5;
-    // 考虑手牌上限：如果资源快满了，去 special 区拿卡更有价值
+    // ???????????????? special ????????
     const hand = sumRes(player.resources);
     const cap = maxResourceHandFor(player);
     if (hand + est.self >= cap && area === 'resource') {
-      score -= 50; // 快要溢出，去资源区的价值下降
+      score -= 50; // ???????????????
     }
     if (area === 'special') {
-      // 手牌建筑/功能卡未达上限时，special 区价值高
+      // ????/?????????special ????
       const bldCap = maxBuildingsFor(player);
       const built = (player.buildings || []).filter((b) => b.built).length;
       const unbuilt = (player.buildings || []).filter((b) => !b.built).length;
-      if (built + unbuilt < bldCap) score += 30;
-      if ((player.funcCards || []).length < maxFuncHandFor(player)) score += 25;
-      // 快要赢的时候，分数卡更有价值（但这里不知道翻开的是啥，只能大概估计）
+      // ????3??????????????????
+      const isEarly = game.round <= 3;
+      if (built + unbuilt < bldCap) {
+        score += isEarly ? 8 : 25;
+      }
+      if ((player.funcCards || []).length < maxFuncHandFor(player)) {
+        // ??????????????????
+        const needsFunc = _needsExchangeBreed(player) || player.villagers < 12;
+        score += needsFunc ? 15 : 8;
+      }
+      // ?????????????????????????????????
       const myScore = playerScore(player, game);
       const leaders = alivePlayers(game).map((p) => playerScore(p, game));
       const maxScore = Math.max(...leaders);
-      if (myScore >= maxScore - 3) score += 20; // 冲刺阶段，special价值上升
+      if (myScore >= maxScore - 3) score += 20; // ?????special?????
     }
-    // 吃不了兜着走：如果已有该事件豁免，资源区价值上升（不怕溢出）
+    // ??????????????????????????????
     if (player.skipSettleResourceDiscard) score += 15;
+
+    // ??????????
+    if (area === 'resource') {
+      score += estimateEventDispatchGain(game, player, face, count, est.myRank);
+      score += estimateEventSettleGain(game, player, face, est.myRank);
+
+      // ???????????????selfRank === 2??
+      const env = envOnResourceSlot(game, face);
+      if (env && env.envType === 'fishermanProfit' && env.trigger === 'settle') {
+        // ??????????????? + count ????????
+        const board = game.board && game.board.resource;
+        const wk = board && board.workers && board.workers[face];
+        if (wk) {
+          const myPower = (wk[player.id] || 0) + (boostAdd || 0);
+          const ord = Object.entries(wk)
+            .filter(([pid]) => pid !== '__neutral__' && pid !== player.id)
+            .map(([, c]) => c)
+            .sort((a, b) => b - a);
+          // ?????????? <= ????>= ??????????
+          const second = ord[0] || 0;
+          const third = ord[1] || 0;
+          if (myPower <= second && myPower >= third) {
+            const tiles = tilesOnNumber(board, face);
+            let large = 0, small = 0;
+            for (const t of tiles) { large += t.large || 0; small += t.small || 0; }
+            const potential = Math.min(large, 6) * 8 * selfGainFactor(game); // ????????????????
+            if (potential > 0) score += potential + 15;
+          }
+        }
+      }
+    }
+
+    // ???????????????????????????
+    if (area === 'resource' && est.myRank === 0) {
+      const risk = rivalCanStillInterfereOnFace(game, player, face);
+      const maxRival = maxRemainingAmongRivals(game, player);
+      const myRem = remainingDiceCount(player);
+      // ??????????idleVillagers ??0??????????????
+      if (myRem <= 0 && maxRival >= 2) {
+        // ??????????????
+        score -= 15;
+      } else if (myRem <= 0 && maxRival === 1) {
+        // ???? 1 ??????????
+        score += 5;
+      } else if (myRem <= 0 && maxRival === 0) {
+        // ??????????????????
+        score += 25;
+      } else if (risk < 0.3) {
+        // ?????????????
+        score += 12;
+      } else if (risk < 0.5) {
+        score += 5;
+      }
+    }
+
+    // ??????????????????????????
+    if (area === 'resource' && count > 0) {
+      const wk = slotWorkers(game.board && game.board.resource, face) || {};
+      const myPrev = wk[player.id] || 0;
+      // ??????????????????
+      if (myPrev >= 1 && myPrev <= 2) {
+        const maxRivalRem = maxRemainingAmongRivals(game, player);
+        // ??????????????????????????
+        if (maxRivalRem >= 3) {
+          score -= count * 12; // ????????12??
+        } else if (maxRivalRem >= 1) {
+          score -= count * 5;
+        }
+        // ??????????????
+        const tileCount = tilesOnNumber(game.board && game.board.resource, face).length;
+        if (tileCount >= 2) score += 8;   // 2+????????
+        if (tileCount >= 3) score += 10;  // 3+????????
+        // ????????????
+        const env = envOnResourceSlot(game, face);
+        if (env && ['teleport', 'mercenaries', 'enterFray', 'firstCome'].includes(env.envType)) {
+          score += 10;
+        }
+      }
+    }
   }
 
   if (diff === 'normal') {
@@ -238,14 +815,14 @@ function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botSt
 }
 
 /**
- * 生产阶段：选一个最优的 face + area 进行 placeDice
- * 返回 { type:'placeDice', payload:{ face, area, count? } } 或 null
+ * ??????????? face + area ?? placeDice
+ * ?? { type:'placeDice', payload:{ face, area, count? } } ??null
  */
 function decidePlaceDice(game, player, diff, botState) {
   const dice = game.dice && game.dice[player.id] ? game.dice[player.id] : [];
   if (!dice.length) return null;
 
-  // 按 face 分组
+  // ??face ??
   const byFace = {};
   for (const d of dice) {
     byFace[d] = (byFace[d] || 0) + 1;
@@ -257,7 +834,7 @@ function decidePlaceDice(game, player, diff, botState) {
   for (const faceStr of Object.keys(byFace)) {
     const face = Number(faceStr);
     const count = byFace[faceStr];
-    // boostAdd 计算
+    // boostAdd ??
     const boostFlags = (game.diceBoosted && game.diceBoosted[player.id]) || [];
     let boostAdd = 0;
     for (let i = 0; i < dice.length; i++) {
@@ -268,7 +845,7 @@ function decidePlaceDice(game, player, diff, botState) {
       const board = game.board && game.board[area];
       const tiles = board ? tilesOnNumber(board, face) : [];
       if (!tiles.length) continue;
-      // 简易模式：只要不与中立对冲即可，随机选
+      // ????????????????????
       if (diff === 'easy') {
         if (wouldCancelWithNeutral(game, area, face, count)) continue;
         // random accept first valid
@@ -286,18 +863,18 @@ function decidePlaceDice(game, player, diff, botState) {
     }
   }
 
-  // 如果没有合法放置（比如全部会被中立对冲），尝试 remoteDice / exile
+  // ????????????????????????remoteDice / exile
   if (!best) {
-    // 如果有遥控骰子或驱逐，尝试清掉中立骰子后再放；否则爆骰换资源
+    // ???????????????????????????????
     const funcRemote = (player.funcCards || []).find((c) => c.funcType === 'remoteDice');
     const funcExile = (player.funcCards || []).find((c) => c.funcType === 'exile');
     if (funcRemote && game.phase === 'produce' && game.currentPlayerId === player.id) {
-      // 困难/普通尽量用remote来放
+      // ??/?????remote??
       if (diff !== 'easy') {
         return { type: 'useFunc', payload: { cardId: funcRemote.id } };
       }
     }
-    // 爆骰换资源：voidSkip
+    // ??????voidSkip
     return decideVoidSkip(game, player, diff, botState);
   }
 
@@ -305,20 +882,20 @@ function decidePlaceDice(game, player, diff, botState) {
 }
 
 /**
- * 爆骰换资源
+ * ??????
  */
 function decideVoidSkip(game, player, diff, botState) {
   const dice = game.dice && game.dice[player.id] ? game.dice[player.id] : [];
   if (!dice.length) return null;
   if (idleVillagers(player) <= 0) return null;
 
-  // 模式判断：如果有可跳过骰子，决定是 pay(消耗额外村民) 还是 burn(换1资源)
-  const mode = 'burn'; // 简化：总是选择爆掉换1资源（因为 pay 需要额外村民且通常不划算）
+  // ??????????????????pay(??????? ?? burn(????)
+  const mode = 'burn'; // ?????????????????pay ?????????????
 
-  // 选择换什么资源
+  // ????????
   let targetRes = 'wood';
   if (diff === 'hard') {
-    // 选当前最缺的资源（按建造需求）
+    // ???????????????
     const needs = estimateResourceNeeds(player);
     targetRes = pickMostNeededResource(player, needs) || 'wood';
   } else if (diff === 'normal') {
@@ -331,19 +908,19 @@ function decideVoidSkip(game, player, diff, botState) {
   return { type: 'voidSkip', payload: { mode, resource: targetRes } };
 }
 
-/* ────────── 建造阶段决策 ────────── */
+/* ?????????? ????????????????? */
 
 /**
- * 粗略估计玩家缺哪些资源（用于兑换、爆骰选择）
- * 基于手牌建筑的成本与常驻功能成本
+ * ???????????????????????
+ * ????????????????
  */
 function estimateResourceNeeds(player) {
   const needs = { wood: 0, stone: 0, food: 0, iron: 0 };
-  // 造房需求
+  // ?????
   const houseCost = { wood: 2, stone: 1, iron: 1 };
   for (const k of RESOURCES) needs[k] += houseCost[k] || 0;
-  // 繁殖需求（不一定马上就繁殖）
-  // 手牌未建造建筑
+  // ???????????????
+  // ????????
   for (const b of player.buildings || []) {
     if (!b.built && b.cost) {
       for (const k of RESOURCES) needs[k] += (b.cost[k] || 0);
@@ -367,7 +944,7 @@ function pickMostNeededResource(player, needs) {
 }
 
 /**
- * 资源溢出时：优先兑换成需要的资源，其次弃牌
+ * ??????????????????????
  */
 function decideResourceOverflow(game, player, diff, botState) {
   const hand = sumRes(player.resources);
@@ -377,7 +954,7 @@ function decideResourceOverflow(game, player, diff, botState) {
 
   const exchCost = effectiveExchangeCost(player, game);
 
-  // 先尝试兑换
+  // ??????
   if (diff !== 'easy') {
     const needs = estimateResourceNeeds(player);
     const needRes = pickMostNeededResource(player, needs);
@@ -387,7 +964,7 @@ function decideResourceOverflow(game, player, diff, botState) {
         const available = player.resources[from] || 0;
         if (available >= exchCost) {
           const maxCount = Math.floor(available / exchCost);
-          // 兑换到不溢出为止，但不超过 maxCount
+          // ??????????????maxCount
           const want = Math.min(maxCount, Math.ceil(over / 1));
           if (want > 0) {
             return {
@@ -400,7 +977,7 @@ function decideResourceOverflow(game, player, diff, botState) {
     }
   }
 
-  // easy 模式：随机兑换
+  // easy ????????
   if (diff === 'easy') {
     const shuffledFrom = shuffle(RESOURCES);
     const shuffledTo = shuffle(RESOURCES);
@@ -414,7 +991,7 @@ function decideResourceOverflow(game, player, diff, botState) {
     }
   }
 
-  // 兑换不了：弃牌
+  // ????????
   const amounts = {};
   let stillOver = over;
   for (const r of shuffle(RESOURCES)) {
@@ -432,24 +1009,24 @@ function decideResourceOverflow(game, player, diff, botState) {
 }
 
 /**
- * 先处理功能卡/建筑爆牌
+ * ??????/????
  */
 function decidePendingDiscard(game, player, diff, botState) {
-  // 建筑爆牌 pendingDiscardBuild
+  // ???? pendingDiscardBuild
   if (player.pendingDiscardBuild) {
-    // 随机弃一张最早入手但未建造的
+    // ??????????????
     const unbuilt = (player.buildings || []).filter((b) => !b.built);
     if (unbuilt.length) {
       const target = unbuilt[0];
       return { type: 'discardUnbuilt', payload: { buildingId: target.id } };
     }
   }
-  // 功能卡超上限
+  // ??????
   if (player.pendingDiscardFunc || (player.funcCards || []).length > maxFuncHandFor(player)) {
     const cards = player.funcCards || [];
     if (cards.length) {
       if (diff === 'hard') {
-        // 优先弃掉最不缺的功能卡；保留 robbery/illegalBuild/harvest/redraw 等强力卡
+        // ???????????????robbery/illegalBuild/harvest/redraw ????
         const priority = {
           robbery: 10,
           illegalBuild: 10,
@@ -483,36 +1060,33 @@ function decidePendingDiscard(game, player, diff, botState) {
 }
 
 /**
- * 困难模式：给手牌建筑打分（建造价值）
+ * ??????????????????
  */
 function scoreBuildingForHard(player, b, game) {
   if (!b.cost) return 0;
-  // 基础分：直接分数
+  // ????????
   let score = (b.score || 0) * 15;
-  // 资源产出建筑：根据当前资源紧缺程度打分
+  // ????????????????????
   if (b.buildType === 'produce' && b.resource) {
     const needs = estimateResourceNeeds(player);
     const gap = Math.max(0, (needs[b.resource] || 0) - (player.resources[b.resource] || 0));
-    score += gap * 8;
-    // 已建成的同类型建筑数量（叠建成就要3座=成就）
-    const stackKey = buildingStackKey(b);
-    const sameBuilt = countBuiltByStackKey(player, stackKey);
-    if (sameBuilt === 2) score += 40; // 即将达成成就
-    else if (sameBuilt === 1) score += 15;
+    score += gap * 8 * selfGainFactor(game);
+    // ???produce ???????????STACK_ACHIEVEMENT_EXCLUDED_BUILD_TYPES??
+    // ????sameBuilt === 2 ????
   }
-  // 集市（exchange）优先级随已有集市数量递减
+  // ???exchange?????????????
   if (b.buildType === 'exchange') {
     const exCount = countBuiltExchanges(player);
-    if (exCount === 0) score += 35; // 第一座集市很重要
-    else if (exCount === 1) score += 20;
-    else score += 8;
+    if (exCount === 0) score += 35; // ????????
+    else if (exCount === 1) score += 45;
+    else score += 40;
   }
-  // 许愿井：通用价值
+  // ?????????
   if (b.buildType === 'wishWell') score += 25;
-  // 宫殿 score2 / 学堂 score1
+  // ?? score2 / ?? score1
   if (b.buildType === 'score2') score += 30;
   if (b.buildType === 'score1') score += 18;
-  // 性价比：成本越低分数越高
+  // ????????????
   const costSum = sumRes(b.cost);
   score -= costSum * 3;
   return score;
@@ -533,112 +1107,463 @@ function scoreBuildingForNormal(player, b) {
 }
 
 function scoreBuildingForEasy(_player, b) {
-  // 简易：只看分数和是否是房子之外的建筑（简易不会常驻造房繁殖）
+  // ???????????????????????????????
   if (!b.cost) return 0;
   return (b.score || 0) * 10 - sumRes(b.cost) * 2;
 }
 
+/* ?????????? ???????????????? ?????????? */
+
+function decideUseFuncCardHard(game, player, botState) {
+  const cards = player.funcCards || [];
+  if (!cards.length) return null;
+  if (game.buildPassed && game.buildPassed[player.id]) return null;
+
+  botState = botState || {};
+
+  // ?? ????????????????????? ??
+  const needs = _planPermanentActions(game, player, botState);
+  const needTotal = (needs.house ? 1 : 0) + (needs.breed ? 1 : 0) + (needs.expand ? 1 : 0);
+  const resSum = sumRes(player.resources);
+
+  // ?? 1. ???redraw??????????? ??
+  const redraw = cards.find((c) => c.funcType === 'redraw' && !player.buildTurnUsedRedraw);
+  if (redraw) {
+    const bldCap = maxBuildingsFor(player);
+    const unbuilt = (player.buildings || []).filter((b) => !b.built).length;
+    if (unbuilt < bldCap) {
+      return { type: 'useFunc', payload: { cardId: redraw.id } };
+    }
+    // ???????????????????????????????
+    // ??????redraw
+  }
+
+  // ?? 2. ?????freeExpand???
+  const freeExpand = cards.find((c) => c.funcType === 'expand');
+  if (freeExpand) {
+    const bldCap = maxBuildingsFor(player);
+    const funcCap = maxFuncHandFor(player);
+    const unbuilt = (player.buildings || []).filter((b) => !b.built).length;
+    const funcN = (player.funcCards || []).length;
+    // ??????????????
+    if (unbuilt >= bldCap) {
+      return { type: 'useFunc', payload: { cardId: freeExpand.id } };
+    }
+    if (funcN >= funcCap) {
+      return { type: 'useFunc', payload: { cardId: freeExpand.id } };
+    }
+    // ??????????????????
+    if (botState.wasOverCap && !(botState.expandedResOnce)) {
+      return { type: 'useFunc', payload: { cardId: freeExpand.id } };
+    }
+  }
+
+  // ?? 3. ???harvest??????????1~2???? ??
+  const harvest = cards.find((c) => c.funcType === 'harvest');
+  if (harvest && needTotal > 0) {
+    // ??????????????????
+    const shortfall = _shortfallForNeeds(player, needs);
+    // ???? 1~2??????
+    if (shortfall > 0 && shortfall <= 2) {
+      return { type: 'useFunc', payload: { cardId: harvest.id } };
+    }
+  }
+
+  // ?? 4. ???robbery?????? ??
+  const robbery = cards.find((c) => c.funcType === 'robbery');
+  if (robbery) {
+    const target = _pickRobberyTarget(game, player);
+    if (target) {
+      return { type: 'useFunc', payload: { cardId: robbery.id, targetId: target.id, mode: target.mode } };
+    }
+  }
+
+  // ?? 5. ???illegalBuild????????????????
+  const illegalBuild = cards.find((c) => c.funcType === 'illegalBuild');
+  if (illegalBuild) {
+    const target = _pickIllegalBuildTarget(game, player);
+    if (target) {
+      return { type: 'useFunc', payload: { cardId: illegalBuild.id, targetId: target.id } };
+    }
+  }
+
+  // ?? 6. ?????caravan?????????????????
+  const caravan = cards.find((c) => c.funcType === 'caravan');
+  if (caravan && !player.caravanPending && !player.buildTurnUsedBuyFunc) {
+    const needExch = _needsExchangeBreed(player);
+    if (resSum >= 8 || needExch) {
+      return { type: 'useFunc', payload: { cardId: caravan.id } };
+    }
+  }
+
+  // ?? 7. ???recruit??????????????????
+  const recruit = cards.find((c) => c.funcType === 'recruit');
+  if (recruit && player.villagers < 15) {
+    return { type: 'useFunc', payload: { cardId: recruit.id } };
+  }
+
+  // ?? 8. ???enhance???????? ??
+  const enhance = cards.find((c) => c.funcType === 'enhance');
+  if (enhance) {
+    const canEnh = Math.min(player.villagers || 0, 5) - (player.enhancedDice || 0);
+    if (canEnh > 0) return { type: 'useFunc', payload: { cardId: enhance.id } };
+  }
+
+  // ?? 9. ???shelter???????? ??
+  const shelter = cards.find((c) => c.funcType === 'shelter');
+  if (shelter && player.villagers < 15) {
+    return { type: 'useFunc', payload: { cardId: shelter.id } };
+  }
+
+  // ?? 10. ????welfareHouse????????
+  const welfareHouse = cards.find((c) => c.funcType === 'welfareHouse');
+  if (welfareHouse) {
+    return { type: 'useFunc', payload: { cardId: welfareHouse.id } };
+  }
+
+  return null;
+}
+
+/** ????????????????needs ?? */
+function _planPermanentActions(game, player, botState) {
+  botState = botState || {};
+  const needs = { house: false, breed: false, expand: false, targetRes: null };
+
+  const BUILD_HOUSE_COST = { wood: 2, stone: 1, iron: 1 };
+  const EXPAND_COST = { wood: 1, stone: 1 };
+
+  // ??????< 6 ??????????
+  if (!player.roundBred && player.villagers < 6 && player.villagers < 15) {
+    const foodNeed = breedFoodCost(player.villagers);
+    if ((player.resources.food || 0) >= foodNeed) {
+      needs.breed = true;
+    } else {
+      // ??????????????
+      const exchCost = effectiveExchangeCost(player, game);
+      const foodShort = foodNeed - (player.resources.food || 0);
+      if (_canExchangeTo(player, exchCost, 'food', foodShort)) {
+        needs.breed = true; // ????????
+      }
+    }
+  }
+
+  // ??????????7????8?????
+  const myScore = playerScore(player, game);
+  const maxScore = Math.max(...alivePlayers(game).map((p) => playerScore(p, game)));
+  if (!player.roundBuiltHouse && canPay(player.resources, BUILD_HOUSE_COST)) {
+    if (myScore >= 7 || player.villagers >= 8) {
+      needs.house = true;
+    }
+  }
+
+  // ????????????????????
+  if (!player.roundExpanded && canPay(player.resources, EXPAND_COST)) {
+    if (botState.wasOverCap && !botState.didExpand) {
+      needs.expand = true;
+      needs.expandDir = 'resource';
+    }
+  }
+
+  return needs;
+}
+
+/** ???????????????? */
+function _shortfallForNeeds(player, needs) {
+  let short = 0;
+  if (needs.breed) {
+    const need = breedFoodCost(player.villagers) - (player.resources.food || 0);
+    if (need > 0) short += need;
+  }
+  if (needs.house) {
+    if ((player.resources.wood || 0) < 2) short += (2 - (player.resources.wood || 0));
+    if ((player.resources.stone || 0) < 1) short += (1 - (player.resources.stone || 0));
+    if ((player.resources.iron || 0) < 1) short += (1 - (player.resources.iron || 0));
+  }
+  if (needs.expand) {
+    if ((player.resources.wood || 0) < 1) short++;
+    if ((player.resources.stone || 0) < 1) short++;
+  }
+  return short;
+}
+
+/** ??????????????*/
+function _canExchangeTo(player, exchCost, targetRes, need) {
+  if (need <= 0) return true;
+  let can = 0;
+  for (const r of RESOURCES) {
+    if (r === targetRes) continue;
+    can += Math.floor((player.resources[r] || 0) / exchCost);
+  }
+  return can >= need;
+}
+
+/** ????????????????2???? */
+function _needsExchangeBreed(player) {
+  if (player.roundBred || player.villagers >= 15) return false;
+  const foodNeed = breedFoodCost(player.villagers);
+  const foodHave = player.resources.food || 0;
+  const gap = foodNeed - foodHave;
+  return gap >= 2;
+}
+
+/** ?????? */
+function _pickRobberyTarget(game, player) {
+  const alive = alivePlayers(game).filter((p) => p.id !== player.id && !p.left);
+  let best = null;
+  let bestScore = -1;
+
+  for (const t of alive) {
+    // ??A??????????/???????????
+    const funcs = t.funcCards || [];
+    const unbuilt = (t.buildings || []).filter((b) => !b.built);
+    const hasCards = funcs.length + unbuilt.length;
+
+    if (hasCards === 1) {
+      const card = funcs[0] || unbuilt[0];
+      if (card) {
+        let val = 0;
+        if (card.funcType === 'enhance' || card.buildType === 'exchange') val = 80;
+        else if (card.funcType === 'recruit') val = 50;
+        else if (card.buildType === 'wishWell') val = 60;
+        else val = 30;
+        if (val > bestScore) { bestScore = val; best = { target: t, mode: 'card' }; }
+      }
+    }
+
+    // ??B????????????????????????
+    const builtGroups = {};
+    for (const b of t.buildings || []) {
+      if (b.built) {
+        builtGroups[b.buildType] = (builtGroups[b.buildType] || 0) + 1;
+      }
+    }
+    for (const b of unbuilt) {
+      if (builtGroups[b.buildType] && builtGroups[b.buildType] >= 2) {
+        const val = 70;
+        if (val > bestScore) { bestScore = val; best = { target: t, mode: 'card' }; }
+      }
+    }
+
+    // ??C??????????????????????
+    const resN = sumRes(t.resources);
+    if (resN >= 2) {
+      const roundGain = t.roundGained || 0;
+      const val = roundGain * 5 + resN * 2;
+      if (val > bestScore) { bestScore = val; best = { target: t, mode: 'resources' }; }
+    }
+  }
+
+  if (best && bestScore >= 20) return { id: best.target.id, mode: best.mode };
+  return null;
+}
+
+/** ?????? */
+function _pickIllegalBuildTarget(game, player) {
+  const alive = alivePlayers(game).filter((p) => p.id !== player.id && !p.left);
+  let best = null;
+  let bestScore = -1;
+
+  for (const t of alive) {
+    const built = (t.buildings || []).filter((b) => b.built);
+    if (!built.length) continue;
+
+    for (const b of built) {
+      let score = (b.score || 0) * 5;
+      // ??????????/??/????
+      if (b.buildType === 'score2') score += 80;   // ??
+      if (b.buildType === 'exchange') score += 60;  // ??
+      if (b.buildType === 'wishWell') score += 50;  // ????
+      // ????
+      const sameStack = built.filter((x) => x.buildType === b.buildType).length;
+      if (sameStack >= 2) score += 40;
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = t;
+      }
+    }
+  }
+
+  return best;
+}
+
+/* ?????????? ??/???????????????????????????? */
+
 /**
- * 建造阶段：使用功能卡
+ * ??????
+ * 1. ????????????????????????????/????
+ * 2. ????produce ????sameRes >= 1 ??????????bug
+ * 3. ????????????game ??bug
  */
+function _scoreCardOptionBuilding(player, card, diff, game) {
+  const built = (player.buildings || []).filter((b) => b.built);
+  const builtMap = {};
+  for (const b of built) {
+    builtMap[b.buildType] = (builtMap[b.buildType] || 0) + 1;
+  }
+
+  // 1. ???score2??????????????????
+  if (card.buildType === 'score2') {
+    const canAfford = canPay(player.resources, card.cost || {});
+    if (game) {
+      const myScore = playerScore(player, game);
+      const maxScore = Math.max(...alivePlayers(game).map((p) => playerScore(p, game)));
+      if (canAfford && myScore >= maxScore - 4) return 500; // ????????
+      if (canAfford) return 50; // ????????
+      return 20; // ??????????
+    }
+    if (canAfford) return 50;
+    return 20;
+  }
+
+  // 2. ???exchange?????????????????????? >= 3 ????????
+  if (card.buildType === 'exchange') {
+    const exCount = builtMap['exchange'] || 0;
+    const afterCount = exCount + 1;
+
+    // ?????????
+    let score = 0;
+    if (exCount === 0) score = 220;
+    else if (exCount === 1) score = 320;
+    else if (exCount === 2) score = 420;
+    else score = 0; // ?? 2+ ????????????
+
+    // ??????
+    if (game) {
+      const rivals = alivePlayers(game).filter((p) => p.id !== player.id && !p.left);
+      const rivalMaxEx = Math.max(
+        0,
+        ...rivals.map((p) => (p.buildings || []).filter((b) => b.built && b.buildType === 'exchange').length)
+      );
+
+      if (afterCount >= 3) {
+        if (afterCount > rivalMaxEx) {
+          score += 45; // ????????????????
+        } else if (afterCount === rivalMaxEx) {
+          // ???????????? engine ????????????
+          if (game.whatYouWantPlayerId === player.id) score += 20; // ????
+          else score += 5; // ???????????????
+        }
+      } else {
+        // ???? 3 ????????>= 3 ????????1-2 ??????
+        if (rivalMaxEx >= 3 && game.whatYouWantPlayerId && game.whatYouWantPlayerId !== player.id) {
+          // ???????????? 1 ??????????
+          score -= 50;
+        }
+      }
+    }
+
+    return score;
+  }
+
+  // 3. ???score1????????????
+  if (card.buildType === 'score1') return 205;
+
+  // 4. ????wishWell????+???????????????
+  if (card.buildType === 'wishWell') {
+    let score = 180;
+    if (game) {
+      const myTotal = built.filter((b) => b.built && (b.buildType === 'produce' || b.buildType === 'wishWell')).length;
+      const afterTotal = myTotal + 1;
+      if (afterTotal >= 3) {
+        const rivals = alivePlayers(game).filter((p) => p.id !== player.id && !p.left);
+        const rivalMax = Math.max(
+          0,
+          ...rivals.map((p) =>
+            (p.buildings || []).filter((b) => b.built && (b.buildType === 'produce' || b.buildType === 'wishWell')).length
+          )
+        );
+        if (afterTotal > rivalMax) score += 45;
+        else if (afterTotal === rivalMax) {
+          if (game.workshopMasterPlayerId === player.id) score += 20;
+          else score += 5;
+        }
+      }
+    }
+    return score;
+  }
+
+  // 5. ????????????????????sameRes >= 1 ???? >=2/>=3 ??bug??
+  if (card.buildType === 'produce' && card.resource) {
+    const sameRes = built.filter((b) => b.built && b.buildType === 'produce' && b.resource === card.resource).length;
+    const afterSameRes = sameRes + 1; // ????????????
+
+    let score = 155;
+    if (afterSameRes >= 2) score = 220; // 2 ??????
+    if (afterSameRes >= 3) score = 320; // 3 ??????
+
+    // ??????produce + wishWell >= 3 ????
+    if (game) {
+      const myTotal = built.filter((b) => b.built && (b.buildType === 'produce' || b.buildType === 'wishWell')).length;
+      const afterTotal = myTotal + 1;
+      if (afterTotal >= 3) {
+        const rivals = alivePlayers(game).filter((p) => p.id !== player.id && !p.left);
+        const rivalMax = Math.max(
+          0,
+          ...rivals.map((p) =>
+            (p.buildings || []).filter((b) => b.built && (b.buildType === 'produce' || b.buildType === 'wishWell')).length
+          )
+        );
+        if (afterTotal > rivalMax) score += 45;
+        else if (afterTotal === rivalMax) {
+          if (game.workshopMasterPlayerId === player.id) score += 20;
+          else score += 5;
+        }
+      }
+    }
+
+    return score;
+  }
+
+  // ??????
+  return (card.score || 0) * 30 + 50;
+}
+
+/**
+ * ??????
+ * ?????? > ?? > ?? > ?? > ?? > ?? > ??
+ */
+function _scoreCardOptionFunction(player, card, diff) {
+  if (diff !== 'hard') {
+    // normal ??????
+    const fp = {
+      robbery: 15, illegalBuild: 15, harvest: 12, redraw: 10,
+      recruit: 9, enhance: 8, expand: 7, caravan: 5,
+      exile: 4, remoteDice: 4, banditRaid: 3, shelter: 2, welfareHouse: 1,
+    };
+    return (fp[card.funcType] || 3) * 3;
+  }
+
+  // hard ????????
+  if (card.funcType === 'enhance') return 350;
+  if (card.funcType === 'shelter') return 300;
+  if (card.funcType === 'recruit') return 250;
+  if (card.funcType === 'redraw') return 200;
+  if (card.funcType === 'harvest') return 150;
+  if (card.funcType === 'caravan') return 120;
+  if (card.funcType === 'robbery') return 100;
+  if (card.funcType === 'illegalBuild') return 90;
+  if (card.funcType === 'expand') return 80;
+  if (card.funcType === 'exile') return 60;
+  if (card.funcType === 'remoteDice') return 50;
+  if (card.funcType === 'banditRaid') return 40;
+  if (card.funcType === 'welfareHouse') return 30;
+  return 10;
+}
+
+/* ?????????? ???????????normal/easy???????????? */
+
 function decideUseFuncCard(game, player, diff, botState) {
   const cards = player.funcCards || [];
   if (!cards.length) return null;
   if (game.buildPassed && game.buildPassed[player.id]) return null;
 
-  // 困难模式：精心选择使用时机和目标
-  if (diff === 'hard') {
-    for (const c of cards) {
-      const ft = c.funcType;
-      // 远征军（recruit）没满村民时用
-      if (ft === 'recruit' && player.villagers < 12 && freeHousesFor(player) > 0) {
-        return { type: 'useFunc', payload: { cardId: c.id } };
-      }
-      // 强化（enhance）身上有未强化的骰子时用
-      if (ft === 'enhance') {
-        const canEnh = Math.min(
-          (player.villagers || 0),
-          5
-        ) - (player.enhancedDice || 0);
-        if (canEnh > 0) return { type: 'useFunc', payload: { cardId: c.id } };
-      }
-      // 丰收（harvest）资源紧缺时用
-      if (ft === 'harvest') {
-        const hand = sumRes(player.resources);
-        if (hand < 6) return { type: 'useFunc', payload: { cardId: c.id } };
-      }
-      // 扩建（expand）：建筑格满了且手牌建筑多时用
-      if (ft === 'expand') {
-        const bldCap = maxBuildingsFor(player);
-        const totalBld = (player.buildings || []).length;
-        if (totalBld >= bldCap) return { type: 'useFunc', payload: { cardId: c.id } };
-      }
-      // 抢劫（robbery）：找资源最多的对手
-      if (ft === 'robbery') {
-        const alive = alivePlayers(game).filter((p) => p.id !== player.id && !p.left);
-        let bestTarget = null;
-        let bestRes = -1;
-        for (const t of alive) {
-          const r = sumRes(t.resources);
-          if (r > bestRes) {
-            bestRes = r;
-            bestTarget = t;
-          }
-        }
-        if (bestTarget && bestRes >= 3) {
-          return { type: 'useFunc', payload: { cardId: c.id, targetId: bestTarget.id } };
-        }
-      }
-      // 拆迁（illegalBuild）：找分数领先且有建筑的对手
-      if (ft === 'illegalBuild') {
-        const alive = alivePlayers(game).filter((p) => p.id !== player.id && !p.left);
-        let bestTarget = null;
-        let bestScore = -1;
-        for (const t of alive) {
-          const s = playerScore(t, game);
-          const hasBuilt = (t.buildings || []).some((b) => b.built);
-          if (hasBuilt && s > bestScore) {
-            bestScore = s;
-            bestTarget = t;
-          }
-        }
-        if (bestTarget) {
-          return { type: 'useFunc', payload: { cardId: c.id, targetId: bestTarget.id } };
-        }
-      }
-      // 重抽（redraw）：有位置放手牌、且还没用过重抽时用
-      if (ft === 'redraw' && !player.buildTurnUsedRedraw) {
-        const funcCap = maxFuncHandFor(player);
-        const bldCap = maxBuildingsFor(player);
-        const funcN = (player.funcCards || []).length;
-        const bldN = (player.buildings || []).filter((b) => !b.built).length;
-        if (funcN < funcCap || bldN < bldCap) {
-          return { type: 'useFunc', payload: { cardId: c.id } };
-        }
-      }
-      // 收留（shelter）：村民被清掉后的一轮？这里简化：有就吃
-      if (ft === 'shelter') {
-        return { type: 'useFunc', payload: { cardId: c.id } };
-      }
-      // 福利房（welfareHouse）
-      if (ft === 'welfareHouse') {
-        return { type: 'useFunc', payload: { cardId: c.id } };
-      }
-      // 商队来临（caravan）：回合早期用（让后续兑换/建造更便宜）
-      if (ft === 'caravan') {
-        if (!player.buildTurnUsedBuyFunc && !player.caravanPending) {
-          return { type: 'useFunc', payload: { cardId: c.id } };
-        }
-      }
-    }
-  }
-
-  // normal / easy：简单使用部分功能卡
+  // normal / easy??????????
   const usableTypesEasy = ['harvest', 'recruit', 'enhance', 'expand', 'welfareHouse', 'shelter', 'caravan'];
   for (const c of cards) {
     if (diff === 'easy' && !usableTypesEasy.includes(c.funcType)) continue;
     if (diff === 'normal' && ['robbery', 'illegalBuild'].includes(c.funcType)) {
-      // normal 也会用抢劫/拆迁，但目标随机
+      // normal ??????????????
       if (c.funcType === 'robbery') {
         const alive = alivePlayers(game).filter((p) => p.id !== player.id && !p.left);
         const target = pickRandom(alive);
@@ -680,81 +1605,121 @@ function decideUseFuncCard(game, player, diff, botState) {
 }
 
 /**
- * 建造阶段：常驻操作 + 建造手牌 + 买卡 + 跳过
+ * ????????? + ?????+ ?? + ??
  */
 function decideBuildAction(game, player, diff, botState) {
   if (game.buildPassed && game.buildPassed[player.id]) return null;
+  botState = botState || {};
 
-  // 0. 资源溢出处理
+  // 0. ??????
   const overflow = decideResourceOverflow(game, player, diff, botState);
   if (overflow) return overflow;
 
-  // 1. 使用功能卡（所有难度都会用已有卡，但 easy 不主动买）
-  const useFunc = decideUseFuncCard(game, player, diff, botState);
-  if (useFunc) return useFunc;
+  // 1. ??????
+  if (diff === 'hard') {
+    const useFunc = decideUseFuncCardHard(game, player, botState);
+    if (useFunc) return useFunc;
+  } else {
+    const useFunc = decideUseFuncCard(game, player, diff, botState);
+    if (useFunc) return useFunc;
+  }
 
-  // 常驻功能造价
+  // ??????
   const BUILD_HOUSE_COST = { wood: 2, stone: 1, iron: 1 };
   const EXPAND_COST = { wood: 1, stone: 1 };
 
-  // 2. 简易/普通/困难 都优先造房子和繁殖（用户要求）
-  const canHouse = canPay(player.resources, BUILD_HOUSE_COST) && !player.roundBuiltHouse;
-  const canBreed =
-    !player.roundBred &&
-    player.villagers < 15 &&
-    freeHousesFor(player) > 0 &&
-    (player.resources.food || 0) >= breedFoodCost(player.villagers);
-
-  // 简易优先繁殖再房子（先有村民才能派遣）
-  if (diff === 'easy') {
-    if (canBreed) return { type: 'breedPermanent' };
-    if (canHouse) return { type: 'buildHousePermanent' };
-  } else {
-    // normal/hard：按策略决定顺序
-    const myScore = playerScore(player, game);
-    const allScores = alivePlayers(game).map((p) => playerScore(p, game));
-    const maxScore = Math.max(...allScores);
-    const isLateGame = myScore >= 8 || maxScore >= 10;
-
-    if (diff === 'hard') {
-      if (isLateGame) {
-        if (canHouse) return { type: 'buildHousePermanent' };
-        if (canBreed) return { type: 'breedPermanent' };
-      } else {
-        // 前期优先繁殖扩充劳动力
-        if (canBreed) return { type: 'breedPermanent' };
-        if (canHouse) return { type: 'buildHousePermanent' };
+  // 2. ????????6??????????????????????/??
+  if (diff === 'hard') {
+    // ????????6????5??????????
+    if (!player.roundBred && player.villagers < 6 && player.villagers < 15) {
+      const foodNeed = breedFoodCost(player.villagers);
+      const foodHave = player.resources.food || 0;
+      if (foodHave >= foodNeed) {
+        return { type: 'breedPermanent' };
       }
+      // ??????????????????????????????????
+      // ?????????
+      const exchCost = effectiveExchangeCost(player, game);
+      const gap = foodNeed - foodHave;
+      if (_canExchangeTo(player, exchCost, 'food', gap)) {
+        // ??????????????
+        // ?bot???????action?????????????tick????
+        for (const r of RESOURCES) {
+          if (r === 'food') continue;
+          if ((player.resources[r] || 0) >= exchCost) {
+            return { type: 'exchange', payload: { from: r, to: 'food', count: Math.ceil(gap / 1) } };
+          }
+        }
+      }
+    }
+
+    // ???????????????????????
+    if (!player.roundExpanded && canPay(player.resources, EXPAND_COST)) {
+      if (botState.wasOverCap) {
+        botState.didExpand = true;
+        return { type: 'expandPermanent', payload: { direction: 'resource' } };
+      }
+      // ?????????????????????
+      const resCap = maxResourceHandFor(player);
+      if (resCap <= 9 && player.expandResSlots === 0) {
+        return { type: 'expandPermanent', payload: { direction: 'resource' } };
+      }
+    }
+
+    // ??????????????
+    const canHouse = canPay(player.resources, BUILD_HOUSE_COST) && !player.roundBuiltHouse;
+    if (canHouse) {
+      const myScore = playerScore(player, game);
+      if (myScore >= 6 || player.villagers >= 8 || freeHousesFor(player) <= 1) {
+        return { type: 'buildHousePermanent' };
+      }
+    }
+
+    // ????????~14??????
+    if (!player.roundBred && player.villagers < 15) {
+      const foodNeed = breedFoodCost(player.villagers);
+      if ((player.resources.food || 0) >= foodNeed) {
+        return { type: 'breedPermanent' };
+      }
+    }
+  } else {
+    // normal/easy ??????
+    const canHouse = canPay(player.resources, BUILD_HOUSE_COST) && !player.roundBuiltHouse;
+    const canBreed =
+      !player.roundBred &&
+      player.villagers < 15 &&
+      freeHousesFor(player) > 0 &&
+      (player.resources.food || 0) >= breedFoodCost(player.villagers);
+
+    if (diff === 'easy') {
+      if (canBreed) return { type: 'breedPermanent' };
+      if (canHouse) return { type: 'buildHousePermanent' };
     } else {
-      // normal
       if (canHouse) return { type: 'buildHousePermanent' };
       if (canBreed) return { type: 'breedPermanent' };
     }
   }
 
-  // 3. 扩建（需要时）
-  const needExpand =
-    (player.buildings || []).length >= maxBuildingsFor(player) ||
-    (player.funcCards || []).length >= maxFuncHandFor(player);
-  if (needExpand && canPay(player.resources, EXPAND_COST) && !player.roundExpanded) {
-    // 选择扩什么
-    const bldOverflow = (player.buildings || []).length >= maxBuildingsFor(player);
-    const funcOverflow = (player.funcCards || []).length >= maxFuncHandFor(player);
-    let dir = 'building';
-    if (funcOverflow && !bldOverflow) dir = 'function';
-    else if (!funcOverflow && bldOverflow) dir = 'building';
-    else if (diff === 'hard') {
-      // 都满时，看更需要哪边
-      dir = (player.buildings || []).filter((b) => !b.built).length > 0 ? 'building' : 'function';
+  // 3. ???????normal/easy???hard????????
+  if (diff !== 'hard') {
+    const needExpand =
+      (player.buildings || []).length >= maxBuildingsFor(player) ||
+      (player.funcCards || []).length >= maxFuncHandFor(player);
+    if (needExpand && canPay(player.resources, EXPAND_COST) && !player.roundExpanded) {
+      const bldOverflow = (player.buildings || []).length >= maxBuildingsFor(player);
+      const funcOverflow = (player.funcCards || []).length >= maxFuncHandFor(player);
+      let dir = 'building';
+      if (funcOverflow && !bldOverflow) dir = 'function';
+      else if (!funcOverflow && bldOverflow) dir = 'building';
+      else dir = (player.buildings || []).filter((b) => !b.built).length > 0 ? 'building' : 'function';
+      return { type: 'expandPermanent', payload: { direction: dir } };
     }
-    return { type: 'expandPermanent', payload: { direction: dir } };
   }
 
-  // 4. 建造手牌建筑
+  // 4. ???????
   const buildable = (player.buildings || []).filter((b) => !b.built && canPay(player.resources, b.cost || {}));
   if (buildable.length) {
     if (diff === 'easy') {
-      // 随机建一个分数最高的
       buildable.sort((a, b) => (b.score || 0) - (a.score || 0));
       return { type: 'construct', payload: { buildingId: buildable[0].id } };
     }
@@ -762,12 +1727,11 @@ function decideBuildAction(game, player, diff, botState) {
       buildable.sort((a, b) => scoreBuildingForNormal(player, b) - scoreBuildingForNormal(player, a));
       return { type: 'construct', payload: { buildingId: buildable[0].id } };
     }
-    // hard
     buildable.sort((a, b) => scoreBuildingForHard(player, b, game) - scoreBuildingForHard(player, a, game));
     return { type: 'construct', payload: { buildingId: buildable[0].id } };
   }
 
-  // 5. 买功能卡（normal/hard）
+  // 5. ????
   const BUY_FUNC_COST = { wood: 1, stone: 1, food: 1, iron: 1 };
   if (diff !== 'easy' && canPay(player.resources, BUY_FUNC_COST) && !player.buildTurnUsedBuyFunc) {
     const funcCap = maxFuncHandFor(player);
@@ -776,55 +1740,32 @@ function decideBuildAction(game, player, diff, botState) {
     }
   }
 
-  // 6. 跳过
+  // 6. ??
   return { type: 'pass' };
 }
 
-/* ────────── 等待状态处理 ────────── */
+/* ?????????? ????????????????? */
 
 function decidePendingAction(game, player, _diff, _botState) {
-  // pendingRedrawChoice（买卡/重抽后选 1 张保留）
+  // pendingRedrawChoice?????????1 ????
   if (game.pendingRedrawChoice && game.pendingRedrawChoice.playerId === player.id) {
     const options = game.pendingRedrawChoice.options || [];
     if (!options.length) return { type: 'redrawPick', payload: { cardId: null } };
-    // 挑一张：优先建筑（可冲分），其次功能卡
-    // 简易随机；普通优先分数；困难精细计算
+    // ????????????????????
+    // ??????????????????
     if (_diff === 'easy') {
       const pick = pickRandom(options);
       return { type: 'redrawPick', payload: { keepId: pick ? pick.id : null } };
     }
-    // normal / hard：优先分数类建筑和高分建筑
+    // normal / hard?????????
     let best = options[0];
     let bestScore = -Infinity;
     for (const c of options) {
       let sc = 0;
       if (c.kind === 'building') {
-        sc = (c.score || 0) * 20;
-        if (c.buildType === 'score2') sc += 30;
-        if (c.buildType === 'score1') sc += 15;
-        if (c.buildType === 'exchange') sc += (_diff === 'hard' ? 25 : 12);
-        if (c.buildType === 'produce' && c.resource) {
-          const needs = estimateResourceNeeds(player);
-          sc += Math.max(0, (needs[c.resource] || 0) - (player.resources[c.resource] || 0)) * 5;
-        }
+        sc = _scoreCardOptionBuilding(player, c, _diff, game);
       } else if (c.kind === 'function') {
-        // 功能卡优先级
-        const fp = {
-          robbery: 15,
-          illegalBuild: 15,
-          harvest: 12,
-          redraw: 10,
-          recruit: 9,
-          enhance: 8,
-          expand: 7,
-          caravan: 5,
-          exile: 4,
-          remoteDice: 4,
-          banditRaid: 3,
-          shelter: 2,
-          welfareHouse: 1,
-        };
-        sc = (fp[c.funcType] || 3) * 3;
+        sc = _scoreCardOptionFunction(player, c, _diff);
       }
       if (sc > bestScore) {
         bestScore = sc;
@@ -834,37 +1775,23 @@ function decidePendingAction(game, player, _diff, _botState) {
     return { type: 'redrawPick', payload: { keepId: best ? best.id : null } };
   }
 
-  // pendingWelfareMinimumChoices 低保户补偿
+  // pendingWelfareMinimumChoices ??????
   if (game.pendingWelfareMinimumChoices && game.pendingWelfareMinimumChoices[player.id]) {
     const count = game.pendingWelfareMinimumChoices[player.id].count || 2;
-    // 选最缺的资源
+    // ??????
     const needs = estimateResourceNeeds(player);
     const needRes = pickMostNeededResource(player, needs) || 'wood';
     return { type: 'eventPickTwoResources', payload: { amounts: { [needRes]: count } } };
   }
 
-  // pendingEventChoice 事件牌选择
+  // pendingEventChoice ?????
   if (game.pendingEventChoice && game.pendingEventChoice.playerId === player.id) {
-    const ev = game.pendingEventChoice;
-    const et = ev.eventType; // 需要看 engine 具体的事件类型
-    // 这里用最通用的兜底：如果要求选资源，选最缺的
-    if (et === 'pickResource' || ev.label && ev.label.includes('资源')) {
-      const needs = estimateResourceNeeds(player);
-      const needRes = pickMostNeededResource(player, needs) || 'wood';
-      return { type: 'eventPickResource', payload: { resource: needRes } };
-    }
-    if (et === 'pickTwoResources' || (ev.options && ev.options.length)) {
-      const needs = estimateResourceNeeds(player);
-      const needRes = pickMostNeededResource(player, needs) || 'wood';
-      return { type: 'eventPickTwoResources', payload: { amounts: { [needRes]: 2 } } };
-    }
-    // 其他事件先返回一个兜底 pass（实际不会走到这里，因为服务端会等 human）
-    return null;
+    return decideEventChoice(game, player, diff, botState);
   }
 
-  // pendingIllegalBuild / pendingRobberyPick（等待别人选的时候不用管；如果是自己选）
+  // pendingIllegalBuild / pendingRobberyPick????????????????????
   if (game.pendingIllegalBuild && game.pendingIllegalBuild.targetId === player.id) {
-    // 被拆迁选一张自己的建筑弃掉，优先弃最没用的（分数最低的）
+    // ?????????????????????????????
     const built = (player.buildings || []).filter((b) => b.built);
     if (built.length) {
       built.sort((a, b) => (a.score || 0) - (b.score || 0));
@@ -874,10 +1801,10 @@ function decidePendingAction(game, player, _diff, _botState) {
   }
 
   if (game.pendingRobberyPick && game.pendingRobberyPick.targetId === player.id) {
-    // 被抢劫选一张手牌功能卡交出
+    // ?????????????
     const cards = player.funcCards || [];
     if (cards.length) {
-      // 优先交最没用的
+      // ????????
       const priority = {
         welfareHouse: 1, shelter: 2, caravan: 3, banditRaid: 4,
         exile: 5, remoteDice: 5, expand: 6, enhance: 7, recruit: 8,
@@ -893,12 +1820,13 @@ function decidePendingAction(game, player, _diff, _botState) {
 
   // pendingTrade
   if (game.pendingTrade) {
+    return { type: 'rejectTrade' };
     if (game.pendingTrade.toId === player.id) {
-      // 收到交易请求：简单逻辑接受或拒绝
-      // normal/hard 评估交易是否划算
+      // ?????????????????
+      // normal/hard ????????
       const trade = game.pendingTrade;
       if (_diff === 'hard') {
-        const give = trade.take || {}; // 我们给的是 take（从发起方角度）
+        const give = trade.take || {}; // ??????take????????
         const get = trade.give || {};
         const need = estimateResourceNeeds(player);
         let getVal = 0;
@@ -910,11 +1838,11 @@ function decidePendingAction(game, player, _diff, _botState) {
         if (getVal >= giveVal) return { type: 'acceptTrade' };
         return { type: 'rejectTrade' };
       }
-      return { type: 'rejectTrade' };
+      
     }
   }
 
-  // wish well 许愿井资源分配
+  // wish well ????????
   if (game.phase === 'wish_well' && player.pendingWishWellBonus > 0) {
     const need = player.pendingWishWellBonus;
     const needs = estimateResourceNeeds(player);
@@ -932,99 +1860,551 @@ function decidePendingAction(game, player, _diff, _botState) {
   return null;
 }
 
-/* ────────── 生产阶段入口 ────────── */
+/* ?????????? ?????????????????? */
+
+function decideEventChoice(game, player, diff, _botState) {
+  const ev = game.pendingEventChoice;
+  if (!ev) return null;
+  const need = ev.needChoice;
+
+  // 1. ??????????????????/???????????/??????
+  if (need === 'pickTwoResources' || need === 'pickResource') {
+    const needs = estimateResourceNeeds(player);
+    const needRes = pickMostNeededResource(player, needs) || 'wood';
+    if (need === 'pickTwoResources') {
+      const count = ev.count || 2;
+      return { type: 'eventPickTwoResources', payload: { amounts: { [needRes]: count } } };
+    }
+    return { type: 'eventPickResource', payload: { resource: needRes } };
+  }
+
+  // 2. ??????????
+  if (need === 'moveNeutral') {
+    return _decideEnterFrayMove(game, player, ev, diff);
+  }
+
+  // 3. ??????????????
+  if (need === 'moveBarrenMarker') {
+    return _decideBarrenMarkerMove(game, player, ev, diff);
+  }
+
+  // 4. ????
+  if (need === 'recallDie') {
+    return _decideRecallDie(game, player, ev, diff);
+  }
+
+  // 5. ??????source????target????
+  if (need === 'teleportDie') {
+    return _decideTeleport(game, player, ev, diff);
+  }
+
+  // 6. ??????????
+  if (need === 'gatherNeutrals') {
+    // ????????????????????????????????????...??
+    // ?????gather ????????????????????
+    return _decideGatherNeutrals(game, player, ev, diff);
+  }
+
+  // ??
+  return null;
+}
+
+/**
+ * ????????????
+ * ???????????????????????????????
+ * ???????????????????????????????
+ */
+function _decideEnterFrayMove(game, player, ev, diff) {
+  const fromNumber = Number(ev.number) || Number(ev.fromNumber) || 1;
+  const maxMove = Math.min(
+    neutralCountOn(game, 'resource', fromNumber),
+    Math.max(1, Number(ev.count) || 1)
+  );
+  const envs =
+    (game.board && game.board.resource && game.board.resource.environments) || {};
+
+  // ??/?????????
+  if (diff !== 'easy') {
+    let bestTarget = null;
+    let bestScore = -Infinity;
+
+    for (const num of [1, 2, 3, 4, 5, 6]) {
+      if (num === fromNumber) continue;
+      const targetEnv = envs[num];
+      const board = game.board && game.board.resource;
+      const wk = board ? (board.workers[num] || {}) : {};
+      let score = 0;
+
+      // ??????????????????????????????
+      if (targetEnv && targetEnv.envType === 'mercenaries') {
+        let rivalFirst = false;
+        let bestOther = 0;
+        for (const [pid, c] of Object.entries(wk)) {
+          if (pid === '__neutral__' || pid === player.id) continue;
+          if (c > bestOther) bestOther = c;
+        }
+        // ??????????????????????????
+        // ????????????????????????????
+        score += 100; // ????????????
+        if (bestOther > 0) score += 60; // ??????????
+      }
+
+      // ????/?????????????????
+      let bestOther = 0;
+      let hasNeutral = false;
+      let hasMe = false;
+      for (const [pid, c] of Object.entries(wk)) {
+        if (pid === '__neutral__') hasNeutral = true;
+        else if (pid === player.id) hasMe = true;
+        else if (c > bestOther) bestOther = c;
+      }
+      if (bestOther > 0 && !hasNeutral) {
+        // ??????????????????????v1 ??????
+        const tiles = tilesOnNumber(board, num);
+        let gainDiff = 0;
+        for (const t of tiles) {
+          gainDiff += (t.large || 0) - (t.small || 0);
+        }
+        score += gainDiff * 5 + 20;
+      }
+
+      // ????????????????????????
+      const myPrev = wk[player.id] || 0;
+      if (hasMe && myPrev > bestOther) {
+        score -= 80; // ??????
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestTarget = { area: 'resource', number: num };
+      }
+    }
+
+    if (bestTarget) {
+      return {
+        type: 'eventMoveNeutral',
+        payload: { area: bestTarget.area, number: bestTarget.number },
+      };
+    }
+  }
+
+  // ??????????????????????
+  for (const num of [1, 2, 3, 4, 5, 6]) {
+    if (num === fromNumber) continue;
+    const wk = slotWorkers(game.board && game.board.resource, num);
+    let hasMe = false;
+    for (const [pid, c] of Object.entries(wk)) {
+      if (pid === player.id && c > 0) hasMe = true;
+    }
+    if (!hasMe) {
+      return { type: 'eventMoveNeutral', payload: { area: 'resource', number: num } };
+    }
+  }
+
+  // ?????????????
+  const fallback = fromNumber === 1 ? 2 : 1;
+  return { type: 'eventMoveNeutral', payload: { area: 'resource', number: fallback } };
+}
+
+/**
+ * ???????????????????
+ * ???????????????????
+ * ????????> ?????? large ????> ??????
+ */
+function _decideBarrenMarkerMove(game, player, ev, diff) {
+  const board = game.board && game.board.resource;
+  const envs = board && board.environments;
+
+  // ??????????????
+  if (diff !== 'easy') {
+    let bestTarget = null;
+    let bestScore = -Infinity;
+
+    for (const num of [1, 2, 3, 4, 5, 6]) {
+      const env = envs && envs[num];
+      const wk = board ? (board.workers[num] || {}) : {};
+      let score = 0;
+
+      // ??1?????????????
+      // ?????? ??????????????
+      if (env && env.envType === 'mercenaries') {
+        // ????????????????????????????
+        let hasChance = false;
+        let bestRival = 0;
+        for (const [pid, c] of Object.entries(wk)) {
+          if (pid === '__neutral__') continue;
+          if (pid === player.id) continue;
+          if (c > bestRival) bestRival = c;
+        }
+        if (bestRival > 0) {
+          score += 120; // ??????????
+          // ???????????????
+          const myCount = wk[player.id] || 0;
+          if (bestRival > myCount) score += 40;
+        }
+      }
+
+      // ??2?????? large ?????
+      let rivalFirst = false;
+      let bestRival = 0;
+      let myCount = wk[player.id] || 0;
+      for (const [pid, c] of Object.entries(wk)) {
+        if (pid === '__neutral__' || pid === player.id) continue;
+        if (c > bestRival) { bestRival = c; }
+      }
+      if (bestRival > myCount) {
+        // ??????????
+        rivalFirst = true;
+        const tiles = tilesOnNumber(board, num);
+        let largeTotal = 0;
+        let smallTotal = 0;
+        for (const t of tiles) {
+          largeTotal += t.large || 0;
+          smallTotal += t.small || 0;
+        }
+        // ???? ??????large+small ??0?? small ??0??
+        score += (largeTotal + smallTotal) * 8 * selfGainFactor(game) + 20;
+      }
+
+      // ??3???????????????????????????
+      // ????????????
+      if (score === 0) {
+        const tiles = tilesOnNumber(board, num);
+        let value = 0;
+        for (const t of tiles) value += (t.large || 0) + (t.small || 0);
+        if (value > 0) score = value * 3;
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestTarget = { area: 'resource', number: num };
+      }
+    }
+
+    if (bestTarget) {
+      return { type: 'eventMoveBarrenMarker', payload: bestTarget };
+    }
+  }
+
+  // ????????????????
+  for (const num of [1, 2, 3, 4, 5, 6]) {
+    const tiles = tilesOnNumber(board, num);
+    if (tiles.length) {
+      return { type: 'eventMoveBarrenMarker', payload: { area: 'resource', number: num } };
+    }
+  }
+  return { type: 'eventMoveBarrenMarker', payload: { area: 'resource', number: 1 } };
+}
+
+/**
+ * ???????????????????
+ */
+function _decideRecallDie(game, player, ev, diff) {
+  const excludeArea = ev.excludeArea;
+  const excludeNumber = Number(ev.excludeNumber);
+  // ???????????????
+  let bestTarget = null;
+  let worstScore = Infinity;
+  for (const area of BOARD_AREAS) {
+    for (let num = 1; num <= 6; num++) {
+      if (area === excludeArea && num === excludeNumber) continue;
+      const board = game.board && game.board[area];
+      const wk = board && board.workers && board.workers[num];
+      const myCount = (wk && wk[player.id]) || 0;
+      if (myCount <= 0) continue;
+      // ?????????????????
+      const est = estimateProduceGain(game, player, area, num, 0, 0);
+      let score = est.self * 8 * selfGainFactor(game);
+      // ??????????????
+      const neutral = (wk && wk.__neutral__) || 0;
+      if (neutral >= myCount) score -= 30;
+      if (score < worstScore) {
+        worstScore = score;
+        bestTarget = { area, number: num };
+      }
+    }
+  }
+  if (bestTarget) {
+    return { type: 'eventRecallDie', payload: { area: bestTarget.area, number: bestTarget.number } };
+  }
+  return null;
+}
+
+/**
+ * ?????????
+ */
+function _decideTeleport(game, player, ev, diff) {
+  const step = ev.teleportStep;
+
+  if (step === 'from') {
+    // ??????????????
+    // ???????????????????????
+    for (const area of BOARD_AREAS) {
+      for (let num = 1; num <= 6; num++) {
+        const board = game.board && game.board[area];
+        const wk = board && board.workers && board.workers[num];
+        if (!wk) continue;
+        const myCount = wk[player.id] || 0;
+        const neutral = wk.__neutral__ || 0;
+        let rivalCount = 0;
+        for (const [pid, c] of Object.entries(wk)) {
+          if (pid !== player.id && pid !== '__neutral__') rivalCount += c;
+        }
+        // ????????????????????
+        if (rivalCount >= 1 && myCount === 0) {
+          return { type: 'eventTeleportFrom', payload: { area, number: num } };
+        }
+        if (neutral >= 1 && myCount === 0) {
+          return { type: 'eventTeleportFrom', payload: { area, number: num } };
+        }
+      }
+    }
+    return null;
+  }
+
+  if (step === 'to') {
+    // ??????????
+    // ?????????????????????
+    // ????????????????
+    const envs =
+      (game.board && game.board.resource && game.board.resource.environments) || {};
+    for (const num of [1, 2, 3, 4, 5, 6]) {
+      const env = envs[num];
+      if (env && env.envType === 'mercenaries') {
+        return { type: 'eventTeleportTo', payload: { area: 'resource', number: num } };
+      }
+    }
+    // ????????????
+    for (const num of [1, 2, 3, 4, 5, 6]) {
+      const tiles = tilesOnNumber(game.board && game.board.resource, num);
+      if (tiles.length) {
+        return { type: 'eventTeleportTo', payload: { area: 'resource', number: num } };
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * ??????????
+ */
+function _decideGatherNeutrals(game, player, ev, diff) {
+  // ????"??"??????????????
+  // ????gatherNeutrals ????????????...
+  // ???????????????
+  for (const area of BOARD_AREAS) {
+    for (let num = 1; num <= 6; num++) {
+      const board = game.board && game.board[area];
+      const wk = board && board.workers && board.workers[num];
+      if (!wk || !wk.__neutral__) continue;
+      let hasRival = false;
+      for (const [pid, c] of Object.entries(wk)) {
+        if (pid !== player.id && pid !== '__neutral__' && c > 0) hasRival = true;
+      }
+      if (hasRival) {
+        return { type: 'eventGatherNeutrals', payload: { area, number: num } };
+      }
+    }
+  }
+  return { type: 'eventGatherNeutrals', payload: { area: 'resource', number: 1 } };
+}
+
+/* ?????????? ?????? ?????????? */
 
 function decideProducePhase(game, player, diff, botState) {
-  // 先投骰
+  // ????
   if (game.awaitingProduceRoll) {
     return { type: 'produceRoll' };
   }
 
-  // 使用生产阶段功能卡（遥控骰子/驱逐/强盗），在困难模式精心判断
+  // ??????????????/?????????????????
   if (diff === 'hard') {
     const funcExile = (player.funcCards || []).find((c) => c.funcType === 'exile');
     const funcBandit = (player.funcCards || []).find((c) => c.funcType === 'banditRaid');
     const funcRemote = (player.funcCards || []).find((c) => c.funcType === 'remoteDice');
+    const idle = idleVillagers(player);
 
-    // 驱逐：当某 face 上有很多别人的骰子且我们想放那里时
+    // ?? ?????????????????? ??
     if (funcExile) {
-      const dice = game.dice && game.dice[player.id] ? game.dice[player.id] : [];
-      for (let face = 1; face <= 6; face++) {
-        if (!dice.includes(face)) continue;
-        for (const area of BOARD_AREAS) {
-          const board = game.board && game.board[area];
-          if (!board) continue;
-          const wk = slotWorkers(board, face);
-          let rivalTotal = 0;
-          for (const [id, n] of Object.entries(wk)) {
-            if (id !== player.id && id !== '__neutral__') rivalTotal += n;
-          }
-          if (rivalTotal >= 2) {
-            // 收益高：驱逐该 face 的别人骰子
-            return { type: 'useFunc', payload: { cardId: funcExile.id, area, number: face } };
-          }
-        }
-      }
+      const bestExile = _decideExileHard(game, player, funcExile);
+      if (bestExile) return bestExile;
     }
 
-    // 强盗来袭：在资源贫瘠的 face 放，干扰别人
-    if (funcBandit) {
-      // 找一个别人有很多骰子、且板块价值高的 face
-      for (let face = 1; face <= 6; face++) {
-        for (const area of BOARD_AREAS) {
-          const board = game.board && game.board[area];
-          if (!board) continue;
-          const tiles = tilesOnNumber(board, face);
-          if (!tiles.length) continue;
-          const wk = slotWorkers(board, face);
-          let rivalTotal = 0;
-          for (const [id, n] of Object.entries(wk)) {
-            if (id !== player.id && id !== '__neutral__') rivalTotal += n;
-          }
-          if (rivalTotal >= 2) {
-            return { type: 'useFunc', payload: { cardId: funcBandit.id, area, number: face } };
-          }
-        }
-      }
+    // ?? ??????????????????????
+    if (funcBandit && idle <= 0) {
+      const bestBandit = _decideBanditHard(game, player, funcBandit);
+      if (bestBandit) return bestBandit;
     }
 
-    // 遥控骰子：如果当前骰子组合很差，或者想精准放到高价值 face
+    // ?? ????????????????????
     if (funcRemote) {
-      const dice = game.dice && game.dice[player.id] ? game.dice[player.id] : [];
-      // 如果当前骰子只有很差的选项（比如全被中立占或没有板块），用遥控
-      let hasGood = false;
-      for (const face of [...new Set(dice)]) {
-        for (const area of BOARD_AREAS) {
-          const board = game.board && game.board[area];
-          if (!board) continue;
-          if (tilesOnNumber(board, face).length && !wouldCancelWithNeutral(game, area, face, dice.filter((d) => d === face).length)) {
-            hasGood = true;
-            break;
-          }
-        }
-        if (hasGood) break;
-      }
-      if (!hasGood) {
-        return { type: 'useFunc', payload: { cardId: funcRemote.id } };
-      }
+      const bestRemote = _decideRemoteHard(game, player, funcRemote);
+      if (bestRemote) return bestRemote;
     }
   }
 
-  // 放置骰子
+  // ????
   const place = decidePlaceDice(game, player, diff, botState);
   if (place) return place;
 
   return null;
 }
 
-/* ────────── 主入口 ────────── */
+/**
+ * ????????????????????????????
+ */
+function _decideExileHard(game, player, funcCard) {
+  const dice = game.dice && game.dice[player.id] ? game.dice[player.id] : [];
+  const idle = idleVillagers(player);
+  const isLast = idle <= 0; // ????????
+
+  for (let face = 1; face <= 6; face++) {
+    if (!dice.includes(face)) continue;
+    for (const area of BOARD_AREAS) {
+      const board = game.board && game.board[area];
+      if (!board) continue;
+      const wk = slotWorkers(board, face);
+
+      // ??????face????
+      let rivalTotal = 0;
+      let myCount = 0;
+      let bestRival = 0;
+      let bestRivalId = null;
+      let neutral = wk.__neutral__ || 0;
+      for (const [id, n] of Object.entries(wk)) {
+        if (id === '__neutral__') continue;
+        if (id === player.id) { myCount += n; continue; }
+        rivalTotal += n;
+        if (n > bestRival) { bestRival = n; bestRivalId = id; }
+      }
+
+      // ??1????????????????????
+      // ???????????? + ??????????
+      if (myCount > 0 && bestRivalId && bestRival > myCount && !isLast) {
+        return { type: 'useFunc', payload: { cardId: funcCard.id, area, number: face } };
+      }
+
+      // ??2??????????????????????/????????
+      if (isLast && bestRivalId && bestRival >= 1) {
+        const otherRival = rivalTotal - bestRival;
+        // ????????????????????????
+        // ??A: myCount>0, bestRival?????????
+        if (myCount > 0 && bestRival >= myCount) {
+          // ??????? myCount > otherRival??????
+          if (myCount > otherRival + neutral) {
+            return { type: 'useFunc', payload: { cardId: funcCard.id, area, number: face } };
+          }
+        }
+        // ??B: ??????????????????
+        if (otherRival > 0 && bestRival === otherRival && myCount === 0) {
+          // ???????????..??????
+          // ??C: myCount>0, ??? opponentCount == myCount????????
+        }
+      }
+    }
+  }
+  return null;
+}
 
 /**
- * 为指定 bot 玩家生成下一个 action。
- * @param {object} game       – engine 游戏状态
- * @param {string} playerId   – bot 玩家 ID
- * @param {string} difficulty – 'easy'|'normal'|'hard'
- * @param {object} botState   – 可选，持久化状态（如 hard 模式记忆对手暗置卡）
+ * ????????????????????
+ */
+function _decideBanditHard(game, player, funcCard) {
+  // ????????/????????
+  const envs = (game.board && game.board.resource && game.board.resource.environments) || {};
+  let bestTarget = null;
+  let bestScore = -1;
+
+  for (let face = 1; face <= 6; face++) {
+    for (const area of BOARD_AREAS) {
+      const board = game.board && game.board[area];
+      if (!board) continue;
+      const tiles = tilesOnNumber(board, face);
+      if (!tiles.length) continue;
+      const wk = slotWorkers(board, face);
+
+      let rivalTotal = 0;
+      let bestRival = 0;
+      let myCount = wk[player.id] || 0;
+      for (const [id, n] of Object.entries(wk)) {
+        if (id === player.id || id === '__neutral__') continue;
+        rivalTotal += n;
+        if (n > bestRival) bestRival = n;
+      }
+      if (rivalTotal < 1) continue;
+
+      let score = 0;
+      // ??????????
+      const env = envs[face];
+      if (env && env.envType === 'mercenaries') score += 100;
+      // ?????????
+      if (bestRival > myCount) {
+        let value = 0;
+        for (const t of tiles) value += (t.large || 0) + (t.small || 0);
+        score += value * 5 + rivalTotal * 3;
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestTarget = { area, number: face };
+      }
+    }
+  }
+
+  if (bestTarget && bestScore >= 20) {
+    return { type: 'useFunc', payload: { cardId: funcCard.id, area: bestTarget.area, number: bestTarget.number } };
+  }
+  return null;
+}
+
+/**
+ * ??????????????????????????????
+ */
+function _decideRemoteHard(game, player, funcCard) {
+  const dice = game.dice && game.dice[player.id] ? game.dice[player.id] : [];
+
+  // ??1?????????????????
+  let hasGood = false;
+  for (const face of [...new Set(dice)]) {
+    for (const area of BOARD_AREAS) {
+      const board = game.board && game.board[area];
+      if (!board) continue;
+      if (tilesOnNumber(board, face).length && !wouldCancelWithNeutral(game, area, face, dice.filter((d) => d === face).length)) {
+        hasGood = true;
+        break;
+      }
+    }
+    if (hasGood) break;
+  }
+  if (!hasGood) return { type: 'useFunc', payload: { cardId: funcCard.id } };
+
+  // ??2??????(firstCome)??????
+  const envs = (game.board && game.board.resource && game.board.resource.environments) || {};
+  for (const num of [1, 2, 3, 4, 5, 6]) {
+    const env = envs[num];
+    if (!env || env.envType !== 'firstCome') continue;
+    const threshold = env.firstComeRequired || 2;
+    if (threshold <= 0) continue;
+    // ???????
+    const cap = maxResourceHandFor(player);
+    const hand = sumRes(player.resources);
+    if (hand + 2 <= cap) {
+      return { type: 'useFunc', payload: { cardId: funcCard.id } };
+    }
+  }
+
+  return null;
+}
+
+/* ?????????? ?????????????? */
+
+/**
+ * ????bot ????????action??
+ * @param {object} game       ??engine ?????
+ * @param {string} playerId   ??bot ?? ID
+ * @param {string} difficulty ??'easy'|'normal'|'hard'
+ * @param {object} botState   ?????????????hard ??????????
  * @returns {{type:string, payload?:object}|null}
  */
 function decideBotAction(game, playerId, difficulty, botState = {}) {
@@ -1033,24 +2413,24 @@ function decideBotAction(game, playerId, difficulty, botState = {}) {
 
   const diff = String(difficulty || 'normal').toLowerCase();
 
-  // 各种待处理状态优先处理
+  // ????????????
   const pending = decidePendingAction(game, player, diff, botState);
   if (pending) return pending;
 
-  // 生产阶段
+  // ????
   if (game.phase === 'produce' && game.currentPlayerId === playerId) {
     return decideProducePhase(game, player, diff, botState);
   }
 
-  // 建造阶段
+  // ?????
   if (game.phase === 'build' && game.currentPlayerId === playerId) {
-    // 先处理弃牌
+    // ??????
     const discard = decidePendingDiscard(game, player, diff, botState);
     if (discard) return discard;
     return decideBuildAction(game, player, diff, botState);
   }
 
-  // 结算动画/结算阶段：不需要操作（由服务端自动推进）
+  // ????/?????????????????????
 
   return null;
 }

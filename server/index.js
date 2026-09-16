@@ -885,7 +885,18 @@ function scheduleBotTick(room) {
   });
   if (!actors.length) return;
 
-  const delay = 600 + Math.floor(Math.random() * 600); // 600-1200ms
+  // 判断 bot 是否刚摇完骰子准备派遣，是则停留更久让玩家看清骰子
+  let delay = 1000 + Math.floor(Math.random() * 600); // 1000-1600ms
+    for (const id of actors) {
+    if (
+      room.game.phase === 'produce' &&
+      room.game.currentPlayerId === id &&
+      !room.game.awaitingProduceRoll
+    ) {
+      delay = 2500 + Math.floor(Math.random() * 300); // 2500-2800ms
+      break;
+    }
+  }
   if (room._botTickHandle) clearTimeout(room._botTickHandle);
   room._botTickHandle = setTimeout(() => {
     room._botTickHandle = null;

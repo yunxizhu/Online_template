@@ -63,7 +63,12 @@
   pointer-events: none;
 }
 
-.lasidao-panel > * {
+.las-content-wrap {
+  position: relative;
+  z-index: 2;
+}
+
+.las-content-wrap > *:not(.modal) {
   position: relative;
   z-index: 2;
 }

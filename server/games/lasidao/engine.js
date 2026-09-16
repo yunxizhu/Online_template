@@ -1645,6 +1645,7 @@ function createGameState(room) {
             : 'B'
       : null,
     left: false,
+    isBot: Boolean(p.isBot),
     villagers: START_VILLAGERS,
     houses: START_HOUSES,
     houseScore: 0, // 常驻建造房子获得的胜利点（与房子容量分开）
@@ -2445,6 +2446,13 @@ function startSettle(game) {
   game.phase = 'settle';
   game.currentPlayerId = null;
   game.settleAnimAcks = {};
+  for (const p of alivePlayers(game)) {
+    if (p.isBot) game.settleAnimAcks[p.id] = true;
+  }
+  if (alivePlayers(game).every((p) => game.settleAnimAcks[p.id])) {
+    completeSettleAfterAnim(game);
+    return;
+  }
   game.settleAnimUntil = Date.now() + SETTLE_ANIM_MAX_MS;
   pushLog(game, '—— 结算动画播放中 ——');
 }

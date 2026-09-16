@@ -1569,10 +1569,11 @@ class RoomManager {
     const diff = String(difficulty || 'normal').toLowerCase();
     const diffLabel = diff === 'easy' ? '简易' : diff === 'hard' ? '困难' : '普通';
     const botNameDiff = diff === 'easy' ? '简单' : diff === 'hard' ? '困难' : '普通';
+    const seatNames = ['一一', '二二', '三三', '四四', '五五', '六六', '七七', '八八'];
     const botId = `bot_${room.id}_${idx}_${Date.now()}`;
     const botPlayer = {
       id: botId,
-      name: `电脑(${botNameDiff})`,
+      name: `${seatNames[idx] || `电脑${idx + 1}`}(${botNameDiff})`,
       tag: null,
       ready: true,
       isBot: true,

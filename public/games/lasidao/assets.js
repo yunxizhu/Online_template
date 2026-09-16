@@ -344,7 +344,7 @@ window.LasidaoAssets = (function () {
 
   /** 对局 BGM：resourse/music/* → /games/lasidao/res/music/* */
   const BGM_FILE =
-    'ほのぼのとした日常BGM「Positive3」_PerituneMaterial_Positive3_loop.mp3';
+    'Satie Gymnopedie No 1.mp3';
   const BGM_SRC = assetPath(RES + '/music/' + encodeURIComponent(BGM_FILE));
   const BGM_BASE_VOLUME = 0.3;
   const BGM_FADE_MS = 10000;
