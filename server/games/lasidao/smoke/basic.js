@@ -4448,6 +4448,48 @@ console.log('— event mercenaries preSettle —');
   console.log('✓ event mercenaries preSettle');
 }
 
+console.log('— mercenary skipAll logs rolled faces —');
+{
+  const {
+    tryEnterPreSettleMercenaryOrSettle,
+    finishSettleAnimForce,
+  } = require('../engine');
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.board.resource.environments[3] = {
+    id: 'env_merc_skip_log',
+    kind: 'environment',
+    label: '雇佣军',
+    envType: 'mercenaries',
+    trigger: 'preSettle',
+    setup: 'mercenary2',
+    mercenaryDice: 2,
+    number: 3,
+  };
+  for (const n of [1, 2, 4, 5, 6]) g.board.resource.environments[n] = null;
+  g.board.resource.workers[3] = { p0: 2, p1: 1 };
+  for (const p of g.players) {
+    p.dispatched = p.villagers;
+    g.dice[p.id] = [];
+  }
+  tryEnterPreSettleMercenaryOrSettle(g);
+  assert.strictEqual(g.phase, 'event_mercenary');
+  assert.ok(!g.mercenaryRoll || !g.mercenaryRoll.length, '跳过前应尚未投掷');
+  const beforeLog = (g.log || []).length;
+  ok(applyAction(g, 'p0', { type: 'mercenarySkipAll', payload: {} }));
+  const texts = (g.log || []).slice(beforeLog).map((x) => x.text || '');
+  assert.ok(
+    texts.some((t) => /雇佣军投掷：\[\d/.test(t)),
+    `应记录投掷骰面，实际=${JSON.stringify(texts)}`
+  );
+  assert.ok(
+    texts.some((t) => /跳过全部雇佣军放置（骰面：/.test(t)),
+    `跳过日志应带骰面，实际=${JSON.stringify(texts)}`
+  );
+  if (g.phase === 'settle') finishSettleAnimForce(g, 'p0');
+  console.log('✓ mercenary skipAll logs rolled faces');
+}
+
 console.log('— event mercenary place triggers dispatch env —');
 {
   const {
@@ -7412,6 +7454,632 @@ console.log('— lasidao open modes default 各自为战 2 —');
   assert.strictEqual(legacySolo.room.gameMode, 'melee');
   assert.strictEqual(legacySolo.room.maxPlayers, 2);
   console.log('✓ lasidao open modes default 各自为战 2 / 2–5 / team 2v2');
+}
+
+console.log('— bot prefers keepOverflow wood over wishWell —');
+{
+  const { decidePlaceDice, scoreProduceMove } = require('../bot');
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.round = 1;
+  g.awaitingProduceRoll = false;
+  g.currentPlayerId = g.players[0].id;
+  g.board.resource.environments = {
+    1: {
+      id: 'env_ko_bot',
+      kind: 'environment',
+      label: '吃不了兜着走',
+      envType: 'keepOverflow',
+      trigger: 'settle',
+      setup: 'stashTwoResources',
+      number: 1,
+      stashCards: [
+        { id: 'ko_a', kind: 'resource', resource: 'wood', faceDown: true },
+        { id: 'ko_b', kind: 'resource', resource: 'stone', faceDown: true },
+      ],
+      stashClaimed: false,
+    },
+    2: null,
+    3: null,
+    4: null,
+    5: null,
+    6: null,
+  };
+  g.board.resource.tiles = [
+    {
+      id: 'res_wood1',
+      kind: 'resource',
+      resource: 'wood',
+      rich: false,
+      large: 2,
+      small: 1,
+      number: 1,
+      label: '灌木丛',
+    },
+  ];
+  g.board.special.tiles = [
+    {
+      id: 'bld_ww1',
+      kind: 'building',
+      buildType: 'wishWell',
+      label: '许愿井',
+      cost: { wood: 1, stone: 1, food: 1, iron: 1 },
+      produce: 0,
+      score: 0,
+      number: 1,
+    },
+  ];
+  g.board.resource.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  g.board.special.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  const bot = g.players[0];
+  const rival = g.players[1];
+  bot.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+  bot.buildings = [];
+  bot.funcCards = [];
+  bot.villagers = 3;
+  bot.dispatched = 0;
+  bot.voided = 0;
+  rival.villagers = 3;
+  rival.dispatched = 3;
+  rival.voided = 0;
+  g.dice = { [bot.id]: [1], [rival.id]: [] };
+  g.diceBoosted = { [bot.id]: [false] };
+
+  const resScore = scoreProduceMove(g, bot, 1, 'resource', 1, 0, 'hard', {});
+  const spScore = scoreProduceMove(g, bot, 1, 'special', 1, 0, 'hard', {});
+  assert.ok(
+    resScore > spScore,
+    `资源吃不了兜着走应高于许愿井: resource=${resScore} special=${spScore}`
+  );
+
+  for (const diff of ['hard', 'normal']) {
+    const act = decidePlaceDice(g, bot, diff, {});
+    assert.ok(act && act.type === 'placeDice', `${diff} 应选择 placeDice`);
+    assert.strictEqual(act.payload.face, 1, `${diff} face`);
+    assert.strictEqual(
+      act.payload.area,
+      'resource',
+      `${diff} 应放资源区而非功能区许愿井`
+    );
+  }
+  console.log('✓ bot prefers keepOverflow wood over wishWell');
+}
+
+console.log('— bot voids triple same face when uncontested —');
+{
+  const { decidePlaceDice, scoreProduceMove, scoreVoidSkipOption } = require('../bot');
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.round = 1;
+  g.phase = 'produce';
+  g.awaitingProduceRoll = false;
+  g.currentPlayerId = g.players[0].id;
+  g.board.resource.environments = {
+    1: null,
+    2: null,
+    3: null,
+    4: null,
+    5: null,
+    6: null,
+  };
+  g.board.resource.tiles = [
+    {
+      id: 'res_wood3',
+      kind: 'resource',
+      resource: 'wood',
+      rich: false,
+      large: 2,
+      small: 1,
+      number: 3,
+      label: '灌木丛',
+    },
+  ];
+  g.board.special.tiles = [
+    {
+      id: 'bld_ww3',
+      kind: 'building',
+      buildType: 'wishWell',
+      label: '许愿井',
+      cost: { wood: 1, stone: 1, food: 1, iron: 1 },
+      produce: 0,
+      score: 0,
+      number: 3,
+    },
+  ];
+  g.board.resource.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  g.board.special.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  const bot = g.players[0];
+  const rival = g.players[1];
+  bot.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+  bot.buildings = [];
+  bot.funcCards = [];
+  bot.villagers = 3;
+  bot.dispatched = 0;
+  bot.voided = 0;
+  rival.villagers = 3;
+  rival.dispatched = 3;
+  rival.voided = 0;
+  g.dice = { [bot.id]: [3, 3, 3], [rival.id]: [] };
+  g.diceBoosted = { [bot.id]: [false, false, false] };
+
+  const placeScore = scoreProduceMove(g, bot, 3, 'resource', 3, 0, 'hard', {});
+  const voidScore = scoreVoidSkipOption(g, bot, 'hard');
+  assert.ok(
+    voidScore > placeScore,
+    `三枚同点无人争时应爆骰更优: void=${voidScore} place=${placeScore}`
+  );
+
+  for (const diff of ['hard', 'normal']) {
+    const act = decidePlaceDice(g, bot, diff, {});
+    assert.ok(act && act.type === 'voidSkip', `${diff} 应选择 voidSkip，实际=${act && act.type}`);
+    assert.strictEqual(act.payload.mode, 'burn', `${diff} 应为 burn`);
+    assert.ok(
+      ['wood', 'stone', 'food', 'iron'].includes(act.payload.resource),
+      `${diff} 应选任意资源`
+    );
+  }
+  console.log('✓ bot voids triple same face when uncontested');
+}
+
+console.log('— bot still places when triple needed to contest —');
+{
+  const { decidePlaceDice } = require('../bot');
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.round = 1;
+  g.phase = 'produce';
+  g.awaitingProduceRoll = false;
+  g.currentPlayerId = g.players[0].id;
+  g.board.resource.environments = {
+    1: null,
+    2: null,
+    3: null,
+    4: null,
+    5: null,
+    6: null,
+  };
+  g.board.resource.tiles = [
+    {
+      id: 'res_wood3b',
+      kind: 'resource',
+      resource: 'wood',
+      rich: false,
+      large: 2,
+      small: 1,
+      number: 3,
+      label: '灌木丛',
+    },
+  ];
+  g.board.special.tiles = [];
+  g.board.resource.workers = {
+    1: {},
+    2: {},
+    3: { [g.players[1].id]: 2 },
+    4: {},
+    5: {},
+    6: {},
+  };
+  g.board.special.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  const bot = g.players[0];
+  const rival = g.players[1];
+  bot.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+  bot.buildings = [];
+  bot.funcCards = [];
+  bot.villagers = 3;
+  bot.dispatched = 0;
+  bot.voided = 0;
+  rival.villagers = 3;
+  rival.dispatched = 3;
+  rival.voided = 0;
+  g.dice = { [bot.id]: [3, 3, 3], [rival.id]: [] };
+  g.diceBoosted = { [bot.id]: [false, false, false] };
+
+  for (const diff of ['hard', 'normal']) {
+    const act = decidePlaceDice(g, bot, diff, {});
+    assert.ok(act && act.type === 'placeDice', `${diff} 争抢时应放置，实际=${act && act.type}`);
+    assert.strictEqual(act.payload.face, 3, `${diff} face`);
+    assert.strictEqual(act.payload.area, 'resource', `${diff} area`);
+  }
+  console.log('✓ bot still places when triple needed to contest');
+}
+
+console.log('— bot prefers mercenaries over fat stone pile —');
+{
+  const { decidePlaceDice, scoreProduceMove } = require('../bot');
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.round = 2;
+  g.phase = 'produce';
+  g.awaitingProduceRoll = false;
+  g.currentPlayerId = g.players[0].id;
+  g.board.resource.environments = {
+    1: null,
+    2: null,
+    3: {
+      id: 'env_merc_bot',
+      kind: 'environment',
+      label: '雇佣军',
+      envType: 'mercenaries',
+      trigger: 'preSettle',
+      setup: 'mercenary2',
+      number: 3,
+      mercenaryDice: 2,
+    },
+    4: null,
+    5: null,
+    6: null,
+  };
+  g.board.resource.tiles = [
+    {
+      id: 'res_st1a',
+      kind: 'resource',
+      resource: 'stone',
+      rich: true,
+      large: 3,
+      small: 1,
+      number: 1,
+      label: '采石场',
+    },
+    {
+      id: 'res_st1b',
+      kind: 'resource',
+      resource: 'stone',
+      rich: false,
+      large: 2,
+      small: 1,
+      number: 1,
+      label: '石堆',
+    },
+    {
+      id: 'res_wood3',
+      kind: 'resource',
+      resource: 'wood',
+      rich: false,
+      large: 2,
+      small: 1,
+      number: 3,
+      label: '灌木丛',
+    },
+  ];
+  g.board.special.tiles = [];
+  g.board.resource.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  g.board.special.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  const bot = g.players[0];
+  const rival = g.players[1];
+  bot.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+  bot.buildings = [];
+  bot.funcCards = [];
+  bot.villagers = 3;
+  bot.dispatched = 0;
+  bot.voided = 0;
+  rival.villagers = 3;
+  rival.dispatched = 0;
+  rival.voided = 0;
+  g.dice = { [bot.id]: [1, 3, 3], [rival.id]: [] };
+  g.diceBoosted = { [bot.id]: [false, false, false] };
+
+  const stoneScore = scoreProduceMove(g, bot, 1, 'resource', 1, 0, 'hard', {});
+  const mercScore = scoreProduceMove(g, bot, 3, 'resource', 2, 0, 'hard', {});
+  assert.ok(
+    mercScore > stoneScore,
+    `雇佣军应高于 5 石: merc=${mercScore} stone=${stoneScore}`
+  );
+
+  for (const diff of ['hard', 'normal']) {
+    const act = decidePlaceDice(g, bot, diff, {});
+    assert.ok(act && act.type === 'placeDice', `${diff} 应放置，实际=${act && act.type}`);
+    assert.strictEqual(act.payload.face, 3, `${diff} 应放 3 号雇佣军`);
+    assert.strictEqual(act.payload.area, 'resource', `${diff} area`);
+  }
+  console.log('✓ bot prefers mercenaries over fat stone pile');
+}
+
+console.log('— bot places mercenary dice instead of skipAll —');
+{
+  const { decideMercenaryPhase, scoreMercenaryPlacement } = require('../bot');
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.phase = 'event_mercenary';
+  g.pendingMercenaryQueue = [{ playerId: g.players[0].id, number: 3, diceN: 2 }];
+  g.mercenaryRoll = null;
+  g.mercenaryPlaced = [];
+  const bot = g.players[0];
+  const rival = g.players[1];
+
+  const rollAct = decideMercenaryPhase(g, bot, 'hard', {});
+  assert.ok(rollAct && rollAct.type === 'mercenaryRoll', '应先投掷');
+
+  g.mercenaryRoll = [1, 4];
+  g.mercenaryPlaced = [];
+  g.board.resource.tiles = [
+    {
+      id: 'm1',
+      kind: 'resource',
+      resource: 'stone',
+      rich: true,
+      large: 5,
+      small: 2,
+      number: 1,
+      label: '富石',
+    },
+    {
+      id: 'm4',
+      kind: 'resource',
+      resource: 'wood',
+      rich: false,
+      large: 2,
+      small: 1,
+      number: 4,
+      label: '木',
+    },
+  ];
+  g.board.special.tiles = [];
+  g.board.resource.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  g.board.special.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+
+  for (const diff of ['hard', 'normal']) {
+    const act = decideMercenaryPhase(g, bot, diff, {});
+    assert.ok(act && act.type === 'mercenaryPlace', `${diff} 应放置`);
+    assert.strictEqual(act.payload.skip, false, `${diff} 不应跳过`);
+    assert.strictEqual(act.payload.index, 0, `${diff} 先处理第 0 枚`);
+    assert.strictEqual(act.payload.area, 'resource', `${diff} 放资源区`);
+  }
+
+  // 第二名 1 vs 第一名 2：再放会对冲 → 该格不可取
+  g.board.resource.workers[1] = { [bot.id]: 1, [rival.id]: 2 };
+  const bad = scoreMercenaryPlacement(g, bot, 'resource', 1, 'hard');
+  assert.ok(bad === -Infinity, `对冲第二名应拒绝: ${bad}`);
+
+  // 空格可放：立即大份为正
+  const good = scoreMercenaryPlacement(g, bot, 'resource', 4, 'hard');
+  assert.ok(good > 0, `空格放置应为正: ${good}`);
+
+  g.mercenaryRoll = [1];
+  g.mercenaryPlaced = [];
+  // 仅 1 点且对冲 → 跳过这一枚
+  const skipAct = decideMercenaryPhase(g, bot, 'hard', {});
+  assert.ok(skipAct && skipAct.type === 'mercenaryPlace', '应有行动');
+  assert.strictEqual(skipAct.payload.skip, true, '对冲场景应跳过该枚');
+
+  console.log('✓ bot places mercenary dice instead of skipAll');
+}
+
+console.log('— bot prefers prisonersDilemma over equal welfare pile —');
+{
+  const { decideMercenaryPhase, scoreMercenaryPlacement, decidePlaceDice } = require('../bot');
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.phase = 'event_mercenary';
+  g.pendingMercenaryQueue = [{ playerId: g.players[0].id, number: 3, diceCount: 2 }];
+  g.mercenaryRoll = [5, 4];
+  g.mercenaryPlaced = [];
+  g.board.resource.environments = {
+    1: null,
+    2: null,
+    3: null,
+    4: {
+      id: 'pd',
+      kind: 'environment',
+      label: '囚徒困境',
+      envType: 'prisonersDilemma',
+      trigger: 'settle',
+      dispatchAlso: true,
+      setup: 'neutral1',
+      number: 4,
+    },
+    5: {
+      id: 'wm',
+      kind: 'environment',
+      label: '低保户',
+      envType: 'welfareMinimum',
+      trigger: 'setup',
+      setup: 'lowestScoreTwo',
+      number: 5,
+    },
+    6: null,
+  };
+  g.board.resource.tiles = [
+    {
+      id: 's4',
+      kind: 'resource',
+      resource: 'stone',
+      rich: false,
+      large: 2,
+      small: 1,
+      number: 4,
+      label: '石',
+    },
+    {
+      id: 'w5',
+      kind: 'resource',
+      resource: 'wood',
+      rich: false,
+      large: 2,
+      small: 1,
+      number: 5,
+      label: '木',
+    },
+  ];
+  g.board.special.tiles = [];
+  g.board.resource.workers = {
+    1: {},
+    2: {},
+    3: {},
+    4: { __neutral__: 1 },
+    5: {},
+    6: {},
+  };
+  g.board.special.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  const bot = g.players[0];
+  bot.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+
+  const s4 = scoreMercenaryPlacement(g, bot, 'resource', 4, 'hard');
+  const s5 = scoreMercenaryPlacement(g, bot, 'resource', 5, 'hard');
+  assert.ok(s4 > s5, `囚徒应高于低保户同额资源: pd=${s4} welfare=${s5}`);
+
+  const mercAct = decideMercenaryPhase(g, bot, 'hard', {});
+  assert.ok(mercAct && mercAct.type === 'mercenaryPlace' && !mercAct.payload.skip);
+  assert.strictEqual(
+    Number(g.mercenaryRoll[mercAct.payload.index]),
+    4,
+    '应先放点数 4（囚徒）'
+  );
+
+  // 生产派遣：1 枚对冲中立拿不到资源，应优先去空的 5 拿 2 木
+  // （雇佣立即大份另算；此处不应再误估「对冲仍拿大份」）
+  g.phase = 'produce';
+  g.awaitingProduceRoll = false;
+  g.currentPlayerId = bot.id;
+  g.dice = { [bot.id]: [4, 5] };
+  g.diceBoosted = { [bot.id]: [false, false] };
+  const placeAct = decidePlaceDice(g, bot, 'hard', {});
+  assert.ok(placeAct && placeAct.type === 'placeDice');
+  assert.strictEqual(
+    placeAct.payload.face,
+    5,
+    '生产1枚对冲中立时应改拿空格资源'
+  );
+  console.log('✓ bot prefers prisonersDilemma over equal welfare pile');
+}
+
+console.log('— bot places to reclaim first over voidSkip —');
+{
+  const { decidePlaceDice, scoreProduceMove, scoreVoidSkipOption } = require('../bot');
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.phase = 'produce';
+  g.awaitingProduceRoll = false;
+  g.currentPlayerId = g.players[0].id;
+  g.board.resource.environments = {
+    1: null,
+    2: null,
+    3: null,
+    4: null,
+    5: null,
+    6: null,
+  };
+  g.board.resource.tiles = [
+    {
+      id: 'w5b',
+      kind: 'resource',
+      resource: 'wood',
+      rich: false,
+      large: 2,
+      small: 1,
+      number: 5,
+      label: '木',
+    },
+  ];
+  g.board.special.tiles = [];
+  const bot = g.players[0];
+  const rival = g.players[1];
+  bot.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+  bot.villagers = 3;
+  bot.dispatched = 2;
+  bot.voided = 0;
+  rival.villagers = 3;
+  rival.dispatched = 3;
+  rival.voided = 0;
+  g.board.resource.workers = {
+    1: {},
+    2: {},
+    3: {},
+    4: {},
+    5: { [bot.id]: 1, __neutral__: 1 },
+    6: {},
+  };
+  g.board.special.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  g.dice = { [bot.id]: [5], [rival.id]: [] };
+  g.diceBoosted = { [bot.id]: [false] };
+
+  const placeScore = scoreProduceMove(g, bot, 5, 'resource', 1, 0, 'hard', {});
+  const voidScore = scoreVoidSkipOption(g, bot, 'hard');
+  assert.ok(
+    placeScore > voidScore,
+    `加码夺回第一应优于爆骰: place=${placeScore} void=${voidScore}`
+  );
+  for (const diff of ['hard', 'normal']) {
+    const act = decidePlaceDice(g, bot, diff, {});
+    assert.ok(act && act.type === 'placeDice', `${diff} 应放置而非爆骰`);
+    assert.strictEqual(act.payload.face, 5, `${diff} face`);
+  }
+  console.log('✓ bot places to reclaim first over voidSkip');
+}
+
+console.log('— bot teleport prefers enhance on special —');
+{
+  const { decideBotAction } = require('../bot');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const bot = g.players[0];
+  g.phase = 'produce';
+  g.currentPlayerId = bot.id;
+  g.awaitingProduceRoll = false;
+  g.board.resource.tiles = [
+    {
+      id: 'r2',
+      kind: 'resource',
+      resource: 'wood',
+      large: 2,
+      small: 1,
+      number: 2,
+      label: '木',
+    },
+    {
+      id: 'r3',
+      kind: 'resource',
+      resource: 'stone',
+      large: 3,
+      small: 1,
+      number: 3,
+      label: '石',
+    },
+  ];
+  g.board.special.tiles = [
+    {
+      id: 'enh',
+      kind: 'function',
+      funcType: 'enhance',
+      label: '强化',
+      number: 1,
+    },
+  ];
+  g.board.resource.workers = {
+    1: {},
+    2: { [bot.id]: 1 },
+    3: {},
+    4: {},
+    5: {},
+    6: {},
+  };
+  g.board.special.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  g.board.resource.environments = {
+    1: null,
+    2: null,
+    3: null,
+    4: null,
+    5: null,
+    6: null,
+  };
+  g.pendingEventChoice = {
+    needChoice: 'teleportDie',
+    teleportStep: 'from',
+    envType: 'teleport',
+    label: '传送',
+    number: 4,
+    playerId: bot.id,
+  };
+
+  const fromAct = decideBotAction(g, bot.id, 'hard');
+  assert.ok(fromAct && fromAct.type === 'eventTeleportFrom');
+  assert.strictEqual(fromAct.payload.targetId, bot.id, '应传送自己的骰');
+  ok(applyAction(g, bot.id, fromAct));
+
+  const toAct = decideBotAction(g, bot.id, 'hard');
+  assert.ok(toAct && toAct.type === 'eventTeleportTo');
+  assert.strictEqual(toAct.payload.area, 'special', '应传到功能区');
+  assert.strictEqual(toAct.payload.number, 1, '应传到强化所在格');
+  console.log('✓ bot teleport prefers enhance on special');
 }
 
 console.log('全部通过');

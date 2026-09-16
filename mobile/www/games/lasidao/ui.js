@@ -9,6 +9,69 @@ window.LasidaoUi = (function () {
     return document.getElementById(id);
   }
 
+  /** 弹窗/播报类节点：迁入 body 覆盖层，避免夹在面板文档流里挤开板块 */
+  const LAS_OVERLAY_IDS = [
+    'las-turn-toast',
+    'las-play-reveal',
+    'las-fx-layer',
+    'las-card-tip',
+    'las-rules-modal',
+    'las-permanent-modal',
+    'las-resource-deck-modal',
+    'las-event-deck-modal',
+    'las-special-deck-modal',
+    'las-exchange-modal',
+    'las-trade-propose-modal',
+    'las-trade-decision-modal',
+    'las-trade-other-modal',
+    'las-robbery-modal',
+    'las-illegal-build-modal',
+    'las-redraw-modal',
+    'las-wishwell-modal',
+    'las-harvest-modal',
+    'las-settle-discard-modal',
+    'las-void-skip-modal',
+    'las-exile-modal',
+    'las-expand-modal',
+    'las-bandit-modal',
+    'las-event-modal',
+    'las-victory-modal',
+  ];
+
+  function ensureLasOverlayRoot() {
+    let root = $('las-overlay-root');
+    if (!root) {
+      root = document.createElement('div');
+      root.id = 'las-overlay-root';
+      root.className = 'las-overlay-root';
+      root.hidden = true;
+      document.body.appendChild(root);
+    }
+    for (const id of LAS_OVERLAY_IDS) {
+      const el = $(id);
+      if (el && el.parentNode !== root) root.appendChild(el);
+    }
+    const panel = $('panel-lasidao');
+    if (panel) {
+      panel.querySelectorAll(':scope > .modal').forEach((el) => {
+        if (el.parentNode !== root) root.appendChild(el);
+      });
+    }
+    return root;
+  }
+
+  function setLasOverlayVisible(visible) {
+    const root = ensureLasOverlayRoot();
+    root.hidden = !visible;
+    root.setAttribute('aria-hidden', visible ? 'false' : 'true');
+  }
+
+  function bootLasOverlayLayer() {
+    ensureLasOverlayRoot();
+    const panel = $('panel-lasidao');
+    setLasOverlayVisible(Boolean(panel && !panel.hidden));
+  }
+
   function t(key, vars) {
     return window.I18n && typeof window.I18n.t === 'function'
       ? window.I18n.t(key, vars)
@@ -529,6 +592,8 @@ window.LasidaoUi = (function () {
     panel.style.setProperty('--las-ui-scale', String(s));
     panel.dataset.uiScale = String(s);
     document.documentElement.style.setProperty('--las-ui-scale', String(s));
+    const overlay = $('las-overlay-root');
+    if (overlay) overlay.style.setProperty('--las-ui-scale', String(s));
     panel.classList.remove('las-scale-zoom', 'las-scale-transform');
     if (mobile) {
       panel.classList.add('las-mobile-surface');
@@ -679,6 +744,7 @@ window.LasidaoUi = (function () {
   function hide(opts) {
     const panel = $('panel-lasidao');
     if (panel) panel.hidden = true;
+    setLasOverlayVisible(false);
     hideCardTip();
     hideTurnToast(true);
     setRulesModalOpen(false);
@@ -9693,6 +9759,7 @@ window.LasidaoUi = (function () {
     if (!panel || !game) return;
     hideOthers();
     panel.hidden = false;
+    setLasOverlayVisible(true);
     bindLasScale();
     updateLasScale();
     const _prevGame = lastGame; // 保存旧状态，用于结算动画期间冻结手牌区
@@ -13999,9 +14066,16 @@ window.LasidaoUi = (function () {
       render(lastGame, netRef, { meId: lastMeId });
       if (window.I18n && window.I18n.applyDom) {
         window.I18n.applyDom(document.getElementById('panel-lasidao'));
+        window.I18n.applyDom(document.getElementById('las-overlay-root'));
       }
     }
   });
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootLasOverlayLayer);
+  } else {
+    bootLasOverlayLayer();
+  }
 
   return {
     render,

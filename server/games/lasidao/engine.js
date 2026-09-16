@@ -3292,7 +3292,23 @@ function actMercenarySkipAll(game, player) {
   if (!cur || cur.playerId !== player.id) {
     return { ok: false, error: '未轮到你' };
   }
-  pushLog(game, `${player.name} 跳过全部雇佣军放置`);
+  // 尚未投掷就跳过时，先掷出并记入日记，避免只看到「跳过」却不知道骰面
+  if (!(game.mercenaryRoll && game.mercenaryRoll.length)) {
+    const n = Number(cur.diceCount) || 2;
+    game.mercenaryRoll = rollDice(n);
+    game.mercenaryPlaced = [];
+    pushLog(
+      game,
+      `${player.name} 雇佣军投掷：[${game.mercenaryRoll.join(', ')}]`
+    );
+  }
+  const faces = (game.mercenaryRoll || []).slice();
+  pushLog(
+    game,
+    faces.length
+      ? `${player.name} 跳过全部雇佣军放置（骰面：${faces.join(', ')}）`
+      : `${player.name} 跳过全部雇佣军放置`
+  );
   game.pendingMercenaryQueue.shift();
   game.mercenaryRoll = null;
   game.mercenaryPlaced = [];

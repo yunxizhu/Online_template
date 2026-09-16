@@ -73,6 +73,42 @@
   z-index: 2;
 }
 
+/*
+ * 独立覆盖层：挂到 body，与板块/玩家面板布局完全隔离。
+ * 所有 toast / 卡牌播报 / 特效 / modal 都迁入此层。
+ */
+.las-overlay-root {
+  position: fixed;
+  inset: 0;
+  z-index: 2500;
+  pointer-events: none;
+  /* 覆盖层不在 .lasidao-panel 内，须自备卡牌尺寸，否则重抽/购买等弹窗卡面会塌成小点 */
+  --las-rem: calc(1rem * var(--las-ui-scale, 1));
+  --las-card-h: calc(7.2 * var(--las-rem));
+  --las-card-w: calc(var(--las-card-h) * 60 / 97);
+  --las-hand-card-w: calc(var(--las-card-w) * 1.2);
+  --las-hand-card-h: calc(var(--las-hand-card-w) * 97 / 60);
+  --las-panel-card-w: calc(var(--las-hand-card-w) * 3 / 4);
+  --las-panel-card-h: calc(var(--las-hand-card-h) * 3 / 4);
+}
+
+.las-overlay-root[hidden] {
+  display: none !important;
+}
+
+.las-overlay-root > .las-turn-toast,
+.las-overlay-root > .las-play-reveal,
+.las-overlay-root > .las-fx-layer,
+.las-overlay-root > .las-card-tip,
+.las-overlay-root > .modal {
+  position: fixed !important;
+}
+
+.las-overlay-root > .modal:not([hidden]),
+.las-overlay-root > .las-card-tip:not([hidden]) {
+  pointer-events: auto;
+}
+
 /* 缩放统一走 --las-ui-scale / --las-rem；不再使用 zoom/transform */
 .lasidao-panel.las-scale-zoom,
 .lasidao-panel.las-scale-transform {
@@ -168,22 +204,14 @@
   --las-status-block-h: calc(2.9 * var(--las-rem));
   --las-status-gap: calc(0.25 * var(--las-rem));
   --las-skip-btn-h: calc(1.65 * var(--las-rem));
-}
-
-.las-status-slot:not(:has(:not([hidden]))) {
-  display: none;
+  /* 始终占位，避免状态文字显隐时把下方板块挤开 */
+  min-height: var(--las-status-block-h);
 }
 
 .las-status-slot:has(.las-skip-settle-btn:not([hidden])) {
   min-height: calc(
     var(--las-status-block-h) + var(--las-status-gap) + var(--las-skip-btn-h)
   );
-}
-
-.las-status-slot:has(.las-status-line:not([hidden])):not(
-    :has(.las-skip-settle-btn:not([hidden]))
-  ) {
-  min-height: var(--las-status-block-h);
 }
 
 .las-status-line {
@@ -207,15 +235,6 @@
   display: block !important;
   visibility: hidden;
   pointer-events: none;
-}
-
-.las-status-slot:has(.las-status-line:not([hidden])):not(
-    :has(.las-skip-settle-btn:not([hidden]))
-  )
-  .las-status-line {
-  position: static;
-  transform: none;
-  left: auto;
 }
 
 .las-skip-settle-btn {
@@ -4025,8 +4044,8 @@
   box-shadow: 0 0 0 2px #c9a227, 0 4px 10px rgba(201, 162, 39, 0.35);
 }
 .las-redraw-modal {
-  --las-redraw-card-w: calc(var(--las-hand-card-w) * 2);
-  --las-redraw-card-h: calc(var(--las-hand-card-h) * 2);
+  --las-redraw-card-w: calc(var(--las-hand-card-w, calc(4.8 * var(--las-rem))) * 2);
+  --las-redraw-card-h: calc(var(--las-hand-card-h, calc(6.6 * var(--las-rem))) * 2);
   --las-redraw-deck-gap: calc(2 * var(--las-rem));
 }
 
@@ -4295,6 +4314,18 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
   transition: transform 0.15s, border-color 0.15s;
   box-shadow: 0 2px 6px rgba(0,0,0,0.35);
   box-sizing: border-box;
+  /* 防止 has-art 在异常尺寸下塌缩 */
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.las-redraw-decks .las-card.has-art {
+  text-indent: 0;
+  color: inherit;
+}
+.las-redraw-decks .las-card .las-hand-card-art {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
 }
 .las-redraw-decks .las-card:hover {
   transform: translateY(-6px);

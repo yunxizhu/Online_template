@@ -192,18 +192,18 @@ function selfGainFactor(game) {
  */
 function estimateEventDispatchGain(game, player, number, count, selfRank) {
   const env = envOnResourceSlot(game, number);
-  if (!env || env.trigger !== 'dispatch' || !envHasDispatchEffect(env.envType)) return 0;
+  // 囚徒困境等为 settle + dispatchAlso，不能只认 trigger===dispatch
+  if (!env || !envTriggersDispatch(env) || !envHasDispatchEffect(env.envType)) return 0;
 
   switch (env.envType) {
     case 'clearSky':
       return count * 8 * selfGainFactor(game);
 
     case 'prisonersDilemma': {
-      // ????1 ??????????????
-      // ??????????????????????
-      if (selfRank === 0) return 35;
-      if (selfRank === 1) return 20;
-      return 10;
+      // 派遣时再放 1 中立；第一名时仍有占坑/施压价值
+      if (selfRank === 0) return 22;
+      if (selfRank === 1) return 12;
+      return 8;
     }
 
     case 'enterFray': {
@@ -355,6 +355,13 @@ function envHasDispatchEffect(envType) {
   ].includes(envType);
 }
 
+/** 与 engine hasDispatchEffect 一致：dispatch 触发或 dispatchAlso */
+function envTriggersDispatch(env) {
+  if (!env) return false;
+  if (env.trigger === 'dispatch') return true;
+  return Boolean(env.dispatchAlso);
+}
+
 /**
  * ?????????????
  * ????"??????????????????
@@ -448,7 +455,7 @@ function _bestTeleportTargetValue(game, player, fromNumber) {
       }
     }
     // ?????dispatch ??????????
-    else if (env && env.trigger === 'dispatch' && envHasDispatchEffect(env.envType)) {
+    else if (env && envTriggersDispatch(env) && envHasDispatchEffect(env.envType)) {
       val = estimateEventDispatchGain(game, player, num, 1, 0);
     }
     // ????????????
@@ -483,6 +490,20 @@ function estimateEventSettleGain(game, player, number, selfRank) {
   if (!env || env.trigger !== 'settle') return 0;
 
   switch (env.envType) {
+    case 'prisonersDilemma': {
+      // 最后一名弃 n 张；第一名施压且自己不用弃；低保户类 setup 事件无此效果
+      const others = Math.max(0, alivePlayers(game).length - 1);
+      if (selfRank === 0) {
+        return 28 + others * 14;
+      }
+      if (selfRank === 1) {
+        // 拿到第二也不是最后，显著降低自己被弃牌风险
+        return 24;
+      }
+      // 与中立对冲搅局 / 占坑：破坏「对手唯一第一逼你弃牌」
+      return 26;
+    }
+
     case 'oneMountain':
       if (selfRank === 0) return 8 * selfGainFactor(game);
       if (selfRank === 1) return -8 * selfGainFactor(game);
@@ -503,21 +524,19 @@ function estimateEventSettleGain(game, player, number, selfRank) {
 
     case 'keepOverflow': {
       if (selfRank !== 0) return 0;
-      let score = 14; // 2 ?????????2 * 7??
-      // ??????????????????
+      // 暗置 2 张任意资源 ≈ 2*8；另有跳过本轮资源弃牌
+      let score = 16 * selfGainFactor(game) + 10;
       const board = game.board && game.board.resource;
       const tiles = tilesOnNumber(board, number);
-      let selfGain = 0;
-      for (const t of tiles) selfGain += (t.large || 0) + (t.small || 0);
+      // 仅估第一名大份（与本格产出一致），用于判断是否会超手牌上限
+      let firstGain = 0;
+      for (const t of tiles) firstGain += t.large || 0;
       const hand = sumRes(player.resources);
       const cap = maxResourceHandFor(player);
-      // ??????????????????????
-      if (hand + selfGain > cap) {
-        const wouldDiscard = hand + selfGain - cap;
-        score += wouldDiscard * 12; // ??????????????
+      if (hand + firstGain > cap) {
+        const wouldDiscard = hand + firstGain - cap;
+        score += wouldDiscard * 12;
       }
-      // ??????????????
-      if (game.phase === 'settle_end' || game.phase === 'settle') score += 5;
       return score;
     }
 
@@ -582,69 +601,67 @@ function shuffle(arr) {
 /* ?????????? ???????????????????? */
 
 /**
- * ????count ??????boostAdd????area/face ??????????????
- * ???????????????face ????large/small ???
+ * 估算 count 枚放到 area/face 后的结算收益（含与中立/对手的同数抵消）。
  */
 function estimateProduceGain(game, player, area, face, count, boostAdd) {
   const board = game.board && game.board[area];
-  if (!board) return { self: 0, rivalsLoss: 0, tileCount: 0 };
+  if (!board) return { self: 0, rivalsLoss: 0, tileCount: 0, rivalDropped: false, myRank: 2 };
   const tiles = tilesOnNumber(board, face);
-  if (!tiles.length) return { self: 0, rivalsLoss: 0, tileCount: 0 };
+  if (!tiles.length) return { self: 0, rivalsLoss: 0, tileCount: 0, rivalDropped: false, myRank: 2 };
   const wk = slotWorkers(board, face);
+  const boosts = (board.boosts && board.boosts[face]) || {};
 
-  // ?? ???????????????? totalAfter <= 2 ?????? ??
-
-  // ??????????boost??????????
-  const myPrev = wk[player.id] || 0;
+  const myPrev = Number(wk[player.id]) || 0;
   const myTotal = myPrev + count;
-  // ??????????????"??????1.5?? myTotal + boostAdd ????
-  const myPower = myTotal + (boostAdd || 0);
+  const boostPrev = Number(boosts[player.id]) || 0;
+  const boostAfter = boostPrev + (Number(boostAdd) || 0);
 
-  // ?????????????
-  let bestOtherId = null;
-  let bestOtherTotal = 0;
-  for (const [pid, c] of Object.entries(wk)) {
-    if (pid === player.id || pid === '__neutral__') continue;
-    if (c > bestOtherTotal) {
-      bestOtherTotal = c;
-      bestOtherId = pid;
+  // 放置前：用于判断是否挤掉对手第一
+  const beforeWorkers = { ...wk };
+  const beforeBoosts = { ...boosts };
+  const beforeStrength = _slotStrengthLocal(beforeWorkers, beforeBoosts);
+  const beforeRemain = _cancelEqualCountsLocal(beforeStrength);
+  const beforeRanked = Object.entries(beforeRemain).sort((a, b) => b[1] - a[1]);
+  const beforeFirstId = beforeRanked[0] ? beforeRanked[0][0] : null;
+
+  const afterWorkers = { ...wk, [player.id]: myTotal };
+  const afterBoosts = { ...boosts, [player.id]: boostAfter };
+  const afterStrength = _slotStrengthLocal(afterWorkers, afterBoosts);
+  const afterRemain = _cancelEqualCountsLocal(afterStrength);
+  const afterRanked = Object.entries(afterRemain).sort((a, b) => b[1] - a[1]);
+
+  let myRank = 2; // 0=第一, 1=第二, 2+=无
+  for (let i = 0; i < afterRanked.length; i++) {
+    if (afterRanked[i][0] === player.id) {
+      myRank = i;
+      break;
     }
   }
+  // 抵消后不在场上
+  if (!afterRemain[player.id]) myRank = 2;
 
-  // ??????????????????????????????????
-  let myRank = 0;          // 0=????large), 1=????small), 2+=??
-  let rivalDropped = false; // ????????????
-
-  if (bestOtherId) {
-    if (myPower > bestOtherTotal) {
-      myRank = 0;
-      rivalDropped = true; // ?????????
-    } else if (myPower === bestOtherTotal) {
-      myRank = 2;          // ????????????
-    } else {
-      myRank = 1;          // ????
-    }
-  }
+  const rivalDropped =
+    Boolean(beforeFirstId) &&
+    beforeFirstId !== player.id &&
+    beforeFirstId !== '__neutral__' &&
+    myRank === 0 &&
+    !afterRemain[beforeFirstId];
 
   let selfGain = 0;
   let rivalsLoss = 0;
-
   for (const t of tiles) {
     const large = t.large || 0;
     const small = t.small || 0;
-
-    // ??????????
     if (myRank === 0) selfGain += large;
     else if (myRank === 1) selfGain += small;
-
-    // ????????????large)????????small)????
     if (rivalDropped && area === 'resource') {
       rivalsLoss += large - small;
     }
   }
 
   if (area === 'special') {
-    selfGain = Math.max(1, tiles.length);
+    selfGain = 0;
+    rivalsLoss = 0;
   }
 
   return { self: selfGain, rivalsLoss, tileCount: tiles.length, rivalDropped, myRank };
@@ -661,142 +678,306 @@ function hasNeutralOnFace(game, area, face) {
 }
 
 /**
- * ?????????????"??? face ??????????????????
- * ??????????????????? ????????????????
+ * 放置后是否会因与中立（或同数）抵消而拿不到名次。
+ * 必须计入场上已有己方骰：已有 1 + 再放 1 vs 中立 1 → 不会对冲。
  */
-function wouldCancelWithNeutral(game, area, face, count) {
+function wouldCancelWithNeutral(game, area, face, count, playerId) {
   const board = game.board && game.board[area];
-  if (!board) return false;
+  if (!board || !playerId) return false;
   const wk = slotWorkers(board, face);
-  const neutral = wk['__neutral__'] || 0;
-  return neutral > 0 && count <= neutral;
+  const neutral = Number(wk.__neutral__) || 0;
+  if (neutral <= 0) return false;
+  const myTotal = (Number(wk[playerId]) || 0) + count;
+  if (myTotal <= 0) return false;
+  // 放置后己方与中立同数 → 同数抵消，己方出局
+  return myTotal === neutral;
 }
 
 /**
- * ????????????????
+ * 放骰视角：估功能/建筑区第一名可拿的牌价值（与「1 资源 ≈ 8 分」同量级）。
+ * 立即资源应显著高于「未建造的许愿井」这类延迟收益。
+ */
+function estimateSpecialTilePlaceValue(game, player, tile, diff) {
+  if (!tile) return 10;
+  if (tile.faceDown) return 12;
+
+  if (tile.funcType || tile.kind === 'function') {
+    if (diff === 'hard') {
+      const vals = {
+        enhance: 28,
+        shelter: 24,
+        recruit: 24,
+        redraw: 20,
+        harvest: 18,
+        expand: 16,
+        caravan: 14,
+        robbery: 16,
+        illegalBuild: 14,
+        exile: 12,
+        remoteDice: 12,
+        banditRaid: 10,
+        welfareHouse: 10,
+      };
+      return vals[tile.funcType] || 12;
+    }
+    const vals = {
+      enhance: 18,
+      recruit: 16,
+      harvest: 14,
+      redraw: 14,
+      expand: 12,
+      shelter: 12,
+      caravan: 10,
+      robbery: 12,
+      illegalBuild: 10,
+      exile: 8,
+      remoteDice: 8,
+      banditRaid: 6,
+      welfareHouse: 6,
+    };
+    return vals[tile.funcType] || 8;
+  }
+
+  if (tile.buildType === 'score1') return 32;
+  if (tile.buildType === 'score2') {
+    return canPay(player.resources, tile.cost || {}) ? 22 : 12;
+  }
+  if (tile.buildType === 'exchange') {
+    const ex = countBuiltExchanges(player);
+    if (ex >= 3) return 8;
+    return 26 + ex * 6;
+  }
+  if (tile.buildType === 'wishWell') {
+    // 造价 4 资源，建成后每轮才 +1 自选；远弱于当场 2 固定 + 2 随机
+    const canAfford = canPay(player.resources, tile.cost || {});
+    let v = canAfford ? 14 : 9;
+    const built = (player.buildings || []).filter((b) => b.built);
+    const workshops =
+      built.filter((b) => b.buildType === 'produce' || b.buildType === 'wishWell').length;
+    if (workshops + 1 >= 3) v += 6;
+    return v;
+  }
+  if (tile.buildType === 'produce' && tile.resource) {
+    const needs = estimateResourceNeeds(player);
+    let v = 18;
+    if (needs && needs[tile.resource]) v += 6;
+    if (tile.rich) v += 4;
+    return v;
+  }
+  return 12;
+}
+
+function estimateSpecialClaimValue(game, player, face, myRank, diff) {
+  if (myRank !== 0) return -40; // 功能区只有第一名拿牌
+  const board = game.board && game.board.special;
+  const tiles = tilesOnNumber(board, face);
+  if (!tiles.length) return 0;
+  let sum = 0;
+  for (const t of tiles) sum += estimateSpecialTilePlaceValue(game, player, t, diff);
+  // 略奖空位，幅度远小于牌面本身，避免无脑偏功能区
+  const bldCap = maxBuildingsFor(player);
+  const heldBld = (player.buildings || []).length;
+  if (heldBld < bldCap && tiles.some((t) => t.buildType || t.kind === 'building')) {
+    sum += diff === 'hard' ? 4 : 2;
+  }
+  if (
+    (player.funcCards || []).length < maxFuncHandFor(player) &&
+    tiles.some((t) => t.funcType || t.kind === 'function')
+  ) {
+    sum += diff === 'hard' ? 3 : 2;
+  }
+  return sum;
+}
+
+/**
+ * 放满 count 枚时的名次/收益，最少需要几枚就能达到同一结果。
+ * 多出来的骰等价于「本可爆骰换资源 / 留给下回合重掷」。
+ */
+function minDiceForSameOutcome(game, player, area, face, count, boostAdd) {
+  const full = estimateProduceGain(game, player, area, face, count, boostAdd);
+  let best = count;
+  for (let k = 1; k <= count; k++) {
+    const b = Math.min(Number(boostAdd) || 0, k);
+    const est = estimateProduceGain(game, player, area, face, k, b);
+    if (est.myRank === full.myRank && est.self === full.self) {
+      best = k;
+      break;
+    }
+  }
+  return best;
+}
+
+/** 爆 1 骰换 1 任意资源的基准分（与 1 资源 ≈ 8 同量级） */
+function scoreVoidSkipOption(game, player, diff) {
+  const dice = (game.dice && game.dice[player.id]) || [];
+  if (!dice.length || idleVillagers(player) <= 0) return -Infinity;
+
+  const factor = selfGainFactor(game);
+  let score = Math.round(8 * factor);
+
+  const needs = estimateResourceNeeds(player);
+  const target = pickMostNeededResource(player, needs);
+  const have = player.resources || {};
+  if (target) {
+    const gap = (needs[target] || 0) - (have[target] || 0);
+    if (gap > 0) score += Math.min(3, gap);
+  }
+
+  // 开局空手：立刻拿到任意资源更值钱（幅度需低于「稳拿大份」以免误爆）
+  const hand = sumRes(have);
+  if (hand === 0) score += diff === 'hard' ? 4 : 3;
+  else if (hand <= 2 && (Number(game.round) || 1) <= 3) score += 2;
+
+  return score;
+}
+
+/**
+ * 独占雇佣军（唯一第一）：投 2 枚雇佣骰，落点立刻拿对应格大份。
+ * 价值应明显高于「本格静态大份」，否则会被旁格厚资源牌压过。
+ */
+function estimateMercenariesClaimValue(game, player, env, diff) {
+  const diceN = Math.max(1, Number(env && env.mercenaryDice) || 2);
+  const board = game.board && game.board.resource;
+  const larges = [];
+  for (let n = 1; n <= 6; n++) {
+    const tiles = tilesOnNumber(board, n);
+    if (!tiles.length) continue;
+    let large = 0;
+    for (const t of tiles) large += t.large || 0;
+    if (large > 0) larges.push(large);
+  }
+  larges.sort((a, b) => b - a);
+  const avg =
+    larges.length > 0
+      ? larges.reduce((s, x) => s + x, 0) / larges.length
+      : 2;
+
+  let expected = 0;
+  for (let i = 0; i < diceN; i++) {
+    const top = larges[i] != null ? larges[i] : avg;
+    // 看见点数后再选落点，偏向第 i 好堆，仍保留掷骰不确定
+    expected += top * 0.7 + avg * 0.3;
+  }
+
+  let score = expected * 8 * selfGainFactor(game);
+  // 雇佣骰还会留在场上参与结算，并可触发派遣事件
+  score += diceN * (diff === 'hard' ? 10 : 8);
+  score += 6;
+  if (sumRes(player.resources || {}) <= 2) score += 6;
+  return score;
+}
+
+/**
+ * 给某次放骰打分
  */
 function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botState) {
-  // ????????????
   const est = estimateProduceGain(game, player, area, face, count, boostAdd);
-  let score = est.self * 8 * selfGainFactor(game); // ??????
+  let score = est.self * 8 * selfGainFactor(game);
+  const env = area === 'resource' ? envOnResourceSlot(game, face) : null;
 
-  // ????????????????????????????
-  if (wouldCancelWithNeutral(game, area, face, count)) {
-    score -= 200;
+  if (wouldCancelWithNeutral(game, area, face, count, player.id)) {
+    // 囚徒困境自带中立：1 枚会对冲拿不到本格资源，但仍有搅局/避弃价值，勿一票否决
+    if (env && env.envType === 'prisonersDilemma') score -= 35;
+    else score -= 200;
   }
 
-  // ??????????????2?? ?????? 1??=10??
+  // 超额占用：同结果少放几枚即可时，按「可爆骰换资源」计价扣分
   const SKIP_BASELINE = Math.round(8 * selfGainFactor(game));
-  if (area === 'special' && count > 1) {
-    score -= (count - 1) * SKIP_BASELINE * 10; // special????????
+  const needed = minDiceForSameOutcome(game, player, area, face, count, boostAdd);
+  const surplus = Math.max(0, count - needed);
+  if (surplus > 0) {
+    let penaltyMult = area === 'special' ? 10 : 1;
+    // 雇佣军要求唯一第一；对手还有骰时薄领先很脆，超额扣分减轻
+    if (
+      env &&
+      env.envType === 'mercenaries' &&
+      maxRemainingAmongRivals(game, player) >= 1
+    ) {
+      penaltyMult = 0.25;
+    }
+    score -= surplus * SKIP_BASELINE * penaltyMult;
   }
 
-  // ?????????????????
+  if (area === 'special') {
+    score += estimateSpecialClaimValue(game, player, face, est.myRank, diff);
+  }
+
+  // 事件收益：normal/hard 都计入（否则吃不了兜着走等会被低估）
+  if (area === 'resource' && (diff === 'hard' || diff === 'normal')) {
+    const evtScale = diff === 'hard' ? 1 : 0.75;
+    score += estimateEventDispatchGain(game, player, face, count, est.myRank) * evtScale;
+    score += estimateEventSettleGain(game, player, face, est.myRank) * evtScale;
+    // 雇佣军是 preSettle，不走上面 settle/dispatch 估值
+    if (env && env.envType === 'mercenaries' && est.myRank === 0) {
+      score += estimateMercenariesClaimValue(game, player, env, diff) * evtScale;
+    }
+  }
+
   if (diff === 'hard') {
     score += est.rivalsLoss * 5;
-    // ???????????????? special ????????
     const hand = sumRes(player.resources);
     const cap = maxResourceHandFor(player);
-    if (hand + est.self >= cap && area === 'resource') {
-      score -= 50; // ???????????????
+    const keepOverflowFirst =
+      env && env.envType === 'keepOverflow' && est.myRank === 0;
+    // 濒临上限通常减分；但「吃不了兜着走」正是为此设计，不可误罚
+    if (hand + est.self >= cap && area === 'resource' && !keepOverflowFirst) {
+      score -= 50;
     }
-    if (area === 'special') {
-      // ????/?????????special ????
-      const bldCap = maxBuildingsFor(player);
-      const built = (player.buildings || []).filter((b) => b.built).length;
-      const unbuilt = (player.buildings || []).filter((b) => !b.built).length;
-      // ????3??????????????????
-      const isEarly = game.round <= 3;
-      if (built + unbuilt < bldCap) {
-        score += isEarly ? 8 : 25;
-      }
-      if ((player.funcCards || []).length < maxFuncHandFor(player)) {
-        // ??????????????????
-        const needsFunc = _needsExchangeBreed(player) || player.villagers < 12;
-        score += needsFunc ? 15 : 8;
-      }
-      // ?????????????????????????????????
-      const myScore = playerScore(player, game);
-      const leaders = alivePlayers(game).map((p) => playerScore(p, game));
-      const maxScore = Math.max(...leaders);
-      if (myScore >= maxScore - 3) score += 20; // ?????special?????
-    }
-    // ??????????????????????????????
     if (player.skipSettleResourceDiscard) score += 15;
 
-    // ??????????
     if (area === 'resource') {
-      score += estimateEventDispatchGain(game, player, face, count, est.myRank);
-      score += estimateEventSettleGain(game, player, face, est.myRank);
-
-      // ???????????????selfRank === 2??
-      const env = envOnResourceSlot(game, face);
       if (env && env.envType === 'fishermanProfit' && env.trigger === 'settle') {
-        // ??????????????? + count ????????
         const board = game.board && game.board.resource;
         const wk = board && board.workers && board.workers[face];
         if (wk) {
-          const myPower = (wk[player.id] || 0) + (boostAdd || 0);
+          const myPower = (wk[player.id] || 0) + count + (boostAdd || 0);
           const ord = Object.entries(wk)
             .filter(([pid]) => pid !== '__neutral__' && pid !== player.id)
             .map(([, c]) => c)
             .sort((a, b) => b - a);
-          // ?????????? <= ????>= ??????????
           const second = ord[0] || 0;
           const third = ord[1] || 0;
           if (myPower <= second && myPower >= third) {
             const tiles = tilesOnNumber(board, face);
-            let large = 0, small = 0;
-            for (const t of tiles) { large += t.large || 0; small += t.small || 0; }
-            const potential = Math.min(large, 6) * 8 * selfGainFactor(game); // ????????????????
+            let large = 0;
+            for (const t of tiles) large += t.large || 0;
+            const potential = Math.min(large, 6) * 8 * selfGainFactor(game);
             if (potential > 0) score += potential + 15;
           }
         }
       }
     }
 
-    // ???????????????????????????
     if (area === 'resource' && est.myRank === 0) {
       const risk = rivalCanStillInterfereOnFace(game, player, face);
       const maxRival = maxRemainingAmongRivals(game, player);
       const myRem = remainingDiceCount(player);
-      // ??????????idleVillagers ??0??????????????
       if (myRem <= 0 && maxRival >= 2) {
-        // ??????????????
         score -= 15;
       } else if (myRem <= 0 && maxRival === 1) {
-        // ???? 1 ??????????
         score += 5;
       } else if (myRem <= 0 && maxRival === 0) {
-        // ??????????????????
         score += 25;
       } else if (risk < 0.3) {
-        // ?????????????
         score += 12;
       } else if (risk < 0.5) {
         score += 5;
       }
     }
 
-    // ??????????????????????????
     if (area === 'resource' && count > 0) {
       const wk = slotWorkers(game.board && game.board.resource, face) || {};
       const myPrev = wk[player.id] || 0;
-      // ??????????????????
       if (myPrev >= 1 && myPrev <= 2) {
         const maxRivalRem = maxRemainingAmongRivals(game, player);
-        // ??????????????????????????
         if (maxRivalRem >= 3) {
-          score -= count * 12; // ????????12??
+          score -= count * 12;
         } else if (maxRivalRem >= 1) {
           score -= count * 5;
         }
-        // ??????????????
         const tileCount = tilesOnNumber(game.board && game.board.resource, face).length;
-        if (tileCount >= 2) score += 8;   // 2+????????
-        if (tileCount >= 3) score += 10;  // 3+????????
-        // ????????????
-        const env = envOnResourceSlot(game, face);
+        if (tileCount >= 2) score += 8;
+        if (tileCount >= 3) score += 10;
         if (env && ['teleport', 'mercenaries', 'enterFray', 'firstCome'].includes(env.envType)) {
           score += 10;
         }
@@ -807,8 +988,12 @@ function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botSt
   if (diff === 'normal') {
     const hand = sumRes(player.resources);
     const cap = maxResourceHandFor(player);
-    if (hand + est.self > cap && area === 'resource') score -= 20;
-    if (area === 'special') score += 8;
+    const env = area === 'resource' ? envOnResourceSlot(game, face) : null;
+    const keepOverflowFirst =
+      env && env.envType === 'keepOverflow' && est.myRank === 0;
+    if (hand + est.self > cap && area === 'resource' && !keepOverflowFirst) {
+      score -= 20;
+    }
   }
 
   return score;
@@ -847,7 +1032,7 @@ function decidePlaceDice(game, player, diff, botState) {
       if (!tiles.length) continue;
       // ????????????????????
       if (diff === 'easy') {
-        if (wouldCancelWithNeutral(game, area, face, count)) continue;
+        if (wouldCancelWithNeutral(game, area, face, count, player.id)) continue;
         // random accept first valid
         if (Math.random() < 0.5 || !best) {
           best = { type: 'placeDice', payload: { face, area } };
@@ -860,6 +1045,15 @@ function decidePlaceDice(game, player, diff, botState) {
         bestScore = sc;
         best = { type: 'placeDice', payload: { face, area } };
       }
+    }
+  }
+
+  // normal/hard：把「爆骰换任意资源」纳入比较，避免无脑全放同点
+  if (diff !== 'easy') {
+    const voidSc = scoreVoidSkipOption(game, player, diff);
+    if (!best || voidSc > bestScore) {
+      const voidAct = decideVoidSkip(game, player, diff, botState);
+      if (voidAct) return voidAct;
     }
   }
 
@@ -1746,14 +1940,14 @@ function decideBuildAction(game, player, diff, botState) {
 
 /* ?????????? ????????????????? */
 
-function decidePendingAction(game, player, _diff, _botState) {
+function decidePendingAction(game, player, diff, botState) {
   // pendingRedrawChoice?????????1 ????
   if (game.pendingRedrawChoice && game.pendingRedrawChoice.playerId === player.id) {
     const options = game.pendingRedrawChoice.options || [];
     if (!options.length) return { type: 'redrawPick', payload: { cardId: null } };
     // ????????????????????
     // ??????????????????
-    if (_diff === 'easy') {
+    if (diff === 'easy') {
       const pick = pickRandom(options);
       return { type: 'redrawPick', payload: { keepId: pick ? pick.id : null } };
     }
@@ -1763,9 +1957,9 @@ function decidePendingAction(game, player, _diff, _botState) {
     for (const c of options) {
       let sc = 0;
       if (c.kind === 'building') {
-        sc = _scoreCardOptionBuilding(player, c, _diff, game);
+        sc = _scoreCardOptionBuilding(player, c, diff, game);
       } else if (c.kind === 'function') {
-        sc = _scoreCardOptionFunction(player, c, _diff);
+        sc = _scoreCardOptionFunction(player, c, diff);
       }
       if (sc > bestScore) {
         bestScore = sc;
@@ -1825,7 +2019,7 @@ function decidePendingAction(game, player, _diff, _botState) {
       // ?????????????????
       // normal/hard ????????
       const trade = game.pendingTrade;
-      if (_diff === 'hard') {
+      if (diff === 'hard') {
         const give = trade.take || {}; // ??????take????????
         const get = trade.give || {};
         const need = estimateResourceNeeds(player);
@@ -2131,56 +2325,282 @@ function _decideRecallDie(game, player, ev, diff) {
 }
 
 /**
- * ?????????
+ * 传送落点评分：moverId 的 1 枚骰落到 toArea/toNumber。
+ * 自己的骰优先抢功能区高价值牌（尤其强化）；
+ * 对手骰绝不能帮对方抢第一/独占；中立骰优先用来拆对手。
  */
-function _decideTeleport(game, player, ev, diff) {
-  const step = ev.teleportStep;
+function _scoreTeleportDestination(game, player, toArea, toNumber, moverId, diff) {
+  const board = game.board && game.board[toArea];
+  if (!board) return -Infinity;
+  const tiles = tilesOnNumber(board, toNumber);
+  if (!tiles.length) return -Infinity;
 
-  if (step === 'from') {
-    // ??????????????
-    // ???????????????????????
-    for (const area of BOARD_AREAS) {
-      for (let num = 1; num <= 6; num++) {
-        const board = game.board && game.board[area];
-        const wk = board && board.workers && board.workers[num];
-        if (!wk) continue;
-        const myCount = wk[player.id] || 0;
-        const neutral = wk.__neutral__ || 0;
-        let rivalCount = 0;
-        for (const [pid, c] of Object.entries(wk)) {
-          if (pid !== player.id && pid !== '__neutral__') rivalCount += c;
+  const openMax =
+    toArea === 'special'
+      ? Math.min(6, 2 + Math.floor((Math.max(1, Number(game.round) || 1) - 1) / 2))
+      : 6;
+  if (toNumber > openMax) return -Infinity;
+
+  const beforeWk = {
+    ...(board.workers && board.workers[toNumber] ? board.workers[toNumber] : {}),
+  };
+  const boosts = { ...((board.boosts && board.boosts[toNumber]) || {}) };
+  const beforeStrength = _slotStrengthLocal(beforeWk, boosts);
+  const beforeRemain = _cancelEqualCountsLocal(beforeStrength);
+  const beforeRanked = Object.entries(beforeRemain).sort((a, b) => b[1] - a[1]);
+  const beforeAiFirst = beforeRanked[0] && beforeRanked[0][0] === player.id;
+
+  const wk = { ...beforeWk };
+  wk[moverId] = (Number(wk[moverId]) || 0) + 1;
+  const strength = _slotStrengthLocal(wk, boosts);
+  const remain = _cancelEqualCountsLocal(strength);
+  const ranked = Object.entries(remain).sort((a, b) => b[1] - a[1]);
+  let moverRank = 2;
+  for (let i = 0; i < ranked.length; i++) {
+    if (ranked[i][0] === moverId) {
+      moverRank = i;
+      break;
+    }
+  }
+  if (!remain[moverId]) moverRank = 2;
+  const afterAiFirst = ranked[0] && ranked[0][0] === player.id;
+  const aiCancelled = beforeAiFirst && !remain[player.id];
+
+  const isSelf = moverId === player.id;
+  const isNeutral = moverId === '__neutral__';
+  const hasEnhance = tiles.some((t) => t.funcType === 'enhance');
+  const hasRecruit = tiles.some((t) => t.funcType === 'recruit');
+  const hasShelter = tiles.some((t) => t.funcType === 'shelter');
+
+  let large = 0;
+  let small = 0;
+  for (const t of tiles) {
+    large += t.large || 0;
+    small += t.small || 0;
+  }
+
+  if (!isSelf) {
+    // 拆掉自己原本的第一名 → 大负分
+    if (aiCancelled || (beforeAiFirst && !afterAiFirst)) {
+      return -110 - large * 8;
+    }
+
+    if (!isNeutral) {
+      // —— 移动对手的骰：绝不能帮对方独占/拿第一 ——
+      if (moverRank === 0) {
+        if (toArea === 'special') {
+          return -160 - (hasEnhance ? 90 : 30);
         }
-        // ????????????????????
-        if (rivalCount >= 1 && myCount === 0) {
-          return { type: 'eventTeleportFrom', payload: { area, number: num } };
-        }
-        if (neutral >= 1 && myCount === 0) {
-          return { type: 'eventTeleportFrom', payload: { area, number: num } };
+        return -100 - large * 14;
+      }
+      if (moverRank === 1) {
+        return -20 - small * 5;
+      }
+      // 对冲掉 / 无名次：可接受的「寄放」
+      return 6;
+    }
+
+    // —— 移动中立：用来拆对手第一 ——
+    const beforeRivalFirst =
+      beforeRanked[0] &&
+      beforeRanked[0][0] !== player.id &&
+      beforeRanked[0][0] !== '__neutral__';
+    const rivalId = beforeRivalFirst ? beforeRanked[0][0] : null;
+    if (rivalId && beforeRivalFirst && !remain[rivalId]) {
+      return 28 + large * 5;
+    }
+    if (moverRank === 0 && toArea === 'special') return -30;
+    return 4;
+  }
+
+  // —— 传送自己的骰 ——
+  if (toArea === 'special') {
+    if (moverRank !== 0) {
+      return hasEnhance ? 8 : 2;
+    }
+    let score = estimateSpecialClaimValue(game, player, toNumber, 0, diff);
+    if (hasEnhance) score += 55;
+    if (hasRecruit) score += 18;
+    if (hasShelter) score += 14;
+    return score;
+  }
+
+  let score = 0;
+  if (moverRank === 0) score += large * 8 * selfGainFactor(game);
+  else if (moverRank === 1) score += small * 8 * selfGainFactor(game);
+
+  const env = envOnResourceSlot(game, toNumber);
+  if (env && env.envType === 'mercenaries' && moverRank === 0) {
+    score += estimateMercenariesClaimValue(game, player, env, diff) * 0.85;
+  }
+  if (diff !== 'easy') {
+    const settleRank = moverRank === 0 ? 0 : moverRank === 1 ? 1 : 2;
+    if (envTriggersDispatch(env) && envHasDispatchEffect(env && env.envType)) {
+      score += estimateEventDispatchGain(game, player, toNumber, 1, settleRank) * 0.6;
+    }
+    score += estimateEventSettleGain(game, player, toNumber, settleRank) * 0.75;
+  }
+  return score;
+}
+
+/** 从某格挪走 targetId 一枚后，对「我」的局势收益（拆对手 / 自己变第一） */
+function _scoreTeleportFromRemoval(game, player, fromArea, fromNumber, targetId, diff) {
+  void diff;
+  if (targetId === player.id) return 0;
+  const board = game.board && game.board[fromArea];
+  if (!board) return 0;
+  const tiles = tilesOnNumber(board, fromNumber);
+  const beforeWk = {
+    ...(board.workers && board.workers[fromNumber] ? board.workers[fromNumber] : {}),
+  };
+  if ((Number(beforeWk[targetId]) || 0) <= 0) return 0;
+  const boosts = { ...((board.boosts && board.boosts[fromNumber]) || {}) };
+
+  const beforeStrength = _slotStrengthLocal(beforeWk, boosts);
+  const beforeRemain = _cancelEqualCountsLocal(beforeStrength);
+  const beforeRanked = Object.entries(beforeRemain).sort((a, b) => b[1] - a[1]);
+
+  const afterWk = { ...beforeWk };
+  afterWk[targetId] = (Number(afterWk[targetId]) || 0) - 1;
+  if (afterWk[targetId] <= 0) delete afterWk[targetId];
+  const afterBoosts = { ...boosts };
+  if (afterBoosts[targetId]) {
+    afterBoosts[targetId] = Math.max(0, (Number(afterBoosts[targetId]) || 0) - 1);
+    if (!afterBoosts[targetId]) delete afterBoosts[targetId];
+  }
+  const afterRemain = _cancelEqualCountsLocal(_slotStrengthLocal(afterWk, afterBoosts));
+  const afterRanked = Object.entries(afterRemain).sort((a, b) => b[1] - a[1]);
+
+  let large = 0;
+  for (const t of tiles) large += t.large || 0;
+  let score = 0;
+
+  const beforeFirst = beforeRanked[0] ? beforeRanked[0][0] : null;
+  const afterFirst = afterRanked[0] ? afterRanked[0][0] : null;
+
+  // 拆掉对手第一 → 自己变第一
+  if (beforeFirst === targetId && afterFirst === player.id) {
+    if (fromArea === 'special') score += 70;
+    else score += 35 + large * 8 * selfGainFactor(game);
+  } else if (beforeFirst === targetId && afterFirst !== targetId) {
+    // 仅拆掉对手独占
+    score += fromArea === 'special' ? 40 : 18 + large * 4;
+  } else if (afterFirst === player.id && beforeFirst !== player.id) {
+    score += fromArea === 'special' ? 50 : 22 + large * 6;
+  }
+
+  return score;
+}
+
+function _listTeleportFromCandidates(game) {
+  const out = [];
+  for (const area of BOARD_AREAS) {
+    const board = game.board && game.board[area];
+    if (!board) continue;
+    const workers = board.workers || {};
+    for (let num = 1; num <= 6; num++) {
+      const wk = workers[num] || {};
+      for (const [targetId, c] of Object.entries(wk)) {
+        if ((Number(c) || 0) > 0) {
+          out.push({ area, number: num, targetId });
         }
       }
     }
-    return null;
+  }
+  return out;
+}
+
+function _bestTeleportDestination(game, player, fromArea, fromNumber, moverId, diff) {
+  let best = null;
+  let bestScore = -Infinity;
+  for (const area of BOARD_AREAS) {
+    for (let num = 1; num <= 6; num++) {
+      if (area === fromArea && num === fromNumber) continue;
+      const sc = _scoreTeleportDestination(game, player, area, num, moverId, diff);
+      if (sc > bestScore) {
+        bestScore = sc;
+        best = { area, number: num, score: sc };
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * 传送：先选来源（须带 targetId），再选落点。
+ * 优先：自己的骰去抢强化；拆对手争抢；绝不把对手骰送到能独占的肥格。
+ */
+function _decideTeleport(game, player, ev, diff) {
+  const step = ev.teleportStep || 'from';
+
+  if (step === 'from') {
+    const cands = _listTeleportFromCandidates(game);
+    if (!cands.length) return null;
+
+    let best = null;
+    let bestScore = -Infinity;
+    for (const from of cands) {
+      const dest = _bestTeleportDestination(
+        game,
+        player,
+        from.area,
+        from.number,
+        from.targetId,
+        diff
+      );
+      let sc = dest ? dest.score : -100;
+      sc += _scoreTeleportFromRemoval(
+        game,
+        player,
+        from.area,
+        from.number,
+        from.targetId,
+        diff
+      );
+      // 明显偏好挪自己的骰去抢牌；挪对手必须落点不帮对方
+      if (from.targetId === player.id) sc += 12;
+      else if (from.targetId === '__neutral__') sc += 2;
+      // 对手骰：若最佳落点仍是大负分，整条候选作废
+      if (from.targetId !== player.id && from.targetId !== '__neutral__') {
+        if (!dest || dest.score < 0) sc -= 50;
+      }
+      if (sc > bestScore) {
+        bestScore = sc;
+        best = from;
+      }
+    }
+    if (!best) best = cands[0];
+    return {
+      type: 'eventTeleportFrom',
+      payload: {
+        area: best.area,
+        number: best.number,
+        targetId: best.targetId,
+      },
+    };
   }
 
   if (step === 'to') {
-    // ??????????
-    // ?????????????????????
-    // ????????????????
-    const envs =
-      (game.board && game.board.resource && game.board.resource.environments) || {};
-    for (const num of [1, 2, 3, 4, 5, 6]) {
-      const env = envs[num];
-      if (env && env.envType === 'mercenaries') {
-        return { type: 'eventTeleportTo', payload: { area: 'resource', number: num } };
-      }
+    const fromArea = ev.fromArea;
+    const fromNumber = Number(ev.fromNumber);
+    const moverId = ev.fromTargetId;
+    if (!moverId || !BOARD_AREAS.includes(fromArea)) {
+      return null;
     }
-    // ????????????
-    for (const num of [1, 2, 3, 4, 5, 6]) {
-      const tiles = tilesOnNumber(game.board && game.board.resource, num);
-      if (tiles.length) {
-        return { type: 'eventTeleportTo', payload: { area: 'resource', number: num } };
-      }
-    }
+    const dest = _bestTeleportDestination(
+      game,
+      player,
+      fromArea,
+      fromNumber,
+      moverId,
+      diff
+    );
+    if (!dest) return null;
+    // 对手骰若所有落点都在帮对方，宁可寄放到最不糟的格（仍选 max，但已大幅为负时至少避开肥独占）
+    return {
+      type: 'eventTeleportTo',
+      payload: { area: dest.area, number: dest.number },
+    };
   }
 
   return null;
@@ -2370,7 +2790,7 @@ function _decideRemoteHard(game, player, funcCard) {
     for (const area of BOARD_AREAS) {
       const board = game.board && game.board[area];
       if (!board) continue;
-      if (tilesOnNumber(board, face).length && !wouldCancelWithNeutral(game, area, face, dice.filter((d) => d === face).length)) {
+      if (tilesOnNumber(board, face).length && !wouldCancelWithNeutral(game, area, face, dice.filter((d) => d === face).length, player.id)) {
         hasGood = true;
         break;
       }
@@ -2417,6 +2837,12 @@ function decideBotAction(game, playerId, difficulty, botState = {}) {
   const pending = decidePendingAction(game, player, diff, botState);
   if (pending) return pending;
 
+  // 雇佣军：投掷 / 逐枚放置（勿回退到 forceTimeout 的 SkipAll）
+  if (game.phase === 'event_mercenary') {
+    const merc = decideMercenaryPhase(game, player, diff, botState);
+    if (merc) return merc;
+  }
+
   // ????
   if (game.phase === 'produce' && game.currentPlayerId === playerId) {
     return decideProducePhase(game, player, diff, botState);
@@ -2435,4 +2861,205 @@ function decideBotAction(game, playerId, difficulty, botState = {}) {
   return null;
 }
 
-module.exports = { decideBotAction };
+/* ─── 雇佣军阶段 ─────────────────────────────────────── */
+
+function _slotStrengthLocal(workers, boosts) {
+  const out = {};
+  for (const [pid, c] of Object.entries(workers || {})) {
+    const n = Number(c) || 0;
+    if (n <= 0) continue;
+    const b = Math.min(Math.max(0, Number(boosts && boosts[pid]) || 0), n);
+    out[pid] = n * 2 + b;
+  }
+  return out;
+}
+
+function _cancelEqualCountsLocal(strengthMap) {
+  const entries = Object.entries(strengthMap || {}).filter(([, c]) => c > 0);
+  const byCount = new Map();
+  for (const [pid, c] of entries) {
+    if (!byCount.has(c)) byCount.set(c, []);
+    byCount.get(c).push(pid);
+  }
+  const remain = {};
+  for (const [c, pids] of byCount) {
+    if (pids.length === 1) remain[pids[0]] = c;
+  }
+  return remain;
+}
+
+/** 抵消后名次：1=第一，2=第二，0=无名次；share=资源大/小份数量 */
+function _mercSettleSnapshot(game, player, area, face, workers, boosts, diff) {
+  const playerId = player.id;
+  const strength = _slotStrengthLocal(workers, boosts);
+  const remain = _cancelEqualCountsLocal(strength);
+  const ranked = Object.entries(remain).sort((a, b) => b[1] - a[1]);
+  let rank = 0;
+  for (let i = 0; i < ranked.length; i++) {
+    if (ranked[i][0] === playerId) {
+      rank = i + 1;
+      break;
+    }
+  }
+  const board = game.board && game.board[area];
+  const tiles = tilesOnNumber(board, face);
+  let share = 0;
+  let specialVal = 0;
+  if (area === 'resource') {
+    let large = 0;
+    let small = 0;
+    for (const t of tiles) {
+      large += t.large || 0;
+      small += t.small || 0;
+    }
+    if (rank === 1) share = large;
+    else if (rank === 2) share = small;
+  } else if (area === 'special' && rank === 1) {
+    specialVal = estimateSpecialClaimValue(game, player, face, 0, diff);
+  }
+  return { rank, share, specialVal, inRemain: Boolean(remain[playerId]) };
+}
+
+/**
+ * 评估雇佣骰落到某区某点：立即大份 + 结算名次变化。
+ * 若会把已有第1/2名对冲掉 → 视为不可取（-Infinity）。
+ */
+function scoreMercenaryPlacement(game, player, area, face, diff) {
+  const board = game.board && game.board[area];
+  if (!board) return -Infinity;
+  const tiles = tilesOnNumber(board, face);
+  if (!tiles.length) return -Infinity;
+
+  const workers = { ...(board.workers && board.workers[face] ? board.workers[face] : {}) };
+  const boosts = {
+    ...((board.boosts && board.boosts[face]) || {}),
+  };
+  const before = _mercSettleSnapshot(game, player, area, face, workers, boosts, diff);
+
+  const afterWorkers = { ...workers };
+  afterWorkers[player.id] = (afterWorkers[player.id] || 0) + 1;
+  const after = _mercSettleSnapshot(
+    game,
+    player,
+    area,
+    face,
+    afterWorkers,
+    boosts,
+    diff
+  );
+
+  // 已有名次被对冲清零：宁可不放这枚（跳过收益为 0）
+  if (before.rank >= 1 && before.rank <= 2 && !after.inRemain) {
+    return -Infinity;
+  }
+
+  const factor = selfGainFactor(game);
+  let immediate = 0;
+  if (area === 'resource') {
+    let large = 0;
+    for (const t of tiles) large += t.large || 0;
+    immediate = large * 8 * factor;
+  }
+
+  // 结算大份与雇佣立即大份可叠；空格双拿很强，但不应压过「同等资源+囚徒避弃」
+  let settleShareScore = (after.share - before.share) * 8 * factor;
+  if (area === 'resource' && immediate > 0 && after.share > 0) {
+    settleShareScore *= 0.55;
+  }
+
+  let score =
+    immediate + settleShareScore + (after.specialVal - before.specialVal);
+
+  if (area === 'resource' && diff !== 'easy') {
+    const env = envOnResourceSlot(game, face);
+    const evtScale = diff === 'hard' ? 1 : 0.75;
+    const settleRank = after.rank === 1 ? 0 : after.rank === 2 ? 1 : 2;
+    if (envTriggersDispatch(env) && envHasDispatchEffect(env && env.envType)) {
+      score +=
+        estimateEventDispatchGain(game, player, face, 1, settleRank) * evtScale;
+    }
+    score += estimateEventSettleGain(game, player, face, settleRank) * evtScale;
+  }
+
+  return score;
+}
+
+function decideMercenaryPhase(game, player, diff, botState) {
+  void botState;
+  if (game.phase !== 'event_mercenary') return null;
+  const cur = (game.pendingMercenaryQueue || [])[0];
+  if (!cur || cur.playerId !== player.id) return null;
+
+  if (!(game.mercenaryRoll && game.mercenaryRoll.length)) {
+    return { type: 'mercenaryRoll' };
+  }
+
+  const roll = game.mercenaryRoll;
+  const placed = new Set(game.mercenaryPlaced || []);
+
+  // 在未处理的骰里选收益最高的一枚（不要死板按 index 0→1）
+  let bestIdx = -1;
+  let bestArea = null;
+  let bestScore = 0; // 跳过 = 0
+
+  for (let i = 0; i < roll.length; i++) {
+    if (placed.has(i)) continue;
+    const face = Number(roll[i]);
+    for (const area of BOARD_AREAS) {
+      const sc = scoreMercenaryPlacement(game, player, area, face, diff);
+      if (sc > bestScore) {
+        bestScore = sc;
+        bestIdx = i;
+        bestArea = area;
+      }
+    }
+  }
+
+  if (diff === 'easy') {
+    const legalIdx = [];
+    for (let i = 0; i < roll.length; i++) {
+      if (placed.has(i)) continue;
+      const face = Number(roll[i]);
+      for (const area of BOARD_AREAS) {
+        const board = game.board && game.board[area];
+        if (board && tilesOnNumber(board, face).length) {
+          legalIdx.push({ i, area });
+        }
+      }
+    }
+    if (legalIdx.length) {
+      const pick = pickRandom(legalIdx) || legalIdx[0];
+      return {
+        type: 'mercenaryPlace',
+        payload: { index: pick.i, area: pick.area, skip: false },
+      };
+    }
+    const any = [...Array(roll.length).keys()].find((i) => !placed.has(i));
+    return {
+      type: 'mercenaryPlace',
+      payload: { index: any != null ? any : 0, skip: true },
+    };
+  }
+
+  if (bestIdx >= 0 && bestArea) {
+    return {
+      type: 'mercenaryPlace',
+      payload: { index: bestIdx, area: bestArea, skip: false },
+    };
+  }
+
+  const fallback = [...Array(roll.length).keys()].find((i) => !placed.has(i));
+  if (fallback == null) return null;
+  return { type: 'mercenaryPlace', payload: { index: fallback, skip: true } };
+}
+
+module.exports = {
+  decideBotAction,
+  // 供冒烟/单测验证放骰偏好
+  decidePlaceDice,
+  scoreProduceMove,
+  scoreVoidSkipOption,
+  minDiceForSameOutcome,
+  decideMercenaryPhase,
+  scoreMercenaryPlacement,
+};
