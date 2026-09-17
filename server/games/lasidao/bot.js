@@ -117,6 +117,50 @@ function maxRemainingAmongRivals(game, player) {
   return max;
 }
 
+/** 对手剩余可派遣骰总数（全员合计） */
+function totalRemainingAmongRivals(game, player) {
+  let sum = 0;
+  for (const p of alivePlayers(game)) {
+    if (p.id === player.id || p.left) continue;
+    sum += remainingDiceCount(p);
+  }
+  return sum;
+}
+
+/**
+ * 对手剩余骰越少，往已占格加码越亏。
+ * rem=0 满扣；rem≥5 基本不扣。
+ */
+function rivalScarceStackPenalty(game, player, stackCount) {
+  const rem = totalRemainingAmongRivals(game, player);
+  const n = Math.max(1, Number(stackCount) || 1);
+  const scarcity = Math.max(0, 5 - rem);
+  if (scarcity <= 0) return 0;
+  return Math.round(scarcity * 8 * selfGainFactor(game) * n);
+}
+
+/**
+ * 先到先得 / 抵抗南蛮：尚未达到触发门槛时，可无视「对手骰少→堆骰扣分」。
+ */
+function canIgnoreRivalScarceStackPenalty(game, player, face, count, env) {
+  if (!env || !player) return false;
+  const wk = slotWorkers(game.board && game.board.resource, face) || {};
+  const myPrev = Number(wk[player.id]) || 0;
+  const after = myPrev + Math.max(0, Number(count) || 0);
+  if (env.envType === 'firstCome' && !env.stashClaimed) {
+    const required =
+      env.firstComeRequired != null
+        ? Number(env.firstComeRequired)
+        : firstComeRequiredWorkers(game.round);
+    return myPrev < required && after > myPrev;
+  }
+  if (env.envType === 'resistBarbarians') {
+    const need = _resistBarbariansNeedDice(game.round);
+    return myPrev < need && after > myPrev;
+  }
+  return false;
+}
+
 function playerScore(p, game) {
   let s = Number(p.houseScore) || 0;
   for (const b of p.buildings || []) {
@@ -682,16 +726,14 @@ function estimateEventSettleGain(game, player, number, selfRank, count = null) {
   switch (env.envType) {
     case 'prisonersDilemma': {
       // 最后一名弃 n 张；第一名施压且自己不用弃；低保户类 setup 事件无此效果
+      // 自己被对冲出局：无资源也无避弃价值
+      if (selfRank > 1) return 0;
       const others = Math.max(0, alivePlayers(game).length - 1);
       if (selfRank === 0) {
         return 28 + others * 14;
       }
-      if (selfRank === 1) {
-        // 拿到第二也不是最后，显著降低自己被弃牌风险
-        return 24;
-      }
-      // 与中立对冲搅局 / 占坑：破坏「对手唯一第一逼你弃牌」
-      return 26;
+      // 第二名（常为中立第一、自己第二）：拿小份且不是最后一名 → 无需弃牌
+      return 24;
     }
 
     case 'oneMountain':
@@ -879,7 +921,19 @@ function shuffle(arr) {
 /* ?????????? ???????????????????? */
 
 /**
+ * 囚徒困境派遣：额外放 1 枚中立（与 environmentEffects 一致，与本次枚数无关）。
+ */
+function prisonersDilemmaDispatchExtraNeutral(game, area, face) {
+  if (area !== 'resource') return 0;
+  const env = envOnResourceSlot(game, face);
+  if (!env || env.envType !== 'prisonersDilemma') return 0;
+  if (!envTriggersDispatch(env)) return 0;
+  return 1;
+}
+
+/**
  * 估算 count 枚放到 area/face 后的结算收益（含与中立/对手的同数抵消）。
+ * 囚徒困境会先按派遣效果把 +1 中立算进终态，再估名次。
  */
 function estimateProduceGain(game, player, area, face, count, boostAdd) {
   const board = game.board && game.board[area];
@@ -903,6 +957,10 @@ function estimateProduceGain(game, player, area, face, count, boostAdd) {
   const beforeFirstId = beforeRanked[0] ? beforeRanked[0][0] : null;
 
   const afterWorkers = { ...wk, [player.id]: myTotal };
+  const pdExtra = prisonersDilemmaDispatchExtraNeutral(game, area, face);
+  if (pdExtra > 0) {
+    afterWorkers.__neutral__ = (Number(afterWorkers.__neutral__) || 0) + pdExtra;
+  }
   const afterBoosts = { ...boosts, [player.id]: boostAfter };
   const afterStrength = _slotStrengthLocal(afterWorkers, afterBoosts);
   const afterRemain = _cancelEqualCountsLocal(afterStrength);
@@ -969,17 +1027,22 @@ function hasNeutralOnFace(game, area, face) {
 /**
  * 放置后是否会因与中立（或同数）抵消而拿不到名次。
  * 必须计入场上已有己方骰：已有 1 + 再放 1 vs 中立 1 → 不会对冲。
+ * 囚徒困境派遣会再 +1 中立，须算进终态（1 己 vs 1 中立 → 放后变 1 vs 2，不对冲）。
  */
 function wouldCancelWithNeutral(game, area, face, count, playerId) {
   const board = game.board && game.board[area];
   if (!board || !playerId) return false;
   const wk = slotWorkers(board, face);
-  const neutral = Number(wk.__neutral__) || 0;
+  let neutral = Number(wk.__neutral__) || 0;
+  neutral += prisonersDilemmaDispatchExtraNeutral(game, area, face);
   if (neutral <= 0) return false;
   const myTotal = (Number(wk[playerId]) || 0) + count;
   if (myTotal <= 0) return false;
-  // 放置后己方与中立同数 → 同数抵消，己方出局
-  return myTotal === neutral;
+  // 用强度抵消判断（与结算一致；强化骰不会被裸中立同数误杀）
+  const boosts = (board.boosts && board.boosts[face]) || {};
+  const afterWk = { ...wk, [playerId]: myTotal, __neutral__: neutral };
+  const remain = _cancelEqualCountsLocal(_slotStrengthLocal(afterWk, boosts));
+  return !remain[playerId];
 }
 
 /**
@@ -1305,6 +1368,47 @@ function estimateMercenariesClaimValue(game, player, env, diff) {
 }
 
 /**
+ * 功能区：对冲掉对手对本格的第一/独占，剥夺其拿牌（自己不一定拿得到）。
+ */
+function estimateSpecialDenyValue(game, player, face, count, boostAdd, diff) {
+  const board = game.board && game.board.special;
+  if (!board || !player) return 0;
+  const tiles = tilesOnNumber(board, face);
+  if (!tiles.length) return 0;
+  const wk = slotWorkers(board, face);
+  const boosts = (board.boosts && board.boosts[face]) || {};
+  const beforeRemain = _cancelEqualCountsLocal(_slotStrengthLocal(wk, boosts));
+  const beforeRanked = Object.entries(beforeRemain).sort((a, b) => b[1] - a[1]);
+  const beforeFirst = beforeRanked[0] ? beforeRanked[0][0] : null;
+  if (
+    !beforeFirst ||
+    beforeFirst === player.id ||
+    beforeFirst === '__neutral__'
+  ) {
+    return 0;
+  }
+  const n = Math.max(0, Number(count) || 0);
+  if (n <= 0) return 0;
+  const afterWk = {
+    ...wk,
+    [player.id]: (Number(wk[player.id]) || 0) + n,
+  };
+  const afterBoosts = {
+    ...boosts,
+    [player.id]: (Number(boosts[player.id]) || 0) + (Number(boostAdd) || 0),
+  };
+  const afterRemain = _cancelEqualCountsLocal(
+    _slotStrengthLocal(afterWk, afterBoosts)
+  );
+  if (afterRemain[beforeFirst]) return 0;
+  const claimVal = estimateSpecialClaimValue(game, player, face, 0, diff);
+  return Math.max(
+    14,
+    Math.round(Math.max(12, claimVal) * 0.8 * rivalsLossFactor(game))
+  );
+}
+
+/**
  * 给某次放骰打分
  */
 function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botState) {
@@ -1362,9 +1466,30 @@ function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botSt
   }
   let score = scoredSelf * 8 * selfGainFactor(game);
 
+  // 往已占资源格加码：对手剩余骰越少扣分越多（先到/南蛮凑门槛除外）；
+  // 对手骰仍多时给一点防抢加码，避免「已是第一」边际资源归零后只剩跳过。
+  if (area === 'resource') {
+    const wkNow = slotWorkers(game.board && game.board.resource, face) || {};
+    const myPrevNow = Number(wkNow[player.id]) || 0;
+    if (myPrevNow >= 1) {
+      if (!canIgnoreRivalScarceStackPenalty(game, player, face, count, env)) {
+        score -= rivalScarceStackPenalty(game, player, count);
+      }
+      const rem = totalRemainingAmongRivals(game, player);
+      if (
+        rem >= 3 &&
+        alreadyFirstBefore &&
+        myPrevNow <= 2 &&
+        (diff === 'hard' || diff === 'normal')
+      ) {
+        score += Math.round(Math.min(rem, 6) * 2.5 * selfGainFactor(game));
+      }
+    }
+  }
+
   if (wouldCancelWithNeutral(game, area, face, count, player.id)) {
-    // 囚徒困境自带中立：微扣提示风险
-    if (env && env.envType === 'prisonersDilemma') score -= 35;
+    // 囚徒困境：终态仍对冲掉自己时重罚（常见于多放与中立打平）
+    if (env && env.envType === 'prisonersDilemma') score -= 80;
     // 以身入局会移走中立：即使本格对冲掉自己，事件对冲收益通常更值
     else if (env && env.envType === 'enterFray') score += 28;
     // 有实际触发效果的事件：不额外惩罚，让事件收益在底部叠加竞争
@@ -1424,7 +1549,23 @@ function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botSt
   }
 
   if (area === 'special') {
-    score += estimateSpecialClaimValue(game, player, face, est.myRank, diff);
+    const claim = estimateSpecialClaimValue(
+      game,
+      player,
+      face,
+      est.myRank,
+      diff
+    );
+    const deny =
+      diff === 'hard' || diff === 'normal'
+        ? estimateSpecialDenyValue(game, player, face, count, boostAdd, diff)
+        : 0;
+    if (deny > 0 && est.myRank !== 0) {
+      // 对冲拆掉对手牌权：不吃「没拿到第一」的固定负分
+      score += deny;
+    } else {
+      score += claim + deny;
+    }
   }
 
   // 事件收益：normal/hard 都计入（否则吃不了兜着走等会被低估）
@@ -1491,24 +1632,30 @@ function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botSt
       const wk = slotWorkers(game.board && game.board.resource, face) || {};
       const myPrev = wk[player.id] || 0;
       if (myPrev >= 1 && myPrev <= 2) {
-        const maxRivalRem = maxRemainingAmongRivals(game, player);
-        if (maxRivalRem >= 3) {
-          score -= count * 12;
-        } else if (maxRivalRem >= 1) {
-          score -= count * 5;
-        }
-        const tileCount = tilesOnNumber(game.board && game.board.resource, face).length;
-        if (tileCount >= 2) score += 8;
-        if (tileCount >= 3) score += 10;
-        if (env && ['teleport', 'mercenaries', 'enterFray', 'firstCome'].includes(env.envType)) {
-          // 传送等「成为最大者」类：无法再次触发时不加码
+        const rivalsTotalRem = totalRemainingAmongRivals(game, player);
+        // 对手还有较多骰时，薄领先加码仍有一点占坑价值；骰少时不再给加分
+        if (rivalsTotalRem >= 4 && !alreadyFirstBefore) {
+          const tileCount = tilesOnNumber(game.board && game.board.resource, face).length;
+          if (tileCount >= 2) score += 8;
+          if (tileCount >= 3) score += 10;
           if (
-            env.envType === 'teleport' &&
-            !wouldBecomeStrictLeaderOnResource(game, player, face, count, boostAdd)
+            env &&
+            ['teleport', 'mercenaries', 'enterFray', 'firstCome'].includes(env.envType)
           ) {
-            // skip
-          } else {
-            score += 10;
+            if (
+              env.envType === 'teleport' &&
+              !wouldBecomeStrictLeaderOnResource(
+                game,
+                player,
+                face,
+                count,
+                boostAdd
+              )
+            ) {
+              // skip
+            } else {
+              score += 10;
+            }
           }
         }
       }
@@ -3619,6 +3766,10 @@ function scoreMercenaryPlacement(game, player, area, face, diff) {
 
   const afterWorkers = { ...workers };
   afterWorkers[player.id] = (afterWorkers[player.id] || 0) + 1;
+  const pdExtra = prisonersDilemmaDispatchExtraNeutral(game, area, face);
+  if (pdExtra > 0) {
+    afterWorkers.__neutral__ = (Number(afterWorkers.__neutral__) || 0) + pdExtra;
+  }
   const after = _mercSettleSnapshot(
     game,
     player,

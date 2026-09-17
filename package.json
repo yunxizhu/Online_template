@@ -1,7 +1,7 @@
 {
   "name": "lianji",
-  "version": "1.0.1",
-  "description": "Turn-based multiplayer lobby & room framework",
+  "version": "1.0.2",
+  "description": "修正人机对于囚徒困境的判断",
   "main": "server/index.js",
   "bin": "server/index.js",
   "scripts": {

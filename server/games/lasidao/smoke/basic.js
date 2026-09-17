@@ -8974,4 +8974,265 @@ console.log('— bot multi-dice and void penalize more unowned slots —');
   console.log('✓ bot multi-dice and void penalize more unowned slots');
 }
 
+console.log('— bot places on prisonersDilemma 1v1 neutral over void —');
+{
+  const { decidePlaceDice, scoreProduceMove, scoreVoidSkipOption } = require('../bot');
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.round = 1;
+  g.phase = 'produce';
+  g.awaitingProduceRoll = false;
+  const bot = g.players[0];
+  const rival = g.players[1];
+  g.currentPlayerId = bot.id;
+  // 资源 6：囚徒 + 仅 1 中立；放 1 后派遣再 +1 中立 → 己 1 / 中立 2，拿小份且非最后一名
+  g.board.resource.tiles = [
+    {
+      id: 'r6',
+      kind: 'resource',
+      resource: 'wood',
+      large: 2,
+      small: 1,
+      number: 6,
+      label: '木',
+    },
+  ];
+  g.board.special.tiles = [];
+  g.board.resource.environments = {
+    1: null,
+    2: null,
+    3: null,
+    4: null,
+    5: null,
+    6: {
+      id: 'pd6',
+      kind: 'environment',
+      label: '囚徒困境',
+      envType: 'prisonersDilemma',
+      trigger: 'settle',
+      dispatchAlso: true,
+      setup: 'neutral1',
+      number: 6,
+    },
+  };
+  g.board.resource.workers = {
+    1: {},
+    2: {},
+    3: {},
+    4: {},
+    5: {},
+    6: { __neutral__: 1 },
+  };
+  g.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  g.board.special.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  bot.resources = { wood: 2, stone: 0, food: 0, iron: 0 };
+  bot.villagers = 3;
+  bot.dispatched = 2;
+  bot.voided = 0;
+  rival.villagers = 3;
+  rival.dispatched = 3;
+  rival.voided = 0;
+  g.dice = { [bot.id]: [6], [rival.id]: [] };
+  g.diceBoosted = { [bot.id]: [false] };
+
+  const placeScore = scoreProduceMove(g, bot, 6, 'resource', 1, 0, 'hard', {});
+  const voidScore = scoreVoidSkipOption(g, bot, 'hard');
+  assert.ok(
+    placeScore > voidScore,
+    `囚徒1中立放1应优于跳过: place=${placeScore} void=${voidScore}`
+  );
+  const act = decidePlaceDice(g, bot, 'hard', {});
+  assert.ok(act && act.type === 'placeDice', `应放置，实际=${act && act.type}`);
+  assert.strictEqual(act.payload.face, 6);
+  assert.strictEqual(act.payload.area, 'resource');
+
+  // 放 2 枚会与派遣后的 2 中立对冲 → 应明显差于放 1
+  g.dice = { [bot.id]: [6, 6], [rival.id]: [] };
+  g.diceBoosted = { [bot.id]: [false, false] };
+  const place2 = scoreProduceMove(g, bot, 6, 'resource', 2, 0, 'hard', {});
+  assert.ok(
+    place2 < placeScore,
+    `囚徒放2对冲应劣于放1: place1=${placeScore} place2=${place2}`
+  );
+
+  console.log('✓ bot places on prisonersDilemma 1v1 neutral over void');
+}
+
+console.log('— bot voids last die on locked resource monopoly —');
+{
+  const { decidePlaceDice, scoreProduceMove, scoreVoidSkipOption } = require('../bot');
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.round = 2;
+  g.phase = 'produce';
+  g.awaitingProduceRoll = false;
+  const bot = g.players[0];
+  const rival = g.players[1];
+  g.currentPlayerId = bot.id;
+  g.board.resource.tiles = [
+    {
+      id: 'r3',
+      kind: 'resource',
+      resource: 'wood',
+      large: 2,
+      small: 1,
+      number: 3,
+      label: '木',
+    },
+  ];
+  g.board.special.tiles = [
+    {
+      id: 'enh',
+      kind: 'function',
+      funcType: 'enhance',
+      label: '强化',
+      number: 3,
+    },
+  ];
+  g.board.resource.environments = {
+    1: null,
+    2: null,
+    3: null,
+    4: null,
+    5: null,
+    6: null,
+  };
+  // 资源 3 已独占；功能 3 有对手 1 枚
+  g.board.resource.workers = {
+    1: {},
+    2: {},
+    3: { [bot.id]: 1 },
+    4: {},
+    5: {},
+    6: {},
+  };
+  g.board.special.workers = {
+    1: {},
+    2: {},
+    3: { [rival.id]: 1 },
+    4: {},
+    5: {},
+    6: {},
+  };
+  g.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  g.board.special.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  bot.villagers = 3;
+  bot.dispatched = 2;
+  bot.voided = 0;
+  rival.villagers = 3;
+  rival.dispatched = 3;
+  rival.voided = 0;
+  bot.resources = { wood: 1, stone: 1, food: 0, iron: 0 };
+  g.dice = { [bot.id]: [3], [rival.id]: [] };
+  g.diceBoosted = { [bot.id]: [false] };
+
+  const stackScore = scoreProduceMove(g, bot, 3, 'resource', 1, 0, 'hard', {});
+  const denyScore = scoreProduceMove(g, bot, 3, 'special', 1, 0, 'hard', {});
+  const voidScore = scoreVoidSkipOption(g, bot, 'hard');
+  assert.ok(
+    stackScore < voidScore || stackScore < denyScore,
+    `已锁定独占不应再堆: stack=${stackScore} void=${voidScore} deny=${denyScore}`
+  );
+  assert.ok(
+    stackScore < 0,
+    `锁定独占再堆应为负分，实际=${stackScore}`
+  );
+
+  const act = decidePlaceDice(g, bot, 'hard', {});
+  assert.ok(act, '应有行动');
+  assert.ok(
+    act.type === 'voidSkip' ||
+      (act.type === 'placeDice' && act.payload.area === 'special'),
+    `应跳过或功能区对冲，实际=${JSON.stringify(act)}`
+  );
+  assert.ok(
+    !(act.type === 'placeDice' && act.payload.area === 'resource'),
+    '不应再堆已锁定的资源 3'
+  );
+
+  console.log('✓ bot voids last die on locked resource monopoly');
+}
+
+console.log('— bot stack score falls as rival dice remain fewer —');
+{
+  const { scoreProduceMove } = require('../bot');
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.round = 1;
+  g.phase = 'produce';
+  g.awaitingProduceRoll = false;
+  const bot = g.players[0];
+  const rival = g.players[1];
+  g.currentPlayerId = bot.id;
+  g.board.resource.tiles = [
+    {
+      id: 'r2',
+      kind: 'resource',
+      resource: 'stone',
+      large: 2,
+      small: 1,
+      number: 2,
+      label: '石',
+    },
+  ];
+  g.board.special.tiles = [];
+  g.board.resource.environments = {
+    1: null,
+    2: null,
+    3: null,
+    4: null,
+    5: null,
+    6: null,
+  };
+  g.board.resource.workers = {
+    1: {},
+    2: { [bot.id]: 1 },
+    3: {},
+    4: {},
+    5: {},
+    6: {},
+  };
+  g.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  g.board.special.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  bot.villagers = 5;
+  bot.dispatched = 1;
+  bot.voided = 0;
+  bot.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+  rival.villagers = 5;
+  rival.voided = 0;
+  g.dice = { [bot.id]: [2], [rival.id]: [] };
+  g.diceBoosted = { [bot.id]: [false] };
+
+  const scores = [];
+  for (const rivalRem of [5, 3, 1, 0]) {
+    rival.dispatched = 5 - rivalRem;
+    scores.push(scoreProduceMove(g, bot, 2, 'resource', 1, 0, 'hard', {}));
+  }
+  assert.ok(
+    scores[0] > scores[1] && scores[1] > scores[2] && scores[2] > scores[3],
+    `对手剩余骰越少堆分应越低: ${scores.join(',')}`
+  );
+  assert.ok(scores[3] < 0, `对手 0 骰时堆分应为负: ${scores[3]}`);
+
+  // 抵抗南蛮凑门槛：对手 0 骰仍可堆
+  g.round = 5;
+  g.board.resource.environments[2] = {
+    id: 'rb',
+    kind: 'environment',
+    label: '抵抗南蛮',
+    envType: 'resistBarbarians',
+    trigger: 'settle',
+    number: 2,
+  };
+  g.board.resource.workers[2] = { [bot.id]: 2 }; // 差 1 枚达标
+  rival.dispatched = 5;
+  const rbScore = scoreProduceMove(g, bot, 2, 'resource', 1, 0, 'hard', {});
+  assert.ok(
+    rbScore > scores[3],
+    `南蛮凑门槛应无视少骰扣分: rb=${rbScore} plain0=${scores[3]}`
+  );
+
+  console.log('✓ bot stack score falls as rival dice remain fewer');
+}
+
 console.log('全部通过');
