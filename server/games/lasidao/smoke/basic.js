@@ -8701,4 +8701,277 @@ console.log('— bot teleport no abandon monopoly to thicken lead —');
   console.log('✓ bot teleport no abandon monopoly to thicken lead');
 }
 
+console.log('— bot no stack teleport when already leader prefers enhance —');
+{
+  const { decidePlaceDice, scoreProduceMove } = require('../bot');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const bot = g.players[0];
+  const rival = g.players[1];
+  g.phase = 'produce';
+  g.currentPlayerId = bot.id;
+  g.awaitingProduceRoll = false;
+  g.round = 1;
+  // 资源1：2木 + 传送；已有 1 枚强化骰独占 → 再放无法触发传送
+  g.board.resource.tiles = [
+    {
+      id: 'r1',
+      kind: 'resource',
+      resource: 'wood',
+      large: 2,
+      small: 1,
+      number: 1,
+      label: '木',
+    },
+  ];
+  g.board.special.tiles = [
+    {
+      id: 'enh',
+      kind: 'function',
+      funcType: 'enhance',
+      label: '强化',
+      number: 1,
+    },
+  ];
+  g.board.resource.workers = {
+    1: { [bot.id]: 1 },
+    2: {},
+    3: {},
+    4: {},
+    5: {},
+    6: {},
+  };
+  g.board.resource.boosts = {
+    1: { [bot.id]: 1 },
+    2: {},
+    3: {},
+    4: {},
+    5: {},
+    6: {},
+  };
+  g.board.special.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  g.board.resource.environments = {
+    1: {
+      id: 'env_tp',
+      kind: 'environment',
+      label: '传送',
+      envType: 'teleport',
+      trigger: 'dispatch',
+      number: 1,
+    },
+    2: null,
+    3: null,
+    4: null,
+    5: null,
+    6: null,
+  };
+  bot.villagers = 3;
+  bot.dispatched = 2;
+  bot.voided = 0;
+  rival.villagers = 3;
+  rival.dispatched = 3;
+  rival.voided = 0;
+  g.dice = { [bot.id]: [1], [rival.id]: [] };
+  g.diceBoosted = { [bot.id]: [false], [rival.id]: [] };
+
+  const resScore = scoreProduceMove(g, bot, 1, 'resource', 1, 0, 'hard', {});
+  const enhScore = scoreProduceMove(g, bot, 1, 'special', 1, 0, 'hard', {});
+  assert.ok(
+    enhScore > resScore,
+    `已是最大再放传送格应劣于强化: res=${resScore} enh=${enhScore}`
+  );
+
+  const act = decidePlaceDice(g, bot, 'hard', {});
+  assert.ok(act && act.type === 'placeDice', `应放置，实际=${act && act.type}`);
+  assert.strictEqual(act.payload.area, 'special', '应放到功能区强化');
+  assert.strictEqual(act.payload.face, 1, '应放到 1 号格');
+  console.log('✓ bot no stack teleport when already leader prefers enhance');
+}
+
+console.log('— bot resistBarbarians score 0 when threshold already met —');
+{
+  const { estimateEventSettleGain, scoreProduceMove, decidePlaceDice } = require('../bot');
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.round = 5; // 第 4–6 轮需 3 枚
+  g.phase = 'produce';
+  g.awaitingProduceRoll = false;
+  const bot = g.players[0];
+  const rival = g.players[1];
+  g.currentPlayerId = bot.id;
+  g.board.resource.tiles = [
+    {
+      id: 'r2',
+      kind: 'resource',
+      resource: 'wood',
+      large: 2,
+      small: 1,
+      number: 2,
+      label: '木',
+    },
+    {
+      id: 'r5',
+      kind: 'resource',
+      resource: 'stone',
+      large: 3,
+      small: 1,
+      number: 5,
+      label: '石',
+    },
+  ];
+  g.board.special.tiles = [];
+  g.board.resource.environments = {
+    1: null,
+    2: {
+      id: 'env_rb',
+      kind: 'environment',
+      label: '抵抗南蛮',
+      envType: 'resistBarbarians',
+      trigger: 'settle',
+      number: 2,
+    },
+    3: null,
+    4: null,
+    5: null,
+    6: null,
+  };
+  // 已独占 3 枚，门槛已满
+  g.board.resource.workers = {
+    1: {},
+    2: { [bot.id]: 3 },
+    3: {},
+    4: {},
+    5: {},
+    6: {},
+  };
+  g.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  g.board.special.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  bot.villagers = 5;
+  bot.dispatched = 3;
+  bot.voided = 0;
+  rival.villagers = 5;
+  rival.dispatched = 5;
+  rival.voided = 0;
+  g.dice = { [bot.id]: [2], [rival.id]: [] };
+  g.diceBoosted = { [bot.id]: [false] };
+
+  const evt = estimateEventSettleGain(g, bot, 2, 0, 1);
+  assert.strictEqual(evt, 0, `已达 3 枚门槛再堆南蛮分应为 0，实际=${evt}`);
+
+  // 空石堆应优于再堆南蛮
+  const rbScore = scoreProduceMove(g, bot, 2, 'resource', 1, 0, 'hard', {});
+  const stoneScore = scoreProduceMove(g, bot, 5, 'resource', 1, 0, 'hard', {});
+  assert.ok(
+    stoneScore > rbScore,
+    `已达标再堆南蛮应劣于占空石: rb=${rbScore} stone=${stoneScore}`
+  );
+  g.dice = { [bot.id]: [2, 5], [rival.id]: [] };
+  g.diceBoosted = { [bot.id]: [false, false] };
+  const act = decidePlaceDice(g, bot, 'hard', {});
+  assert.ok(act && act.type === 'placeDice');
+  assert.strictEqual(act.payload.face, 5, '应优先占空石而非再堆南蛮');
+  assert.strictEqual(act.payload.area, 'resource');
+
+  // 对冲危机：双方各 3，再放 1 才能领分 → 仍应给南蛮分
+  g.board.resource.workers[2] = { [bot.id]: 3, [rival.id]: 3 };
+  g.dice = { [bot.id]: [2], [rival.id]: [] };
+  g.diceBoosted = { [bot.id]: [false] };
+  const contested = estimateEventSettleGain(g, bot, 2, 0, 1);
+  assert.ok(contested > 0, `对冲危机加码应仍有南蛮分，实际=${contested}`);
+
+  console.log('✓ bot resistBarbarians score 0 when threshold already met');
+}
+
+console.log('— bot multi-dice and void penalize more unowned slots —');
+{
+  const {
+    scoreProduceMove,
+    scoreVoidSkipOption,
+    countUnownedBoardSlots,
+    decidePlaceDice,
+  } = require('../bot');
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.round = 1;
+  g.phase = 'produce';
+  g.awaitingProduceRoll = false;
+  const bot = g.players[0];
+  const rival = g.players[1];
+  g.currentPlayerId = bot.id;
+  // 多块无主资源 + 普通木（非先到/南蛮）
+  g.board.resource.tiles = [
+    { id: 'r1', kind: 'resource', resource: 'wood', large: 2, small: 1, number: 1, label: '木' },
+    { id: 'r2', kind: 'resource', resource: 'stone', large: 2, small: 1, number: 2, label: '石' },
+    { id: 'r3', kind: 'resource', resource: 'food', large: 2, small: 1, number: 3, label: '粮' },
+    { id: 'r4', kind: 'resource', resource: 'iron', large: 2, small: 1, number: 4, label: '铁' },
+    { id: 'r5', kind: 'resource', resource: 'wood', large: 2, small: 1, number: 5, label: '木' },
+  ];
+  g.board.special.tiles = [];
+  g.board.resource.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  g.board.special.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  g.board.resource.environments = {
+    1: null,
+    2: null,
+    3: null,
+    4: null,
+    5: null,
+    6: null,
+  };
+  bot.resources = { wood: 1, stone: 1, food: 1, iron: 1 };
+  bot.villagers = 5;
+  bot.dispatched = 0;
+  rival.dispatched = 5;
+  g.dice = { [bot.id]: [2, 2], [rival.id]: [] };
+  g.diceBoosted = { [bot.id]: [false, false] };
+
+  const manyUnowned = countUnownedBoardSlots(g);
+  assert.ok(manyUnowned >= 4, `应有多块无主，实际=${manyUnowned}`);
+  const placeMany = scoreProduceMove(g, bot, 2, 'resource', 2, 0, 'hard', {});
+  const voidMany = scoreVoidSkipOption(g, bot, 'hard');
+
+  // 只留 1 块无主：惩罚应明显更轻
+  g.board.resource.workers = {
+    1: { [rival.id]: 1 },
+    2: {},
+    3: { [rival.id]: 1 },
+    4: { [rival.id]: 1 },
+    5: { [rival.id]: 1 },
+    6: {},
+  };
+  const fewUnowned = countUnownedBoardSlots(g);
+  assert.strictEqual(fewUnowned, 1, '仅剩目标格无主');
+  const placeFew = scoreProduceMove(g, bot, 2, 'resource', 2, 0, 'hard', {});
+  const voidFew = scoreVoidSkipOption(g, bot, 'hard');
+
+  assert.ok(
+    placeMany < placeFew,
+    `无主多时多骰放置应更差: many=${placeMany} few=${placeFew}`
+  );
+  assert.ok(
+    voidMany < voidFew,
+    `无主多时跳过应更差: many=${voidMany} few=${voidFew}`
+  );
+
+  // 抵抗南蛮凑门槛：多无主也不应压过正当堆骰（相对普通格）
+  g.board.resource.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  g.board.resource.environments[2] = {
+    id: 'env_rb',
+    kind: 'environment',
+    label: '抵抗南蛮',
+    envType: 'resistBarbarians',
+    trigger: 'settle',
+    number: 2,
+  };
+  g.round = 1; // 需 2 枚
+  const rbPlace = scoreProduceMove(g, bot, 2, 'resource', 2, 0, 'hard', {});
+  g.board.resource.environments[2] = null;
+  const plainPlace = scoreProduceMove(g, bot, 2, 'resource', 2, 0, 'hard', {});
+  assert.ok(
+    rbPlace > plainPlace,
+    `南蛮双骰应优于普通双骰(免无主多骰惩罚): rb=${rbPlace} plain=${plainPlace}`
+  );
+
+  console.log('✓ bot multi-dice and void penalize more unowned slots');
+}
+
 console.log('全部通过');

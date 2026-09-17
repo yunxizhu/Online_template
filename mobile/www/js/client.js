@@ -288,6 +288,9 @@ window.GameNet = (function () {
       'room:probe-result',
       'room:resolved',
       'room:reload',
+      'room:transfer',
+      'room:reopenDone',
+      'room:kicked',
       'room:verifyPassword:result',
       'game:started',
       'game:state',
@@ -636,6 +639,10 @@ window.GameNet = (function () {
       client: clientOf(opts),
       role: roleOf(opts),
     });
+  }
+
+  function reopenTunnelRoom() {
+    ensureSocket().emit('room:reopenTunnel');
   }
 
   function setPassive(on) {
@@ -1030,6 +1037,14 @@ window.GameNet = (function () {
     ensureSocket().emit('room:moveSeat', { from, to });
   }
 
+  function addBot(seatIndex, difficulty) {
+    ensureSocket().emit('room:addBot', { seatIndex, difficulty });
+  }
+
+  function removeBot(seatIndex) {
+    ensureSocket().emit('room:removeBot', { seatIndex });
+  }
+
   function inviteLobby() {
     ensureSocket().emit('room:inviteLobby');
   }
@@ -1085,6 +1100,7 @@ window.GameNet = (function () {
     switchMqttBroker,
     renamePlayer,
     createRoom,
+    reopenTunnelRoom,
     createRoomOnHost,
     setPassive,
     updateRoomSettings,
@@ -1102,6 +1118,8 @@ window.GameNet = (function () {
     setReady,
     startGame,
     moveRoomSeat,
+    addBot,
+    removeBot,
     inviteLobby,
     quitGame,
     sendChat,

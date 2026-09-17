@@ -5,7 +5,7 @@
 ## 安装 APK
 
 1. 把 APK 拷到手机本地（不要微信/网盘里直接装）：
-   - 一键打包：`dist/android/lianji.apk`（正式签名，包名 `com.lianji.join`）
+   - 一键打包：`dist/{version}-android-carastan/{version}-lianji-carastan.apk`（如 `dist/1.0.1-android-carastan/1.0.1-lianji-carastan.apk`，正式签名，包名 `com.lianji.join`）
    - 或：`mobile/dist/lianji-android.apk`
 2. 允许「未知来源 / 安装未知应用」
 3. 用文件管理打开安装 → 桌面出现「联机大厅」

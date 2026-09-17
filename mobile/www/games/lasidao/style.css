@@ -4359,6 +4359,7 @@ body.is-mobile-chat .las-redraw-modal .modal-dialog {
   transition: transform 0.15s, border-color 0.15s;
   box-shadow: 0 2px 6px rgba(0,0,0,0.35);
   box-sizing: border-box;
+  /* 防止 has-art 在异常尺寸下塌缩 */
   flex-shrink: 0;
   overflow: hidden;
 }

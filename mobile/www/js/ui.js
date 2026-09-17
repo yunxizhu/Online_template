@@ -142,6 +142,11 @@
     passiveLockOverlay: document.getElementById('passive-lock-overlay'),
     passiveLockDesc: document.getElementById('passive-lock-desc'),
     btnExitPassive: document.getElementById('btn-exit-passive'),
+    addBotModal: document.getElementById('add-bot-modal'),
+    addBotSeatLabel: document.getElementById('add-bot-seat-label'),
+    botDifficulty: document.getElementById('bot-difficulty'),
+    btnCloseAddBot: document.getElementById('btn-close-add-bot'),
+    btnConfirmAddBot: document.getElementById('btn-confirm-add-bot'),
   };
 
   const state = {
@@ -167,6 +172,7 @@
     isSpectator: false,
     passiveMode: false,
     roomSeatMoveFrom: null,
+    addBotSeatIndex: null,
     roomCtxTarget: null,
     chatChannel: 'all',
     chatAll: [],
@@ -3229,6 +3235,7 @@
     function fillRoomSlot(slot, p, teamKey, slotIdx) {
       if (p) {
         if (p.left) slot.classList.add('is-left');
+        if (p.isBot) slot.classList.add('is-bot');
         slot.dataset.speakerKey = memberSpeakerKey(p);
         const isMe = state.me && p.id === state.me.id;
         const hostHere = p.id === room.hostId;
@@ -3237,20 +3244,52 @@
         nick.innerHTML =
           nickHtml(p.name, p.tag) +
           (isMe ? ' <span class="you">(' + t('common.you') + ')</span>' : '') +
-          (hostHere ? ' <span class="badge">' + t('room.host') + '</span>' : '');
+          (hostHere ? ' <span class="badge">' + t('room.host') + '</span>' : '') +
+          (p.isBot ? ' <span class="badge">' + (p.botDifficultyLabel || t('bot.botPlayer')) + '</span>' : '');
         nick.title = window.PlayerNick.fullLabel(p.name, p.tag);
         const status = document.createElement('span');
         status.className = 'muted room-slot-status';
         if (p.left) status.textContent = t('room.left');
         else if (hostHere) status.textContent = t('room.host');
+        else if (p.isBot) status.textContent = t('bot.botPlayer');
         else status.textContent = t('room.seated');
         slot.appendChild(nick);
         slot.appendChild(status);
+
+        if (p.isBot && isHost && room.status !== 'playing') {
+          const actions = document.createElement('div');
+          actions.className = 'slot-actions';
+          const btnRemove = document.createElement('button');
+          btnRemove.type = 'button';
+          btnRemove.className = 'btn-remove-bot';
+          btnRemove.textContent = t('room.removeBot');
+          btnRemove.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            if (net.removeBot) net.removeBot(slotIdx);
+          });
+          actions.appendChild(btnRemove);
+          slot.appendChild(actions);
+        }
       } else {
         const empty = document.createElement('span');
         empty.className = 'room-slot-empty';
         empty.textContent = t('room.emptySeat');
         slot.appendChild(empty);
+
+        if (isHost && room.status !== 'playing') {
+          const actions = document.createElement('div');
+          actions.className = 'slot-actions';
+          const btnAdd = document.createElement('button');
+          btnAdd.type = 'button';
+          btnAdd.className = 'btn-add-bot';
+          btnAdd.textContent = t('room.addBot');
+          btnAdd.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            openAddBotModal(slotIdx);
+          });
+          actions.appendChild(btnAdd);
+          slot.appendChild(actions);
+        }
       }
       if (teamRoom && isHost && room.status !== 'playing') {
         slot.classList.add('is-team-movable');
@@ -4219,8 +4258,30 @@
   function closeAllModals() {
     if (el.createRoomModal) el.createRoomModal.hidden = true;
     if (el.joinCodeModal) el.joinCodeModal.hidden = true;
+    if (el.addBotModal) el.addBotModal.hidden = true;
+    state.addBotSeatIndex = null;
     state.createModalMode = 'create';
     syncCreateModalChrome();
+  }
+
+  function setAddBotOpen(open, seatIndex) {
+    if (!el.addBotModal) return;
+    el.addBotModal.hidden = !open;
+    if (open) {
+      state.addBotSeatIndex = seatIndex;
+      if (el.addBotSeatLabel) {
+        el.addBotSeatLabel.textContent = t('room.botSeatLabel').replace('{seat}', String(Number(seatIndex) + 1));
+      }
+      if (el.botDifficulty) el.botDifficulty.value = 'hard';
+      if (el.createRoomModal) el.createRoomModal.hidden = true;
+      if (el.joinCodeModal) el.joinCodeModal.hidden = true;
+    } else {
+      state.addBotSeatIndex = null;
+    }
+  }
+
+  function openAddBotModal(seatIndex) {
+    setAddBotOpen(true, seatIndex);
   }
 
   let nickEditing = false;
@@ -4585,6 +4646,25 @@
   }
   if (el.btnCloseJoin) {
     el.btnCloseJoin.addEventListener('click', () => setJoinPanelOpen(false));
+  }
+  if (el.btnCloseAddBot) {
+    el.btnCloseAddBot.addEventListener('click', () => setAddBotOpen(false));
+  }
+  if (el.btnConfirmAddBot) {
+    el.btnConfirmAddBot.addEventListener('click', () => {
+      const seatIndex = state.addBotSeatIndex;
+      const difficulty = el.botDifficulty ? el.botDifficulty.value : 'hard';
+      if (seatIndex != null && net.addBot) {
+        net.addBot(seatIndex, difficulty);
+      }
+      setAddBotOpen(false);
+    });
+  }
+  if (el.addBotModal) {
+    el.addBotModal.addEventListener('click', (ev) => {
+      const close = ev.target.closest('[data-close="add-bot"]');
+      if (close) setAddBotOpen(false);
+    });
   }
   if (el.btnRefreshDoc) {
     el.btnRefreshDoc.addEventListener('click', () => {

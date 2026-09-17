@@ -1,6 +1,6 @@
 {
   "name": "lianji",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Turn-based multiplayer lobby & room framework",
   "main": "server/index.js",
   "bin": "server/index.js",

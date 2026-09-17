@@ -1236,6 +1236,50 @@ button.secondary:hover {
   opacity: 0.65;
 }
 
+.room-player-slot .slot-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.room-player-slot .btn-add-bot,
+.room-player-slot .btn-remove-bot {
+  font-size: 0.68rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid rgba(180, 150, 100, 0.4);
+  background: rgba(80, 60, 30, 0.45);
+  color: #e0c890;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+.room-player-slot .btn-add-bot:hover,
+.room-player-slot .btn-remove-bot:hover {
+  background: rgba(100, 80, 40, 0.6);
+  border-color: rgba(220, 190, 130, 0.55);
+}
+
+.room-player-slot .btn-remove-bot {
+  border-color: rgba(180, 90, 70, 0.4);
+  background: rgba(80, 30, 20, 0.4);
+  color: #d8a090;
+}
+
+.room-player-slot .btn-remove-bot:hover {
+  background: rgba(110, 40, 30, 0.55);
+  border-color: rgba(210, 110, 90, 0.55);
+}
+
+.room-player-slot.is-bot .room-slot-nick {
+  color: #c8e0f0;
+}
+
+.room-player-slot.is-bot .room-slot-status {
+  color: #90b8d0;
+}
+
 .room-slot-nick {
   display: inline-flex;
   align-items: center;

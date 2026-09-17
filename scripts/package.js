@@ -2,9 +2,10 @@
 
 /**
  * 一键打包 → dist/
- *   windows/         Windows 主机绿版（自带 node.exe，双击 启动.bat）
- *   android/         安卓加入端 APK
- *   client-windows/  轻量纯客户端（仅 www + 启动.bat，无 Node）
+ * 目录名：{version}-{target}-carastan
+ *   1.0.1-windows-carastan/         Windows 主机绿版（自带 node.exe，双击 启动.bat）
+ *   1.0.1-android-carastan/         安卓加入端 APK
+ *   1.0.1-client-windows-carastan/  轻量纯客户端（仅 www + 启动.bat，无 Node）
  */
 
 const fs = require('fs');
@@ -17,9 +18,22 @@ const {
 
 const ROOT = path.resolve(__dirname, '..');
 const DIST = path.join(ROOT, 'dist');
-const DIR_WIN = path.join(DIST, 'windows');
-const DIR_ANDROID = path.join(DIST, 'android');
-const DIR_CLIENT_WIN = path.join(DIST, 'client-windows');
+const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+const PACK_VERSION = String(PKG.version || '0.0.0');
+const PACK_SUFFIX = 'carastan';
+
+function packDirName(target) {
+  return `${PACK_VERSION}-${target}-${PACK_SUFFIX}`;
+}
+
+function packApkName() {
+  return `${PACK_VERSION}-lianji-${PACK_SUFFIX}.apk`;
+}
+
+const DIR_WIN = path.join(DIST, packDirName('windows'));
+const DIR_ANDROID = path.join(DIST, packDirName('android'));
+const DIR_CLIENT_WIN = path.join(DIST, packDirName('client-windows'));
+const APK_BASENAME = packApkName();
 const DEFAULT_PORT = '39200';
 const CLIENT_DEFAULT_PORT = '39199';
 const MOBILE_WWW = path.join(ROOT, 'mobile', 'www');
@@ -175,6 +189,7 @@ function windowsReadme(nodeExeName) {
   return (
     '联机大厅 · Windows 绿色版\n' +
     '========================\n' +
+    `版本 ${PACK_VERSION}（${PACK_SUFFIX}）\n\n` +
     '不需要安装 Node.js，双击即可运行。\n\n' +
     '用法\n' +
     '----\n' +
@@ -346,13 +361,13 @@ function buildAndroidPack() {
   ensureDir(DIR_ANDROID);
   const apk = buildAndroidApk();
   if (apk && fs.existsSync(apk)) {
-    const dest = path.join(DIR_ANDROID, 'lianji.apk');
+    const dest = path.join(DIR_ANDROID, APK_BASENAME);
     fs.copyFileSync(apk, dest);
-    console.log(`  lianji.apk (${getSizeMB(dest)} MB)`);
+    console.log(`  ${APK_BASENAME} (${getSizeMB(dest)} MB)`);
   } else {
     writeUtf8(path.join(DIR_ANDROID, '安装说明.txt'), androidReadme(false));
     throw new Error(
-      '[android] 未生成 lianji.apk。请释放磁盘空间（尤其 C 盘）后运行 打包.bat 选 3，或 mobile 目录下 npm run build:apk'
+      `[android] 未生成 ${APK_BASENAME}。请释放磁盘空间（尤其 C 盘）后运行 打包.bat 选 3，或 mobile 目录下 npm run build:apk`
     );
   }
   writeUtf8(path.join(DIR_ANDROID, '安装说明.txt'), androidReadme(true));
@@ -462,6 +477,7 @@ function buildClientWindowsPack() {
     path.join(DIR_CLIENT_WIN, 'README.txt'),
     '联机大厅 · Windows 纯客户端（轻量 / 仅加入）\n' +
       '==========================================\n' +
+      `版本 ${PACK_VERSION}（${PACK_SUFFIX}）\n\n` +
       '双击「启动.bat」在本机 http://127.0.0.1:' +
       CLIENT_DEFAULT_PORT +
       ' 打开加入端大厅（需 Node.js 18+，首次可自动下载）。\n' +
@@ -472,11 +488,15 @@ function buildClientWindowsPack() {
 }
 
 function androidReadme(hasApk) {
+  const apkName = APK_BASENAME;
+  const winDir = packDirName('windows');
+  const androidDir = packDirName('android');
   return (
     '联机大厅 · 安卓加入端\n' +
     '====================\n' +
+    `版本 ${PACK_VERSION}（${PACK_SUFFIX}）\n\n` +
     (hasApk
-      ? '安装本目录的 lianji.apk（正式签名，包名 com.lianji.join）。\n\n'
+      ? `安装本目录的 ${apkName}（正式签名，包名 com.lianji.join）。\n\n`
       : '本目录暂无 APK。请在开发机执行：\n' +
         '  cd mobile && npx cap sync android\n' +
         '  cd android && gradlew.bat assembleRelease\n' +
@@ -486,7 +506,7 @@ function androidReadme(hasApk) {
     '1. 把 APK 拷到手机「下载」或「文档」本地目录（不要在微信/网盘里直接点开装）\n' +
     '2. 手机允许安装未知来源应用\n' +
     '3. 用文件管理打开 APK 安装；桌面图标名「联机大厅」\n' +
-    '4. 电脑先用 windows/ 开房，手机再加入\n\n' +
+    `4. 电脑先用 ${winDir}/ 开房，手机再加入\n\n` +
     '若一直转圈「正在安装」且无法取消（华为机常见）\n' +
     '----------------------------------------------\n' +
     '1. 划掉安装界面；设置 → 应用 → 搜「软件包安装程序/应用安装器」→ 强行停止 → 清除缓存\n' +
@@ -496,7 +516,7 @@ function androidReadme(hasApk) {
     '若提示「解析包出错」或文件很小（几 KB）\n' +
     '--------------------------------\n' +
     '说明 APK 未编译成功（常见：电脑 C 盘空间不足）。请在本机释放空间后重新运行 打包.bat 选 3，\n' +
-    '确认 dist\\android\\lianji.apk 约 3MB 以上再拷到手机安装。\n\n' +
+    `确认 dist\\${androidDir}\\${apkName} 约 3MB 以上再拷到手机安装。\n\n` +
     '说明：手机端不能建房开服，只负责加入。\n'
   );
 }
@@ -521,7 +541,9 @@ async function main() {
   if (targets.windows) bits.push('windows');
   if (targets.android) bits.push('android');
   if (targets.clientWindows) bits.push('client-windows');
-  console.log(`[Pack] targets: ${bits.join(', ')} (choice=${choiceArg})`);
+  console.log(
+    `[Pack] version=${PACK_VERSION} suffix=${PACK_SUFFIX} targets: ${bits.join(', ')} (choice=${choiceArg})`
+  );
 
   ensureDir(DIST);
   removeFile(path.join(ROOT, 'dist.zip'));
@@ -531,20 +553,23 @@ async function main() {
 
   if (targets.windows) {
     step += 1;
-    console.log(`\n[${step}/${total}] Build windows/ ...`);
+    console.log(`\n[${step}/${total}] Build ${packDirName('windows')}/ ...`);
     rmDir(DIR_WIN);
+    rmDir(path.join(DIST, 'windows')); // 清理旧无版本目录名
     await buildWindowsPack();
   }
   if (targets.android) {
     step += 1;
-    console.log(`\n[${step}/${total}] Build android/ ...`);
+    console.log(`\n[${step}/${total}] Build ${packDirName('android')}/ ...`);
     rmDir(DIR_ANDROID);
+    rmDir(path.join(DIST, 'android'));
     buildAndroidPack();
   }
   if (targets.clientWindows) {
     step += 1;
-    console.log(`\n[${step}/${total}] Build client-windows/ ...`);
+    console.log(`\n[${step}/${total}] Build ${packDirName('client-windows')}/ ...`);
     rmDir(DIR_CLIENT_WIN);
+    rmDir(path.join(DIST, 'client-windows'));
     buildClientWindowsPack();
   }
 
@@ -552,7 +577,7 @@ async function main() {
   if (targets.windows && fs.existsSync(DIR_WIN)) console.log(`  ${DIR_WIN}`);
   if (targets.android && fs.existsSync(DIR_ANDROID)) {
     console.log(`  ${DIR_ANDROID}`);
-    const apkOut = path.join(DIR_ANDROID, 'lianji.apk');
+    const apkOut = path.join(DIR_ANDROID, APK_BASENAME);
     if (fs.existsSync(apkOut)) console.log(`  ${apkOut}`);
   }
   if (targets.clientWindows && fs.existsSync(DIR_CLIENT_WIN)) {

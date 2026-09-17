@@ -8,25 +8,35 @@ if errorlevel 1 (
   exit /b 1
 )
 
+for /f "usebackq delims=" %%V in (`node -p "require('./package.json').version"`) do set "PACK_VER=%%V"
+if "%PACK_VER%"=="" set "PACK_VER=1.0.1"
+set "PACK_SUFFIX=carastan"
+set "DIR_WIN=dist\%PACK_VER%-windows-%PACK_SUFFIX%"
+set "DIR_ANDROID=dist\%PACK_VER%-android-%PACK_SUFFIX%"
+set "DIR_CLIENT=dist\%PACK_VER%-client-windows-%PACK_SUFFIX%"
+set "APK_NAME=%PACK_VER%-lianji-%PACK_SUFFIX%.apk"
+set "APK_PATH=%DIR_ANDROID%\%APK_NAME%"
+
 echo.
 echo ================================
 echo   LianJi pack menu
+echo   version %PACK_VER%  suffix %PACK_SUFFIX%
 echo ================================
 echo.
 echo   1  All packs
-echo      - dist\windows         host (Node + start.bat)
-echo      - dist\android         APK join client
-echo      - dist\client-windows  lightweight PC client (no Node)
+echo      - %DIR_WIN%         host (Node + start.bat)
+echo      - %DIR_ANDROID%         APK join client
+echo      - %DIR_CLIENT%  lightweight PC client (no Node)
 echo.
 echo   2  Windows host only
-echo      - Rebuild dist\windows (can create rooms)
+echo      - Rebuild %DIR_WIN% (can create rooms)
 echo.
 echo   3  Android APK only
-echo      - Rebuild APK into dist\android\lianji.apk
+echo      - Rebuild APK into %APK_PATH%
 echo      - Gradle cache: project .gradle-home (~500MB+)
 echo.
 echo   4  Windows pure client only
-echo      - Rebuild dist\client-windows (www + start.bat)
+echo      - Rebuild %DIR_CLIENT% (www + start.bat)
 echo      - Local server http://127.0.0.1:39199 (keep cmd window open)
 echo      - Join host over MQTT / room code / URL
 echo.
@@ -38,7 +48,7 @@ set /p CHOICE=Enter choice (default 1):
 if "%CHOICE%"=="" set "CHOICE=1"
 
 echo.
-echo [Pack] choice=%CHOICE%
+echo [Pack] choice=%CHOICE% version=%PACK_VER%
 set "NEED_ANDROID="
 echo %CHOICE%| findstr "1" >nul
 if not errorlevel 1 (
@@ -65,7 +75,7 @@ if defined HINT (
 echo.
 
 if not defined NEED_ANDROID goto AFTER_ANDROID_PREP
-echo [Android] 编译加入端 APK -^> dist\android\lianji.apk
+echo [Android] 编译加入端 APK -^> %APK_PATH%
 echo [Android] 若失败，请先释放 C 盘空间（Gradle 需约 500MB+）
 echo.
 set "GRADLE_USER_HOME=%~dp0.gradle-home"
@@ -87,16 +97,16 @@ echo.
 if errorlevel 1 goto FAIL
 
 if not defined NEED_ANDROID goto SUCCESS
-if not exist "dist\android\lianji.apk" (
-  echo [ERROR] dist\android\lianji.apk 不存在
+if not exist "%APK_PATH%" (
+  echo [ERROR] %APK_PATH% 不存在
   goto FAIL
 )
-for %%F in ("dist\android\lianji.apk") do set SIZE=%%~zF
+for %%F in ("%APK_PATH%") do set SIZE=%%~zF
 if %SIZE% LSS 1000000 (
-  echo [ERROR] lianji.apk 过小 ^(%SIZE% bytes^)，可能不是有效安装包
+  echo [ERROR] %APK_NAME% 过小 ^(%SIZE% bytes^)，可能不是有效安装包
   goto FAIL
 )
-echo OK: dist\android\lianji.apk ^(%SIZE% bytes^)
+echo OK: %APK_PATH% ^(%SIZE% bytes^)
 echo 请拷到手机「下载」目录后用文件管理安装，勿在微信里直接点。
 echo.
 

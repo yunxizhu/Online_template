@@ -12,10 +12,35 @@
  *   hard   ?????????????????????????????????
  */
 
+const { becameStrictSlotLeader } = require('./environmentEffects');
+
 const RESOURCES = ['wood', 'stone', 'food', 'iron'];
 const BOARD_AREAS = ['resource', 'special'];
 
 /* ?????????? ?????? engine ???????????????????? */
+
+/**
+ * 本次往资源格放 count 枚（含 boostAdd 强化）后，是否「成为」严格最大者。
+ * 与 engine 传送/渔翁/颗粒无收触发条件一致：已是最大再加码不触发。
+ */
+function wouldBecomeStrictLeaderOnResource(game, player, number, count, boostAdd) {
+  const board = game.board && game.board.resource;
+  if (!board || !player) return false;
+  const face = Number(number);
+  const n = Math.max(0, Number(count) || 0);
+  if (!(face >= 1 && face <= 6) || n <= 0) return false;
+  const beforeWk = (board.workers && board.workers[face]) || {};
+  const beforeBoosts = (board.boosts && board.boosts[face]) || {};
+  const afterWk = {
+    ...beforeWk,
+    [player.id]: (Number(beforeWk[player.id]) || 0) + n,
+  };
+  const afterBoosts = {
+    ...beforeBoosts,
+    [player.id]: (Number(beforeBoosts[player.id]) || 0) + (Number(boostAdd) || 0),
+  };
+  return becameStrictSlotLeader(afterWk, player.id, n, afterBoosts);
+}
 
 function playerById(game, id) {
   return (game.players || []).find((p) => p.id === id) || null;
@@ -215,7 +240,7 @@ function selfGainFactor(game) {
  * ??????????????????????????????
  * @returns number  ????????
  */
-function estimateEventDispatchGain(game, player, number, count, selfRank) {
+function estimateEventDispatchGain(game, player, number, count, selfRank, boostAdd) {
   const env = envOnResourceSlot(game, number);
   // 囚徒困境等为 settle + dispatchAlso，不能只认 trigger===dispatch
   if (!env || !envTriggersDispatch(env) || !envHasDispatchEffect(env.envType)) return 0;
@@ -238,8 +263,11 @@ function estimateEventDispatchGain(game, player, number, count, selfRank) {
     }
 
     case 'barrenHarvest': {
-      // ????????????
+      // 需成为最大者；已是最大再加码不触发
       if (selfRank !== 0) return 0;
+      if (!wouldBecomeStrictLeaderOnResource(game, player, number, count, boostAdd)) {
+        return 0;
+      }
       let score = 35;
       const wk = slotWorkers(game.board && game.board.resource, number);
       if (wk) {
@@ -270,6 +298,9 @@ function estimateEventDispatchGain(game, player, number, count, selfRank) {
 
     case 'fishermanProfit': {
       if (selfRank !== 0) return 0;
+      if (!wouldBecomeStrictLeaderOnResource(game, player, number, count, boostAdd)) {
+        return 0;
+      }
       const workers = (game.board && game.board.resource && game.board.resource.workers && game.board.resource.workers[number]) || {};
       const distinctOwners = Object.keys(workers).filter(pid => pid !== '__neutral__' && (workers[pid] || 0) > 0).length;
       const n = Math.max(1, distinctOwners + (workers[player.id] ? 0 : 1));
@@ -286,7 +317,11 @@ function estimateEventDispatchGain(game, player, number, count, selfRank) {
     }
 
     case 'teleport': {
+      // 需重新成为最大者；已是最大再加码无法触发 → 收益 0
       if (selfRank !== 0) return 0;
+      if (!wouldBecomeStrictLeaderOnResource(game, player, number, count, boostAdd)) {
+        return 0;
+      }
       let bestVal = _bestTeleportTargetValue(game, player, number);
       // ?????????????????????????? + ????????
       for (const area2 of BOARD_AREAS) {
@@ -668,10 +703,22 @@ function estimateEventSettleGain(game, player, number, selfRank, count = null) {
       if (selfRank > 1) return 0;
       const wk = slotWorkers(game.board && game.board.resource, number) || {};
       const myPrev = Number(wk[player.id]) || 0;
-      const after = count == null ? myPrev : myPrev + Math.max(0, Number(count) || 0);
+      const placed = count == null ? 0 : Math.max(0, Number(count) || 0);
+      const after = count == null ? myPrev : myPrev + placed;
       const need = _resistBarbariansNeedDice(game.round);
       // 未达物理骰门槛：满额 VP 不给，由追梦分处理
       if (after < need) return 0;
+      // 放置前已能领到南蛮分：再堆不增加 VP → 事件收益 0
+      //（对冲危机下加码使自己从「被抵消」变「能领分」时仍给满额）
+      if (
+        myPrev >= need &&
+        _wouldEarnResistBarbariansVp(game, player, number, myPrev)
+      ) {
+        return 0;
+      }
+      if (!_wouldEarnResistBarbariansVp(game, player, number, after)) {
+        return 0;
+      }
       const myScore = playerScore(player, game);
       const maxScore = Math.max(...alivePlayers(game).map((p) => playerScore(p, game)));
       if (myScore >= maxScore - 3) return 45;
@@ -1043,12 +1090,89 @@ function _slotHasRivalWorkers(game, area, face, playerId) {
   return false;
 }
 
+/** 功能区当前已解锁的最大号码格 */
+function _specialOpenMax(game) {
+  return Math.min(6, 2 + Math.floor((Math.max(1, Number(game.round) || 1) - 1) / 2));
+}
+
+/**
+ * 场上无主板块数：有牌且无任何玩家骰（中立不算有主）。
+ */
+function countUnownedBoardSlots(game) {
+  let n = 0;
+  const openMax = _specialOpenMax(game);
+  for (const area of BOARD_AREAS) {
+    const board = game.board && game.board[area];
+    if (!board) continue;
+    const maxFace = area === 'special' ? openMax : 6;
+    for (let face = 1; face <= maxFace; face++) {
+      if (!tilesOnNumber(board, face).length) continue;
+      const wk = slotWorkers(board, face);
+      let owned = false;
+      for (const [pid, c] of Object.entries(wk)) {
+        if (pid === '__neutral__') continue;
+        if ((Number(c) || 0) > 0) {
+          owned = true;
+          break;
+        }
+      }
+      if (!owned) n += 1;
+    }
+  }
+  return n;
+}
+
+/**
+ * 无主板块机会成本：数量越多负分越高。
+ * @param {number} weight 权重（多骰可用 count-1；跳过用 1）
+ */
+function unownedBoardOpportunityPenalty(game, weight) {
+  const w = Math.max(0, Number(weight) || 0);
+  if (w <= 0) return 0;
+  const n = countUnownedBoardSlots(game);
+  if (n <= 0) return 0;
+  const per = Math.round(4 * selfGainFactor(game));
+  return n * per * w;
+}
+
+/** 先到先得 / 抵抗南蛮：正当需要堆多枚，不受「无主机会成本」多骰惩罚 */
+function isMultiDiceThresholdEnv(env) {
+  return Boolean(
+    env && (env.envType === 'firstCome' || env.envType === 'resistBarbarians')
+  );
+}
+
 /** 抵抗南蛮所需物理骰数（与 engine 一致） */
 function _resistBarbariansNeedDice(round) {
   const r = Math.max(1, Number(round) || 1);
   if (r >= 7) return 4;
   if (r >= 4) return 3;
   return 2;
+}
+
+/**
+ * 以 myCount 枚（及对应强化）占该资源格时，结算后是否仍能领到抵抗南蛮 VP。
+ * 需：物理骰 ≥ 门槛，且同强度抵消后仍留在场上。
+ */
+function _wouldEarnResistBarbariansVp(game, player, number, myCount, myBoost) {
+  const need = _resistBarbariansNeedDice(game.round);
+  const n = Math.max(0, Number(myCount) || 0);
+  if (n < need || !player) return false;
+  const board = game.board && game.board.resource;
+  if (!board) return false;
+  const face = Number(number);
+  const beforeWk = (board.workers && board.workers[face]) || {};
+  const beforeBoosts = (board.boosts && board.boosts[face]) || {};
+  const wk = { ...beforeWk, [player.id]: n };
+  const boosts = {
+    ...beforeBoosts,
+    [player.id]: Math.min(
+      n,
+      Math.max(0, myBoost != null ? Number(myBoost) : Number(beforeBoosts[player.id]) || 0)
+    ),
+  };
+  const remain = _cancelEqualCountsLocal(_slotStrengthLocal(wk, boosts));
+  return Boolean(remain[player.id]);
 }
 
 /**
@@ -1138,6 +1262,9 @@ function scoreVoidSkipOption(game, player, diff) {
   if (hand === 0) score += diff === 'hard' ? 3 : 2;
   else if (hand <= 2 && (Number(game.round) || 1) <= 3) score += 1;
 
+  // 场上无主板块越多，跳过浪费落子机会 → 负分越高
+  score -= unownedBoardOpportunityPenalty(game, 1);
+
   return score;
 }
 
@@ -1191,6 +1318,15 @@ function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botSt
   // 资源收益：只按手牌空位能留下的数量计分（如 7/9 空位、预计拿 5 → 按 2 计），不额外扣分；
   // 幸运一抽等其它收益仍在下方全额叠加。吃不了兜着走 / 本轮跳过弃牌则不截断。
   let scoredSelf = est.self;
+  // 本已是第一再加码：结算大份不是新收益（与传送落点评分一致）
+  let alreadyFirstBefore = false;
+  if (area === 'resource') {
+    const beforeEst = estimateProduceGain(game, player, area, face, 0, 0);
+    alreadyFirstBefore = beforeEst.myRank === 0;
+    if (alreadyFirstBefore && est.myRank === 0 && beforeEst.self >= est.self) {
+      scoredSelf = 0;
+    }
+  }
   if (
     area === 'resource' &&
     env &&
@@ -1256,7 +1392,8 @@ function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botSt
         player,
         face,
         count,
-        est.myRank
+        est.myRank,
+        boostAdd
       );
       const unclaimed = !_slotHasRivalWorkers(game, area, face, player.id);
       // 以身入局：多骰=多挪中立，超额惩罚大幅减轻
@@ -1281,6 +1418,11 @@ function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botSt
     score -= surplus * SKIP_BASELINE * penaltyMult;
   }
 
+  // 非先到先得/抵抗南蛮：单次多枚时，场上无主板块越多惩罚越重
+  if (count >= 2 && !isMultiDiceThresholdEnv(env)) {
+    score -= unownedBoardOpportunityPenalty(game, count - 1);
+  }
+
   if (area === 'special') {
     score += estimateSpecialClaimValue(game, player, face, est.myRank, diff);
   }
@@ -1288,7 +1430,7 @@ function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botSt
   // 事件收益：normal/hard 都计入（否则吃不了兜着走等会被低估）
   if (area === 'resource' && (diff === 'hard' || diff === 'normal')) {
     const evtScale = diff === 'hard' ? 1 : 0.75;
-    score += estimateEventDispatchGain(game, player, face, count, est.myRank) * evtScale;
+    score += estimateEventDispatchGain(game, player, face, count, est.myRank, boostAdd) * evtScale;
     score += estimateEventSettleGain(game, player, face, est.myRank, count) * evtScale;
     // 先到先得 / 抵抗南蛮：未达门槛但剩余骰多 → 追梦占坑
     score += estimateThresholdChaseBonus(game, player, face, count, est.myRank) * evtScale;
@@ -1336,12 +1478,12 @@ function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botSt
       } else if (myRemAfter <= 0 && maxRival === 1) {
         score += 5;
       } else if (myRemAfter <= 0 && maxRival === 0) {
-        // 超额堆骰时不把「安全独占」加成算满，否则无人争抢的 3 同点会虚高不去爆骰
-        score += surplus > 0 ? 0 : 25;
+        // 超额堆骰 / 已是第一再加码：安全独占不是本步新收益
+        score += surplus > 0 || alreadyFirstBefore ? 0 : 25;
       } else if (risk < 0.3) {
-        score += 12;
+        score += alreadyFirstBefore ? 3 : 12;
       } else if (risk < 0.5) {
-        score += 5;
+        score += alreadyFirstBefore ? 1 : 5;
       }
     }
 
@@ -1359,7 +1501,15 @@ function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botSt
         if (tileCount >= 2) score += 8;
         if (tileCount >= 3) score += 10;
         if (env && ['teleport', 'mercenaries', 'enterFray', 'firstCome'].includes(env.envType)) {
-          score += 10;
+          // 传送等「成为最大者」类：无法再次触发时不加码
+          if (
+            env.envType === 'teleport' &&
+            !wouldBecomeStrictLeaderOnResource(game, player, face, count, boostAdd)
+          ) {
+            // skip
+          } else {
+            score += 10;
+          }
         }
       }
     }
@@ -3593,4 +3743,6 @@ module.exports = {
   minDiceForSameOutcome,
   decideMercenaryPhase,
   scoreMercenaryPlacement,
+  estimateEventSettleGain,
+  countUnownedBoardSlots,
 };
