@@ -10,14 +10,15 @@ if errorlevel 1 (
 
 echo.
 echo ========================================
-echo   Publish Windows host OTA update
+echo   Publish Windows host OTA (Gitee)
 echo ========================================
 echo.
 echo   Scans server/ + public/ + package.json
-echo   Uploads new blobs to GitHub branch "ota"
+echo   Uploads new blobs to Gitee branch "ota"
 echo   Updates host-update.json for other hosts
 echo.
-echo   Need git permission to push origin/ota
+echo   Need remote "gitee" with push permission:
+echo     git remote add gitee https://gitee.com/yunxizhu/Online_template.git
 echo.
 
 set "LIANJI_OTA_NOTES="

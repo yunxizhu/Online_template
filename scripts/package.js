@@ -216,12 +216,13 @@ function windowsReadme(nodeExeName) {
     '- .tools/       Cloudflare 隧道（cloudflared.exe）\n' +
     '- 启动.bat      一键启动（支持 OTA 后自动重启）\n' +
     '\n' +
-    '主机差分更新\n' +
+    '主机差分更新（默认 Gitee）\n' +
     '--------\n' +
     '启动后本机浏览器会检测更新；也可在菜单点「检查更新」。\n' +
     '须用 http://localhost 打开本机页（不要用隧道域名点升级）。\n' +
     '禁用：在目录下放 update.off\n' +
-    '自定义清单地址：update.url（一行 URL）\n'
+    '自定义清单地址：update.url（一行 URL）\n' +
+    '默认：https://gitee.com/yunxizhu/Online_template/raw/ota/host-update.json\n'
   );
 }
 

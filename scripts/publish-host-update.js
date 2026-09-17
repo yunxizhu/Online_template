@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 一键发布 Windows 主机差分更新到 GitHub ota 分支。
+ * 一键发布 Windows 主机差分更新到 Gitee ota 分支。
  *
  * 用法：
  *   node scripts/publish-host-update.js
@@ -10,8 +10,11 @@
  *   node scripts/publish-host-update.js --dry-run
  *   node scripts/publish-host-update.js --force
  *
+ * 首次请添加 Gitee 远程（与 GitHub 同名仓库即可）：
+ *   git remote add gitee https://gitee.com/yunxizhu/Online_template.git
+ *
  * 发布后他人检测地址（默认）：
- *   https://raw.githubusercontent.com/yunxizhu/Online_template/ota/host-update.json
+ *   https://gitee.com/yunxizhu/Online_template/raw/ota/host-update.json
  */
 
 const fs = require('fs');
@@ -26,6 +29,11 @@ const {
 
 const ROOT = path.resolve(__dirname, '..');
 const OTA_BRANCH = 'ota';
+const DEFAULT_OWNER = 'yunxizhu';
+const DEFAULT_REPO = 'Online_template';
+/** 推送 OTA 的 git remote 名；可用环境变量 LIANJI_OTA_REMOTE 覆盖 */
+const OTA_REMOTE =
+  String(process.env.LIANJI_OTA_REMOTE || 'gitee').trim() || 'gitee';
 const SCAN_DIRS = ['server', 'public'];
 const ROOT_FILES = ['package.json'];
 const SKIP_DIR_NAMES = new Set([
@@ -114,7 +122,6 @@ function walkFiles(dir, relBase, out) {
     } else if (ent.isFile()) {
       const norm = rel.replace(/\\/g, '/');
       if (!isPathAllowed(norm)) continue;
-      // 跳过测试文件可选：保留，便于热修测试
       out.push(norm);
     }
   }
@@ -136,28 +143,74 @@ function blobRelPath(sha) {
   return 'blobs/' + sha.slice(0, 2) + '/' + sha;
 }
 
-function detectGithubRepo() {
-  const r = spawnSync('git', ['remote', 'get-url', 'origin'], {
+function parseOwnerRepoFromUrl(url) {
+  const u = String(url || '').trim();
+  let m = u.match(/gitee\.com[:/]([^/]+)\/([^/.]+)/i);
+  if (m) return { owner: m[1], repo: m[2].replace(/\.git$/i, '') };
+  m = u.match(/github\.com[:/]([^/]+)\/([^/.]+)/i);
+  if (m) return { owner: m[1], repo: m[2].replace(/\.git$/i, '') };
+  return null;
+}
+
+function gitRemoteUrl(name) {
+  const r = spawnSync('git', ['remote', 'get-url', name], {
     cwd: ROOT,
     encoding: 'utf8',
   });
-  if (r.status !== 0) return { owner: 'yunxizhu', repo: 'Online_template' };
-  const url = String(r.stdout || '').trim();
-  let m = url.match(/github\.com[:/]([^/]+)\/([^/.]+)/i);
-  if (m) return { owner: m[1], repo: m[2].replace(/\.git$/i, '') };
-  return { owner: 'yunxizhu', repo: 'Online_template' };
+  if (r.status !== 0) return '';
+  return String(r.stdout || '').trim();
+}
+
+function listRemotes() {
+  const r = spawnSync('git', ['remote'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+  });
+  if (r.status !== 0) return [];
+  return String(r.stdout || '')
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function resolveOtaRemote() {
+  const remotes = listRemotes();
+  if (remotes.includes(OTA_REMOTE)) return OTA_REMOTE;
+  // 若用户把 origin 直接设成 Gitee，也可
+  const originUrl = gitRemoteUrl('origin');
+  if (/gitee\.com/i.test(originUrl)) return 'origin';
+  return OTA_REMOTE;
+}
+
+function detectRepo(remoteName) {
+  const url = gitRemoteUrl(remoteName) || gitRemoteUrl('origin');
+  const parsed = parseOwnerRepoFromUrl(url);
+  if (parsed) return parsed;
+  return { owner: DEFAULT_OWNER, repo: DEFAULT_REPO };
 }
 
 function rawBlobUrl(owner, repo, sha) {
   return (
-    'https://raw.githubusercontent.com/' +
+    'https://gitee.com/' +
     owner +
     '/' +
     repo +
-    '/' +
+    '/raw/' +
     OTA_BRANCH +
     '/' +
     blobRelPath(sha)
+  );
+}
+
+function rawManifestUrl(owner, repo) {
+  return (
+    'https://gitee.com/' +
+    owner +
+    '/' +
+    repo +
+    '/raw/' +
+    OTA_BRANCH +
+    '/host-update.json'
   );
 }
 
@@ -174,16 +227,26 @@ function runGit(args, opts = {}) {
   return String(r.stdout || '').trim();
 }
 
-function ensureOtaWorktree(worktreePath) {
+function ensureOtaRemote(remoteName, owner, repo) {
+  const remotes = listRemotes();
+  if (remotes.includes(remoteName)) return;
+  const url = 'https://gitee.com/' + owner + '/' + repo + '.git';
+  throw new Error(
+    `缺少 git remote「${remoteName}」。请先在 Gitee 创建仓库 ${owner}/${repo}，然后执行：\n` +
+      `  git remote add ${remoteName} ${url}\n` +
+      `再重新运行本脚本。`
+  );
+}
+
+function ensureOtaWorktree(worktreePath, remoteName) {
   if (fs.existsSync(worktreePath)) {
-    // 已有 worktree：拉最新
     try {
-      runGit(['fetch', 'origin', OTA_BRANCH], { cwd: ROOT });
+      runGit(['fetch', remoteName, OTA_BRANCH], { cwd: ROOT });
     } catch (_) {}
     try {
       runGit(['checkout', OTA_BRANCH], { cwd: worktreePath });
       try {
-        runGit(['pull', '--ff-only', 'origin', OTA_BRANCH], {
+        runGit(['pull', '--ff-only', remoteName, OTA_BRANCH], {
           cwd: worktreePath,
         });
       } catch (_) {}
@@ -193,41 +256,36 @@ function ensureOtaWorktree(worktreePath) {
     }
   }
 
-  // 远端是否已有 ota
   let remoteHas = false;
   try {
-    runGit(['fetch', 'origin', OTA_BRANCH]);
+    runGit(['fetch', remoteName, OTA_BRANCH]);
     remoteHas = true;
   } catch (_) {
     remoteHas = false;
   }
 
   if (remoteHas) {
-    runGit(['worktree', 'add', worktreePath, 'origin/' + OTA_BRANCH]);
-    // detached → 建本地分支
+    runGit(['worktree', 'add', worktreePath, remoteName + '/' + OTA_BRANCH]);
     try {
       runGit(['checkout', '-B', OTA_BRANCH], { cwd: worktreePath });
     } catch (_) {}
     return;
   }
 
-  // 本地是否有 ota
   const branches = runGit(['branch', '--list', OTA_BRANCH]);
   if (branches) {
     runGit(['worktree', 'add', worktreePath, OTA_BRANCH]);
     return;
   }
 
-  // 新建 orphan ota
   runGit(['worktree', 'add', '--detach', worktreePath, 'HEAD']);
   runGit(['checkout', '--orphan', OTA_BRANCH], { cwd: worktreePath });
-  // 清空工作区
   try {
     runGit(['rm', '-rf', '.'], { cwd: worktreePath });
   } catch (_) {}
   fs.writeFileSync(
     path.join(worktreePath, 'README.md'),
-    '# LianJi host OTA\n\nContent-addressed blobs + host-update.json\n'
+    '# LianJi host OTA (Gitee)\n\nContent-addressed blobs + host-update.json\n'
   );
   runGit(['add', 'README.md'], { cwd: worktreePath });
   runGit(['commit', '-m', 'chore: init ota branch'], { cwd: worktreePath });
@@ -244,7 +302,7 @@ async function fetchRemoteManifest(url) {
 }
 
 function printHelp() {
-  console.log(`发布 Windows 主机差分更新
+  console.log(`发布 Windows 主机差分更新（Gitee）
 
   node scripts/publish-host-update.js [options]
 
@@ -257,7 +315,8 @@ function printHelp() {
   --dry-run            只生成 dist/ota-stage，不推送
   --no-push            写入 ota worktree 并 commit，但不 push
 
-默认会把新 blob + host-update.json 推到 origin/${OTA_BRANCH}。
+默认推送到 remote「${OTA_REMOTE}」的 ${OTA_BRANCH} 分支。
+可用环境变量 LIANJI_OTA_REMOTE 改 remote 名。
 `);
 }
 
@@ -294,19 +353,18 @@ async function main() {
   const version = String(pkg.version || '').trim();
   if (!version) throw new Error('package.json 缺少 version');
 
-  const { owner, repo } = detectGithubRepo();
-  const manifestUrl =
-    'https://raw.githubusercontent.com/' +
-    owner +
-    '/' +
-    repo +
-    '/' +
-    OTA_BRANCH +
-    '/host-update.json';
+  const remoteName = resolveOtaRemote();
+  const { owner, repo } = detectRepo(remoteName);
+  const manifestUrl = rawManifestUrl(owner, repo);
 
   console.log('[publish] version =', version);
-  console.log('[publish] repo =', owner + '/' + repo);
+  console.log('[publish] remote =', remoteName);
+  console.log('[publish] repo =', owner + '/' + repo, '(Gitee)');
   console.log('[publish] manifest will be', manifestUrl);
+
+  if (!args.dryRun && !args.noPush) {
+    ensureOtaRemote(remoteName, owner, repo);
+  }
 
   const remote = await fetchRemoteManifest(manifestUrl);
   if (remote && remote.version && cmpSemver(version, remote.version) < 0) {
@@ -383,7 +441,6 @@ async function main() {
     JSON.stringify(manifest, null, 2) + '\n'
   );
 
-  // 也写一份便于人工检查的精简列表
   fs.writeFileSync(
     path.join(stageDir, 'CHANGED_BLOBS.txt'),
     newBlobs.map((b) => b.sha + '  ' + b.size + '\n').join('') || '(none)\n'
@@ -401,9 +458,8 @@ async function main() {
 
   const worktreePath = path.join(ROOT, 'dist', 'ota-worktree');
   console.log('[publish] preparing worktree', worktreePath);
-  ensureOtaWorktree(worktreePath);
+  ensureOtaWorktree(worktreePath, remoteName);
 
-  // 复制新 blob
   let copied = 0;
   for (const b of newBlobs) {
     const dest = path.join(worktreePath, ...blobRelPath(b.sha).split('/'));
@@ -435,30 +491,21 @@ async function main() {
     return;
   }
 
-  console.log('[publish] pushing origin/' + OTA_BRANCH + ' …');
-  runGit(['push', '-u', 'origin', OTA_BRANCH], { cwd: worktreePath });
+  ensureOtaRemote(remoteName, owner, repo);
+  console.log('[publish] pushing ' + remoteName + '/' + OTA_BRANCH + ' …');
+  runGit(['push', '-u', remoteName, OTA_BRANCH], { cwd: worktreePath });
 
-  // 写默认 update.url 到 stage 提示
   fs.writeFileSync(
     path.join(stageDir, 'update.url.example'),
     manifestUrl + '\n'
   );
 
   console.log('');
-  console.log('发布成功。');
+  console.log('发布成功（Gitee）。');
   console.log('  Manifest:', manifestUrl);
   console.log('  其他人启动主机后会自动检测；也可在菜单点「检查更新」。');
-  console.log('  若 raw.githubusercontent.com 较慢，可在主机目录放 update.url 指向镜像。');
-  console.log('  jsDelivr 镜像示例:');
-  console.log(
-    '  https://cdn.jsdelivr.net/gh/' +
-      owner +
-      '/' +
-      repo +
-      '@' +
-      OTA_BRANCH +
-      '/host-update.json'
-  );
+  console.log('  旧包若仍指向 GitHub，可在主机目录放 update.url：');
+  console.log('  ' + manifestUrl);
 }
 
 main().catch((err) => {

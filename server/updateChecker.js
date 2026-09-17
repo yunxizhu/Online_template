@@ -5,6 +5,9 @@
  * 本地配置（可选）：
  *   update.url  — 一行，manifest URL（覆盖默认）
  *   update.off  — 存在则禁用自动检查
+ *
+ * 默认走 Gitee（国内可达）：
+ *   https://gitee.com/yunxizhu/Online_template/raw/ota/host-update.json
  */
 
 const fs = require('fs');
@@ -15,7 +18,7 @@ const https = require('https');
 const { URL } = require('url');
 
 const DEFAULT_MANIFEST_URL =
-  'https://raw.githubusercontent.com/yunxizhu/Online_template/ota/host-update.json';
+  'https://gitee.com/yunxizhu/Online_template/raw/ota/host-update.json';
 
 const ALLOWED_PREFIXES = ['server/', 'public/'];
 const ALLOWED_FILES = new Set(['package.json']);
