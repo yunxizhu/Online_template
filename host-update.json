@@ -1,0 +1,2809 @@
+{
+  "schema": 1,
+  "version": "1.0.2",
+  "minVersion": "",
+  "force": false,
+  "notes": "修正ai对于囚徒困境的判断",
+  "notes_en": "",
+  "publishedAt": "2026-09-17T17:10:47.133Z",
+  "fileCount": 466,
+  "totalBytes": 67521047,
+  "files": [
+    {
+      "path": "package.json",
+      "sha256": "a241eb761e0083eff80708ad2fc9ab3d1f328f746072c96f09175ae771d43cda",
+      "size": 1478,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/a2/a241eb761e0083eff80708ad2fc9ab3d1f328f746072c96f09175ae771d43cda"
+    },
+    {
+      "path": "public/css/style.css",
+      "sha256": "0f3e18c0e672e2b53393ae0a6a697a31ca2ef134cdccb320489e47fb8be1cbc4",
+      "size": 46796,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/0f/0f3e18c0e672e2b53393ae0a6a697a31ca2ef134cdccb320489e47fb8be1cbc4"
+    },
+    {
+      "path": "public/favicon.svg",
+      "sha256": "0e69dfed6fb4b30ac6f36c8f6eb1c0be6da927546a66699b44e383d41c55b9fc",
+      "size": 256,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/0e/0e69dfed6fb4b30ac6f36c8f6eb1c0be6da927546a66699b44e383d41c55b9fc"
+    },
+    {
+      "path": "public/games/README.md",
+      "sha256": "23ccf9d3587624ef56d396f83b3026b9655abba4d2f8013078c699327a591830",
+      "size": 393,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/23/23ccf9d3587624ef56d396f83b3026b9655abba4d2f8013078c699327a591830"
+    },
+    {
+      "path": "public/games/gomoku/board.js",
+      "sha256": "7697093570eb42f699697a106cd26510d2bb395806ec3b93ff8d7dcb62855fb7",
+      "size": 4128,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/76/7697093570eb42f699697a106cd26510d2bb395806ec3b93ff8d7dcb62855fb7"
+    },
+    {
+      "path": "public/games/gomoku/panel.html",
+      "sha256": "ccd70eae109ed5121eb90683b2a02d2f0d154bf29b57d7c20223e7112e7e13bd",
+      "size": 430,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/cc/ccd70eae109ed5121eb90683b2a02d2f0d154bf29b57d7c20223e7112e7e13bd"
+    },
+    {
+      "path": "public/games/gomoku/style.css",
+      "sha256": "166f349964202ab5bc1c4544ac9b899490b3c8fb0622e65b5a4a3cacbbc3b012",
+      "size": 273,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/16/166f349964202ab5bc1c4544ac9b899490b3c8fb0622e65b5a4a3cacbbc3b012"
+    },
+    {
+      "path": "public/games/incan/panel.html",
+      "sha256": "8b598fd871d7a71888bea38ff8708ad74c703d2255661f3ba28bc0c4f582f2c6",
+      "size": 1470,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/8b/8b598fd871d7a71888bea38ff8708ad74c703d2255661f3ba28bc0c4f582f2c6"
+    },
+    {
+      "path": "public/games/incan/style.css",
+      "sha256": "118a5160d31665586bdecc833a4b26babe91134953dfcc58f83ff05d650de09a",
+      "size": 1257,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/11/118a5160d31665586bdecc833a4b26babe91134953dfcc58f83ff05d650de09a"
+    },
+    {
+      "path": "public/games/incan/ui.js",
+      "sha256": "408df40ca5ae7fe1f2288a1d54e3eac1f0f03aee2c443a49083fc60179d3a396",
+      "size": 6217,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/40/408df40ca5ae7fe1f2288a1d54e3eac1f0f03aee2c443a49083fc60179d3a396"
+    },
+    {
+      "path": "public/games/lasidao/assets.js",
+      "sha256": "dc5eff77a2c8abdd95e3569949c0636a7bcab9da022919b2e48e5a8c9f578f22",
+      "size": 14690,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/dc/dc5eff77a2c8abdd95e3569949c0636a7bcab9da022919b2e48e5a8c9f578f22"
+    },
+    {
+      "path": "public/games/lasidao/fx.js",
+      "sha256": "3065233111f3a9ece5f962a8231f14ef43625a9090c6ffab0173a5fd4ee9c30c",
+      "size": 50931,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/30/3065233111f3a9ece5f962a8231f14ef43625a9090c6ffab0173a5fd4ee9c30c"
+    },
+    {
+      "path": "public/games/lasidao/panel.html",
+      "sha256": "2792df5bdfa14e4bd7d09507cd637602df965fc94bf249c7f108799f24b86128",
+      "size": 30104,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/27/2792df5bdfa14e4bd7d09507cd637602df965fc94bf249c7f108799f24b86128"
+    },
+    {
+      "path": "public/games/lasidao/style.css",
+      "sha256": "c850bfe7365453e2627095dae510bc0cdaac641c64574cadb6bfa5542917ac9c",
+      "size": 171655,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c8/c850bfe7365453e2627095dae510bc0cdaac641c64574cadb6bfa5542917ac9c"
+    },
+    {
+      "path": "public/games/lasidao/ui.js",
+      "sha256": "59810be72f005c7ff8b612afa66fa03715d3c1df604d44138af5fb1f9da2f0be",
+      "size": 479272,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/59/59810be72f005c7ff8b612afa66fa03715d3c1df604d44138af5fb1f9da2f0be"
+    },
+    {
+      "path": "public/games/sgs/assets.js",
+      "sha256": "0c3e5568d0e718d21261c754479d051d0666fb568b29c3df5a7a6273fb3cc96a",
+      "size": 20504,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/0c/0c3e5568d0e718d21261c754479d051d0666fb568b29c3df5a7a6273fb3cc96a"
+    },
+    {
+      "path": "public/games/sgs/fx.js",
+      "sha256": "e3239c0a8c380a04a719642bdd574489c40c7940f36f2f51fa099f4d8f28c8dc",
+      "size": 14968,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e3/e3239c0a8c380a04a719642bdd574489c40c7940f36f2f51fa099f4d8f28c8dc"
+    },
+    {
+      "path": "public/games/sgs/panel.html",
+      "sha256": "7ddbdde72c8c56152ddf3c0f945c3be805cc74caca20e9d883430a56ffbb9930",
+      "size": 4151,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/7d/7ddbdde72c8c56152ddf3c0f945c3be805cc74caca20e9d883430a56ffbb9930"
+    },
+    {
+      "path": "public/games/sgs/style.css",
+      "sha256": "f233831585f4e66a322c237322565a9af0759d2cf9074b823b7e1e6d3e852b93",
+      "size": 51554,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/f2/f233831585f4e66a322c237322565a9af0759d2cf9074b823b7e1e6d3e852b93"
+    },
+    {
+      "path": "public/games/sgs/ui.js",
+      "sha256": "2c13952f0f066339921ea8b4d22fbad6edacf50cceb87dd2d038c4322c6d15d0",
+      "size": 208125,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/2c/2c13952f0f066339921ea8b4d22fbad6edacf50cceb87dd2d038c4322c6d15d0"
+    },
+    {
+      "path": "public/i18n/en.json",
+      "sha256": "18da820fffc6e7b45d30c466c4ec9a6e953811014ee8b80404aafc7fef29b555",
+      "size": 59462,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/18/18da820fffc6e7b45d30c466c4ec9a6e953811014ee8b80404aafc7fef29b555"
+    },
+    {
+      "path": "public/i18n/zh.json",
+      "sha256": "ac9dbfcee9e9b24dcd704038821a4eded0fd364a11a1683ce1c251ff4bd4d039",
+      "size": 61851,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ac/ac9dbfcee9e9b24dcd704038821a4eded0fd364a11a1683ce1c251ff4bd4d039"
+    },
+    {
+      "path": "public/index.html",
+      "sha256": "275995609475c1139b996b428c99b773a0f77ab8640e72d43bb08e9118f55f63",
+      "size": 28247,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/27/275995609475c1139b996b428c99b773a0f77ab8640e72d43bb08e9118f55f63"
+    },
+    {
+      "path": "public/js/bgm-volume.js",
+      "sha256": "354f99b715f4ee3956df2b7b20f3b3851ae194e537065cd76224da081516f2dc",
+      "size": 1130,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/35/354f99b715f4ee3956df2b7b20f3b3851ae194e537065cd76224da081516f2dc"
+    },
+    {
+      "path": "public/js/boot-games.js",
+      "sha256": "ba5e8d1f968203fc8852c13bd9bd7556bdf0c573614752e33bf15a3576a08b57",
+      "size": 6081,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ba/ba5e8d1f968203fc8852c13bd9bd7556bdf0c573614752e33bf15a3576a08b57"
+    },
+    {
+      "path": "public/js/client.js",
+      "sha256": "372d6373b025ffaa6666a16046786e7340b936195f9325f5711b8b77ebb78554",
+      "size": 33726,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/37/372d6373b025ffaa6666a16046786e7340b936195f9325f5711b8b77ebb78554"
+    },
+    {
+      "path": "public/js/i18n.js",
+      "sha256": "28ca85823b82913d548cea313553beef9d6991367083a5a220bcc641921a6f97",
+      "size": 4442,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/28/28ca85823b82913d548cea313553beef9d6991367083a5a220bcc641921a6f97"
+    },
+    {
+      "path": "public/js/mqtt-room-resolve.js",
+      "sha256": "d72da9a991aaf6d691437670e56a9367d613d59d2eb167a0b6c8842833c079b4",
+      "size": 8366,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/d7/d72da9a991aaf6d691437670e56a9367d613d59d2eb167a0b6c8842833c079b4"
+    },
+    {
+      "path": "public/js/ui.js",
+      "sha256": "253dd028246544faa0ffc1e1003af0da008997f418cd5ba4330be0f1dd881762",
+      "size": 229574,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/25/253dd028246544faa0ffc1e1003af0da008997f418cd5ba4330be0f1dd881762"
+    },
+    {
+      "path": "public/lasidao-manual.html",
+      "sha256": "baed3198aada05dbee6c1bc317b3a99a246bf0add3c9606399145cb3b5e08f23",
+      "size": 23387,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ba/baed3198aada05dbee6c1bc317b3a99a246bf0add3c9606399145cb3b5e08f23"
+    },
+    {
+      "path": "server/games/gomoku/README.md",
+      "sha256": "e9d62d7cc3b67e090f52b71266fe860abcf3fa5106389235c1b1d544241a3d34",
+      "size": 166,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e9/e9d62d7cc3b67e090f52b71266fe860abcf3fa5106389235c1b1d544241a3d34"
+    },
+    {
+      "path": "server/games/gomoku/index.js",
+      "sha256": "6dc080199f99cbda999ed10df501ac62f84f9bc3c3f9f67daa77bdfa0fe71abe",
+      "size": 5952,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/6d/6dc080199f99cbda999ed10df501ac62f84f9bc3c3f9f67daa77bdfa0fe71abe"
+    },
+    {
+      "path": "server/games/gomoku/smoke/basic.js",
+      "sha256": "e4d693aa1aa5ade2d8165665d6bc65d1760dfc58685477aa7753a99dd719d496",
+      "size": 1169,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e4/e4d693aa1aa5ade2d8165665d6bc65d1760dfc58685477aa7753a99dd719d496"
+    },
+    {
+      "path": "server/games/incan/README.md",
+      "sha256": "a79bd92a654fdb7da10753a48811d4c0199b1117127d44b7b4fc39bee4a54fbf",
+      "size": 162,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/a7/a79bd92a654fdb7da10753a48811d4c0199b1117127d44b7b4fc39bee4a54fbf"
+    },
+    {
+      "path": "server/games/incan/index.js",
+      "sha256": "3966bdbd79e0b56ac41936565b8f0184667db15e31677814e100d2dd4c15c7c6",
+      "size": 13581,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/39/3966bdbd79e0b56ac41936565b8f0184667db15e31677814e100d2dd4c15c7c6"
+    },
+    {
+      "path": "server/games/incan/smoke/basic.js",
+      "sha256": "76804eac4209a97c9200c65903448871b6d74e814a53e2dcd7443e16adb3634a",
+      "size": 1794,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/76/76804eac4209a97c9200c65903448871b6d74e814a53e2dcd7443e16adb3634a"
+    },
+    {
+      "path": "server/games/index.js",
+      "sha256": "b8e9059aaccbea486f9a008bcdd64ac52a292c9909e51cafbd508f31511fe302",
+      "size": 857,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/b8/b8e9059aaccbea486f9a008bcdd64ac52a292c9909e51cafbd508f31511fe302"
+    },
+    {
+      "path": "server/games/lasidao/README.md",
+      "sha256": "d5bc19f74c72f458a9f33d1d852ac620f73cfa55dc1f6fd1a265303965b306d9",
+      "size": 5172,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/d5/d5bc19f74c72f458a9f33d1d852ac620f73cfa55dc1f6fd1a265303965b306d9"
+    },
+    {
+      "path": "server/games/lasidao/bot.js",
+      "sha256": "e9232337a7496ac7afbfefe77daf4d7136f308cf2a3946b8c28d80bf87bc762d",
+      "size": 131785,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e9/e9232337a7496ac7afbfefe77daf4d7136f308cf2a3946b8c28d80bf87bc762d"
+    },
+    {
+      "path": "server/games/lasidao/deckProfiles.js",
+      "sha256": "f9c86707eb86d234fe5fbc5838869731309f22905336ce5a42fd31753d391b90",
+      "size": 4435,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/f9/f9c86707eb86d234fe5fbc5838869731309f22905336ce5a42fd31753d391b90"
+    },
+    {
+      "path": "server/games/lasidao/decks.js",
+      "sha256": "2e50fd638b1494ca0561f241b8ff7fde3d5c90c67cbf8d8a226f07d9d1cab9f4",
+      "size": 14076,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/2e/2e50fd638b1494ca0561f241b8ff7fde3d5c90c67cbf8d8a226f07d9d1cab9f4"
+    },
+    {
+      "path": "server/games/lasidao/engine.js",
+      "sha256": "54e73638a4e45bfe4f0c441ed011db44703f12488731b80b945066d86624bd8f",
+      "size": 246967,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/54/54e73638a4e45bfe4f0c441ed011db44703f12488731b80b945066d86624bd8f"
+    },
+    {
+      "path": "server/games/lasidao/environmentEffects.js",
+      "sha256": "d5f76c7809ca32027997a3cdd28e673164194f316826c562e740e73b021053cb",
+      "size": 33819,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/d5/d5f76c7809ca32027997a3cdd28e673164194f316826c562e740e73b021053cb"
+    },
+    {
+      "path": "server/games/lasidao/index.js",
+      "sha256": "ccd8de3ebbf1409925a1e87efdc0546d97266c05c4b31c236889d6daf4ef5fab",
+      "size": 1078,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/cc/ccd8de3ebbf1409925a1e87efdc0546d97266c05c4b31c236889d6daf4ef5fab"
+    },
+    {
+      "path": "server/games/lasidao/resourse/music/Satie Gymnopedie No 1.mp3",
+      "sha256": "050ecc5ed8691714957845140874ab4afe088d42ae11a99c598960edb634905f",
+      "size": 1745077,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/05/050ecc5ed8691714957845140874ab4afe088d42ae11a99c598960edb634905f"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/bankuaikabei_gongneng.png",
+      "sha256": "ce03c2429fc6e4ea7be20963b60df71ccb63011aa9389b4383d5cb4245f13d5f",
+      "size": 369183,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ce/ce03c2429fc6e4ea7be20963b60df71ccb63011aa9389b4383d5cb4245f13d5f"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/bankuaikabei_jianzhu.png",
+      "sha256": "e6579da57ef7a289de237157e470172b2bc3c8371062c1e7738eb9a8d741bf11",
+      "size": 374712,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e6/e6579da57ef7a289de237157e470172b2bc3c8371062c1e7738eb9a8d741bf11"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/bankuaikabei_shijian.png",
+      "sha256": "b35bfef7a19847d037c60697d98848b1d6914609dda6b1c5f5bdbc73e9302b65",
+      "size": 368523,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/b3/b35bfef7a19847d037c60697d98848b1d6914609dda6b1c5f5bdbc73e9302b65"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/bankuaikabei_ziyuan.png",
+      "sha256": "7ceec88ba133f87e4c49c5dda953a56e297eb14d1326fbb5c4df6762a78e4a30",
+      "size": 375190,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/7c/7ceec88ba133f87e4c49c5dda953a56e297eb14d1326fbb5c4df6762a78e4a30"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/danongtian.png",
+      "sha256": "1cd10ef39fba9bf0e285c46153c5fe2bcd22b30e379c40d66e187dc1a9f9ec44",
+      "size": 835037,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/1c/1cd10ef39fba9bf0e285c46153c5fe2bcd22b30e379c40d66e187dc1a9f9ec44"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/dasenlin.png",
+      "sha256": "009bf013c602c77bfca519a68417444aa886d4f8ab6fc87c960d5085ed2dfb65",
+      "size": 967744,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/00/009bf013c602c77bfca519a68417444aa886d4f8ab6fc87c960d5085ed2dfb65"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/dashitou.png",
+      "sha256": "4ba756a6fad3854958ebe020379d7df1a2bf2c9703e10e7424a3ba8a160e8723",
+      "size": 1014050,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/4b/4ba756a6fad3854958ebe020379d7df1a2bf2c9703e10e7424a3ba8a160e8723"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/gongnengka_chaiqian.png",
+      "sha256": "932a742e853e63dd4505937177c13fc91f1c01eb2d43d9e43a1bdbc4cb46f876",
+      "size": 890038,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/93/932a742e853e63dd4505937177c13fc91f1c01eb2d43d9e43a1bdbc4cb46f876"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/gongnengka_chongchou.png",
+      "sha256": "698c207b9a819ece2a6fa07819dc83d84f87f7173814e43981a158fa1db61b0e",
+      "size": 504141,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/69/698c207b9a819ece2a6fa07819dc83d84f87f7173814e43981a158fa1db61b0e"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/gongnengka_fengshou.png",
+      "sha256": "a80482d46fef01b916e3bd754b4cba74dc336b193cbb204bfc68bd472f69fde0",
+      "size": 863254,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/a8/a80482d46fef01b916e3bd754b4cba74dc336b193cbb204bfc68bd472f69fde0"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/gongnengka_fulifang.png",
+      "sha256": "f5c2e3f53c57cbdd83516e561e6404dd42f4b5fdd0e77e9b6b225ebab0ee5b92",
+      "size": 808550,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/f5/f5c2e3f53c57cbdd83516e561e6404dd42f4b5fdd0e77e9b6b225ebab0ee5b92"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/gongnengka_qiangdaolaixi.png",
+      "sha256": "6040e2deae38bb43b83224c5c8378de58105d2e2bd51e2b7964caa697ac285f3",
+      "size": 779934,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/60/6040e2deae38bb43b83224c5c8378de58105d2e2bd51e2b7964caa697ac285f3"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/gongnengka_qianghua.png",
+      "sha256": "4672607ff36caaa9f5c4741f10125f8fe393e98a4fa77e3c54a7af6f160eff20",
+      "size": 887989,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/46/4672607ff36caaa9f5c4741f10125f8fe393e98a4fa77e3c54a7af6f160eff20"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/gongnengka_qiangjie.png",
+      "sha256": "787e072864c08f0890b01c605190d252fdeade0de790c7de1cff51c3cb88565f",
+      "size": 915765,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/78/787e072864c08f0890b01c605190d252fdeade0de790c7de1cff51c3cb88565f"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/gongnengka_quzhu.png",
+      "sha256": "cbffe22692ea3311b17c5417b3df2b248b4092ebdc09c6bc88dac4e0ca405214",
+      "size": 965615,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/cb/cbffe22692ea3311b17c5417b3df2b248b4092ebdc09c6bc88dac4e0ca405214"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/gongnengka_shangduilailin.png",
+      "sha256": "772b11b6b0d8e8e5f17e79dd72cd4556e3636a0f7d52a4727fcc588117365097",
+      "size": 885813,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/77/772b11b6b0d8e8e5f17e79dd72cd4556e3636a0f7d52a4727fcc588117365097"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/gongnengka_shouliu.png",
+      "sha256": "3f0ab13a1c83c44a7d5b1c218623a26e30be09d799dbb15ede1d7ee652e2dd86",
+      "size": 768197,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/3f/3f0ab13a1c83c44a7d5b1c218623a26e30be09d799dbb15ede1d7ee652e2dd86"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/gongnengka_yaokongtouzi.png",
+      "sha256": "b0f24956d033d11cafd7c38c9e9296be8d83f7671c53ea69d42ff23e65f06037",
+      "size": 582063,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/b0/b0f24956d033d11cafd7c38c9e9296be8d83f7671c53ea69d42ff23e65f06037"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/gongnengka_zhengzhao.png",
+      "sha256": "ef5c13f663f9d6f5e324c0d2f0ede49fd28d932f9868046f669dfbc789a5520d",
+      "size": 732400,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ef/ef5c13f663f9d6f5e324c0d2f0ede49fd28d932f9868046f669dfbc789a5520d"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/jianzhuka_gongdian.png",
+      "sha256": "d298de9331342829ecb7949078e24b152cd49dfdd0c4ef93c2b459cb63eb505a",
+      "size": 817691,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/d2/d298de9331342829ecb7949078e24b152cd49dfdd0c4ef93c2b459cb63eb505a"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/jianzhuka_jishi.png",
+      "sha256": "b1f702d045fb56cc43145e7504b56071339e4c5969516787bbf4b2ca1c7a1d0d",
+      "size": 919074,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/b1/b1f702d045fb56cc43145e7504b56071339e4c5969516787bbf4b2ca1c7a1d0d"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/jianzhuka_mutougongfang.png",
+      "sha256": "ddfb7a3f1a0e8760b847bac1ad15e3f53492eda24b0d27b0aeb7bf030ff77af8",
+      "size": 898651,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/dd/ddfb7a3f1a0e8760b847bac1ad15e3f53492eda24b0d27b0aeb7bf030ff77af8"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/jianzhuka_shitougongfang.png",
+      "sha256": "f978d85a25984908b9b18e6648aecd58d608b0191c672ab5ade1cc8ecb1a2d8e",
+      "size": 921408,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/f9/f978d85a25984908b9b18e6648aecd58d608b0191c672ab5ade1cc8ecb1a2d8e"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/jianzhuka_tiekuanggongfang.png",
+      "sha256": "7d70d8de5048fa5ee7898e2beb92f6601463b475cffab5371ab7087caf7d81ff",
+      "size": 946174,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/7d/7d70d8de5048fa5ee7898e2beb92f6601463b475cffab5371ab7087caf7d81ff"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/jianzhuka_xiaomaigongfang.png",
+      "sha256": "740e84c8ebc77572f1646844ff7a7a462a29d0d9e6cfc29dc09c2c4bc8cef536",
+      "size": 864520,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/74/740e84c8ebc77572f1646844ff7a7a462a29d0d9e6cfc29dc09c2c4bc8cef536"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/jianzhuka_xuetang.png",
+      "sha256": "f8aac2c389bbc76a0ee43f1cfc60f868b8e7ca6bdae5bd442b7593605eae9ccb",
+      "size": 851638,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/f8/f8aac2c389bbc76a0ee43f1cfc60f868b8e7ca6bdae5bd442b7593605eae9ccb"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/jianzhuka_xuyuanjin.png",
+      "sha256": "42fc63fa1f9f157aa37fa408f330823759f71a2fb58e5da1a0575f250e56d448",
+      "size": 839278,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/42/42fc63fa1f9f157aa37fa408f330823759f71a2fb58e5da1a0575f250e56d448"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/jianzhuka_yonghengwangzuo.png",
+      "sha256": "3fbefecda8032d329fd74794c054c5342ec5b2708ae1320e6ad0008a787915db",
+      "size": 882227,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/3f/3fbefecda8032d329fd74794c054c5342ec5b2708ae1320e6ad0008a787915db"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/shijianka_chibuliaodouzhezou.png",
+      "sha256": "f61bf569dfe88de6562a98bbeb3e7b36f7c149a3dd8bc469d3cd2efde274909b",
+      "size": 884424,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/f6/f61bf569dfe88de6562a98bbeb3e7b36f7c149a3dd8bc469d3cd2efde274909b"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/shijianka_chuansong.png",
+      "sha256": "3c52e960dbb23f56eb807d5eef799ba32ece2b869dcd81166cfd8b9d620395bf",
+      "size": 840231,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/3c/3c52e960dbb23f56eb807d5eef799ba32ece2b869dcd81166cfd8b9d620395bf"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/shijianka_dibaohu.png",
+      "sha256": "2a1cb34be98b97748f231e09b12185020da22ca75b32b4b9f2879c2446e0472f",
+      "size": 861097,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/2a/2a1cb34be98b97748f231e09b12185020da22ca75b32b4b9f2879c2446e0472f"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/shijianka_diyunanman.png",
+      "sha256": "2c57c090926999d39372f02c560a00c7b4471640e8dd3b0374baac07ed8b73df",
+      "size": 721932,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/2c/2c57c090926999d39372f02c560a00c7b4471640e8dd3b0374baac07ed8b73df"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/shijianka_guyongjun.png",
+      "sha256": "ef43f36db783860f5aa6bea9b878e6cca7d17bde55625908810e8510f436bc09",
+      "size": 880541,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ef/ef43f36db783860f5aa6bea9b878e6cca7d17bde55625908810e8510f436bc09"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/shijianka_keliwushou.png",
+      "sha256": "70966db71db87c88074f2f9a9ecf789766fc1a5bf549269adef9e4d76cb23284",
+      "size": 966903,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/70/70966db71db87c88074f2f9a9ecf789766fc1a5bf549269adef9e4d76cb23284"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/shijianka_manghe.png",
+      "sha256": "127229eba75845290136257c1cf3a29dde8ca836e4f4e713845c8744cb0ed8d0",
+      "size": 841053,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/12/127229eba75845290136257c1cf3a29dde8ca836e4f4e713845c8744cb0ed8d0"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/shijianka_qingkongwanli.png",
+      "sha256": "7953505aac879d002ed0256b9f9ecd88bf49308aa648d83172cc59b276659eaa",
+      "size": 768444,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/79/7953505aac879d002ed0256b9f9ecd88bf49308aa648d83172cc59b276659eaa"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/shijianka_qiutukunjing.png",
+      "sha256": "377a70ef2278da179ee881c5338d95c7ca7ac379b043db60206f3fb1351efc36",
+      "size": 869999,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/37/377a70ef2278da179ee881c5338d95c7ca7ac379b043db60206f3fb1351efc36"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/shijianka_weiweijiuzhao.png",
+      "sha256": "a37d8a744a9332c41022249fbf0ff90ba7c07b5333b8b8928d22f10ca8b29016",
+      "size": 793732,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/a3/a37d8a744a9332c41022249fbf0ff90ba7c07b5333b8b8928d22f10ca8b29016"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/shijianka_xiandaoxiande.png",
+      "sha256": "4aad7b7a0e5658d1b7e0294d7e2f00f82bbd029f5c9bf0c7c1e98c169e36da37",
+      "size": 932046,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/4a/4aad7b7a0e5658d1b7e0294d7e2f00f82bbd029f5c9bf0c7c1e98c169e36da37"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/shijianka_yishanburongerhu.png",
+      "sha256": "e32dd6bd0c60104cd5abb5c733889f073649939959fbcfb5045e2dd6c60fa09a",
+      "size": 876423,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e3/e32dd6bd0c60104cd5abb5c733889f073649939959fbcfb5045e2dd6c60fa09a"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/shijianka_yishenruju.png",
+      "sha256": "7f92bfcedcba21228e6cd8892972b0f262db2206d388601ac887815ec9bcfb9e",
+      "size": 881153,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/7f/7f92bfcedcba21228e6cd8892972b0f262db2206d388601ac887815ec9bcfb9e"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/shijianka_yuwengdeli.png",
+      "sha256": "b2c390e0ef854f2460f2d2e216255de14ee4510835d5a179accd9dd6105d76a9",
+      "size": 914707,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/b2/b2c390e0ef854f2460f2d2e216255de14ee4510835d5a179accd9dd6105d76a9"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/shijianka_zhaohui.png",
+      "sha256": "de2612eb06f787875b808bbcd9469c974561fe6b14c79aab1f73b4cd5dd91d7f",
+      "size": 806790,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/de/de2612eb06f787875b808bbcd9469c974561fe6b14c79aab1f73b4cd5dd91d7f"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/tiekuang.png",
+      "sha256": "d275594f4a09c8973f763f1a720987635de5e6e46fb863c03bcabfcd0583e525",
+      "size": 937599,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/d2/d275594f4a09c8973f763f1a720987635de5e6e46fb863c03bcabfcd0583e525"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/xiaonongtian.png",
+      "sha256": "b6e366743e5c8f4952e7c8b6fadb3b5050553e21ecd49072b97d2c9769587759",
+      "size": 1000878,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/b6/b6e366743e5c8f4952e7c8b6fadb3b5050553e21ecd49072b97d2c9769587759"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/xiaosenlin.png",
+      "sha256": "241e7c4c2e11e4c6b0685781dfa5165c0b9772c001595c2fbd99d5e7ffdee089",
+      "size": 944163,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/24/241e7c4c2e11e4c6b0685781dfa5165c0b9772c001595c2fbd99d5e7ffdee089"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/xiaoshitou.png",
+      "sha256": "e03bd0f288223c219abd2d86afe5deac57c4047986ad3443ede7340db21b3816",
+      "size": 804662,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e0/e03bd0f288223c219abd2d86afe5deac57c4047986ad3443ede7340db21b3816"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/youxibeijing.png",
+      "sha256": "b15a33f642049bcafe80cd3065d964012d9b7312de65be4d03ea76f51391b47b",
+      "size": 4687360,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/b1/b15a33f642049bcafe80cd3065d964012d9b7312de65be4d03ea76f51391b47b"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/ziyuan_mutou.png",
+      "sha256": "d0219892c34fd921f9d0b13d00f35c7815b9dd36c7a7c9eb3ee4846496112aba",
+      "size": 539410,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/d0/d0219892c34fd921f9d0b13d00f35c7815b9dd36c7a7c9eb3ee4846496112aba"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/ziyuan_shitou.png",
+      "sha256": "4313992182d8f14ce5b029044131164b83406adc66b0427424fbf7b1beb79d22",
+      "size": 453250,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/43/4313992182d8f14ce5b029044131164b83406adc66b0427424fbf7b1beb79d22"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/ziyuan_tiekuang.png",
+      "sha256": "938a5167076483ee0abdca34b28208313708c0e67dcee720f68cbd14ccc5b2c8",
+      "size": 505343,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/93/938a5167076483ee0abdca34b28208313708c0e67dcee720f68cbd14ccc5b2c8"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/ziyuan_xiaomai.png",
+      "sha256": "fd576281e5478036e59d0ac1863914ca9c8e05be18be1ced2c1650e10f843b98",
+      "size": 361275,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/fd/fd576281e5478036e59d0ac1863914ca9c8e05be18be1ced2c1650e10f843b98"
+    },
+    {
+      "path": "server/games/lasidao/resourse/picture/ziyuankabei.png",
+      "sha256": "eae76f120f7bcc12232b2c401be977351c428cf2bf6d373ffaf001bbd0e5433c",
+      "size": 429992,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ea/eae76f120f7bcc12232b2c401be977351c428cf2bf6d373ffaf001bbd0e5433c"
+    },
+    {
+      "path": "server/games/lasidao/smoke/basic.js",
+      "sha256": "25203b81490797f14820219c8c203d80fa84d5511a1f8bfa95460d1eab6d3406",
+      "size": 278581,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/25/25203b81490797f14820219c8c203d80fa84d5511a1f8bfa95460d1eab6d3406"
+    },
+    {
+      "path": "server/games/sgs/README.md",
+      "sha256": "b67e5006cde5f29755ea2bfb472c7f0f4ea55b6a675a01bae7e6265de6dd0754",
+      "size": 741,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/b6/b67e5006cde5f29755ea2bfb472c7f0f4ea55b6a675a01bae7e6265de6dd0754"
+    },
+    {
+      "path": "server/games/sgs/constants.js",
+      "sha256": "e00e015bfecfd780d00758321e30511d379432e46a6b9b11ef1d3218d9c50fcc",
+      "size": 1507,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e0/e00e015bfecfd780d00758321e30511d379432e46a6b9b11ef1d3218d9c50fcc"
+    },
+    {
+      "path": "server/games/sgs/deck.js",
+      "sha256": "80c06a2a9bc06a3fcc31d3a254afce54f3ab910bb81eb8f885b147cee84676b3",
+      "size": 10200,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/80/80c06a2a9bc06a3fcc31d3a254afce54f3ab910bb81eb8f885b147cee84676b3"
+    },
+    {
+      "path": "server/games/sgs/distance.js",
+      "sha256": "20edd900606e112012cc50dfceea214ae009f71e6a46bf0e41c95aefb123d7a6",
+      "size": 2121,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/20/20edd900606e112012cc50dfceea214ae009f71e6a46bf0e41c95aefb123d7a6"
+    },
+    {
+      "path": "server/games/sgs/engine.js",
+      "sha256": "967d6899bf89167f308b487cba4245c6679f10bd52702742cb4ff45dd882c9b9",
+      "size": 181485,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/96/967d6899bf89167f308b487cba4245c6679f10bd52702742cb4ff45dd882c9b9"
+    },
+    {
+      "path": "server/games/sgs/equip/muniu.js",
+      "sha256": "8769c003338981dbca4c8217c78edc0f2213c030388d85a455e58091fc563f57",
+      "size": 4679,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/87/8769c003338981dbca4c8217c78edc0f2213c030388d85a455e58091fc563f57"
+    },
+    {
+      "path": "server/games/sgs/generals.js",
+      "sha256": "c2709022f7331178727aa1782218740732fa6d686e894bdcdb842075cfc6f5bf",
+      "size": 136,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c2/c2709022f7331178727aa1782218740732fa6d686e894bdcdb842075cfc6f5bf"
+    },
+    {
+      "path": "server/games/sgs/hero/README.md",
+      "sha256": "5255a0b997d906e11272f3d592ad5e8422d7acd1528c7cd5b5e96b708c05a671",
+      "size": 1807,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/52/5255a0b997d906e11272f3d592ad5e8422d7acd1528c7cd5b5e96b708c05a671"
+    },
+    {
+      "path": "server/games/sgs/hero/_generate.js",
+      "sha256": "a2b6923b27b1c77a9a406c601586d7abbe617b78fc2334bccb774d3d675cfc0d",
+      "size": 13343,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/a2/a2b6923b27b1c77a9a406c601586d7abbe617b78fc2334bccb774d3d675cfc0d"
+    },
+    {
+      "path": "server/games/sgs/hero/_infra_helpers.js",
+      "sha256": "2f001c4b6ee38c0c3af873dba71e925d334eaa9d3211799b8c5a215e40306371",
+      "size": 7906,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/2f/2f001c4b6ee38c0c3af873dba71e925d334eaa9d3211799b8c5a215e40306371"
+    },
+    {
+      "path": "server/games/sgs/hero/_write_batch_heroes.js",
+      "sha256": "cc3a98c6b3864239a4613ca3522b85d9d407a2f56ffc7dc626d35ab9ea13b303",
+      "size": 21479,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/cc/cc3a98c6b3864239a4613ca3522b85d9d407a2f56ffc7dc626d35ab9ea13b303"
+    },
+    {
+      "path": "server/games/sgs/hero/_write_jie_skills.js",
+      "sha256": "90683ba32e9c962e319f51452875b39862d22472988f4a602cd702f43481f3f4",
+      "size": 34057,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/90/90683ba32e9c962e319f51452875b39862d22472988f4a602cd702f43481f3f4"
+    },
+    {
+      "path": "server/games/sgs/hero/bulianshi/anxu.js",
+      "sha256": "cc81be2eb498a6f0f67112d6f352b435ffcc212af4c3552973e8a760ec407a59",
+      "size": 1924,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/cc/cc81be2eb498a6f0f67112d6f352b435ffcc212af4c3552973e8a760ec407a59"
+    },
+    {
+      "path": "server/games/sgs/hero/bulianshi/index.js",
+      "sha256": "e1cbd6992e561633845b366827a06194b5dda23e6580d357f52c66f2a19ee3d1",
+      "size": 264,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e1/e1cbd6992e561633845b366827a06194b5dda23e6580d357f52c66f2a19ee3d1"
+    },
+    {
+      "path": "server/games/sgs/hero/bulianshi/zhuiyi.js",
+      "sha256": "3ffe2a0e6ce9d38f647d843b1a5fb9856380f936655f0edebf431dad549be445",
+      "size": 889,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/3f/3ffe2a0e6ce9d38f647d843b1a5fb9856380f936655f0edebf431dad549be445"
+    },
+    {
+      "path": "server/games/sgs/hero/caiwenji/beige.js",
+      "sha256": "8f932bfef73666ee4e0a3bf99482267f6bab42f9ca7cc91e93de57f30334f84d",
+      "size": 1191,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/8f/8f932bfef73666ee4e0a3bf99482267f6bab42f9ca7cc91e93de57f30334f84d"
+    },
+    {
+      "path": "server/games/sgs/hero/caiwenji/duanchang.js",
+      "sha256": "83bb85871dd3af102e9507e9ec6b9159e1f2ec57cf8def6b3493479290456bac",
+      "size": 1084,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/83/83bb85871dd3af102e9507e9ec6b9159e1f2ec57cf8def6b3493479290456bac"
+    },
+    {
+      "path": "server/games/sgs/hero/caiwenji/index.js",
+      "sha256": "3b76cdd5046b1f3190092d76ab491b423f32d141d7fc98f22a109472f32fc214",
+      "size": 253,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/3b/3b76cdd5046b1f3190092d76ab491b423f32d141d7fc98f22a109472f32fc214"
+    },
+    {
+      "path": "server/games/sgs/hero/caocao/hujia.js",
+      "sha256": "77baeccd0b3316a2125d89c87c6d0bf3081751b9abea2d42a554c929cdf2535d",
+      "size": 359,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/77/77baeccd0b3316a2125d89c87c6d0bf3081751b9abea2d42a554c929cdf2535d"
+    },
+    {
+      "path": "server/games/sgs/hero/caocao/index.js",
+      "sha256": "bdcede5ba02857f96710febdae4078f2c7acb74cd849c008b92c4ca89849ca44",
+      "size": 267,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/bd/bdcede5ba02857f96710febdae4078f2c7acb74cd849c008b92c4ca89849ca44"
+    },
+    {
+      "path": "server/games/sgs/hero/caocao/jianxiong.js",
+      "sha256": "a8996342732ee39076afe514bb3224aadeb8576aa9ad3a9454ea0801133d3bf7",
+      "size": 1516,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/a8/a8996342732ee39076afe514bb3224aadeb8576aa9ad3a9454ea0801133d3bf7"
+    },
+    {
+      "path": "server/games/sgs/hero/caoren/index.js",
+      "sha256": "57cede259243ad611f459b4c6bd9dc2a2442d79d6b0cca8cae601e2087fceaed",
+      "size": 215,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/57/57cede259243ad611f459b4c6bd9dc2a2442d79d6b0cca8cae601e2087fceaed"
+    },
+    {
+      "path": "server/games/sgs/hero/caoren/jushou.js",
+      "sha256": "6d148a15796d6b0956b60bad30f075fad49fa3d749766cc9eef5fb668eda926e",
+      "size": 489,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/6d/6d148a15796d6b0956b60bad30f075fad49fa3d749766cc9eef5fb668eda926e"
+    },
+    {
+      "path": "server/games/sgs/hero/caozhi/index.js",
+      "sha256": "b8dd480e61d1e204f5d8b23dbd6ff3a824b15ab7010b20737935bfe1c1349fb6",
+      "size": 240,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/b8/b8dd480e61d1e204f5d8b23dbd6ff3a824b15ab7010b20737935bfe1c1349fb6"
+    },
+    {
+      "path": "server/games/sgs/hero/caozhi/jiushi.js",
+      "sha256": "02baa6377c5d1454bbff995757813f5d36484cfd3e80b2410a09fe20abb81883",
+      "size": 1635,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/02/02baa6377c5d1454bbff995757813f5d36484cfd3e80b2410a09fe20abb81883"
+    },
+    {
+      "path": "server/games/sgs/hero/caozhi/luoying.js",
+      "sha256": "78d142a6a0b9bbc9f6e33c070690c54cdf5d24d5b9950a5eea79974dc0d840bd",
+      "size": 1111,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/78/78d142a6a0b9bbc9f6e33c070690c54cdf5d24d5b9950a5eea79974dc0d840bd"
+    },
+    {
+      "path": "server/games/sgs/hero/daqiao/guose.js",
+      "sha256": "904702bea8c2bb0de3d44c9d53c1ef855d5925ce5305dfe2e52aed8bf2ab589e",
+      "size": 346,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/90/904702bea8c2bb0de3d44c9d53c1ef855d5925ce5305dfe2e52aed8bf2ab589e"
+    },
+    {
+      "path": "server/games/sgs/hero/daqiao/index.js",
+      "sha256": "a5437c78afa8e2758a11cb441f0e34f3a2500073ef9385c3f0ceb9e66d913f7c",
+      "size": 264,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/a5/a5437c78afa8e2758a11cb441f0e34f3a2500073ef9385c3f0ceb9e66d913f7c"
+    },
+    {
+      "path": "server/games/sgs/hero/daqiao/liuli.js",
+      "sha256": "59d01719e151cd45400ecee8e72429290b6f1ba51a8ab1a7a523aef109cd8343",
+      "size": 819,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/59/59d01719e151cd45400ecee8e72429290b6f1ba51a8ab1a7a523aef109cd8343"
+    },
+    {
+      "path": "server/games/sgs/hero/dengai/index.js",
+      "sha256": "812af09e3fe06fdcdc1032d24d7cddff28b677f5dc8976d52bd7ebc53a154acb",
+      "size": 258,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/81/812af09e3fe06fdcdc1032d24d7cddff28b677f5dc8976d52bd7ebc53a154acb"
+    },
+    {
+      "path": "server/games/sgs/hero/dengai/jixi.js",
+      "sha256": "3b76153b8c99949b50cd6667cb17ebae91f222f790bd04728f5278f67c50fc90",
+      "size": 2396,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/3b/3b76153b8c99949b50cd6667cb17ebae91f222f790bd04728f5278f67c50fc90"
+    },
+    {
+      "path": "server/games/sgs/hero/dengai/tuntian.js",
+      "sha256": "7921f826d5fb2f3bdfba78b00e65d963984a4946a6005ae5868cb73124242eb5",
+      "size": 906,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/79/7921f826d5fb2f3bdfba78b00e65d963984a4946a6005ae5868cb73124242eb5"
+    },
+    {
+      "path": "server/games/sgs/hero/dengai/zaiqi.js",
+      "sha256": "49820c1af7ab0aa5c88c1bd3e83e872aeafbf8e0c06a98ff3a881353f19330fe",
+      "size": 913,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/49/49820c1af7ab0aa5c88c1bd3e83e872aeafbf8e0c06a98ff3a881353f19330fe"
+    },
+    {
+      "path": "server/games/sgs/hero/diaochan/biyue.js",
+      "sha256": "75dc372d720135b01ee2df25feae1843970b63cc6e899e5c6c21bc97fc8f47a0",
+      "size": 417,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/75/75dc372d720135b01ee2df25feae1843970b63cc6e899e5c6c21bc97fc8f47a0"
+    },
+    {
+      "path": "server/games/sgs/hero/diaochan/index.js",
+      "sha256": "009ce763e6d8e695a4066f1ab1a16af9e44d4cdac56a2f3c344686503daa168d",
+      "size": 276,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/00/009ce763e6d8e695a4066f1ab1a16af9e44d4cdac56a2f3c344686503daa168d"
+    },
+    {
+      "path": "server/games/sgs/hero/diaochan/lijian.js",
+      "sha256": "cc1fb03b586c9fb68824694d693fb52f7e5f789786c9b7563c533fca19e48fb1",
+      "size": 1279,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/cc/cc1fb03b586c9fb68824694d693fb52f7e5f789786c9b7563c533fca19e48fb1"
+    },
+    {
+      "path": "server/games/sgs/hero/fazheng/enyuan.js",
+      "sha256": "14c90b99d45f5b881dcb5c62401592e56af087fdaa1b7ad6a7a1b60427892989",
+      "size": 1866,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/14/14c90b99d45f5b881dcb5c62401592e56af087fdaa1b7ad6a7a1b60427892989"
+    },
+    {
+      "path": "server/games/sgs/hero/fazheng/index.js",
+      "sha256": "249956b6b9e1ebb51f7620a4f6b7d4de1228211644568fd8e16a92cbd51e8a33",
+      "size": 245,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/24/249956b6b9e1ebb51f7620a4f6b7d4de1228211644568fd8e16a92cbd51e8a33"
+    },
+    {
+      "path": "server/games/sgs/hero/fazheng/xuanhuo.js",
+      "sha256": "69ea86f83de21b32afa9cb9a1207fa81ad5b69e78d0209c318e254cacb46f860",
+      "size": 1950,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/69/69ea86f83de21b32afa9cb9a1207fa81ad5b69e78d0209c318e254cacb46f860"
+    },
+    {
+      "path": "server/games/sgs/hero/ganning/index.js",
+      "sha256": "08676863b3d05459225bf227ad536c20e752390b01f35089563506f273f7fb4d",
+      "size": 240,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/08/08676863b3d05459225bf227ad536c20e752390b01f35089563506f273f7fb4d"
+    },
+    {
+      "path": "server/games/sgs/hero/ganning/qixi.js",
+      "sha256": "3df01ac185a6e88f51383e1f2117154113633449b9cde595ca3c9cb103cbeb08",
+      "size": 370,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/3d/3df01ac185a6e88f51383e1f2117154113633449b9cde595ca3c9cb103cbeb08"
+    },
+    {
+      "path": "server/games/sgs/hero/guanxinzhangbao/fuhun.js",
+      "sha256": "6afd50d061df2712defe2b565f4b68e9d9c40dfdc9f246e0098962b160826659",
+      "size": 1495,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/6a/6afd50d061df2712defe2b565f4b68e9d9c40dfdc9f246e0098962b160826659"
+    },
+    {
+      "path": "server/games/sgs/hero/guanxinzhangbao/index.js",
+      "sha256": "66e4ba9595c1e4177003f3e9c140efd032f6a6ca9ece1748b2c852596392e60f",
+      "size": 252,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/66/66e4ba9595c1e4177003f3e9c140efd032f6a6ca9ece1748b2c852596392e60f"
+    },
+    {
+      "path": "server/games/sgs/hero/guanyu/index.js",
+      "sha256": "9f0c5562249d08c8cee81c75f9e75cd15143f1ccf5dde67cd0280abb7a31d681",
+      "size": 242,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/9f/9f0c5562249d08c8cee81c75f9e75cd15143f1ccf5dde67cd0280abb7a31d681"
+    },
+    {
+      "path": "server/games/sgs/hero/guanyu/wusheng.js",
+      "sha256": "e417f5a7d9b715e1ab6d98391c66afa72b662dbc997619b39366d345cfcee070",
+      "size": 421,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e4/e417f5a7d9b715e1ab6d98391c66afa72b662dbc997619b39366d345cfcee070"
+    },
+    {
+      "path": "server/games/sgs/hero/guojia/index.js",
+      "sha256": "2055615c6e89a8bdc97daddf94cc948fcdf8727c87e60508c3ccf274aab8a8aa",
+      "size": 266,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/20/2055615c6e89a8bdc97daddf94cc948fcdf8727c87e60508c3ccf274aab8a8aa"
+    },
+    {
+      "path": "server/games/sgs/hero/guojia/tiandu.js",
+      "sha256": "106b599479d9f17eb1c558349b722b8abfc318e85fb87e14b9776ba09877d61e",
+      "size": 446,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/10/106b599479d9f17eb1c558349b722b8abfc318e85fb87e14b9776ba09877d61e"
+    },
+    {
+      "path": "server/games/sgs/hero/guojia/yiji.js",
+      "sha256": "cd54883b285595b8d523322817e4dd59fa37e7eafbc1089cb5bfcfcce7b988eb",
+      "size": 748,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/cd/cd54883b285595b8d523322817e4dd59fa37e7eafbc1089cb5bfcfcce7b988eb"
+    },
+    {
+      "path": "server/games/sgs/hero/handang/gongqi.js",
+      "sha256": "c97dfbc6efcf3420c7e4e58b3e7582ce9ff1bb46774fdcc42cd816d062366a2f",
+      "size": 1911,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c9/c97dfbc6efcf3420c7e4e58b3e7582ce9ff1bb46774fdcc42cd816d062366a2f"
+    },
+    {
+      "path": "server/games/sgs/hero/handang/index.js",
+      "sha256": "2045e049a4b8551a33e0220eba4fa078b3ff8ad28c12dfacea2621c01942fd2b",
+      "size": 257,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/20/2045e049a4b8551a33e0220eba4fa078b3ff8ad28c12dfacea2621c01942fd2b"
+    },
+    {
+      "path": "server/games/sgs/hero/handang/jiefan.js",
+      "sha256": "7f393bf320fcf6db6f7d65df71296ed665816f95a30ce50f9b27b4ae34471242",
+      "size": 1298,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/7f/7f393bf320fcf6db6f7d65df71296ed665816f95a30ce50f9b27b4ae34471242"
+    },
+    {
+      "path": "server/games/sgs/hero/huanggai/index.js",
+      "sha256": "a272c5efff67d5f658008e6774dfb69635dc02308f7420deafe26f22284fa2bb",
+      "size": 243,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/a2/a272c5efff67d5f658008e6774dfb69635dc02308f7420deafe26f22284fa2bb"
+    },
+    {
+      "path": "server/games/sgs/hero/huanggai/kurou.js",
+      "sha256": "d5c35b447b1ed901e8dd019ee48b76b6a0014c721f035f6da4d686d126fc054b",
+      "size": 367,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/d5/d5c35b447b1ed901e8dd019ee48b76b6a0014c721f035f6da4d686d126fc054b"
+    },
+    {
+      "path": "server/games/sgs/hero/huangyueying/index.js",
+      "sha256": "b76201b64b6bf0d4d85418d55dfbc883d0debccd17882849324d5975dd19efa4",
+      "size": 286,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/b7/b76201b64b6bf0d4d85418d55dfbc883d0debccd17882849324d5975dd19efa4"
+    },
+    {
+      "path": "server/games/sgs/hero/huangyueying/jizhi.js",
+      "sha256": "ad8aab80c867e9f1262d7684bafab5dde7bbd618583c493666cf6a837d7fe03f",
+      "size": 697,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ad/ad8aab80c867e9f1262d7684bafab5dde7bbd618583c493666cf6a837d7fe03f"
+    },
+    {
+      "path": "server/games/sgs/hero/huangyueying/qicai.js",
+      "sha256": "73d48eedf14498cb27eaf5938168ae2059129caa428c467eca8f9af687478179",
+      "size": 467,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/73/73d48eedf14498cb27eaf5938168ae2059129caa428c467eca8f9af687478179"
+    },
+    {
+      "path": "server/games/sgs/hero/huangzhong/index.js",
+      "sha256": "d3070d2e7d4ee2becb8e978f714a15b6fc26f00b36da594f45859045e3100065",
+      "size": 227,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/d3/d3070d2e7d4ee2becb8e978f714a15b6fc26f00b36da594f45859045e3100065"
+    },
+    {
+      "path": "server/games/sgs/hero/huangzhong/liegong.js",
+      "sha256": "349ef83b2290f3779e4e0005ff20b96e11c3d60a569c6c66d1c0a33d595894ed",
+      "size": 1608,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/34/349ef83b2290f3779e4e0005ff20b96e11c3d60a569c6c66d1c0a33d595894ed"
+    },
+    {
+      "path": "server/games/sgs/hero/huatuo/index.js",
+      "sha256": "8c867ca6758f8cd675b2e9e7a4a5f37d2cb9a33f4473288ee5df76bdd71ad6c6",
+      "size": 260,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/8c/8c867ca6758f8cd675b2e9e7a4a5f37d2cb9a33f4473288ee5df76bdd71ad6c6"
+    },
+    {
+      "path": "server/games/sgs/hero/huatuo/jijiu.js",
+      "sha256": "79de6d23b0b1f8f6f08bfa55292a571d07c9d06b6bfc10ba40308ea8c2f09c01",
+      "size": 510,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/79/79de6d23b0b1f8f6f08bfa55292a571d07c9d06b6bfc10ba40308ea8c2f09c01"
+    },
+    {
+      "path": "server/games/sgs/hero/huatuo/qingnang.js",
+      "sha256": "68354998d76bdb3dd48042ab5cb83e3de3712288f52ce744df4a71bb6100cceb",
+      "size": 749,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/68/68354998d76bdb3dd48042ab5cb83e3de3712288f52ce744df4a71bb6100cceb"
+    },
+    {
+      "path": "server/games/sgs/hero/index.js",
+      "sha256": "ef5510881cb04cfbd8be2376948f995f458ffc03de0d28ec95a98e8183427dfa",
+      "size": 4497,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ef/ef5510881cb04cfbd8be2376948f995f458ffc03de0d28ec95a98e8183427dfa"
+    },
+    {
+      "path": "server/games/sgs/hero/jiangwei/index.js",
+      "sha256": "6800d9c1eacf787c581b3a651fd5ce0f9665ece1b546f48e91b90df77333ac7c",
+      "size": 274,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/68/6800d9c1eacf787c581b3a651fd5ce0f9665ece1b546f48e91b90df77333ac7c"
+    },
+    {
+      "path": "server/games/sgs/hero/jiangwei/tiaoxin.js",
+      "sha256": "7acfc5aa76d29327b323c7255dae393c712bc11aae90b28d0da9e6c597d78ab7",
+      "size": 1247,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/7a/7acfc5aa76d29327b323c7255dae393c712bc11aae90b28d0da9e6c597d78ab7"
+    },
+    {
+      "path": "server/games/sgs/hero/jiangwei/zhiji.js",
+      "sha256": "06c202aa501c9c094a6dd3eb937fe4fd0ec0d25d1c623bf3cca15ea80552c76c",
+      "size": 793,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/06/06c202aa501c9c094a6dd3eb937fe4fd0ec0d25d1c623bf3cca15ea80552c76c"
+    },
+    {
+      "path": "server/games/sgs/hero/jiaxu/index.js",
+      "sha256": "834fe0743ea8be5c46227493e2bfab334155c2faa1e7b03ddf46c70f338e0569",
+      "size": 285,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/83/834fe0743ea8be5c46227493e2bfab334155c2faa1e7b03ddf46c70f338e0569"
+    },
+    {
+      "path": "server/games/sgs/hero/jiaxu/luanwu.js",
+      "sha256": "7dda533ad51753df9708a77a5f079110e7035da1ab50fb3550d2c9b81a368cb1",
+      "size": 980,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/7d/7dda533ad51753df9708a77a5f079110e7035da1ab50fb3550d2c9b81a368cb1"
+    },
+    {
+      "path": "server/games/sgs/hero/jiaxu/wansha.js",
+      "sha256": "f8ed1a5a9716002953df360ced6b390b48f85ca35e0a5ed29046409326e195df",
+      "size": 206,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/f8/f8ed1a5a9716002953df360ced6b390b48f85ca35e0a5ed29046409326e195df"
+    },
+    {
+      "path": "server/games/sgs/hero/jiaxu/weimu.js",
+      "sha256": "dbb5bea3c5ee0982407115d6b9582fb5d1df366a53840549d3755b8d23cd5a1b",
+      "size": 961,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/db/dbb5bea3c5ee0982407115d6b9582fb5d1df366a53840549d3755b8d23cd5a1b"
+    },
+    {
+      "path": "server/games/sgs/hero/liubei/index.js",
+      "sha256": "a688e8c38f8f233f6c988f7f8edd6288a44def668cd243fa686d89a112ad4de0",
+      "size": 271,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/a6/a688e8c38f8f233f6c988f7f8edd6288a44def668cd243fa686d89a112ad4de0"
+    },
+    {
+      "path": "server/games/sgs/hero/liubei/jijiang.js",
+      "sha256": "72223a7ea159082e2e43c481f78ef082307e233a38c6d363eb52dba848d99cc3",
+      "size": 286,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/72/72223a7ea159082e2e43c481f78ef082307e233a38c6d363eb52dba848d99cc3"
+    },
+    {
+      "path": "server/games/sgs/hero/liubei/rende.js",
+      "sha256": "6ca9219984cd69447bddc1182d27c0c6ae3135cd4fc134c18cfc678d97e29afb",
+      "size": 1619,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/6c/6ca9219984cd69447bddc1182d27c0c6ae3135cd4fc134c18cfc678d97e29afb"
+    },
+    {
+      "path": "server/games/sgs/hero/liubiao/index.js",
+      "sha256": "52965def2733b867e1c80d29463b54b3ce588d99f8114ba707343dd917b30d86",
+      "size": 258,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/52/52965def2733b867e1c80d29463b54b3ce588d99f8114ba707343dd917b30d86"
+    },
+    {
+      "path": "server/games/sgs/hero/liubiao/zishou.js",
+      "sha256": "1656286957ea888501b5b38e45e6e2f3c10d11f4a90b33da72abb692f60f107f",
+      "size": 687,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/16/1656286957ea888501b5b38e45e6e2f3c10d11f4a90b33da72abb692f60f107f"
+    },
+    {
+      "path": "server/games/sgs/hero/liubiao/zongshi.js",
+      "sha256": "013b05f20efb3f9f8dc53c2f25f2efe22e64230e8e43b02cccfe71ba66d9393e",
+      "size": 194,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/01/013b05f20efb3f9f8dc53c2f25f2efe22e64230e8e43b02cccfe71ba66d9393e"
+    },
+    {
+      "path": "server/games/sgs/hero/liushan/fangquan.js",
+      "sha256": "c5e4d88e2cfd241389db3a8b10b4e189412c0717e12ddb9bb2ad2c129db9b6c4",
+      "size": 1243,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c5/c5e4d88e2cfd241389db3a8b10b4e189412c0717e12ddb9bb2ad2c129db9b6c4"
+    },
+    {
+      "path": "server/games/sgs/hero/liushan/index.js",
+      "sha256": "55d13f8dd5278a65e3d7fd84ce40d170376ef82986f456c927968acb4fdb4d9d",
+      "size": 304,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/55/55d13f8dd5278a65e3d7fd84ce40d170376ef82986f456c927968acb4fdb4d9d"
+    },
+    {
+      "path": "server/games/sgs/hero/liushan/ruoyu.js",
+      "sha256": "8b882194535b1c77211f757e320f6248ff663c9732714862353d278d184ed69c",
+      "size": 1065,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/8b/8b882194535b1c77211f757e320f6248ff663c9732714862353d278d184ed69c"
+    },
+    {
+      "path": "server/games/sgs/hero/liushan/xiangle.js",
+      "sha256": "fd11bef087c174389fe31d75fe359b5ebf6ba6c3d062bc03b6fd2ee7e7a7de48",
+      "size": 734,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/fd/fd11bef087c174389fe31d75fe359b5ebf6ba6c3d062bc03b6fd2ee7e7a7de48"
+    },
+    {
+      "path": "server/games/sgs/hero/lusu/dimeng.js",
+      "sha256": "845147436c977af6f4ec684ad772af95b57bc63c02afd015a4ed11f528cf8f17",
+      "size": 1773,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/84/845147436c977af6f4ec684ad772af95b57bc63c02afd015a4ed11f528cf8f17"
+    },
+    {
+      "path": "server/games/sgs/hero/lusu/haoshi.js",
+      "sha256": "8f5f045a246df25c5953a4d8894d5e4d2c4a7406c202512c76b7fcd755088d0d",
+      "size": 1741,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/8f/8f5f045a246df25c5953a4d8894d5e4d2c4a7406c202512c76b7fcd755088d0d"
+    },
+    {
+      "path": "server/games/sgs/hero/lusu/index.js",
+      "sha256": "493900a45e20a810e356d1e808d7605e42b7da443c5bb99c74c5e5fed7889b5f",
+      "size": 271,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/49/493900a45e20a810e356d1e808d7605e42b7da443c5bb99c74c5e5fed7889b5f"
+    },
+    {
+      "path": "server/games/sgs/hero/luxun/index.js",
+      "sha256": "f1a00c2917ede25af6331ee9ffe1ca72a6537ae99e8ae71d1bdae1f83bb3e2bb",
+      "size": 268,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/f1/f1a00c2917ede25af6331ee9ffe1ca72a6537ae99e8ae71d1bdae1f83bb3e2bb"
+    },
+    {
+      "path": "server/games/sgs/hero/luxun/lianying.js",
+      "sha256": "e837f31ec0a03bf0c974dd641879a518ac2ac268e615da0728cd49ca9e90cabd",
+      "size": 538,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e8/e837f31ec0a03bf0c974dd641879a518ac2ac268e615da0728cd49ca9e90cabd"
+    },
+    {
+      "path": "server/games/sgs/hero/luxun/qianxun.js",
+      "sha256": "30b9095159bd5f74eb7ef4ae0c377f0f07ffbffa33118b614a6f9cff9c527e7c",
+      "size": 323,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/30/30b9095159bd5f74eb7ef4ae0c377f0f07ffbffa33118b614a6f9cff9c527e7c"
+    },
+    {
+      "path": "server/games/sgs/hero/lvbu/index.js",
+      "sha256": "c09f08ff9f3d99023131d20ae284f7b833e884f2b21cc73c3ff4fc11598a73d5",
+      "size": 261,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c0/c09f08ff9f3d99023131d20ae284f7b833e884f2b21cc73c3ff4fc11598a73d5"
+    },
+    {
+      "path": "server/games/sgs/hero/lvbu/liyu.js",
+      "sha256": "f214d4b58396e06381d98837ed61d2cf46356deb95f0e2fc985f8f12b76ec65a",
+      "size": 875,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/f2/f214d4b58396e06381d98837ed61d2cf46356deb95f0e2fc985f8f12b76ec65a"
+    },
+    {
+      "path": "server/games/sgs/hero/lvbu/wushuang.js",
+      "sha256": "3e32425be0314ecc9d2d5f2e5c4775c4782725b7bcd50b7aec2e55f3690131d9",
+      "size": 306,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/3e/3e32425be0314ecc9d2d5f2e5c4775c4782725b7bcd50b7aec2e55f3690131d9"
+    },
+    {
+      "path": "server/games/sgs/hero/lvmeng/index.js",
+      "sha256": "6b9da0be965916dbd292d282da164acc70c10870eba2957edcd9109cfae0a01f",
+      "size": 238,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/6b/6b9da0be965916dbd292d282da164acc70c10870eba2957edcd9109cfae0a01f"
+    },
+    {
+      "path": "server/games/sgs/hero/lvmeng/keji.js",
+      "sha256": "f9f6e1e0e602f161c4b9e2fa0f875252ff3cc4f7d8249fa7e81bbef64550a1ca",
+      "size": 550,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/f9/f9f6e1e0e602f161c4b9e2fa0f875252ff3cc4f7d8249fa7e81bbef64550a1ca"
+    },
+    {
+      "path": "server/games/sgs/hero/machao/index.js",
+      "sha256": "1ec7e31ba643a170e61c508a2fcdd412cdff42d04c0a49d516a1f09cae425149",
+      "size": 266,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/1e/1ec7e31ba643a170e61c508a2fcdd412cdff42d04c0a49d516a1f09cae425149"
+    },
+    {
+      "path": "server/games/sgs/hero/machao/mashu.js",
+      "sha256": "2df2e1266ce7401ba6623093f87cb9c6fe73d0dad9f6ccba07b7b678693d68ef",
+      "size": 194,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/2d/2df2e1266ce7401ba6623093f87cb9c6fe73d0dad9f6ccba07b7b678693d68ef"
+    },
+    {
+      "path": "server/games/sgs/hero/machao/tieji.js",
+      "sha256": "809c5017a6b9b74f88bcff45824bfa5d2ec5e9875cc357ffb121dcc623b556b5",
+      "size": 571,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/80/809c5017a6b9b74f88bcff45824bfa5d2ec5e9875cc357ffb121dcc623b556b5"
+    },
+    {
+      "path": "server/games/sgs/hero/pangde/index.js",
+      "sha256": "30d21ca59a5f8d6ea16252e8aff7704e864e494f03e36f1821c4282260cbaeb7",
+      "size": 239,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/30/30d21ca59a5f8d6ea16252e8aff7704e864e494f03e36f1821c4282260cbaeb7"
+    },
+    {
+      "path": "server/games/sgs/hero/pangde/mashu.js",
+      "sha256": "2df2e1266ce7401ba6623093f87cb9c6fe73d0dad9f6ccba07b7b678693d68ef",
+      "size": 194,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/2d/2df2e1266ce7401ba6623093f87cb9c6fe73d0dad9f6ccba07b7b678693d68ef"
+    },
+    {
+      "path": "server/games/sgs/hero/pangde/mengjin.js",
+      "sha256": "d24d1f878abddd73667f13d7de43edb19a2d303b09092e4b26992ec1676e1a2f",
+      "size": 789,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/d2/d24d1f878abddd73667f13d7de43edb19a2d303b09092e4b26992ec1676e1a2f"
+    },
+    {
+      "path": "server/games/sgs/hero/pangtong/index.js",
+      "sha256": "b0c82b48381fafb74f8a5f8bb8403836cb4e5204f6418b76a38366fd5c6d90ac",
+      "size": 239,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/b0/b0c82b48381fafb74f8a5f8bb8403836cb4e5204f6418b76a38366fd5c6d90ac"
+    },
+    {
+      "path": "server/games/sgs/hero/pangtong/lianhuan.js",
+      "sha256": "2812e32f38aa5cba974ddf50deafd3fa3cf8c82bb59d91e4255a3c43b52a3f45",
+      "size": 354,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/28/2812e32f38aa5cba974ddf50deafd3fa3cf8c82bb59d91e4255a3c43b52a3f45"
+    },
+    {
+      "path": "server/games/sgs/hero/pangtong/niepan.js",
+      "sha256": "31b067eecb4f533fed00d97ba05f0579c9ad3a96bd46ae20df41acb1ad809a11",
+      "size": 1544,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/31/31b067eecb4f533fed00d97ba05f0579c9ad3a96bd46ae20df41acb1ad809a11"
+    },
+    {
+      "path": "server/games/sgs/hero/simayi/fankui.js",
+      "sha256": "c90704e382318a34c5331d167d0aa89c3d699d9c10136063eeb5df72b910aaf6",
+      "size": 772,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c9/c90704e382318a34c5331d167d0aa89c3d699d9c10136063eeb5df72b910aaf6"
+    },
+    {
+      "path": "server/games/sgs/hero/simayi/guicai.js",
+      "sha256": "32538e85cdd1b5257cbdd7c2042102788e4d1fc0ba3c0f9e12682c34e31d19a4",
+      "size": 671,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/32/32538e85cdd1b5257cbdd7c2042102788e4d1fc0ba3c0f9e12682c34e31d19a4"
+    },
+    {
+      "path": "server/games/sgs/hero/simayi/index.js",
+      "sha256": "b9e38725c1922b76a79bdcebeeb983b57610de3eff628c6bbbaa177c5f7f3a6a",
+      "size": 271,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/b9/b9e38725c1922b76a79bdcebeeb983b57610de3eff628c6bbbaa177c5f7f3a6a"
+    },
+    {
+      "path": "server/games/sgs/hero/skillBridge.js",
+      "sha256": "0bef2bc9c654be3dc7a8bf0d63fe67cb85c244451f48a43fd7f84c40fd46aff0",
+      "size": 5689,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/0b/0bef2bc9c654be3dc7a8bf0d63fe67cb85c244451f48a43fd7f84c40fd46aff0"
+    },
+    {
+      "path": "server/games/sgs/hero/skillBus.js",
+      "sha256": "a4ee3f926101bfd8cf57fd82859b859d0ad11d1485c680ea7cf9a4d3266acb24",
+      "size": 13984,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/a4/a4ee3f926101bfd8cf57fd82859b859d0ad11d1485c680ea7cf9a4d3266acb24"
+    },
+    {
+      "path": "server/games/sgs/hero/skillCtx.js",
+      "sha256": "74ad8148bb081e4f400df914dec5da5ca6a840c84aed65ac09e9dbd205fcbaf3",
+      "size": 4002,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/74/74ad8148bb081e4f400df914dec5da5ca6a840c84aed65ac09e9dbd205fcbaf3"
+    },
+    {
+      "path": "server/games/sgs/hero/skillEffects.js",
+      "sha256": "7658b770e8011af2562d0bc831b84d1d393149939c425f3307a1d721e0e4ddc9",
+      "size": 57017,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/76/7658b770e8011af2562d0bc831b84d1d393149939c425f3307a1d721e0e4ddc9"
+    },
+    {
+      "path": "server/games/sgs/hero/sunquan/index.js",
+      "sha256": "d1a1e28a1952f9fca25fd6fe245edb744ac2726c124d758550510af97fe6881b",
+      "size": 274,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/d1/d1a1e28a1952f9fca25fd6fe245edb744ac2726c124d758550510af97fe6881b"
+    },
+    {
+      "path": "server/games/sgs/hero/sunquan/jiuyuan.js",
+      "sha256": "348fb7dbf36282010151a8a7e3377208df5e88aff2dacfa50b6a568baabb004b",
+      "size": 407,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/34/348fb7dbf36282010151a8a7e3377208df5e88aff2dacfa50b6a568baabb004b"
+    },
+    {
+      "path": "server/games/sgs/hero/sunquan/zhiheng.js",
+      "sha256": "2440682ecab277b2a179e52ddad260532c6fe97e9d8134b7741eb3d8acac678b",
+      "size": 1382,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/24/2440682ecab277b2a179e52ddad260532c6fe97e9d8134b7741eb3d8acac678b"
+    },
+    {
+      "path": "server/games/sgs/hero/sunshangxiang/index.js",
+      "sha256": "d4489639e325bdcf4eef29dfaa073fad297b357e0dba6db1a22f92b5c30cc586",
+      "size": 283,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/d4/d4489639e325bdcf4eef29dfaa073fad297b357e0dba6db1a22f92b5c30cc586"
+    },
+    {
+      "path": "server/games/sgs/hero/sunshangxiang/jieyin.js",
+      "sha256": "0dbc34eb4011ec718d56dad31cdfa8b778c5ebdaf39b5c3c7808ad1649a7a5db",
+      "size": 1028,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/0d/0dbc34eb4011ec718d56dad31cdfa8b778c5ebdaf39b5c3c7808ad1649a7a5db"
+    },
+    {
+      "path": "server/games/sgs/hero/sunshangxiang/xiaoji.js",
+      "sha256": "c7e05b3baa44dd2064520c968c5a4292d22627753aca0313e24870c8b4d39bfa",
+      "size": 325,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c7/c7e05b3baa44dd2064520c968c5a4292d22627753aca0313e24870c8b4d39bfa"
+    },
+    {
+      "path": "server/games/sgs/hero/weiyan/index.js",
+      "sha256": "b789902ac44828d418a56c243014351f20be0d026a53f2a6bd6209d55f91142e",
+      "size": 222,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/b7/b789902ac44828d418a56c243014351f20be0d026a53f2a6bd6209d55f91142e"
+    },
+    {
+      "path": "server/games/sgs/hero/weiyan/kuanggu.js",
+      "sha256": "77686090f6cb577ae33d73eebfca8155d1e4ef957684eac0e8973129bf0916a8",
+      "size": 770,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/77/77686090f6cb577ae33d73eebfca8155d1e4ef957684eac0e8973129bf0916a8"
+    },
+    {
+      "path": "server/games/sgs/hero/wolongzhuge/bazhen.js",
+      "sha256": "853952860e92019251c4a2d44cb7fdea420ada0543aff226e6c24b121417da03",
+      "size": 195,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/85/853952860e92019251c4a2d44cb7fdea420ada0543aff226e6c24b121417da03"
+    },
+    {
+      "path": "server/games/sgs/hero/wolongzhuge/huoji.js",
+      "sha256": "b96039a9115bd686ac8d54de2e1e835ac45c7c2047390513d25dac2808a5df38",
+      "size": 376,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/b9/b96039a9115bd686ac8d54de2e1e835ac45c7c2047390513d25dac2808a5df38"
+    },
+    {
+      "path": "server/games/sgs/hero/wolongzhuge/index.js",
+      "sha256": "063bd32af7bb16331242d8788bb99c878f5e5f03c2b2d60de4c0bc278e619bec",
+      "size": 271,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/06/063bd32af7bb16331242d8788bb99c878f5e5f03c2b2d60de4c0bc278e619bec"
+    },
+    {
+      "path": "server/games/sgs/hero/wolongzhuge/kanpo.js",
+      "sha256": "ec5fa72deced1178ebe4b94b59e88b3ed5b6ae521bf8e2c3345601032f33b66b",
+      "size": 375,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ec/ec5fa72deced1178ebe4b94b59e88b3ed5b6ae521bf8e2c3345601032f33b66b"
+    },
+    {
+      "path": "server/games/sgs/hero/wuguotai/buyi.js",
+      "sha256": "5ae96499fc6f44fc60392fb69d35324e61b146c3be54668956a99fd880d0d1b1",
+      "size": 1449,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/5a/5ae96499fc6f44fc60392fb69d35324e61b146c3be54668956a99fd880d0d1b1"
+    },
+    {
+      "path": "server/games/sgs/hero/wuguotai/ganlu.js",
+      "sha256": "c61a571af78d63c16069d4264c6ab97d380656f287fc289cdf1c4d171adc75fc",
+      "size": 2103,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c6/c61a571af78d63c16069d4264c6ab97d380656f287fc289cdf1c4d171adc75fc"
+    },
+    {
+      "path": "server/games/sgs/hero/wuguotai/index.js",
+      "sha256": "34d55062d3be8b40bea4ba66ac8ddc221a708ff967b5840f3cffd5304d08934f",
+      "size": 248,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/34/34d55062d3be8b40bea4ba66ac8ddc221a708ff967b5840f3cffd5304d08934f"
+    },
+    {
+      "path": "server/games/sgs/hero/xiahoudun/ganglie.js",
+      "sha256": "fbf9e3eda91b812dc4347394212eba20da84a6cf039696c11da3b298451b47da",
+      "size": 662,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/fb/fbf9e3eda91b812dc4347394212eba20da84a6cf039696c11da3b298451b47da"
+    },
+    {
+      "path": "server/games/sgs/hero/xiahoudun/index.js",
+      "sha256": "4f76e5a4c64ea731a6084b95977ee4cb2fb03f5c12e0d78acd3bb6b2a4b5b41f",
+      "size": 257,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/4f/4f76e5a4c64ea731a6084b95977ee4cb2fb03f5c12e0d78acd3bb6b2a4b5b41f"
+    },
+    {
+      "path": "server/games/sgs/hero/xiaoqiao/hongyan.js",
+      "sha256": "cb874c2579fe65b8a0cf26272a4ed12f2e3429ff0fe5364fb9efe53a6de7b96d",
+      "size": 220,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/cb/cb874c2579fe65b8a0cf26272a4ed12f2e3429ff0fe5364fb9efe53a6de7b96d"
+    },
+    {
+      "path": "server/games/sgs/hero/xiaoqiao/index.js",
+      "sha256": "0cdfea5351fbc93c994c27eb9f6fb6ea403581329bf903c6620ccd23ab3fb9fe",
+      "size": 249,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/0c/0cdfea5351fbc93c994c27eb9f6fb6ea403581329bf903c6620ccd23ab3fb9fe"
+    },
+    {
+      "path": "server/games/sgs/hero/xiaoqiao/tianxiang.js",
+      "sha256": "8b9a5b46c2d4878e5fcd56cd70f32a79f1172e2ce743281084c7cd569700432a",
+      "size": 981,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/8b/8b9a5b46c2d4878e5fcd56cd70f32a79f1172e2ce743281084c7cd569700432a"
+    },
+    {
+      "path": "server/games/sgs/hero/xuchu/index.js",
+      "sha256": "fbbef537a6ea4ede6ae8a481bf2d8e19c086a7fb72b2d382a6e4078a677d05fb",
+      "size": 235,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/fb/fbbef537a6ea4ede6ae8a481bf2d8e19c086a7fb72b2d382a6e4078a677d05fb"
+    },
+    {
+      "path": "server/games/sgs/hero/xuchu/luoyi.js",
+      "sha256": "696d8814f0036374a0993db87714758cff99e0c58ba808971f8dfc7ad871ae47",
+      "size": 1082,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/69/696d8814f0036374a0993db87714758cff99e0c58ba808971f8dfc7ad871ae47"
+    },
+    {
+      "path": "server/games/sgs/hero/xuhuang/duanliang.js",
+      "sha256": "4ee3c7320247a023f725a09a8eb9e1e0a4e0c7519f019534924df6c8893bbc18",
+      "size": 914,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/4e/4ee3c7320247a023f725a09a8eb9e1e0a4e0c7519f019534924df6c8893bbc18"
+    },
+    {
+      "path": "server/games/sgs/hero/xuhuang/index.js",
+      "sha256": "bf02ab2e937e722aab418e47f1ca0702daf7f2fd5f3a9579a3ed92fd8eb5d42f",
+      "size": 254,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/bf/bf02ab2e937e722aab418e47f1ca0702daf7f2fd5f3a9579a3ed92fd8eb5d42f"
+    },
+    {
+      "path": "server/games/sgs/hero/xunyou/index.js",
+      "sha256": "82bdcc3a8ac3d73236b1eaec264be2bc2880276bf32d21d90443245e87787d0d",
+      "size": 255,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/82/82bdcc3a8ac3d73236b1eaec264be2bc2880276bf32d21d90443245e87787d0d"
+    },
+    {
+      "path": "server/games/sgs/hero/xunyou/qice.js",
+      "sha256": "c28c43e56cdad7320a45b019ed4744babb392b794a4246a706a4c22eb6e06ba6",
+      "size": 1064,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c2/c28c43e56cdad7320a45b019ed4744babb392b794a4246a706a4c22eb6e06ba6"
+    },
+    {
+      "path": "server/games/sgs/hero/xunyou/zhiyu.js",
+      "sha256": "167d82cbcbfc9196c995b0d0d84ae4d50e6cf6b5ec1a6253937a59a3847bd6da",
+      "size": 1334,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/16/167d82cbcbfc9196c995b0d0d84ae4d50e6cf6b5ec1a6253937a59a3847bd6da"
+    },
+    {
+      "path": "server/games/sgs/hero/xunyu/index.js",
+      "sha256": "056c11ebe6dfd9f4948b695a9f8c173d8c12b8777e0dccf8f9aebf7799b70702",
+      "size": 236,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/05/056c11ebe6dfd9f4948b695a9f8c173d8c12b8777e0dccf8f9aebf7799b70702"
+    },
+    {
+      "path": "server/games/sgs/hero/xunyu/jieming.js",
+      "sha256": "88cdf5a085f85597065f7761f81e6e865b20531efba89890dd756b9b9376bf85",
+      "size": 1182,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/88/88cdf5a085f85597065f7761f81e6e865b20531efba89890dd756b9b9376bf85"
+    },
+    {
+      "path": "server/games/sgs/hero/xunyu/quhu.js",
+      "sha256": "fd41c1f6b61051af67990f5ba8616ce219294f16ca628ab1877212b29277dab0",
+      "size": 3015,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/fd/fd41c1f6b61051af67990f5ba8616ce219294f16ca628ab1877212b29277dab0"
+    },
+    {
+      "path": "server/games/sgs/hero/xushu/index.js",
+      "sha256": "e04e24122527e22d8a94dad6122d5806cdf663c57604d2f0cecc7de99b4bce29",
+      "size": 239,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e0/e04e24122527e22d8a94dad6122d5806cdf663c57604d2f0cecc7de99b4bce29"
+    },
+    {
+      "path": "server/games/sgs/hero/xushu/jujian.js",
+      "sha256": "2b051c6a2a1299c543349c7674de85dacc5990af03342982397d879e24209321",
+      "size": 2177,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/2b/2b051c6a2a1299c543349c7674de85dacc5990af03342982397d879e24209321"
+    },
+    {
+      "path": "server/games/sgs/hero/xushu/wuyan.js",
+      "sha256": "3aeb1619fb59e757c17f3404d6b5512ce8a80034b0384ce7aaba9c639c45b7b7",
+      "size": 1469,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/3a/3aeb1619fb59e757c17f3404d6b5512ce8a80034b0384ce7aaba9c639c45b7b7"
+    },
+    {
+      "path": "server/games/sgs/hero/yangxiu/danlao.js",
+      "sha256": "f2589997c31e3288e3e15478b275960213a4236b7f0827221df9df9823f249da",
+      "size": 775,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/f2/f2589997c31e3288e3e15478b275960213a4236b7f0827221df9df9823f249da"
+    },
+    {
+      "path": "server/games/sgs/hero/yangxiu/index.js",
+      "sha256": "8075463ae0716fb0f0a69629be6eb14b5ae655a495fdc678c98a130152a9c621",
+      "size": 274,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/80/8075463ae0716fb0f0a69629be6eb14b5ae655a495fdc678c98a130152a9c621"
+    },
+    {
+      "path": "server/games/sgs/hero/yangxiu/jilei.js",
+      "sha256": "bfe5232ca8d0dd851da498229beeb1b8cb0492b830252417601c49a559fd4041",
+      "size": 1483,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/bf/bfe5232ca8d0dd851da498229beeb1b8cb0492b830252417601c49a559fd4041"
+    },
+    {
+      "path": "server/games/sgs/hero/yanliangwenchou/index.js",
+      "sha256": "46b910d09560cb3a8f0820c95ce33c0c4484768a3503525ae9660fdf7b4b91ee",
+      "size": 275,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/46/46b910d09560cb3a8f0820c95ce33c0c4484768a3503525ae9660fdf7b4b91ee"
+    },
+    {
+      "path": "server/games/sgs/hero/yanliangwenchou/shuangxiong.js",
+      "sha256": "b3edc1083cbe69b24c6e2a6ac83bcdbde6e2e2082dceefcb3b41ca146915762c",
+      "size": 1117,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/b3/b3edc1083cbe69b24c6e2a6ac83bcdbde6e2e2082dceefcb3b41ca146915762c"
+    },
+    {
+      "path": "server/games/sgs/hero/yuanshao/index.js",
+      "sha256": "6af3e6fa31fad3dd20b9cac54ae1d12b5fc835fb5a8952a17efce84b303f0c6f",
+      "size": 276,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/6a/6af3e6fa31fad3dd20b9cac54ae1d12b5fc835fb5a8952a17efce84b303f0c6f"
+    },
+    {
+      "path": "server/games/sgs/hero/yuanshao/luanji.js",
+      "sha256": "71fd4e5d665d5c665049810af4beaa7cb514bfa66658148431b53bdc2df4b46a",
+      "size": 2451,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/71/71fd4e5d665d5c665049810af4beaa7cb514bfa66658148431b53bdc2df4b46a"
+    },
+    {
+      "path": "server/games/sgs/hero/yuanshao/xueyi.js",
+      "sha256": "58b5a1ebfb03455c7e6dffe5be5f1c7d0a6105e252577b57f85e7a1bdf0354c4",
+      "size": 200,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/58/58b5a1ebfb03455c7e6dffe5be5f1c7d0a6105e252577b57f85e7a1bdf0354c4"
+    },
+    {
+      "path": "server/games/sgs/hero/yuanshu/index.js",
+      "sha256": "e3a40e97b902bbbcb3fd29abb006ce5e325f0129d950edeaf3c5f90fa9d0cfaf",
+      "size": 268,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e3/e3a40e97b902bbbcb3fd29abb006ce5e325f0129d950edeaf3c5f90fa9d0cfaf"
+    },
+    {
+      "path": "server/games/sgs/hero/yuanshu/weidi.js",
+      "sha256": "545e60c7f9cc170fdf54e233ca40fe641faacc49d15d4a82782275488239dbd6",
+      "size": 287,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/54/545e60c7f9cc170fdf54e233ca40fe641faacc49d15d4a82782275488239dbd6"
+    },
+    {
+      "path": "server/games/sgs/hero/yuanshu/yongsi.js",
+      "sha256": "05a327c965a16999688db6ff304612e86b06723faa2579370b682d7ca427851f",
+      "size": 570,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/05/05a327c965a16999688db6ff304612e86b06723faa2579370b682d7ca427851f"
+    },
+    {
+      "path": "server/games/sgs/hero/yujin/index.js",
+      "sha256": "969b92361e7e22d621115e0fa3d05badf2d7c6c6fb1d1577144e2f7636fe99b1",
+      "size": 217,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/96/969b92361e7e22d621115e0fa3d05badf2d7c6c6fb1d1577144e2f7636fe99b1"
+    },
+    {
+      "path": "server/games/sgs/hero/yujin/yizhong.js",
+      "sha256": "8c9264ac5f538e010fa11bb36e07d0f36130a33da8975ddf502b0f86411c57e6",
+      "size": 323,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/8c/8c9264ac5f538e010fa11bb36e07d0f36130a33da8975ddf502b0f86411c57e6"
+    },
+    {
+      "path": "server/games/sgs/hero/zhangcunhua/index.js",
+      "sha256": "15945597268ef91c8d68531c2c742287f71c21a76e2f0a938b35e658dbc7eb35",
+      "size": 257,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/15/15945597268ef91c8d68531c2c742287f71c21a76e2f0a938b35e658dbc7eb35"
+    },
+    {
+      "path": "server/games/sgs/hero/zhangcunhua/jueqing.js",
+      "sha256": "867c6f8d6f007150d07edf6932c519d5d2445db92add1d5c3ab9140379b66208",
+      "size": 313,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/86/867c6f8d6f007150d07edf6932c519d5d2445db92add1d5c3ab9140379b66208"
+    },
+    {
+      "path": "server/games/sgs/hero/zhangcunhua/shangshi.js",
+      "sha256": "37ba1d8a5b095fcdea7e78bb1f2564ff4127853ff29df8386f1d8bb7e5728916",
+      "size": 726,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/37/37ba1d8a5b095fcdea7e78bb1f2564ff4127853ff29df8386f1d8bb7e5728916"
+    },
+    {
+      "path": "server/games/sgs/hero/zhangfei/index.js",
+      "sha256": "688466de3547055fa4507e9f9018822caeda115c143dd9e94a6055ff277677ed",
+      "size": 249,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/68/688466de3547055fa4507e9f9018822caeda115c143dd9e94a6055ff277677ed"
+    },
+    {
+      "path": "server/games/sgs/hero/zhangfei/paoxiao.js",
+      "sha256": "49b739f1982ce819f0110bb6626feee70144c4104e885f0e2171e7e7bc0dc7cc",
+      "size": 508,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/49/49b739f1982ce819f0110bb6626feee70144c4104e885f0e2171e7e7bc0dc7cc"
+    },
+    {
+      "path": "server/games/sgs/hero/zhangliao/index.js",
+      "sha256": "6d23e01381f2da95533882d034a98a5bc658a329d6ed48c59b35d0bb2c4c34a9",
+      "size": 245,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/6d/6d23e01381f2da95533882d034a98a5bc658a329d6ed48c59b35d0bb2c4c34a9"
+    },
+    {
+      "path": "server/games/sgs/hero/zhangliao/tuxi.js",
+      "sha256": "aa39d131e353f4d7ff4473966dd7f1db2bc49202ec15866c5ab575ec18012e5f",
+      "size": 742,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/aa/aa39d131e353f4d7ff4473966dd7f1db2bc49202ec15866c5ab575ec18012e5f"
+    },
+    {
+      "path": "server/games/sgs/hero/zhaoyun/index.js",
+      "sha256": "0668820ec2877625e34e3fe869696a4ce580920601b47e74d2cecf642a7ca24d",
+      "size": 271,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/06/0668820ec2877625e34e3fe869696a4ce580920601b47e74d2cecf642a7ca24d"
+    },
+    {
+      "path": "server/games/sgs/hero/zhaoyun/longdan.js",
+      "sha256": "394e719e24f057b2644886aa07f6a025b30a30975312dc62bed8e319940c5134",
+      "size": 593,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/39/394e719e24f057b2644886aa07f6a025b30a30975312dc62bed8e319940c5134"
+    },
+    {
+      "path": "server/games/sgs/hero/zhaoyun/yajiao.js",
+      "sha256": "7faa9094d736831d5218b0213e0a37dd0b4758866335d133cdb9eb54732d55e4",
+      "size": 433,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/7f/7faa9094d736831d5218b0213e0a37dd0b4758866335d133cdb9eb54732d55e4"
+    },
+    {
+      "path": "server/games/sgs/hero/zhenji/index.js",
+      "sha256": "dad2483602e28fe65f4dc3ded6849e8891814c9362bbdd0da3c64ac6093766ed",
+      "size": 275,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/da/dad2483602e28fe65f4dc3ded6849e8891814c9362bbdd0da3c64ac6093766ed"
+    },
+    {
+      "path": "server/games/sgs/hero/zhenji/luoshen.js",
+      "sha256": "d3768b1beba60b000aac1eff312308148b9587e26e7e535bf75a7edd94854007",
+      "size": 533,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/d3/d3768b1beba60b000aac1eff312308148b9587e26e7e535bf75a7edd94854007"
+    },
+    {
+      "path": "server/games/sgs/hero/zhenji/qingguo.js",
+      "sha256": "3b301a06290a2b667e0cf2f3e017ea940a7e58143f66493b0f765eb22fb4a2bf",
+      "size": 334,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/3b/3b301a06290a2b667e0cf2f3e017ea940a7e58143f66493b0f765eb22fb4a2bf"
+    },
+    {
+      "path": "server/games/sgs/hero/zhoutai/buqu.js",
+      "sha256": "eeb017bbbb1335f716432fec587e3ca824f3b1b7dd468a546c1c1bb91fceac22",
+      "size": 1802,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ee/eeb017bbbb1335f716432fec587e3ca824f3b1b7dd468a546c1c1bb91fceac22"
+    },
+    {
+      "path": "server/games/sgs/hero/zhoutai/index.js",
+      "sha256": "e1206fe36b12a832930e8947da758b48ac6a524a1d0fc2a443573e2e96e652c0",
+      "size": 218,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e1/e1206fe36b12a832930e8947da758b48ac6a524a1d0fc2a443573e2e96e652c0"
+    },
+    {
+      "path": "server/games/sgs/hero/zhouyu/fanjian.js",
+      "sha256": "becc850e5120ae0379328fb924c8235b53463a282ebd4b17db88d85832e4345a",
+      "size": 1575,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/be/becc850e5120ae0379328fb924c8235b53463a282ebd4b17db88d85832e4345a"
+    },
+    {
+      "path": "server/games/sgs/hero/zhouyu/index.js",
+      "sha256": "3c0048dbd3142139f386c2b9fb63f19481d937c1866891a36aeb80f89ec4bea8",
+      "size": 262,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/3c/3c0048dbd3142139f386c2b9fb63f19481d937c1866891a36aeb80f89ec4bea8"
+    },
+    {
+      "path": "server/games/sgs/hero/zhouyu/yingzi.js",
+      "sha256": "d37b38ab79ca6b65fe87ffbd79a44ae142d739b80a7f4940cf9ab2caab2ff984",
+      "size": 393,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/d3/d37b38ab79ca6b65fe87ffbd79a44ae142d739b80a7f4940cf9ab2caab2ff984"
+    },
+    {
+      "path": "server/games/sgs/hero/zhugeliang/guanxing.js",
+      "sha256": "31c7870cc9b4dfbd2162e54808a8b43a0e441f257c0ff183dff8a3a824e98b35",
+      "size": 915,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/31/31c7870cc9b4dfbd2162e54808a8b43a0e441f257c0ff183dff8a3a824e98b35"
+    },
+    {
+      "path": "server/games/sgs/hero/zhugeliang/index.js",
+      "sha256": "999624b59485435746d0c24622a2dc845f9de90c1d7bb15d86dbfa878efce238",
+      "size": 287,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/99/999624b59485435746d0c24622a2dc845f9de90c1d7bb15d86dbfa878efce238"
+    },
+    {
+      "path": "server/games/sgs/hero/zhugeliang/kongcheng.js",
+      "sha256": "c9fcb585f8ceb792eac5ab0c6fb0a40a344b4c0432dec9c4af02a552a0602d6b",
+      "size": 400,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c9/c9fcb585f8ceb792eac5ab0c6fb0a40a344b4c0432dec9c4af02a552a0602d6b"
+    },
+    {
+      "path": "server/games/sgs/hero/zhurong/index.js",
+      "sha256": "ab9813d5a065f97e7b69bf5ddc0a0f9ef254294ebd1429bfb2fc2762072af2aa",
+      "size": 278,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ab/ab9813d5a065f97e7b69bf5ddc0a0f9ef254294ebd1429bfb2fc2762072af2aa"
+    },
+    {
+      "path": "server/games/sgs/hero/zhurong/juxiang.js",
+      "sha256": "e52532a8862f98a1c5a5bee2877ef7c854cdf5eb16376fa90048fb4407ca392e",
+      "size": 872,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e5/e52532a8862f98a1c5a5bee2877ef7c854cdf5eb16376fa90048fb4407ca392e"
+    },
+    {
+      "path": "server/games/sgs/hero/zhurong/lieren.js",
+      "sha256": "80d7d53ee0d0bdb76126004fa3467c7b7c3f215318940104659c17cec122b969",
+      "size": 925,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/80/80d7d53ee0d0bdb76126004fa3467c7b7c3f215318940104659c17cec122b969"
+    },
+    {
+      "path": "server/games/sgs/index.js",
+      "sha256": "525694509c4b089c9118cbddecff523b34269d54b5f180ef4654dbf72e93496c",
+      "size": 815,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/52/525694509c4b089c9118cbddecff523b34269d54b5f180ef4654dbf72e93496c"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/bgm/01【播报】一破 卧龙出山.mp3",
+      "sha256": "3535ac4748d06869b94076fdc8c27eb34f674593478406770ab48c4514fa8e2a",
+      "size": 38078,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/35/3535ac4748d06869b94076fdc8c27eb34f674593478406770ab48c4514fa8e2a"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/bgm/01【背景】经典.mp3",
+      "sha256": "63d4b1ca6087426616cb5b8c85d525719dd7e074e9b1b1fe1f1f99e64a75d817",
+      "size": 888758,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/63/63d4b1ca6087426616cb5b8c85d525719dd7e074e9b1b1fe1f1f99e64a75d817"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/bgm/02【播报】双连 一战成名.mp3",
+      "sha256": "9ba70183a8a87a1e479f1597842605b09969a233dbdbb22637a85c184cde17c0",
+      "size": 34107,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/9b/9ba70183a8a87a1e479f1597842605b09969a233dbdbb22637a85c184cde17c0"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/bgm/02【背景】大厅.mp3",
+      "sha256": "1bace95e0631da11ca58ac40c4d6aef8fb5ceae558a4fd7da2f9dba2c88213a4",
+      "size": 622797,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/1b/1bace95e0631da11ca58ac40c4d6aef8fb5ceae558a4fd7da2f9dba2c88213a4"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/bgm/03【播报】三连 举世皆惊.mp3",
+      "sha256": "37fee2b5ed305beaae65cf9dc448000b0ba47456b256d4d00dd889270e98bf72",
+      "size": 37242,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/37/37fee2b5ed305beaae65cf9dc448000b0ba47456b256d4d00dd889270e98bf72"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/bgm/04【播报】四连 天下无敌.mp3",
+      "sha256": "619c2ea029df8646e59bc39ca1850b596469ac2734a58ede2700e52e03b78d3f",
+      "size": 37242,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/61/619c2ea029df8646e59bc39ca1850b596469ac2734a58ede2700e52e03b78d3f"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/bgm/05【播报】五连 诛天灭地.mp3",
+      "sha256": "2a4f05b374e796b6ea2f124cc596f18ea92cd8219eaafdd9ba7faced358c05aa",
+      "size": 37451,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/2a/2a4f05b374e796b6ea2f124cc596f18ea92cd8219eaafdd9ba7faced358c05aa"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/bgm/06【播报】六连 诛天灭地.mp3",
+      "sha256": "d8597271b9914616cfec287efb51705ed61539809484bf7463c77ca56e333137",
+      "size": 36197,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/d8/d8597271b9914616cfec287efb51705ed61539809484bf7463c77ca56e333137"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/bgm/07【播报】七连 诛天灭地.mp3",
+      "sha256": "b6d3ec289f87020a3dced0ae769a875973b6a4b46874a30f2c986840a225b95c",
+      "size": 37869,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/b6/b6d3ec289f87020a3dced0ae769a875973b6a4b46874a30f2c986840a225b95c"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/bgm/08【播报】无双 万军取首.mp3",
+      "sha256": "99645b18241ffd56d1836046e90885ba5b9a48c9232e8f6b4caf3502f52c3cbb",
+      "size": 37326,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/99/99645b18241ffd56d1836046e90885ba5b9a48c9232e8f6b4caf3502f52c3cbb"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/bgm/11【播报】妙手回春.mp3",
+      "sha256": "8d3af36b7a9451dc8ebe3b9b9f4f202582fbeafde808d1907efc1b29f05b3b17",
+      "size": 26877,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/8d/8d3af36b7a9451dc8ebe3b9b9f4f202582fbeafde808d1907efc1b29f05b3b17"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/bgm/12【播报】医术高超.mp3",
+      "sha256": "9b65875d52a51ece10087e89439f8794989936dd7a866b46741cc2b9ab99bd25",
+      "size": 26250,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/9b/9b65875d52a51ece10087e89439f8794989936dd7a866b46741cc2b9ab99bd25"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/01【女】杀.mp3",
+      "sha256": "da2b78148db0f9bb6649caa78edb8601f2a88f329f62dcc9ca8a6cb7930e41fa",
+      "size": 14137,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/da/da2b78148db0f9bb6649caa78edb8601f2a88f329f62dcc9ca8a6cb7930e41fa"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/01【男】杀.mp3",
+      "sha256": "08e95b1a234dba2c27431114dc5529b064208e73dd069f016b49d8cfda34f2d1",
+      "size": 12256,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/08/08e95b1a234dba2c27431114dc5529b064208e73dd069f016b49d8cfda34f2d1"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/02【女】火杀.mp3",
+      "sha256": "f639823a88fd9cfd09317730748880e47e79bc7eacd1402d6ae70081393d7655",
+      "size": 13706,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/f6/f639823a88fd9cfd09317730748880e47e79bc7eacd1402d6ae70081393d7655"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/02【男】火杀.mp3",
+      "sha256": "bb115b341e02a97ec62ccd0f4df0b0fe31f1c0b4f78afd57720022f1aa61992e",
+      "size": 13706,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/bb/bb115b341e02a97ec62ccd0f4df0b0fe31f1c0b4f78afd57720022f1aa61992e"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/03【女】雷杀.mp3",
+      "sha256": "15f22e781b438164a307a4ce8ae64c47214104d9c5513418a15ce2974b4d4eff",
+      "size": 13898,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/15/15f22e781b438164a307a4ce8ae64c47214104d9c5513418a15ce2974b4d4eff"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/03【男】雷杀.mp3",
+      "sha256": "5ed084adacd14cdc77fd0115a9aea14f858b45754c386d624c141fe8a3eb3a62",
+      "size": 14474,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/5e/5ed084adacd14cdc77fd0115a9aea14f858b45754c386d624c141fe8a3eb3a62"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/04【女】闪.mp3",
+      "sha256": "39f19ea8ff91e499ff9d07caf8754a22b2e1bf95e683cdc9a2a5a9b2778bbca8",
+      "size": 15390,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/39/39f19ea8ff91e499ff9d07caf8754a22b2e1bf95e683cdc9a2a5a9b2778bbca8"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/04【男】闪.mp3",
+      "sha256": "c4b7c8fd5fe3074e48ba3ccc89727de4af4f03e49ae8e5a811036f0dbabd2ea0",
+      "size": 12256,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c4/c4b7c8fd5fe3074e48ba3ccc89727de4af4f03e49ae8e5a811036f0dbabd2ea0"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/05【女】决斗.mp3",
+      "sha256": "5391467226658355d9d401879710a4a0d81cec055abae9c6e5d33eda7c648b56",
+      "size": 13092,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/53/5391467226658355d9d401879710a4a0d81cec055abae9c6e5d33eda7c648b56"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/05【男】决斗.mp3",
+      "sha256": "100edf75c2e13577f59b91c01ef00ab777b56eb745b11d076b22ffd7abf3767c",
+      "size": 12362,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/10/100edf75c2e13577f59b91c01ef00ab777b56eb745b11d076b22ffd7abf3767c"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/06【女】酒.mp3",
+      "sha256": "bf21f0fade7883015a167e1d197db08a4d4e79c28b5a1f8f226080d1ef8f7011",
+      "size": 13130,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/bf/bf21f0fade7883015a167e1d197db08a4d4e79c28b5a1f8f226080d1ef8f7011"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/06【男】酒.mp3",
+      "sha256": "0f8ecfc5834724c3e2421863d480e18fed96c2896a95f42965551142a15e2407",
+      "size": 13706,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/0f/0f8ecfc5834724c3e2421863d480e18fed96c2896a95f42965551142a15e2407"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/07【女】火攻.mp3",
+      "sha256": "24b5cc9251537e8d85a4eae4f8d6a71cc0803c2e036b494e12b30101275b5ea6",
+      "size": 13898,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/24/24b5cc9251537e8d85a4eae4f8d6a71cc0803c2e036b494e12b30101275b5ea6"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/07【男】火攻.mp3",
+      "sha256": "ae8abe55d0b89d7e8f50df39d30878103d5a1b600567a82662b9dc280bcecd1f",
+      "size": 17354,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ae/ae8abe55d0b89d7e8f50df39d30878103d5a1b600567a82662b9dc280bcecd1f"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/08【女】闪电.mp3",
+      "sha256": "acbd062a6a3a5cd79c9e0215453a5823b94cdc92074160c792edbe02eb1430e9",
+      "size": 13510,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ac/acbd062a6a3a5cd79c9e0215453a5823b94cdc92074160c792edbe02eb1430e9"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/08【男】闪电.mp3",
+      "sha256": "2d45c0024bc1ccf0b2f81f142fb39da53a30b8044168c8beb191885dea7fbcf3",
+      "size": 13510,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/2d/2d45c0024bc1ccf0b2f81f142fb39da53a30b8044168c8beb191885dea7fbcf3"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/09【女】无懈可击.mp3",
+      "sha256": "f72cf8b891b0048ec3d3c9cd51e73fb4bd4b9d82bf8e174ddfd8a53c4273f8a7",
+      "size": 17480,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/f7/f72cf8b891b0048ec3d3c9cd51e73fb4bd4b9d82bf8e174ddfd8a53c4273f8a7"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/09【男】无懈可击.mp3",
+      "sha256": "db6ee5ca1f62aebfceb01288a06825205b198af49daae3f3ca5e26ea9fe377ed",
+      "size": 18525,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/db/db6ee5ca1f62aebfceb01288a06825205b198af49daae3f3ca5e26ea9fe377ed"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/10【女】顺手牵羊.mp3",
+      "sha256": "0b3c2a9cfccce3527dba8426ecc30f60f60e98f1dfcb3633d371f9d680f1a532",
+      "size": 18734,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/0b/0b3c2a9cfccce3527dba8426ecc30f60f60e98f1dfcb3633d371f9d680f1a532"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/10【男】顺手牵羊.mp3",
+      "sha256": "b33d048af81c9f2912370f83066ab2e00a47b5a06dce4e05e9e54a5498dd4dfb",
+      "size": 17271,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/b3/b33d048af81c9f2912370f83066ab2e00a47b5a06dce4e05e9e54a5498dd4dfb"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/11【女】过河拆桥.mp3",
+      "sha256": "8c2b8cfefba46deb1a7869733d585e81ae1f19b9348ea36ab065c00f3fcb996a",
+      "size": 18316,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/8c/8c2b8cfefba46deb1a7869733d585e81ae1f19b9348ea36ab065c00f3fcb996a"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/11【男】过河拆桥.mp3",
+      "sha256": "9606246f3a1f134c2f5cf7edc611d03e52821532fa7c9474f1db2d37004d9614",
+      "size": 16853,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/96/9606246f3a1f134c2f5cf7edc611d03e52821532fa7c9474f1db2d37004d9614"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/12【女】乐不思蜀.mp3",
+      "sha256": "9d3b220d1868bb63c80f26cae62cc6c7c33aedf28019fd391752ed49414d3b28",
+      "size": 19361,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/9d/9d3b220d1868bb63c80f26cae62cc6c7c33aedf28019fd391752ed49414d3b28"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/12【男】乐不思蜀.mp3",
+      "sha256": "3f6f2715b0837e289990a998a2b0cc9ec2428e0458d2229c495c62cd7041f914",
+      "size": 18316,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/3f/3f6f2715b0837e289990a998a2b0cc9ec2428e0458d2229c495c62cd7041f914"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/13【女】兵粮寸断.mp3",
+      "sha256": "83a5a3d6b494803b3c08498d622eae714bdd4e9beb71f1ec86f4abf61dafc7d0",
+      "size": 17354,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/83/83a5a3d6b494803b3c08498d622eae714bdd4e9beb71f1ec86f4abf61dafc7d0"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/13【男】兵粮寸断.mp3",
+      "sha256": "308f0c3b3ca38b0e9349cd90ac7b671b1dbf8ab2a401b967fcb3dbdb7773073b",
+      "size": 18122,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/30/308f0c3b3ca38b0e9349cd90ac7b671b1dbf8ab2a401b967fcb3dbdb7773073b"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/14【女】南蛮入侵.mp3",
+      "sha256": "3c1c07b5d47e62959ecddb0e0a59a4ac8961840d26f4eebf2e7b2b61605e3707",
+      "size": 17898,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/3c/3c1c07b5d47e62959ecddb0e0a59a4ac8961840d26f4eebf2e7b2b61605e3707"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/14【男】南蛮入侵.mp3",
+      "sha256": "e85c5c58264a8843098045353a267a9722438791e7870338bffa1a8f10cb0a45",
+      "size": 17480,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e8/e85c5c58264a8843098045353a267a9722438791e7870338bffa1a8f10cb0a45"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/15【女】万箭齐发.mp3",
+      "sha256": "6ca92a990de7e0cfc0115875cfd04f413ef569c9b75be4cba137c7aa9dbb09eb",
+      "size": 17898,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/6c/6ca92a990de7e0cfc0115875cfd04f413ef569c9b75be4cba137c7aa9dbb09eb"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/15【男】万箭齐发.mp3",
+      "sha256": "14973798c342a532c36c2774263643f2715affa3da8cdb9f9de1e033321a21e8",
+      "size": 19779,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/14/14973798c342a532c36c2774263643f2715affa3da8cdb9f9de1e033321a21e8"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/16【女】桃园结义.mp3",
+      "sha256": "7277a5a2f7bf0ece45c96fced10be8f99b197e2bd880e92b0b719628bf8b1a73",
+      "size": 18107,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/72/7277a5a2f7bf0ece45c96fced10be8f99b197e2bd880e92b0b719628bf8b1a73"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/16【男】桃园结义.mp3",
+      "sha256": "968a440b2be1eb1b724a910508366d4b5f58cd280c0f79699035397560acf2b9",
+      "size": 16853,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/96/968a440b2be1eb1b724a910508366d4b5f58cd280c0f79699035397560acf2b9"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/17【女】借刀杀人.mp3",
+      "sha256": "fa6530690ca090ef2d129df252fcf0604bd8a10024fc59c39eaf1793ebf4613e",
+      "size": 18734,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/fa/fa6530690ca090ef2d129df252fcf0604bd8a10024fc59c39eaf1793ebf4613e"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/17【男】借刀杀人.mp3",
+      "sha256": "adf5513d64ad2ca34e012229225e1dfd4d5d60bfebb6a44f1e78c481816f9df9",
+      "size": 18734,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ad/adf5513d64ad2ca34e012229225e1dfd4d5d60bfebb6a44f1e78c481816f9df9"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/18【女】铁索连环.mp3",
+      "sha256": "0fe63e47a4fb9e8c83bfc7297b3b7438dbd3b4d9d90dc2ef5dc7dec150f47ae3",
+      "size": 18698,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/0f/0fe63e47a4fb9e8c83bfc7297b3b7438dbd3b4d9d90dc2ef5dc7dec150f47ae3"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/18【男】铁索连环.mp3",
+      "sha256": "736a4316179eac4765d871bcb33a99065bc5f26898c65333381a77e6ee6d593b",
+      "size": 18698,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/73/736a4316179eac4765d871bcb33a99065bc5f26898c65333381a77e6ee6d593b"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/19【女】无中生有.mp3",
+      "sha256": "e1410b09a7bbd726bd6e58bbf6ba2cec86f112e7577abe4718de250c6863f6d0",
+      "size": 17689,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e1/e1410b09a7bbd726bd6e58bbf6ba2cec86f112e7577abe4718de250c6863f6d0"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/19【男】无中生有.mp3",
+      "sha256": "1af817daab915de437da37fbad8f36ee1f59142b06712d497f509b010325a846",
+      "size": 17689,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/1a/1af817daab915de437da37fbad8f36ee1f59142b06712d497f509b010325a846"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/20【女】五谷丰登.mp3",
+      "sha256": "30aac4c7e9f18af74ae4615f50d92bad8ae255458adbcf3f7fd9487070e1e3e8",
+      "size": 17480,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/30/30aac4c7e9f18af74ae4615f50d92bad8ae255458adbcf3f7fd9487070e1e3e8"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/card/20【男】五谷丰登.mp3",
+      "sha256": "a2493ab8fa8096d19d0737172ae6231321e5a8a67bd59c86559f4ee442a50219",
+      "size": 16644,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/a2/a2493ab8fa8096d19d0737172ae6231321e5a8a67bd59c86559f4ee442a50219"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/effect/01【音效】普杀-1.mp3",
+      "sha256": "c6dd2d96ea09faf959a09171e5c5fcc4f939b9529efac15bbdc40d795bd5abd3",
+      "size": 9121,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c6/c6dd2d96ea09faf959a09171e5c5fcc4f939b9529efac15bbdc40d795bd5abd3"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/effect/03【音效】雷杀-1.mp3",
+      "sha256": "56333824006fd3825246a13051c5025a6cecff71d9ec3d203ccd496789271a84",
+      "size": 20406,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/56/56333824006fd3825246a13051c5025a6cecff71d9ec3d203ccd496789271a84"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/effect/05【音效】火杀-1.mp3",
+      "sha256": "49589d2536d8873cf334fa7afde96974eddc5388a58997b53d567d8e94d358cb",
+      "size": 21660,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/49/49589d2536d8873cf334fa7afde96974eddc5388a58997b53d567d8e94d358cb"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/effect/07【音效】加血.mp3",
+      "sha256": "51a18887a3f30524c8244dc0ccee744b6404c08b76caf8b84b2bf87d19852aca",
+      "size": 35035,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/51/51a18887a3f30524c8244dc0ccee744b6404c08b76caf8b84b2bf87d19852aca"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/effect/08【音效】自残.mp3",
+      "sha256": "aa7477900667146b33cdf6126b0807e5f625612d7e242899c92a76a8c95cf7db",
+      "size": 17579,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/aa/aa7477900667146b33cdf6126b0807e5f625612d7e242899c92a76a8c95cf7db"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/effect/09【音效】闪电.mp3",
+      "sha256": "c4ebae438f6af26c2cf7ba2afcf4b043a92f7abf9dd58b086aefc6f750f35272",
+      "size": 63697,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c4/c4ebae438f6af26c2cf7ba2afcf4b043a92f7abf9dd58b086aefc6f750f35272"
+    },
+    {
+      "path": "server/games/sgs/resourse/music/effect/10【音效】装备.mp3",
+      "sha256": "9e1e1d6db751a7539f24bf27a7afa2ce88d54c792bc17dcbe1e520ce8911daa2",
+      "size": 19988,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/9e/9e1e1d6db751a7539f24bf27a7afa2ce88d54c792bc17dcbe1e520ce8911daa2"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/README.md",
+      "sha256": "29d6d066c964b5eacb17bb403c5b4ba486d89bcdcd89274ed7ba29b06c2d8561",
+      "size": 211,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/29/29d6d066c964b5eacb17bb403c5b4ba486d89bcdcd89274ed7ba29b06c2d8561"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_bulianshi.png",
+      "sha256": "0db94a9b671d0473b39fd81278ce95bfd9e533e7084881e8208a3697ecadeb41",
+      "size": 203536,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/0d/0db94a9b671d0473b39fd81278ce95bfd9e533e7084881e8208a3697ecadeb41"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_caiwenji.png",
+      "sha256": "65728b8d2e02790f2d90ec406a80588ef96e619262d4e223545e4d82380dbc8b",
+      "size": 120657,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/65/65728b8d2e02790f2d90ec406a80588ef96e619262d4e223545e4d82380dbc8b"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_caocao.png",
+      "sha256": "153985df950d679587d68c5c23e40eb83a46fec3e16b908626e2403cfa53644a",
+      "size": 127691,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/15/153985df950d679587d68c5c23e40eb83a46fec3e16b908626e2403cfa53644a"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_caoren.png",
+      "sha256": "51f63fe1b82354cd87ea2a6a7d9980885c17468f9cad2e931f74720c09dce1c3",
+      "size": 131952,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/51/51f63fe1b82354cd87ea2a6a7d9980885c17468f9cad2e931f74720c09dce1c3"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_caozhi.png",
+      "sha256": "894f9ac1b1cfb2dae8db7ca616b7f180ffcb14036c6cbf4bb8bdae09f2b78086",
+      "size": 123291,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/89/894f9ac1b1cfb2dae8db7ca616b7f180ffcb14036c6cbf4bb8bdae09f2b78086"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_daqiao.png",
+      "sha256": "2761aaf69b1feba1d514f57af5664b88cbbe18138cb8a247d012cc15f40d451d",
+      "size": 128628,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/27/2761aaf69b1feba1d514f57af5664b88cbbe18138cb8a247d012cc15f40d451d"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_dengai.png",
+      "sha256": "c35089c01dc3918e2e7a754dfd82dc53c88be1ad6b17d6bd9e66ee38c1506015",
+      "size": 143284,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c3/c35089c01dc3918e2e7a754dfd82dc53c88be1ad6b17d6bd9e66ee38c1506015"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_diaochan.png",
+      "sha256": "909db12bdd76f5bfdf923050a67a5994142e2761a63d461cf79a3c25bb67f663",
+      "size": 136259,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/90/909db12bdd76f5bfdf923050a67a5994142e2761a63d461cf79a3c25bb67f663"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_fazheng.png",
+      "sha256": "c698aebb33581d0604505a2691bfd10c0df8995050830eeae1d40c4a9d6849eb",
+      "size": 130923,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c6/c698aebb33581d0604505a2691bfd10c0df8995050830eeae1d40c4a9d6849eb"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_ganning.png",
+      "sha256": "39aa0d759ef350aee9f7e3548a36f32fc6e636ec64d4ff157dda3ce0796a06e4",
+      "size": 136792,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/39/39aa0d759ef350aee9f7e3548a36f32fc6e636ec64d4ff157dda3ce0796a06e4"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_guanxinzhangbao.png",
+      "sha256": "ac2c986e92d2869fc41a58e5e3166c8d49bea8b0e1e2dbabf81cf6c42096644a",
+      "size": 201276,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ac/ac2c986e92d2869fc41a58e5e3166c8d49bea8b0e1e2dbabf81cf6c42096644a"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_guanyu.png",
+      "sha256": "1319ffff50125d716c78327f7907aa8316183406f2e01c56ee06509a2b01206b",
+      "size": 120617,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/13/1319ffff50125d716c78327f7907aa8316183406f2e01c56ee06509a2b01206b"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_guojia.png",
+      "sha256": "19036e7277a13447b82cbcd862b2f5b70a427ff254e779988256d1dd249d95e2",
+      "size": 121609,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/19/19036e7277a13447b82cbcd862b2f5b70a427ff254e779988256d1dd249d95e2"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_handang.png",
+      "sha256": "2489eae46b593d5d2b5e2001dd69d25168b742a7bd4a9ebef474c19dbf6ab739",
+      "size": 202702,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/24/2489eae46b593d5d2b5e2001dd69d25168b742a7bd4a9ebef474c19dbf6ab739"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_huanggai.png",
+      "sha256": "377a54bf6ca259602170cb6e6107d9568e3228b5d9e3ae1133bc679660cfbbd1",
+      "size": 125137,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/37/377a54bf6ca259602170cb6e6107d9568e3228b5d9e3ae1133bc679660cfbbd1"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_huangyueying.png",
+      "sha256": "ab2634753bf6228e03fea21777fc13f94c71336ec98534752dfb5fb112d06e6a",
+      "size": 121380,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ab/ab2634753bf6228e03fea21777fc13f94c71336ec98534752dfb5fb112d06e6a"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_huangzhong.png",
+      "sha256": "bc08aa06aeeca07b6e2b819dafe085be5b4f2f3829c7cf8abae1cb8732d460e4",
+      "size": 135705,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/bc/bc08aa06aeeca07b6e2b819dafe085be5b4f2f3829c7cf8abae1cb8732d460e4"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_huatuo.png",
+      "sha256": "5f9a43d6c01c47d7f96017946120df669343baba15cf3b254f36f0b84d869dd5",
+      "size": 124564,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/5f/5f9a43d6c01c47d7f96017946120df669343baba15cf3b254f36f0b84d869dd5"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_jiangwei.png",
+      "sha256": "922e58570ccb55ad44d6ccf24f944e09a273c756ad9805e72661f6a506139993",
+      "size": 142974,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/92/922e58570ccb55ad44d6ccf24f944e09a273c756ad9805e72661f6a506139993"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_jiaxu.png",
+      "sha256": "a4306f05e3b3e5500fc4a90774648c1dc5801338f56ad65d2f4fc66971c607d0",
+      "size": 126055,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/a4/a4306f05e3b3e5500fc4a90774648c1dc5801338f56ad65d2f4fc66971c607d0"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_liubei.png",
+      "sha256": "f482c6e4110f239ecf440a88c15c313b3c1c5613abbd53cabb465804a302a6c9",
+      "size": 133430,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/f4/f482c6e4110f239ecf440a88c15c313b3c1c5613abbd53cabb465804a302a6c9"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_liubiao.png",
+      "sha256": "c8a4ba1f946ed04b84e49e38483d7d05da0854d56d5b1170a08aa56e078837cb",
+      "size": 179534,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c8/c8a4ba1f946ed04b84e49e38483d7d05da0854d56d5b1170a08aa56e078837cb"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_liushan.png",
+      "sha256": "350199aa6f5e84d6fda3c5cf2cd43e824e2dec90df48ce3ef9370621afbf5787",
+      "size": 128327,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/35/350199aa6f5e84d6fda3c5cf2cd43e824e2dec90df48ce3ef9370621afbf5787"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_lusu.png",
+      "sha256": "87331f6be1eb6c5c8476fdb26f3f0b5fd260c99607c9b02e6c35d4407361ea30",
+      "size": 128385,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/87/87331f6be1eb6c5c8476fdb26f3f0b5fd260c99607c9b02e6c35d4407361ea30"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_luxun.png",
+      "sha256": "45395c1f954f6023ba6ea7d7aa0d88f7bdfb1da9d525153f6c16582249d13acf",
+      "size": 120390,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/45/45395c1f954f6023ba6ea7d7aa0d88f7bdfb1da9d525153f6c16582249d13acf"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_lvbu.png",
+      "sha256": "1abb02b456a225d671c24e84d671a94eb5a976cf3c742a1f255f31e7c19e2dea",
+      "size": 131419,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/1a/1abb02b456a225d671c24e84d671a94eb5a976cf3c742a1f255f31e7c19e2dea"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_lvmeng.png",
+      "sha256": "c829d50dc32a251b2da745e91ec15b39b623e971c46e8a84ede39076be7e203b",
+      "size": 125095,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c8/c829d50dc32a251b2da745e91ec15b39b623e971c46e8a84ede39076be7e203b"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_machao.png",
+      "sha256": "32654cc5e985a915d2ca3b97e370b94b62fa85e9ab75ab5007b1bd8d8cdbb14a",
+      "size": 131363,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/32/32654cc5e985a915d2ca3b97e370b94b62fa85e9ab75ab5007b1bd8d8cdbb14a"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_pangde.png",
+      "sha256": "accf154194adcd43b5b9ed79d9dfff535dd4bb40c9977594b2af9d4e7b8b214a",
+      "size": 126632,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ac/accf154194adcd43b5b9ed79d9dfff535dd4bb40c9977594b2af9d4e7b8b214a"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_pangtong.png",
+      "sha256": "0871d73b7cd325e703aaea9a2b4ed060b635c755e11f7d610809b067ca7c3f06",
+      "size": 133936,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/08/0871d73b7cd325e703aaea9a2b4ed060b635c755e11f7d610809b067ca7c3f06"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_simayi.png",
+      "sha256": "a9144564fee956934424591ce21ce16f1d0e3611302c41ead938dd8dedd99331",
+      "size": 129942,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/a9/a9144564fee956934424591ce21ce16f1d0e3611302c41ead938dd8dedd99331"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_sunquan.png",
+      "sha256": "24729cb12071ec04849b3ee0b670ab8144c4b516207ff96e483df1d904b80c15",
+      "size": 130933,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/24/24729cb12071ec04849b3ee0b670ab8144c4b516207ff96e483df1d904b80c15"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_sunshangxiang.png",
+      "sha256": "78b9bac1c57ea0d317a4a820733e2b1ee6ff51044b90de2d6a2523d6e60ec550",
+      "size": 125281,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/78/78b9bac1c57ea0d317a4a820733e2b1ee6ff51044b90de2d6a2523d6e60ec550"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_weiyan.png",
+      "sha256": "2f5d61aa5eb0d9135cd85da38e2dff9a2f29462f72bda779b3051f450d8e5327",
+      "size": 113542,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/2f/2f5d61aa5eb0d9135cd85da38e2dff9a2f29462f72bda779b3051f450d8e5327"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_wolongzhuge.png",
+      "sha256": "f6c5ac133d9ec436b87d200dd5d97b5de79ac1ac7a29dd8bcbf1cfd1a17bbe91",
+      "size": 122491,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/f6/f6c5ac133d9ec436b87d200dd5d97b5de79ac1ac7a29dd8bcbf1cfd1a17bbe91"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_wuguotai.png",
+      "sha256": "58ffc08d98025f38f9ce54ef67210f265a2713ece62f81de8752336039082d42",
+      "size": 135017,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/58/58ffc08d98025f38f9ce54ef67210f265a2713ece62f81de8752336039082d42"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_xiahoudun.png",
+      "sha256": "a5bed4ee567f5848e251aa7145ca07d30d2c87da4a257c42d79242e8f578d938",
+      "size": 131862,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/a5/a5bed4ee567f5848e251aa7145ca07d30d2c87da4a257c42d79242e8f578d938"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_xiaoqiao.png",
+      "sha256": "6f00d8e3312234134382e22e1a4cb1512f2377a21d82bec56edf6afb4ab5480b",
+      "size": 118168,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/6f/6f00d8e3312234134382e22e1a4cb1512f2377a21d82bec56edf6afb4ab5480b"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_xuchu.png",
+      "sha256": "f4bb77db2de8b2570c4c76ce0e28a37902e5d83ce9c53e5fc7fa6d32470f3602",
+      "size": 126750,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/f4/f4bb77db2de8b2570c4c76ce0e28a37902e5d83ce9c53e5fc7fa6d32470f3602"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_xuhuang.png",
+      "sha256": "c0c85d2bde8c0a4ae3344dfb32a0b8d57e7629494ba44f392f86c055106c19bd",
+      "size": 132217,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c0/c0c85d2bde8c0a4ae3344dfb32a0b8d57e7629494ba44f392f86c055106c19bd"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_xunyou.png",
+      "sha256": "4451ad96f2ee8bc9557729413dde51cea20b9274611a46245b5c400fa734da21",
+      "size": 190571,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/44/4451ad96f2ee8bc9557729413dde51cea20b9274611a46245b5c400fa734da21"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_xunyu.png",
+      "sha256": "c661417f6c5f0b4497964f4f002bdc04ca57d6846d98903560cad2ae55d8bc5f",
+      "size": 118454,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c6/c661417f6c5f0b4497964f4f002bdc04ca57d6846d98903560cad2ae55d8bc5f"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_xushu.png",
+      "sha256": "5ee7a177ba5027506973e7c2cde0c035cd8e14a8e01372d00532b13795de4cfd",
+      "size": 125133,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/5e/5ee7a177ba5027506973e7c2cde0c035cd8e14a8e01372d00532b13795de4cfd"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_yangxiu.png",
+      "sha256": "2bcb6272b28544eda7ca418bd373aea736b75746628710dbcd81665377bc3bb2",
+      "size": 118394,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/2b/2bcb6272b28544eda7ca418bd373aea736b75746628710dbcd81665377bc3bb2"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_yanliangwenchou.png",
+      "sha256": "0fe57d7355e833fc15bdf1feebf878c529ac68974650ec9034f1b7ff8feb1aa9",
+      "size": 142981,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/0f/0fe57d7355e833fc15bdf1feebf878c529ac68974650ec9034f1b7ff8feb1aa9"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_yuanshao.png",
+      "sha256": "3b25204a865a425d494bf3788513cb36f1e207c6ee76b95ee46084f087204909",
+      "size": 128597,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/3b/3b25204a865a425d494bf3788513cb36f1e207c6ee76b95ee46084f087204909"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_yuanshu.png",
+      "sha256": "bc3051c8ff3de1e68d5643d2bed2c7b934a4adf9c2ad5ae5c861f7bcf9482331",
+      "size": 119386,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/bc/bc3051c8ff3de1e68d5643d2bed2c7b934a4adf9c2ad5ae5c861f7bcf9482331"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_yujin.png",
+      "sha256": "32e02f62055de76a104094f5360c55228cecff0d03a2b9ddd039451bfcacaf6d",
+      "size": 135055,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/32/32e02f62055de76a104094f5360c55228cecff0d03a2b9ddd039451bfcacaf6d"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_zhangcunhua.png",
+      "sha256": "b27781255e5ec359ff22bc58886706fbec343c7e7fbfa7f7bd9e79d242cdd8d2",
+      "size": 129223,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/b2/b27781255e5ec359ff22bc58886706fbec343c7e7fbfa7f7bd9e79d242cdd8d2"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_zhangfei.png",
+      "sha256": "44fbccc5327654932a7ca8cf9146975c1711997fb164f7afbc05900c58b8aff8",
+      "size": 116490,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/44/44fbccc5327654932a7ca8cf9146975c1711997fb164f7afbc05900c58b8aff8"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_zhangliao.png",
+      "sha256": "aca2a6184e27168851dd69150b6ca3c5c0ebadff4261cd18b6b4babaebd3187c",
+      "size": 124260,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ac/aca2a6184e27168851dd69150b6ca3c5c0ebadff4261cd18b6b4babaebd3187c"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_zhaoyun.png",
+      "sha256": "3531445c203cc590517b6ef17a63e3f4b9353fe86b466d98ecbcc2fb0a5340dd",
+      "size": 125692,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/35/3531445c203cc590517b6ef17a63e3f4b9353fe86b466d98ecbcc2fb0a5340dd"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_zhenji.png",
+      "sha256": "ee0d534b23628c12a5cd6d3b8db184db3be78a602caa8c5fbca98dbf31a97984",
+      "size": 129215,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ee/ee0d534b23628c12a5cd6d3b8db184db3be78a602caa8c5fbca98dbf31a97984"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_zhoutai.png",
+      "sha256": "fb26eb1f3bc18b9da2fcabcdd37bc1b8273d247981cde5f52d2785561aa2508f",
+      "size": 132139,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/fb/fb26eb1f3bc18b9da2fcabcdd37bc1b8273d247981cde5f52d2785561aa2508f"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_zhouyu.png",
+      "sha256": "2307198d2e038efd2f2dac2817c59471d66e8c451351aea81317396259f92e5d",
+      "size": 129806,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/23/2307198d2e038efd2f2dac2817c59471d66e8c451351aea81317396259f92e5d"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_zhugeliang.png",
+      "sha256": "8b1372d243ab32677302731d13b9d3b6cdd010fcf8173a7a596bc714734684bd",
+      "size": 128739,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/8b/8b1372d243ab32677302731d13b9d3b6cdd010fcf8173a7a596bc714734684bd"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/hero/hero_zhurong.png",
+      "sha256": "e98ffc2b92a95984741761343f78e1c28621b79f6581be222c6aa7876048ac55",
+      "size": 125790,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e9/e98ffc2b92a95984741761343f78e1c28621b79f6581be222c6aa7876048ac55"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/jiangbei.png",
+      "sha256": "45f6cc3ca128c82896c85d78a392e0ce76490704157cff8d05af493fa87fb85c",
+      "size": 131793,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/45/45f6cc3ca128c82896c85d78a392e0ce76490704157cff8d05af493fa87fb85c"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kabei.png",
+      "sha256": "ed6ec521f5d8acdd1f25908d36faeede136f95fcef29d8fec966d901de9b4c05",
+      "size": 107993,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ed/ed6ec521f5d8acdd1f25908d36faeede136f95fcef29d8fec966d901de9b4c05"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_baguazhen.png",
+      "sha256": "c69fbffd85fbfb3ecc1ec4452f4f23aa32502bbdc269ba5252046d64e8492c5f",
+      "size": 128118,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c6/c69fbffd85fbfb3ecc1ec4452f4f23aa32502bbdc269ba5252046d64e8492c5f"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_baiyinshizi.png",
+      "sha256": "dd0790e5ef807aebeb7f985918c3dbec30e83e8f90e946f1420b9ea43ed43a77",
+      "size": 129051,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/dd/dd0790e5ef807aebeb7f985918c3dbec30e83e8f90e946f1420b9ea43ed43a77"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_bingliangchunduan.png",
+      "sha256": "a3be037cc73820798301eee1d9a5a110c6a3c70650b25c02f552a81afca8f090",
+      "size": 128118,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/a3/a3be037cc73820798301eee1d9a5a110c6a3c70650b25c02f552a81afca8f090"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_chitu.png",
+      "sha256": "4c9be73af596fa0c53378910f9e016c9966d11d6d47e7f9e0a04abae56cda087",
+      "size": 114669,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/4c/4c9be73af596fa0c53378910f9e016c9966d11d6d47e7f9e0a04abae56cda087"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_cixiongshuanggujian.png",
+      "sha256": "e96f10cfd84b9fc360c7b13692701f73c76de4f2b432bfe1392f06c664c23a68",
+      "size": 143166,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e9/e96f10cfd84b9fc360c7b13692701f73c76de4f2b432bfe1392f06c664c23a68"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_dawan.png",
+      "sha256": "c35a54d6651ddca41c3c4f057c833308043fc6a76143d925de51c4a3294344f5",
+      "size": 119534,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c3/c35a54d6651ddca41c3c4f057c833308043fc6a76143d925de51c4a3294344f5"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_dilu.png",
+      "sha256": "b824ec7734e84332f02c9a7877d06ed60e9080678490a897453317431dee3c4b",
+      "size": 108227,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/b8/b824ec7734e84332f02c9a7877d06ed60e9080678490a897453317431dee3c4b"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_fangtianhuaji.png",
+      "sha256": "518f0ce60d010fb64e372dcee6d96e896996fee9f73f1759ae2cef4144a52c13",
+      "size": 127594,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/51/518f0ce60d010fb64e372dcee6d96e896996fee9f73f1759ae2cef4144a52c13"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_guanshifu.png",
+      "sha256": "7ba858fdb82b280a9b830d1c4f7340f028cc20141f3c3ef3649d3fa35882043c",
+      "size": 124781,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/7b/7ba858fdb82b280a9b830d1c4f7340f028cc20141f3c3ef3649d3fa35882043c"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_gudingdao.png",
+      "sha256": "c6b66646812f2b9fbdf418b703e2a2b739107276ba48635df643ee2188405693",
+      "size": 122859,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c6/c6b66646812f2b9fbdf418b703e2a2b739107276ba48635df643ee2188405693"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_guohechaiqiao.png",
+      "sha256": "9611aa4341f6aaabf036158758bc63aba9c1efc4f76861dda65175a8de7ded0c",
+      "size": 120049,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/96/9611aa4341f6aaabf036158758bc63aba9c1efc4f76861dda65175a8de7ded0c"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_hanbingjian.png",
+      "sha256": "74d38e5c29d3e0ad192f079833d35aa0d63407bb9a16db54c862efbe7217d07b",
+      "size": 124382,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/74/74d38e5c29d3e0ad192f079833d35aa0d63407bb9a16db54c862efbe7217d07b"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_hualiu.png",
+      "sha256": "a3aeaee6a8272a698fbb93dc2e1daf293ed492e3816ff48f7d6432fdf071e386",
+      "size": 138306,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/a3/a3aeaee6a8272a698fbb93dc2e1daf293ed492e3816ff48f7d6432fdf071e386"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_huogong.png",
+      "sha256": "f55c2e1642f8bf6111bbb7076db6dfcddfa7c78b0aef272272f3e178c302bdeb",
+      "size": 125135,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/f5/f55c2e1642f8bf6111bbb7076db6dfcddfa7c78b0aef272272f3e178c302bdeb"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_huosha.png",
+      "sha256": "7693f1d6d0af45136dd503dbef766ff049b2bc06fcbb846172a246e7e181a43c",
+      "size": 134658,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/76/7693f1d6d0af45136dd503dbef766ff049b2bc06fcbb846172a246e7e181a43c"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_jiedaosharen.png",
+      "sha256": "30111ae68fb283f6b8f3bcdc9c6d6d52bb5b1acd180813657ab2be7acaf66ac5",
+      "size": 126365,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/30/30111ae68fb283f6b8f3bcdc9c6d6d52bb5b1acd180813657ab2be7acaf66ac5"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_jiu.png",
+      "sha256": "c3165e919c49172c08ac7102eaa2e35b57f4f1625279ddc48930d7d5bf2ccfd5",
+      "size": 114548,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c3/c3165e919c49172c08ac7102eaa2e35b57f4f1625279ddc48930d7d5bf2ccfd5"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_juedou.png",
+      "sha256": "e97245a5effbe441a07706043862d10a6ab4c92751af69d7ead9dc5019a5a2b6",
+      "size": 124803,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e9/e97245a5effbe441a07706043862d10a6ab4c92751af69d7ead9dc5019a5a2b6"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_jueying.png",
+      "sha256": "07a5954a62732c82a2641ef83e9b86f6eb3f07b6ec039e8861b4ca663f07b295",
+      "size": 117303,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/07/07a5954a62732c82a2641ef83e9b86f6eb3f07b6ec039e8861b4ca663f07b295"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_lebusishu.png",
+      "sha256": "28347e57bacfcd5a6225457da63335356a15d2ceadf88913bf01d96703355621",
+      "size": 135805,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/28/28347e57bacfcd5a6225457da63335356a15d2ceadf88913bf01d96703355621"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_leisha.png",
+      "sha256": "9e9836ef0935dee1571a5d4e990814b2d4420edcf3581a14629b8c1c6cda14f1",
+      "size": 125355,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/9e/9e9836ef0935dee1571a5d4e990814b2d4420edcf3581a14629b8c1c6cda14f1"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_muniuliuma.png",
+      "sha256": "363cb271429d27b159af2db2ee957e19384b20d93c1c331652421583181bd9bf",
+      "size": 184275,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/36/363cb271429d27b159af2db2ee957e19384b20d93c1c331652421583181bd9bf"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_nanmanruqin.png",
+      "sha256": "e36b97be0318bc60a1696c773db683942487a90b57edde7d54ce852fee37ffb9",
+      "size": 124045,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e3/e36b97be0318bc60a1696c773db683942487a90b57edde7d54ce852fee37ffb9"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_qilingong.png",
+      "sha256": "0972b2a43971693197701931eb14bbed345a2c1b6fc8c09a7d08d915e8003f77",
+      "size": 124233,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/09/0972b2a43971693197701931eb14bbed345a2c1b6fc8c09a7d08d915e8003f77"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_qinggangjian.png",
+      "sha256": "c56401f2c76d302a8acfb99269a822ea49876e2f5d1e987c4a9a6c60d5099974",
+      "size": 123017,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c5/c56401f2c76d302a8acfb99269a822ea49876e2f5d1e987c4a9a6c60d5099974"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_qinglongyanyuedao.png",
+      "sha256": "313fc7bbfc3b3d2944b8d5d83ed8e7ca940b23b6d46312b8d15b121851063fae",
+      "size": 126887,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/31/313fc7bbfc3b3d2944b8d5d83ed8e7ca940b23b6d46312b8d15b121851063fae"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_renwangdun.png",
+      "sha256": "c8d6fda1871beaaf3a701760f3e9166f618c8211df66feb507bc7bd2462b48ee",
+      "size": 124924,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c8/c8d6fda1871beaaf3a701760f3e9166f618c8211df66feb507bc7bd2462b48ee"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_sha.png",
+      "sha256": "d309c2594b78fd2ca907b67dc0f45738be91ecfd763a0757e65f684e4ca9d03f",
+      "size": 126689,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/d3/d309c2594b78fd2ca907b67dc0f45738be91ecfd763a0757e65f684e4ca9d03f"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_shan.png",
+      "sha256": "c4e63b2e437defd342a498dc2b3768bf84724db1c19e5e376d21c8c7357b6ec7",
+      "size": 125705,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c4/c4e63b2e437defd342a498dc2b3768bf84724db1c19e5e376d21c8c7357b6ec7"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_shandian.png",
+      "sha256": "90ca36bc1493dbdb3015df2872dec149451e27ab8161f322598794f4ef54c7b3",
+      "size": 129973,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/90/90ca36bc1493dbdb3015df2872dec149451e27ab8161f322598794f4ef54c7b3"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_shunshouqianyang.png",
+      "sha256": "80051285f1582028a875c33b2c5dc38f38f9277e90f4c9f53290be309b811419",
+      "size": 124262,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/80/80051285f1582028a875c33b2c5dc38f38f9277e90f4c9f53290be309b811419"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_tao.png",
+      "sha256": "7d99fdc06e7d352c3d034b98408fda476400161395b3758676d2410a027ee5c0",
+      "size": 121525,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/7d/7d99fdc06e7d352c3d034b98408fda476400161395b3758676d2410a027ee5c0"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_taoyuanjieyi.png",
+      "sha256": "30a6b95e54226c2eaef87f97865904242d8be6cb957b453d961d5d0de056de30",
+      "size": 125732,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/30/30a6b95e54226c2eaef87f97865904242d8be6cb957b453d961d5d0de056de30"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_tengjia.png",
+      "sha256": "1e905ddcc3a865d3ab6cd0623619ad57956a5c524f52632dcbe8c65014292c5e",
+      "size": 124065,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/1e/1e905ddcc3a865d3ab6cd0623619ad57956a5c524f52632dcbe8c65014292c5e"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_tiesuolianhuan.png",
+      "sha256": "708ec9df44156c9237d4710c339384da4d8b0b1e6df1940b2f1dd28fb35bffff",
+      "size": 139544,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/70/708ec9df44156c9237d4710c339384da4d8b0b1e6df1940b2f1dd28fb35bffff"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_wanjianqifa.png",
+      "sha256": "6f614482e85525959159797508f5a855d492a9e1e7e7517d46ad2725c017c2be",
+      "size": 132640,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/6f/6f614482e85525959159797508f5a855d492a9e1e7e7517d46ad2725c017c2be"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_wugufengdeng.png",
+      "sha256": "716fadd60a91a4e9789f6b8a7e03aa70ca4fe79f79d146b268de16a04bb5a1b4",
+      "size": 121235,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/71/716fadd60a91a4e9789f6b8a7e03aa70ca4fe79f79d146b268de16a04bb5a1b4"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_wuxiekeji.png",
+      "sha256": "797acb8e0e37a95d834f0752be3e558b27f71cbe4e47b30f855c10116267f35a",
+      "size": 147054,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/79/797acb8e0e37a95d834f0752be3e558b27f71cbe4e47b30f855c10116267f35a"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_wuzhongshengyou.png",
+      "sha256": "e3b8602c0a8805db1be478ad97eb06464c679ed8ad9e8333d28451abd0950987",
+      "size": 121034,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/e3/e3b8602c0a8805db1be478ad97eb06464c679ed8ad9e8333d28451abd0950987"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_yinyueqiang.png",
+      "sha256": "6930cee6469b3e3c0f31c33d8c6ed14399c0a54467ee6d326965d00afb5e8f83",
+      "size": 137112,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/69/6930cee6469b3e3c0f31c33d8c6ed14399c0a54467ee6d326965d00afb5e8f83"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_zhangbashemao.png",
+      "sha256": "1b0b20786553fc2a66dcfc50ac32ed5c2921851887eb1cca7af1ba4c61bcdb3c",
+      "size": 124770,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/1b/1b0b20786553fc2a66dcfc50ac32ed5c2921851887eb1cca7af1ba4c61bcdb3c"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_zhuahuangfeidian.png",
+      "sha256": "01b4ceb01f3681035bdc025cc1363e3df0ee56d3d56d8c3f30dc68d77ce3c0c3",
+      "size": 117393,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/01/01b4ceb01f3681035bdc025cc1363e3df0ee56d3d56d8c3f30dc68d77ce3c0c3"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_zhugeliannu.png",
+      "sha256": "ef97aa09690f0b0ccc193d17fadd96ea554cbfffeeaa40d6648537f906c5d101",
+      "size": 125729,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ef/ef97aa09690f0b0ccc193d17fadd96ea554cbfffeeaa40d6648537f906c5d101"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_zhuqueyusan.png",
+      "sha256": "af11235f4a9b4b4510822be5edd33abbbfe80ae81804da1d9779ee5268641476",
+      "size": 124561,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/af/af11235f4a9b4b4510822be5edd33abbbfe80ae81804da1d9779ee5268641476"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/kapai_zixin.png",
+      "sha256": "1ff9a462509f78b7656beadffdc373613c8d7b19316e86f7b28a785d8eb8e563",
+      "size": 119058,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/1f/1ff9a462509f78b7656beadffdc373613c8d7b19316e86f7b28a785d8eb8e563"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/shenfen_fanzei.png",
+      "sha256": "522354ae4c3bfd328560bb7a666f7f0d314f9840a3055950a63438dcdfd5a4e6",
+      "size": 128518,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/52/522354ae4c3bfd328560bb7a666f7f0d314f9840a3055950a63438dcdfd5a4e6"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/shenfen_houzhu.png",
+      "sha256": "c0ecd57001b0c388a30037eb752a7cfd105149eac37cc3f80c0f485f9604bf6d",
+      "size": 122164,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c0/c0ecd57001b0c388a30037eb752a7cfd105149eac37cc3f80c0f485f9604bf6d"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/shenfen_huangjin.png",
+      "sha256": "cdfb8c31beb8d08f03f1f6fb762d3443e62d776bc9376da0cfceef297dc3207d",
+      "size": 122991,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/cd/cdfb8c31beb8d08f03f1f6fb762d3443e62d776bc9376da0cfceef297dc3207d"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/shenfen_neijian.png",
+      "sha256": "c047e1f5416c3be22a00642f46568e0f3cc270e7316b879a69df6d821a57aa46",
+      "size": 134408,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/c0/c047e1f5416c3be22a00642f46568e0f3cc270e7316b879a69df6d821a57aa46"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/shenfen_xianzhu.png",
+      "sha256": "562f4906a14f6979a6d504435d1278cf23d1e5ea309263fc90f114b4245ff969",
+      "size": 122323,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/56/562f4906a14f6979a6d504435d1278cf23d1e5ea309263fc90f114b4245ff969"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/shenfen_zhongchen.png",
+      "sha256": "dcf9425b0bfed12dfab2b81441a1dea57c15b6cee0cd017d6d0534a2497b23a4",
+      "size": 135598,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/dc/dcf9425b0bfed12dfab2b81441a1dea57c15b6cee0cd017d6d0534a2497b23a4"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/shenfen_zhugong.png",
+      "sha256": "a1af0a026519e6e84887c54da0c0817d71ed26fd4c9ab7dd1c21c43ab3d7f51f",
+      "size": 131495,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/a1/a1af0a026519e6e84887c54da0c0817d71ed26fd4c9ab7dd1c21c43ab3d7f51f"
+    },
+    {
+      "path": "server/games/sgs/resourse/picture/shenfenkabei.png",
+      "sha256": "196984dc26fe1d92dcd5007db4dee27b8a9e92cf5f0860f19ff60e7f3611daff",
+      "size": 157635,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/19/196984dc26fe1d92dcd5007db4dee27b8a9e92cf5f0860f19ff60e7f3611daff"
+    },
+    {
+      "path": "server/games/sgs/skillJudgeFlow.js",
+      "sha256": "b799592cab849c32557100fe49fe113d49ae40b9cf38bce2ecc1141b444a07f6",
+      "size": 6917,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/b7/b799592cab849c32557100fe49fe113d49ae40b9cf38bce2ecc1141b444a07f6"
+    },
+    {
+      "path": "server/games/sgs/smoke/1v2.js",
+      "sha256": "d3a95502e4bac8f75ea028619ebf070039bf84b6c96d142e67557e12f7ae73f0",
+      "size": 2234,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/d3/d3a95502e4bac8f75ea028619ebf070039bf84b6c96d142e67557e12f7ae73f0"
+    },
+    {
+      "path": "server/games/sgs/smoke/h2h.js",
+      "sha256": "2cfb30a73a0bad3fa2df76a4628f0914693fe4525be9fa3b448ff71a5b1adad0",
+      "size": 2996,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/2c/2cfb30a73a0bad3fa2df76a4628f0914693fe4525be9fa3b448ff71a5b1adad0"
+    },
+    {
+      "path": "server/games/sgs/smoke/identity-death.js",
+      "sha256": "abcd53f97c8dffe7097f78b5023636f8cc67ccf1660d99f69e8854212c3745b6",
+      "size": 4430,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ab/abcd53f97c8dffe7097f78b5023636f8cc67ccf1660d99f69e8854212c3745b6"
+    },
+    {
+      "path": "server/games/sgs/smoke/identity.js",
+      "sha256": "fd764ab796d910af114d8c26f95cba41b49a0c55aa5aaa54e498bc31e20b167f",
+      "size": 2200,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/fd/fd764ab796d910af114d8c26f95cba41b49a0c55aa5aaa54e498bc31e20b167f"
+    },
+    {
+      "path": "server/games/sgs/smoke/skills-opt.js",
+      "sha256": "43e56e0a190af635e68bb5fe565864f9b400cdb7f56a18f14cdac91cf6c9e414",
+      "size": 7801,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/43/43e56e0a190af635e68bb5fe565864f9b400cdb7f56a18f14cdac91cf6c9e414"
+    },
+    {
+      "path": "server/games/sgs/smoke/skills.js",
+      "sha256": "a46d0b2f56fbe555bddaebdc0a2ae9737019111ab440c9d96079bf5cabe7cd89",
+      "size": 7054,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/a4/a46d0b2f56fbe555bddaebdc0a2ae9737019111ab440c9d96079bf5cabe7cd89"
+    },
+    {
+      "path": "server/games/sgs/smoke/xianzhu.js",
+      "sha256": "ed4badf293075fc7c3791ce6a82e06a58e8231a05b51b7320d8227a62e019d83",
+      "size": 7248,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/ed/ed4badf293075fc7c3791ce6a82e06a58e8231a05b51b7320d8227a62e019d83"
+    },
+    {
+      "path": "server/games/sgs/trickFlow.js",
+      "sha256": "7358a36e9b5878e296b8b9a33bcfcd75b106c99ef890ffde05eaa46173420fd2",
+      "size": 15232,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/73/7358a36e9b5878e296b8b9a33bcfcd75b106c99ef890ffde05eaa46173420fd2"
+    },
+    {
+      "path": "server/games/sgs/xianzhuMode.js",
+      "sha256": "9cb1146dfd7ed73259291cddb88b6b2dd4b8039246cd1581296eb82f07e91611",
+      "size": 11054,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/9c/9cb1146dfd7ed73259291cddb88b6b2dd4b8039246cd1581296eb82f07e91611"
+    },
+    {
+      "path": "server/index.js",
+      "sha256": "20630fc91486fb8ecd8f366968daaea8d767ce531fa3bdc74a8a51c6669a87b4",
+      "size": 79580,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/20/20630fc91486fb8ecd8f366968daaea8d767ce531fa3bdc74a8a51c6669a87b4"
+    },
+    {
+      "path": "server/mqttBulletin.js",
+      "sha256": "2ff2080706c56b9d53f47a7f57bfb70a5f0c3ae54d728f74305cef5a3bc8b165",
+      "size": 58509,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/2f/2ff2080706c56b9d53f47a7f57bfb70a5f0c3ae54d728f74305cef5a3bc8b165"
+    },
+    {
+      "path": "server/mqttBulletin.recover.test.js",
+      "sha256": "f99593b820a9966858766ae7f9fb6379602947518caa1ea27d6e78fb1c8cdcf3",
+      "size": 4453,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/f9/f99593b820a9966858766ae7f9fb6379602947518caa1ea27d6e78fb1c8cdcf3"
+    },
+    {
+      "path": "server/rooms.js",
+      "sha256": "17aff4460871802798ffff0f2889c9f21c1487ffa67a3cd921de056564c1c6ed",
+      "size": 54322,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/17/17aff4460871802798ffff0f2889c9f21c1487ffa67a3cd921de056564c1c6ed"
+    },
+    {
+      "path": "server/tunnel.health.test.js",
+      "sha256": "497d7ebca31bba0a7c59960d5395d43844546a91b1edf6b14bc4c0f8afd97f28",
+      "size": 5117,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/49/497d7ebca31bba0a7c59960d5395d43844546a91b1edf6b14bc4c0f8afd97f28"
+    },
+    {
+      "path": "server/tunnel.js",
+      "sha256": "44f67e44051e231f0d3dcba125d0d5c729c953c3fd484b3cd385ba745afa86e7",
+      "size": 23315,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/44/44f67e44051e231f0d3dcba125d0d5c729c953c3fd484b3cd385ba745afa86e7"
+    },
+    {
+      "path": "server/turnTimer.js",
+      "sha256": "4b8235b27326c852c1fd16813dfe0673519b5ddaf9cc7bffd587d0417527e075",
+      "size": 1533,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/4b/4b8235b27326c852c1fd16813dfe0673519b5ddaf9cc7bffd587d0417527e075"
+    },
+    {
+      "path": "server/updateChecker.js",
+      "sha256": "81365adba9d27c07208e2e62932f63c7733e3d2947cd2d37d2312fdd2d81b192",
+      "size": 17024,
+      "url": "https://raw.githubusercontent.com/yunxizhu/Online_template/ota/blobs/81/81365adba9d27c07208e2e62932f63c7733e3d2947cd2d37d2312fdd2d81b192"
+    }
+  ]
+}

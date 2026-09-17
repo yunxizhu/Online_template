@@ -1,0 +1,797 @@
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const https = require('https');
+const http = require('http');
+const { spawn } = require('child_process');
+const { pipeline } = require('stream/promises');
+const { createWriteStream } = require('fs');
+
+const TOOLS_DIR = path.join(__dirname, '..', '.tools');
+
+/** 随仓库分发的 cloudflared（git 跟踪，clone 即用） */
+const VENDORED_CLOUDFLARED = {
+  'win32:amd64': 'cloudflared.exe',
+  'win32:arm64': 'cloudflared.exe',
+  'darwin:amd64': 'cloudflared-darwin-amd64',
+  'darwin:arm64': 'cloudflared-darwin-arm64',
+  'linux:amd64': 'cloudflared-linux-amd64',
+  'linux:arm64': 'cloudflared-linux-arm64',
+};
+
+const VENDORED_CLOUDFLARED_FILES = [
+  'cloudflared.exe',
+  'cloudflared-darwin-amd64',
+  'cloudflared-darwin-arm64',
+];
+
+/** 打包时分平台拷贝（git 仓库仍保留全平台） */
+const VENDORED_CLOUDFLARED_BY_PLATFORM = {
+  win32: ['cloudflared.exe'],
+  darwin: ['cloudflared-darwin-amd64', 'cloudflared-darwin-arm64'],
+};
+
+function vendoredCloudflaredFilesFor(platform) {
+  if (platform === 'win32') return VENDORED_CLOUDFLARED_BY_PLATFORM.win32;
+  if (platform === 'darwin') return VENDORED_CLOUDFLARED_BY_PLATFORM.darwin;
+  return VENDORED_CLOUDFLARED_FILES;
+}
+const URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i;
+
+/** 轻量探活路径（公网/本机都打这个，避免拉首页） */
+const HEALTH_PATH = '/healthz';
+
+/** 公网地址探活间隔（进程仍在但 trycloudflare 域名已死时靠此换新） */
+const HEALTH_INTERVAL_MS = Math.max(
+  5000,
+  Number(process.env.TUNNEL_HEALTH_MS) || 15000
+);
+/** 公网探活已失败时的重试间隔（加快确认/换址） */
+const HEALTH_FAIL_INTERVAL_MS = Math.max(
+  1000,
+  Number(process.env.TUNNEL_HEALTH_FAIL_MS) || 4000
+);
+/** 拿到新 URL 后多久再开始探活（给 DNS 传播留时间） */
+const HEALTH_WARMUP_MS = Math.max(
+  0,
+  Number(process.env.TUNNEL_HEALTH_WARMUP_MS) || 25000
+);
+/** 连续公网探活失败几次后才考虑换隧道（对局/多人房会跳过） */
+const HEALTH_FAILS = Math.max(
+  1,
+  Number(process.env.TUNNEL_HEALTH_FAILS) || 8
+);
+/**
+ * DNS 解析失败（ENOTFOUND）时更快换址。
+ * trycloudflare 偶发分配到本机解析不了的域名，等满 HEALTH_FAILS 会空等很久。
+ */
+const DNS_HEALTH_FAILS = Math.max(
+  1,
+  Number(process.env.TUNNEL_DNS_HEALTH_FAILS) || 2
+);
+const HEALTH_TIMEOUT_MS = Math.max(
+  2000,
+  Number(process.env.TUNNEL_HEALTH_TIMEOUT_MS) || 15000
+);
+const LOCAL_HEALTH_TIMEOUT_MS = Math.max(
+  500,
+  Number(process.env.TUNNEL_LOCAL_HEALTH_TIMEOUT_MS) || 2000
+);
+
+function publicHealthUrl(urlString) {
+  try {
+    const u = new URL(urlString);
+    u.pathname = HEALTH_PATH;
+    u.search = '';
+    u.hash = '';
+    return u.href;
+  } catch (_) {
+    return '';
+  }
+}
+
+/** trycloudflare 域名 DNS 未解析到（ENOTFOUND）→ 更快换隧道 */
+function isDnsNotFoundReason(reason) {
+  const r = String(reason || '').toUpperCase();
+  return r === 'ENOTFOUND' || r === 'ENODATA';
+}
+
+function healthFailLimitForReason(reason) {
+  return isDnsNotFoundReason(reason) ? DNS_HEALTH_FAILS : HEALTH_FAILS;
+}
+
+function httpGetStatus(href, timeoutMs, headers) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    let u;
+    try {
+      u = new URL(href);
+    } catch (_) {
+      done({ ok: false, reason: 'bad-url', fatal: true });
+      return;
+    }
+    if (!u.hostname) {
+      done({ ok: false, reason: 'bad-url', fatal: true });
+      return;
+    }
+    const getter = u.protocol === 'https:' ? https : http;
+    const req = getter.get(
+      href,
+      {
+        timeout: timeoutMs,
+        headers: headers || { 'User-Agent': 'lianji-tunnel-health' },
+      },
+      (res) => {
+        res.resume();
+        // 任意 HTTP 状态（含 502/530）都说明边缘/本机还在回包
+        done({ ok: true, status: res.statusCode, fatal: false });
+      }
+    );
+    req.on('timeout', () => {
+      req.destroy();
+      done({ ok: false, reason: 'timeout', fatal: false });
+    });
+    req.on('error', (err) => {
+      const code = (err && err.code) || '';
+      done({
+        ok: false,
+        reason: code || (err && err.message) || 'http-error',
+        fatal: false,
+      });
+    });
+  });
+}
+
+/**
+ * 探测公网隧道是否仍可达。
+ * 只打 /healthz，不做 DNS 预检（国内对 trycloudflare 假阴性极高）。
+ * HTTPS 任意响应（含 502/530）→ 域名仍在边缘，视为存活。
+ */
+function probeTunnelUrl(urlString, ops = {}) {
+  const opts = ops || {};
+  const timeoutMs = Math.max(1000, Number(opts.timeoutMs) || HEALTH_TIMEOUT_MS);
+  const href = publicHealthUrl(urlString);
+  if (!href) {
+    return Promise.resolve({ ok: false, reason: 'bad-url', fatal: true });
+  }
+  return httpGetStatus(href, timeoutMs, {
+    'User-Agent': 'lianji-tunnel-health',
+  });
+}
+
+/** 本机 origin 探活：通了说明不是本地服务挂了 */
+function probeLocalOrigin(port, ops = {}) {
+  const opts = ops || {};
+  const n = Number(port);
+  if (!n) {
+    return Promise.resolve({ ok: false, reason: 'bad-port', fatal: false });
+  }
+  const timeoutMs = Math.max(
+    500,
+    Number(opts.timeoutMs) || LOCAL_HEALTH_TIMEOUT_MS
+  );
+  return httpGetStatus(`http://127.0.0.1:${n}${HEALTH_PATH}`, timeoutMs, {
+    'User-Agent': 'lianji-tunnel-health-local',
+  });
+}
+
+function cloudflaredPlatformKey(platform, arch) {
+  const p = platform || process.platform;
+  const a = arch || process.arch;
+  const normArch = a === 'arm64' ? 'arm64' : 'amd64';
+  return `${p}:${normArch}`;
+}
+
+function vendoredCloudflaredFileName(platform, arch) {
+  return VENDORED_CLOUDFLARED[cloudflaredPlatformKey(platform, arch)] || null;
+}
+
+function vendoredCloudflaredPath(platform, arch) {
+  const name = vendoredCloudflaredFileName(platform, arch);
+  if (!name) return null;
+  const p = path.join(TOOLS_DIR, name);
+  return fs.existsSync(p) ? p : null;
+}
+
+function binUsable(p) {
+  if (!p || !fs.existsSync(p)) return false;
+  try {
+    const st = fs.statSync(p);
+    if (!st.isFile() || st.size < 4096) return false;
+  } catch (_) {
+    return false;
+  }
+  try {
+    const { spawnSync } = require('child_process');
+    const r = spawnSync(p, ['--version'], { timeout: 10000, windowsHide: true });
+    if (r.error) return false;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function copyVendoredCloudflaredTo(destToolsDir, opts = {}) {
+  fs.mkdirSync(destToolsDir, { recursive: true });
+  const names = opts.platform
+    ? vendoredCloudflaredFilesFor(opts.platform)
+    : VENDORED_CLOUDFLARED_FILES;
+  const copied = [];
+  for (const name of names) {
+    const src = path.join(TOOLS_DIR, name);
+    if (!fs.existsSync(src)) continue;
+    const dst = path.join(destToolsDir, name);
+    fs.copyFileSync(src, dst);
+    if (process.platform !== 'win32' || !name.endsWith('.exe')) {
+      try {
+        fs.chmodSync(dst, 0o755);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    copied.push(name);
+  }
+  if (!opts.quiet && copied.length) {
+    console.log('[tunnel] copied vendored cloudflared:', copied.join(', '));
+  }
+  return copied;
+}
+
+function cloudflaredBinaryName() {
+  if (process.platform === 'win32') return 'cloudflared.exe';
+  return 'cloudflared';
+}
+
+function cloudflaredDownloadUrl() {
+  // latest/download redirects to the current release asset
+  const base =
+    'https://github.com/cloudflare/cloudflared/releases/latest/download';
+  if (process.platform === 'win32') {
+    const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
+    return `${base}/cloudflared-windows-${arch}.exe`;
+  }
+  if (process.platform === 'darwin') {
+    const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
+    return `${base}/cloudflared-darwin-${arch}.tgz`;
+  }
+  const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
+  return `${base}/cloudflared-linux-${arch}`;
+}
+
+function downloadFile(url, dest) {
+  return new Promise((resolve, reject) => {
+    const getter = url.startsWith('https') ? https : http;
+    const req = getter.get(url, { headers: { 'User-Agent': 'lianji' } }, (res) => {
+      if (
+        res.statusCode >= 300 &&
+        res.statusCode < 400 &&
+        res.headers.location
+      ) {
+        res.resume();
+        let redirectUrl;
+        try {
+          redirectUrl = new URL(res.headers.location, url).href;
+        } catch (_) {
+          reject(new Error(`invalid redirect location: ${res.headers.location}`));
+          return;
+        }
+        downloadFile(redirectUrl, dest).then(resolve, reject);
+        return;
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        reject(new Error(`download failed HTTP ${res.statusCode}`));
+        return;
+      }
+      const out = createWriteStream(dest);
+      pipeline(res, out).then(resolve, (err) => {
+        try { fs.unlinkSync(dest); } catch (_) {}
+        reject(err);
+      });
+    });
+    req.on('error', (err) => {
+      try { fs.unlinkSync(dest); } catch (_) {}
+      reject(err);
+    });
+  });
+}
+
+async function ensureCloudflared() {
+  fs.mkdirSync(TOOLS_DIR, { recursive: true });
+
+  const vendored = vendoredCloudflaredPath();
+  if (vendored && binUsable(vendored)) {
+    if (process.platform !== 'win32') {
+      try {
+        fs.chmodSync(vendored, 0o755);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    return vendored;
+  }
+
+  const bin = path.join(TOOLS_DIR, cloudflaredBinaryName());
+  if (binUsable(bin)) return bin;
+  try {
+    fs.unlinkSync(bin);
+  } catch (_) {
+    /* ignore */
+  }
+
+  const url = cloudflaredDownloadUrl();
+  console.log('[tunnel] 仓库内无可用 cloudflared，正在下载…');
+  console.log('[tunnel]', url);
+
+  if (process.platform === 'darwin' && url.endsWith('.tgz')) {
+    const tgz = path.join(TOOLS_DIR, 'cloudflared.tgz');
+    await downloadFile(url, tgz);
+    const { execFileSync } = require('child_process');
+    execFileSync('tar', ['-xzf', tgz, '-C', TOOLS_DIR], { stdio: 'ignore' });
+    const extracted = path.join(TOOLS_DIR, 'cloudflared');
+    if (!fs.existsSync(extracted)) {
+      throw new Error('cloudflared extract failed');
+    }
+    fs.chmodSync(extracted, 0o755);
+    fs.unlinkSync(tgz);
+    return extracted;
+  }
+
+  await downloadFile(url, bin);
+  if (process.platform !== 'win32') {
+    fs.chmodSync(bin, 0o755);
+  }
+  console.log('[tunnel] cloudflared 已安装到', bin);
+  return bin;
+}
+
+/**
+ * Cloudflare Quick Tunnel for a local HTTP port.
+ * trycloudflare 快速隧道不稳定：进程退出或公网域名僵死时都必须自动拉起并换新域名。
+ */
+class QuickTunnel {
+  constructor(opts = {}) {
+    this.proc = null;
+    this.publicUrl = null;
+    this._port = null;
+    this._starting = null;
+    this._stopped = false;
+    this._gen = 0;
+    this._restartTimer = null;
+    this._backoffMs = 1500;
+    this._logLines = [];
+    this._healthTimer = null;
+    this._healthFails = 0;
+    this._healthRunning = false;
+    this._protectedSkipLogs = 0;
+    this.onUrl = typeof opts.onUrl === 'function' ? opts.onUrl : null;
+    this.onLost = typeof opts.onLost === 'function' ? opts.onLost : null;
+    this.onDegraded =
+      typeof opts.onDegraded === 'function' ? opts.onDegraded : null;
+    this._probe =
+      typeof opts.probe === 'function' ? opts.probe : probeTunnelUrl;
+    this._probeLocal =
+      typeof opts.probeLocal === 'function' ? opts.probeLocal : probeLocalOrigin;
+    this.shouldProtect =
+      typeof opts.shouldProtect === 'function' ? opts.shouldProtect : () => false;
+    this._degradedNotified = false;
+  }
+
+  _isProtected() {
+    try {
+      return Boolean(this.shouldProtect && this.shouldProtect());
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /** @returns {Promise<string>} public https URL */
+  async ensure(localPort) {
+    const port = Number(localPort);
+    if (!port) throw new Error('invalid local port');
+    this._stopped = false;
+    this._port = port;
+    if (this.proc && this.publicUrl && this._port === port) {
+      return this.publicUrl;
+    }
+    if (this._starting) return this._starting;
+
+    this._clearRestart();
+    if (this.proc) this._killProc();
+
+    this._starting = this._start(port).finally(() => {
+      this._starting = null;
+    });
+    return this._starting;
+  }
+
+  async _start(port) {
+    const bin = await ensureCloudflared();
+    if (this._stopped) throw new Error('tunnel stopped');
+    this._port = port;
+    this.publicUrl = null;
+    this._clearHealth();
+    const gen = ++this._gen;
+
+    const protocol = String(process.env.TUNNEL_PROTOCOL || 'http2').trim() || 'http2';
+    const args = [
+      'tunnel',
+      '--url',
+      `http://127.0.0.1:${port}`,
+      '--no-autoupdate',
+      '--protocol',
+      protocol,
+    ];
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const failTimer = setTimeout(() => {
+        if (settled || gen !== this._gen) return;
+        settled = true;
+        this._killProc();
+        reject(new Error('cloudflared 启动超时（未拿到公网 URL）'));
+        this._scheduleRestart();
+      }, 90000);
+
+      const proc = spawn(bin, args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        env: { ...process.env, NO_COLOR: '1' },
+      });
+      this.proc = proc;
+
+      const onChunk = (buf) => {
+        if (gen !== this._gen) return;
+        const text = buf.toString('utf8');
+        this._rememberLog(text);
+        const m = text.match(URL_RE);
+        if (m && !this.publicUrl) {
+          this.publicUrl = m[0].replace(/\/$/, '');
+          this._backoffMs = 1500;
+          this._healthFails = 0;
+          console.log('[tunnel] 公网地址:', this.publicUrl);
+          if (typeof this.onUrl === 'function') {
+            try {
+              this.onUrl(this.publicUrl);
+            } catch (_) {
+              /* ignore */
+            }
+          }
+          this._armHealth();
+          if (!settled) {
+            settled = true;
+            clearTimeout(failTimer);
+            resolve(this.publicUrl);
+          }
+        }
+      };
+
+      proc.stdout.on('data', onChunk);
+      proc.stderr.on('data', onChunk);
+
+      proc.on('error', (err) => {
+        if (gen !== this._gen) return;
+        if (this.proc === proc) this.proc = null;
+        this._clearHealth();
+        if (settled) {
+          this._scheduleRestart();
+          return;
+        }
+        settled = true;
+        clearTimeout(failTimer);
+        reject(err);
+        this._scheduleRestart();
+      });
+
+      proc.on('exit', (code, signal) => {
+        clearTimeout(failTimer);
+        if (gen !== this._gen) return;
+        if (this.proc === proc) {
+          this.proc = null;
+          this.publicUrl = null;
+        }
+        this._clearHealth();
+        const tail = this._logLines.slice(-6).join(' | ');
+        const why = `code=${code} signal=${signal || '-'}${
+          tail ? ` 日志: ${tail}` : ''
+        }`;
+        if (!settled) {
+          settled = true;
+          reject(new Error(`cloudflared 退出 ${why}`));
+          this._scheduleRestart();
+          return;
+        }
+        if (this._stopped) return;
+        console.warn('[tunnel] cloudflared 已退出', why);
+        this._clearRestart();
+        this._backoffMs = Math.min(this._backoffMs, 300);
+        if (typeof this.onLost === 'function') {
+          try {
+            this.onLost();
+          } catch (_) {
+            /* ignore */
+          }
+        }
+        this._scheduleRestart();
+      });
+    });
+  }
+
+  _rememberLog(text) {
+    const parts = String(text || '')
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const line of parts) {
+      this._logLines.push(line.slice(0, 240));
+    }
+    if (this._logLines.length > 40) {
+      this._logLines = this._logLines.slice(-40);
+    }
+  }
+
+  _clearRestart() {
+    if (this._restartTimer) {
+      clearTimeout(this._restartTimer);
+      this._restartTimer = null;
+    }
+  }
+
+  _clearHealth() {
+    if (this._healthTimer) {
+      clearTimeout(this._healthTimer);
+      this._healthTimer = null;
+    }
+    this._healthRunning = false;
+  }
+
+  _armHealth() {
+    this._clearHealth();
+    if (this._stopped || !this.publicUrl) return;
+    this._healthTimer = setTimeout(() => {
+      this._healthTimer = null;
+      this._runHealthTick();
+    }, HEALTH_WARMUP_MS);
+    if (typeof this._healthTimer.unref === 'function') this._healthTimer.unref();
+  }
+
+  _scheduleHealthTick(failing) {
+    this._clearHealth();
+    if (this._stopped || !this.publicUrl || !this.proc) return;
+    const ms = failing ? HEALTH_FAIL_INTERVAL_MS : HEALTH_INTERVAL_MS;
+    this._healthTimer = setTimeout(() => {
+      this._healthTimer = null;
+      this._runHealthTick();
+    }, ms);
+    if (typeof this._healthTimer.unref === 'function') this._healthTimer.unref();
+  }
+
+  async _runHealthTick() {
+    if (this._stopped || this._healthRunning) return;
+    const url = this.publicUrl;
+    if (!url || !this.proc) return;
+    this._healthRunning = true;
+    let local = { ok: true };
+    let result;
+    try {
+      local = await this._probeLocal(this._port, {
+        timeoutMs: LOCAL_HEALTH_TIMEOUT_MS,
+      });
+    } catch (err) {
+      local = {
+        ok: false,
+        reason: (err && err.message) || 'local-probe-error',
+        fatal: false,
+      };
+    }
+    try {
+      result = await this._probe(url, { timeoutMs: HEALTH_TIMEOUT_MS });
+    } catch (err) {
+      result = {
+        ok: false,
+        reason: (err && err.message) || 'probe-error',
+        fatal: false,
+      };
+    } finally {
+      this._healthRunning = false;
+    }
+    // 探活期间已换址 / 进程已死则忽略
+    if (this._stopped || this.publicUrl !== url || !this.proc) return;
+
+    if (result && result.ok) {
+      this._healthFails = 0;
+      this._protectedSkipLogs = 0;
+      this._degradedNotified = false;
+      this._scheduleHealthTick(false);
+      return;
+    }
+
+    const reason = (result && result.reason) || 'unknown';
+    const fatal = Boolean(result && result.fatal);
+
+    // 本机都打不通：是本地服务问题，不归咎隧道、不换址
+    if (!local || !local.ok) {
+      console.warn(
+        `[tunnel] 本机探活失败，不换隧道: ${
+          (local && local.reason) || 'local-down'
+        }（公网旁证: ${reason}）`
+      );
+      this._scheduleHealthTick(true);
+      return;
+    }
+
+    // 对局中 / 房内已有多人：公网失败只记日志，禁止误杀隧道
+    if (!fatal && this._isProtected()) {
+      this._healthFails = 0;
+      this._protectedSkipLogs += 1;
+      if (this._protectedSkipLogs === 1 || this._protectedSkipLogs % 8 === 0) {
+        console.warn(
+          `[tunnel] 公网探活失败（已保护，不换址 x${this._protectedSkipLogs}）: ${reason}`
+        );
+      }
+      if (
+        !this._degradedNotified &&
+        typeof this.onDegraded === 'function'
+      ) {
+        this._degradedNotified = true;
+        try {
+          this.onDegraded({ reason });
+        } catch (_) {
+          /* ignore */
+        }
+      }
+      this._scheduleHealthTick(true);
+      return;
+    }
+
+    this._healthFails += 1;
+    const failLimit = healthFailLimitForReason(reason);
+    console.warn(
+      `[tunnel] 公网探活失败 (${this._healthFails}/${failLimit}` +
+        `${fatal ? ', fatal' : ''}` +
+        `${isDnsNotFoundReason(reason) ? ', dns' : ''}): ${reason}`
+    );
+    if (fatal || this._healthFails >= failLimit) {
+      this._forceRotate(reason);
+      return;
+    }
+    this._scheduleHealthTick(true);
+  }
+
+  /**
+   * 空闲时公网域名僵死才杀进程换新隧道。
+   * 对局中不会走到这里（_runHealthTick 已保护）。
+   * 对局房间仍留在本机内存；MQTT 心跳由 onLost → markTunnelLost 续上。
+   * @param {string} [reason]
+   * @param {{ silent?: boolean }} [opts] silent=true 时不触发 onLost（房主主动重开会自己清房间）
+   */
+  _forceRotate(reason, opts) {
+    if (this._stopped) return;
+    const silent = Boolean(opts && opts.silent);
+    const dead = this.publicUrl;
+    console.warn(
+      `[tunnel] 公网地址失效，强制换新` +
+        `${dead ? `（旧址 ${dead}）` : ''}: ${reason || 'health'}`
+    );
+    this._clearHealth();
+    this._clearRestart();
+    this.publicUrl = null;
+    this._healthFails = 0;
+    this._backoffMs = Math.min(this._backoffMs || 200, 200);
+    this._killProc();
+    if (!silent && typeof this.onLost === 'function') {
+      try {
+        this.onLost();
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    this._scheduleRestart();
+  }
+
+  /**
+   * 房主确认重开：立刻杀隧道并等到新公网地址（绕过 protect，不走 markTunnelLost）。
+   */
+  async forceRotateAndWait(reason) {
+    if (this._stopped) throw new Error('tunnel stopped');
+    const port = this._port;
+    if (!port) throw new Error('隧道未绑定端口');
+    const prev = this.publicUrl;
+    this._forceRotate(reason || 'host-reopen', { silent: true });
+    const start = Date.now();
+    const timeoutMs = 90000;
+    while (Date.now() - start < timeoutMs) {
+      if (this._stopped) throw new Error('tunnel stopped');
+      if (this.publicUrl && this.publicUrl !== prev && this.proc) {
+        return this.publicUrl;
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    throw new Error('隧道换址超时');
+  }
+
+  _scheduleRestart() {
+    if (this._stopped || this._restartTimer) return;
+    if (this.proc && this.publicUrl) return;
+    const port = this._port;
+    if (!port) return;
+    const delay = this._backoffMs;
+    this._backoffMs = Math.min(Math.round(this._backoffMs * 1.8), 30000);
+    console.log(`[tunnel] ${Math.round(delay / 100) / 10}s 后自动重连…`);
+    this._restartTimer = setTimeout(() => {
+      this._restartTimer = null;
+      if (this._stopped) return;
+      if (this.proc && this.publicUrl) return;
+      this.ensure(port).catch((err) => {
+        console.warn(
+          '[tunnel] 重连失败:',
+          err && err.message ? err.message : err
+        );
+      });
+    }, delay);
+    if (typeof this._restartTimer.unref === 'function') this._restartTimer.unref();
+  }
+
+  _killProc() {
+    this._gen += 1;
+    const proc = this.proc;
+    this.proc = null;
+    this.publicUrl = null;
+    this._clearHealth();
+    if (!proc) return;
+    try {
+      proc.kill('SIGTERM');
+    } catch (_) {
+      /* ignore */
+    }
+    const killer = setTimeout(() => {
+      try {
+        if (!proc.killed) proc.kill('SIGKILL');
+      } catch (_) {
+        /* ignore */
+      }
+    }, 2000);
+    if (typeof killer.unref === 'function') killer.unref();
+  }
+
+  stop() {
+    this._stopped = true;
+    this._clearRestart();
+    this._clearHealth();
+    this._killProc();
+    this._port = null;
+  }
+
+  getPublicUrl() {
+    return this.publicUrl;
+  }
+}
+
+module.exports = {
+  QuickTunnel,
+  ensureCloudflared,
+  probeTunnelUrl,
+  probeLocalOrigin,
+  publicHealthUrl,
+  HEALTH_PATH,
+  HEALTH_FAILS,
+  DNS_HEALTH_FAILS,
+  HEALTH_INTERVAL_MS,
+  HEALTH_FAIL_INTERVAL_MS,
+  HEALTH_TIMEOUT_MS,
+  isDnsNotFoundReason,
+  healthFailLimitForReason,
+  downloadFile,
+  TOOLS_DIR,
+  VENDORED_CLOUDFLARED_FILES,
+  VENDORED_CLOUDFLARED_BY_PLATFORM,
+  vendoredCloudflaredFilesFor,
+  copyVendoredCloudflaredTo,
+  vendoredCloudflaredPath,
+};

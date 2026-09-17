@@ -1,0 +1,79 @@
+.incan-panel {
+  text-align: left;
+}
+
+.incan-panel h2,
+.incan-panel .game-status {
+  text-align: center;
+}
+
+.incan-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  margin-bottom: 0.5rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.incan-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.incan-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.incan-card {
+  display: inline-block;
+  padding: 0.35rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 0.85rem;
+  background: #1a242b;
+}
+
+.incan-card.treasure {
+  border-color: #c9a227;
+  color: #e8d48b;
+}
+
+.incan-card.artifact {
+  border-color: #7a5cff;
+  color: #cbb6ff;
+}
+
+.incan-card.hazard {
+  border-color: #c45c5c;
+  color: #f0c8c8;
+}
+
+.art-badge {
+  background: #3a2f5c;
+  color: #cbb6ff;
+}
+
+.hazard-badge {
+  background: #5c2f2f;
+  color: #f0c8c8;
+}
+
+.incan-reveal {
+  background: #1a242b;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem 0.8rem;
+  margin: 0.5rem 0 0.75rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.incan-actions {
+  justify-content: center;
+}

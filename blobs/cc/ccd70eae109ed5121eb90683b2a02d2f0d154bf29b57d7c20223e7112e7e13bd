@@ -1,0 +1,9 @@
+<!-- 五子棋对局面板 -->
+<div class="panel game-panel" id="panel-gomoku" hidden>
+  <h2 id="game-title" data-i18n="gomoku.title">五子棋</h2>
+  <p id="game-status" class="game-status">—</p>
+  <p id="game-sides" class="muted"></p>
+  <div class="board-wrap">
+    <canvas id="gomoku-board" width="480" height="480" data-i18n-attr="aria-label:gomoku.boardAria" aria-label="五子棋棋盘"></canvas>
+  </div>
+</div>
