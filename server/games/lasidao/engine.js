@@ -815,6 +815,15 @@ function pushLog(game, text) {
   if (game.log.length > 60) game.log.shift();
 }
 
+/** 日记用：在具体骰面后标 ↑ 表示强化骰，例如 [4↑, 5, 2↑, 1] */
+function formatDiceList(dice, boosted) {
+  const faces = Array.isArray(dice) ? dice : [];
+  const flags = Array.isArray(boosted) ? boosted : [];
+  return faces
+    .map((d, i) => (flags[i] ? `${d}↑` : String(d)))
+    .join(', ');
+}
+
 function pushProduceFx(game, payload) {
   game.lastProduceFx = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -1957,11 +1966,10 @@ function rollForCurrent(game) {
   }
   game.dice[p.id] = rollDice(n);
   assignDiceBoostFlags(game, p, n);
-  const boostN = (game.diceBoosted[p.id] || []).filter(Boolean).length;
+  const flags = game.diceBoosted[p.id] || [];
   pushLog(
     game,
-    `${p.name} 投掷 ${n} 枚骰子：[${game.dice[p.id].join(', ')}]` +
-      (boostN ? `（强化 ${boostN}）` : '')
+    `${p.name} 投掷 ${n} 枚骰子：[${formatDiceList(game.dice[p.id], flags)}]`
   );
 }
 
@@ -5451,7 +5459,13 @@ function useRemoteDice(game, player, payload) {
     while (game.diceBoosted[player.id].length < n) {
       game.diceBoosted[player.id].push(false);
     }
-    pushLog(game, `${player.name} 遥控骰子 → [${dice.join(', ')}]`);
+    pushLog(
+      game,
+      `${player.name} 遥控骰子 → [${formatDiceList(
+        game.dice[player.id],
+        game.diceBoosted[player.id]
+      )}]`
+    );
     return { ok: true };
   }
 

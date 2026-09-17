@@ -1240,8 +1240,12 @@ class MqttBulletin {
         room.status === 'playing') &&
       !room.over;
 
+    // 只广播可加入/对局中的房间；终局僵尸房不能挡在 [0] 导致新房永远发不出去
+    const listed = this.getHostedRooms() || [];
+    const publishRoom = listed.find(wantPublish) || null;
+
     // 没有可广播房间时立刻清空 retained，避免别人大厅继续显示旧人数/旧房间
-    if (!wantPublish((this.getHostedRooms() || [])[0])) {
+    if (!publishRoom) {
       this._tunnelRecovering = false;
       if (!this.#pub(this.#roomTopic(), '')) {
         this.#scheduleRoomRetry();
@@ -1307,7 +1311,8 @@ class MqttBulletin {
       this._skipNextWarmup = false;
     }
     // 等隧道期间房间可能已变，发出前再读一次
-    const room = (this.getHostedRooms() || [])[0];
+    const room =
+      (this.getHostedRooms() || []).find(wantPublish) || null;
     if (!wantPublish(room)) {
       this._tunnelRecovering = false;
       if (!this.#pub(this.#roomTopic(), '')) {

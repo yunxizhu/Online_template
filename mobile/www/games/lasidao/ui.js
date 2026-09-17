@@ -489,6 +489,8 @@ window.LasidaoUi = (function () {
   let lastLogNewestKey = '';
   let victoryModalKey = null;
   let victoryAnimPlaying = false;
+  /** 本地点击「退出并回到大厅」后，同局胜利弹窗不再自动弹出（不影响其他人） */
+  let victoryDismissedKey = null;
   let onLeaveLobbyRef = null;
   let lastProduceFxKey = null;
   let produceFxPlaying = false;
@@ -790,6 +792,7 @@ window.LasidaoUi = (function () {
     banditCardId = null;
     victoryModalKey = null;
     victoryAnimPlaying = false;
+    // victoryDismissedKey 保留到下一局非 over，避免离开途中迟到的 render 又弹开
     setVictoryModalOpen(false);
     discardResPick = emptyDiscardResPick();
     settleDiscardFuncId = null;
@@ -1624,15 +1627,34 @@ window.LasidaoUi = (function () {
     syncModalVisTogglePositions();
   }
 
+  function collectLasModals() {
+    // 弹窗已迁到 body 覆盖层；勿只在 panel-lasidao 内查找
+    ensureLasOverlayRoot();
+    const seen = new Set();
+    const list = [];
+    const add = (el) => {
+      if (!el || !el.classList || !el.classList.contains('modal') || seen.has(el)) {
+        return;
+      }
+      seen.add(el);
+      list.push(el);
+    };
+    const overlay = $('las-overlay-root');
+    const panel = $('panel-lasidao');
+    for (const root of [overlay, panel]) {
+      if (!root || !root.querySelectorAll) continue;
+      root.querySelectorAll('.modal').forEach(add);
+    }
+    for (const id of LAS_OVERLAY_IDS) add($(id));
+    return list;
+  }
+
   function installModalVisibilityToggles() {
     if (modalVisToggleInstalled) return;
     modalVisToggleInstalled = true;
     window.addEventListener('resize', syncModalVisTogglePositions);
     window.addEventListener('scroll', syncModalVisTogglePositions, true);
-    const root = $('panel-lasidao') || document;
-    const modals = root.querySelectorAll
-      ? root.querySelectorAll('.modal')
-      : [];
+    const modals = collectLasModals();
     const obs = new MutationObserver((mutations) => {
       for (const m of mutations) {
         if (m.type === 'attributes' && m.attributeName === 'hidden') {
@@ -2535,42 +2557,41 @@ window.LasidaoUi = (function () {
 
     const rowCount = wrap.querySelectorAll('.las-worker-row').length;
     wrap.dataset.workerCount = String(rowCount);
+    /* 3 组及以上纵向堆叠，避免横向撑开裁掉强化倍率（如 ×1.5） */
+    const stacked = rowCount >= 3;
+    wrap.classList.toggle('is-stack', stacked);
 
-    const pad = 6;
-    const maxW = Math.max(0, containerEl.clientWidth - pad);
-    const maxH = Math.max(0, containerEl.clientHeight - pad);
+    const maxW = containerEl.clientWidth;
+    const maxH = containerEl.clientHeight;
     if (maxW <= 0 || maxH <= 0) {
       requestAnimationFrame(() => fitSlotWorkerDice(containerEl));
       return;
     }
 
-    let scale = 1;
-    if (rowCount >= 6) scale = 0.52;
-    else if (rowCount >= 5) scale = 0.6;
-    else if (rowCount >= 4) scale = 0.72;
-    else if (rowCount >= 3) scale = 0.85;
+    /* width:100% 时 scrollWidth≈容器宽，不能再减 pad，否则会误判溢出并缩到最小 */
+    const fits = (s) => {
+      setSlotDieScale(containerEl, s);
+      return wrap.scrollWidth <= maxW + 1 && wrap.scrollHeight <= maxH + 1;
+    };
 
-    const minDim = Math.min(maxW, maxH);
-    if (minDim < 72) scale *= 0.8;
-    else if (minDim < 96) scale *= 0.88;
-    else if (minDim < 120) scale *= 0.94;
-
-    if (containerEl.closest('.las-board-special')) {
-      scale *= 0.94;
+    const minScale = stacked ? 0.5 : SLOT_DIE_SCALE_MIN;
+    let lo = minScale;
+    let hi = 1;
+    let best = minScale;
+    if (fits(1)) {
+      best = 1;
+    } else {
+      for (let i = 0; i < 14; i++) {
+        const mid = (lo + hi) / 2;
+        if (fits(mid)) {
+          best = mid;
+          lo = mid;
+        } else {
+          hi = mid;
+        }
+      }
     }
-
-    setSlotDieScale(containerEl, scale);
-
-    let guard = 0;
-    while (
-      guard < 28 &&
-      scale > SLOT_DIE_SCALE_MIN &&
-      (wrap.scrollWidth > maxW || wrap.scrollHeight > maxH)
-    ) {
-      scale -= 0.04;
-      setSlotDieScale(containerEl, scale);
-      guard += 1;
-    }
+    setSlotDieScale(containerEl, best);
   }
 
   function observeSlotWorkerDiceFit(containerEl) {
@@ -5960,7 +5981,10 @@ window.LasidaoUi = (function () {
       const needsLayoutFix =
         !shell ||
         !shell.querySelector(':scope > .las-slot-confirm-layer') ||
-        Boolean(slot && !slot.querySelector('.las-slot-tiles-wrap > .las-slot-overlay')) ||
+        Boolean(slot && !slot.querySelector('.las-slot-panel > .las-slot-overlay')) ||
+        Boolean(
+          slot && slot.querySelector('.las-slot-tiles-wrap > .las-slot-overlay')
+        ) ||
         Boolean(
           slot && slot.querySelector('.las-slot-overlay .las-slot-confirm-layer')
         );
@@ -6123,7 +6147,6 @@ window.LasidaoUi = (function () {
       );
       const wTxt = workersText(workers, game.players, game, boosts);
       if (diceRow && wTxt) diceRow.title = wTxt;
-      tilesWrap.appendChild(overlay);
       panel.appendChild(tilesWrap);
 
       if (areaKey === 'resource' && num >= 1 && num <= 6) {
@@ -6244,6 +6267,9 @@ window.LasidaoUi = (function () {
         envWrap.appendChild(envBox);
         panel.appendChild(envWrap);
       }
+
+      // 覆盖层盖住资源牌+事件区，骰子可使用整格高度
+      panel.appendChild(overlay);
 
       body.appendChild(panel);
 
@@ -6890,7 +6916,7 @@ window.LasidaoUi = (function () {
       if (mercenaryRollAnimKey !== animKey || diceAnim.stage === 'idle') {
         mercenaryRollAnimKey = animKey;
         const color = playerDieColor(game.players || [], actorId, game);
-        startSpectatorDiceAnimation(roll, color, []);
+        startSpectatorDiceAnimation(roll, color, actorName, []);
       }
       setDiceTitle(t('lasidao.eventMercenarySpectatePlace', { name: actorName }));
       updateDiceHint();
@@ -7408,13 +7434,16 @@ window.LasidaoUi = (function () {
         hint.textContent = t('lasidao.otherDiceHint', { name: actorName });
       }
       const color = playerDieColor(game.players || [], actorId, game);
+      const boostKey = boostFlags.map((b) => (b ? '1' : '0')).join('');
       const key =
         'spec:' +
         game.round +
         ':' +
         actorId +
         ':' +
-        dice.join(',');
+        dice.join(',') +
+        ':' +
+        boostKey;
 
       // 动画播放期间 dice 因放置而减少：结束动画直接更新，不重新启动
       if (
@@ -7424,7 +7453,8 @@ window.LasidaoUi = (function () {
         clearDiceTimers();
         diceAnim.stage = 'ready';
         diceAnim.finalDice = dice.slice();
-        renderSpectatorDice(dice, color);
+        diceAnim.finalBoosted = boostFlags.slice();
+        renderSpectatorDice(dice, color, boostFlags);
         return;
       }
 
@@ -9718,15 +9748,30 @@ window.LasidaoUi = (function () {
       }
   }
 
+  function dismissVictoryModalLocal() {
+    const key =
+      (lastGame && lastGame.over && victoryModalStateKey(lastGame)) ||
+      victoryModalKey ||
+      null;
+    if (key) victoryDismissedKey = key;
+    victoryAnimPlaying = false;
+    setVictoryModalOpen(false);
+  }
+
   function maybeShowVictoryModal(game, meId) {
     if (!game || !game.over) {
+      victoryDismissedKey = null;
+      setVictoryModalOpen(false);
+      return;
+    }
+    const key = victoryModalStateKey(game);
+    if (victoryDismissedKey === key) {
       setVictoryModalOpen(false);
       return;
     }
     renderVictoryModalContent(game, meId);
     if (settlePlaying || victoryAnimPlaying) return;
 
-    const key = victoryModalStateKey(game);
     if (victoryModalKey === key && !$('las-victory-modal')?.hidden) {
       return;
     }
@@ -9737,6 +9782,10 @@ window.LasidaoUi = (function () {
 
     const show = () => {
       victoryAnimPlaying = false;
+      if (victoryDismissedKey === key) {
+        setVictoryModalOpen(false);
+        return;
+      }
       setVictoryModalOpen(true);
       const dialog = $('las-victory-dialog');
       if (dialog) {
@@ -13678,6 +13727,9 @@ window.LasidaoUi = (function () {
     const victoryLeaveBtn = $('btn-las-victory-leave');
     if (victoryLeaveBtn) {
       victoryLeaveBtn.onclick = () => {
+        // 仅关闭本机胜利弹窗/覆盖层，不广播给其他玩家
+        dismissVictoryModalLocal();
+        hide();
         if (typeof onLeaveLobbyRef === 'function') {
           onLeaveLobbyRef();
         }

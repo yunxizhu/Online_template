@@ -970,6 +970,8 @@
   border-width: 1.5px;
   flex: 0 0 var(--las-panel-die);
   box-sizing: border-box;
+  /* 摇骰面板：普通骰固定白字（覆盖玩家色），旁观他人同样适用 */
+  color: #f2f5f7;
 }
 
 .las-pcell-dice .las-die.is-boosted,
@@ -986,6 +988,18 @@
   font-weight: 900;
   border-radius: 4px;
   border-width: 2px;
+  /* 摇骰面板：强化骰固定黑字（覆盖玩家色），旁观他人同样适用 */
+  color: #000;
+}
+
+.las-pcell-dice .las-die[class*='color-']:not(.is-boosted),
+.las-pcell-dice .las-die-group .las-die-face[class*='color-']:not(.is-boosted) {
+  color: #f2f5f7;
+}
+
+.las-pcell-dice .las-die[class*='color-'].is-boosted,
+.las-pcell-dice .las-die-group .las-die-face[class*='color-'].is-boosted {
+  color: #000;
 }
 
 .las-pcell-dice .las-die.is-rolling {
@@ -2204,9 +2218,11 @@
   right: auto;
   bottom: auto;
   top: auto;
-  width: fit-content;
+  /* 占满可用宽度，才能真正换行；fit-content 会按单行 max-content 横向撑开 */
+  width: 100%;
   max-width: 100%;
   min-width: 0;
+  box-sizing: border-box;
   display: flex;
   flex-direction: row;
   flex-wrap: wrap;
@@ -2219,6 +2235,22 @@
   overflow: visible;
   opacity: 1;
   margin: 0 auto;
+  padding: 0 calc(0.08 * var(--las-rem));
+}
+
+/* 3 人及以上：改为纵向堆叠，避免强化骰 ×1.5 被裁切 */
+.las-slot-overlay .las-worker-dice.is-overlay.is-stack,
+.las-personal-build-num .las-worker-dice.is-overlay.is-stack {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: calc(0.18 * var(--las-rem) * var(--las-slot-die-scale, 1));
+}
+
+.las-slot-overlay .las-worker-dice.is-overlay.is-stack .las-worker-row.is-compact {
+  padding:
+    calc(0.06 * var(--las-rem) * var(--las-slot-die-scale, 1))
+    calc(0.16 * var(--las-rem) * var(--las-slot-die-scale, 1));
 }
 
 .las-personal-build-num .las-worker-dice.is-overlay {
@@ -2226,9 +2258,10 @@
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: fit-content;
+  width: 100%;
   max-width: 100%;
   min-width: 0;
+  box-sizing: border-box;
   display: flex;
   flex-direction: row;
   flex-wrap: wrap;
@@ -2240,6 +2273,7 @@
   pointer-events: none;
   overflow: visible;
   opacity: 1;
+  padding: 0 calc(0.06 * var(--las-rem));
 }
 
 .las-worker-row {
@@ -2277,6 +2311,16 @@
   background: rgba(10, 14, 18, 0.72);
   backdrop-filter: blur(2px);
   flex: 0 0 auto;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.las-slot-overlay .las-worker-mul {
+  /* 强化倍率如 ×1.5 必须完整可见，勿被挤掉 */
+  flex: 0 0 auto;
+  min-width: max-content;
+  font-size: calc(1.9 * var(--las-rem) * var(--las-slot-die-scale, 1));
 }
 
 .las-slot-overlay .las-worker-row.is-dispatch-preview-row {
@@ -2298,10 +2342,6 @@
 .las-slot-overlay .las-worker-row.is-dispatch-preview-row .las-worker-mul {
   color: rgba(255, 224, 138, 0.96);
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
-}
-
-.las-slot-overlay .las-worker-mul {
-  font-size: calc(1.9 * var(--las-rem) * var(--las-slot-die-scale, 1));
 }
 
 .las-personal-build-num .las-die.is-mini {
@@ -2363,6 +2403,11 @@
   width: 100%;
   min-width: 0;
   flex: 0 0 auto;
+}
+
+/* 骰子/点数覆盖层：盖住资源牌区+事件区整格 */
+.las-slot-panel > .las-slot-overlay {
+  inset: 0;
 }
 
 /* 板块区内卡牌横排：至少 20px 间距，相邻卡之间虚线分隔 */
@@ -6816,7 +6861,8 @@ button.las-exile-player.color-neutral {
   position: fixed;
   left: 0;
   top: 0;
-  z-index: 1200;
+  /* 须高于 .las-overlay-root(2500)，否则会被整屏弹层盖住 */
+  z-index: 2600;
   min-height: calc(2.2 * var(--las-rem, 1rem));
   padding: calc(0.35 * var(--las-rem, 1rem)) calc(0.75 * var(--las-rem, 1rem));
   border-radius: 8px;

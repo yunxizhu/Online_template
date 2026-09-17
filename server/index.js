@@ -333,6 +333,10 @@ function hostedBeaconRooms() {
         over: Boolean(full && full.game && full.game.over),
         hasPassword: Boolean(full && full.hasPassword),
       };
+    })
+    .sort((a, b) => {
+      if (Boolean(a.over) !== Boolean(b.over)) return a.over ? 1 : -1;
+      return (Number(b._createdAt) || 0) - (Number(a._createdAt) || 0);
     });
 }
 
@@ -379,7 +383,7 @@ function applyExplicitLeaveResult(result) {
   mqttOnLogin();
   if (result.dissolved) mqttClearRoomOnDissolve();
   else mqttAfterRoomChange();
-  if (result.dissolved && tunnel && !rooms.rooms.size) tunnel.stop();
+  if (result.dissolved) stopTunnelIfIdle();
 }
 
 /** 对局开始/结束或房间状态变化：立刻刷新大厅 + MQTT 房间心跳 */
@@ -398,6 +402,9 @@ function afterPlayingMutation(room, { wasOver = false, wasStatus = null } = {}) 
   const nowStatus = room.status || null;
   if ((nowOver && !wasOver) || (wasStatus && nowStatus && wasStatus !== nowStatus)) {
     mqttNotifyRoomStatusNow();
+  }
+  if (nowOver && !wasOver) {
+    stopTunnelIfIdle();
   }
 }
 
@@ -557,12 +564,18 @@ function nudgeStaleTunnelPlayers() {
 function hasActiveHostedRoom() {
   try {
     for (const room of rooms.rooms.values()) {
-      if (room && !room.pendingLobby) return true;
+      if (!room || room.pendingLobby) continue;
+      if (room.game && room.game.over) continue;
+      return true;
     }
   } catch (_) {
     /* ignore */
   }
   return false;
+}
+
+function stopTunnelIfIdle() {
+  if (tunnel && !hasActiveHostedRoom()) tunnel.stop();
 }
 
 function tunnelIsProtected() {
@@ -886,14 +899,14 @@ function scheduleBotTick(room) {
   if (!actors.length) return;
 
   // 判断 bot 是否刚摇完骰子准备派遣，是则停留更久让玩家看清骰子
-  let delay = 1000 + Math.floor(Math.random() * 600); // 1000-1600ms
+  let delay = 800 + Math.floor(Math.random() * 300); // 800-1100ms
     for (const id of actors) {
     if (
       room.game.phase === 'produce' &&
       room.game.currentPlayerId === id &&
       !room.game.awaitingProduceRoll
     ) {
-      delay = 2500 + Math.floor(Math.random() * 300); // 2500-2800ms
+      delay = 3500 + Math.floor(Math.random() * 300); // 3500-3800ms
       break;
     }
   }
@@ -1730,7 +1743,7 @@ io.on('connection', (socket) => {
           roomId: leftRoomId,
         });
         mqttClearRoomOnDissolve();
-        if (tunnel && !rooms.rooms.size) tunnel.stop();
+        stopTunnelIfIdle();
       }
 
       const result = rooms.setPlayerPassive(socket.id, false);
@@ -1850,7 +1863,7 @@ io.on('connection', (socket) => {
     mqttOnLogin();
     if (result.dissolved) mqttClearRoomOnDissolve();
     else mqttAfterRoomChange();
-    if (result.dissolved && tunnel && !rooms.rooms.size) tunnel.stop();
+    if (result.dissolved) stopTunnelIfIdle();
   });
 
   socket.on('game:leave', () => {
@@ -1890,7 +1903,7 @@ io.on('connection', (socket) => {
     mqttOnLogin();
     if (result.dissolved) mqttClearRoomOnDissolve();
     else mqttAfterRoomChange();
-    if (result.dissolved && tunnel && !rooms.rooms.size) tunnel.stop();
+    if (result.dissolved) stopTunnelIfIdle();
   });
 
   socket.on('room:ready', (data = {}) => {

@@ -3,8 +3,8 @@
 /**
  * 卡拉斯坦牌堆数量配置（两套互相独立，可直接改数字；允许为 0）。
  *
- * - PEACEFUL_DECK：和平发育（创建房间默认）
- * - CONFLICT_DECK：非和平发育
+ * - PEACEFUL_DECK：未勾选冲突DLC（创建房间默认）
+ * - CONFLICT_DECK：勾选冲突DLC
  *
  * resources: 各资源 富/贫 张数
  * functions: 功能卡种类 → 张数

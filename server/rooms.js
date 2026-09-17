@@ -957,34 +957,26 @@ class RoomManager {
       };
     }
 
-    // 逻辑房主主动离开：解散整个房间（游戏已结束时不解散，避免胜利后把其他人踢掉）
+    // 逻辑房主主动离开：解散整个房间
+    // 对局已结束也解散——胜利弹窗由各端本地维持，避免僵尸房挡住新房 MQTT 广播/占用隧道
     if (room.hostId === playerId) {
-      // 游戏已结束时保留房间，移交房主即可
-      if (room.game && room.game.over) {
-        const newHost = room.players.find(
-          (p) => p.id !== playerId && !p.left && !p.offline
-        );
-        if (newHost) room.hostId = newHost.id;
-        // 继续走普通离开逻辑，不解散
-      } else {
-        const affectedPlayerIds = [
-          ...room.players.filter((p) => p.id !== playerId).map((p) => p.id),
-          ...room.observers.map((o) => o.id),
-        ];
-        for (const memberId of affectedPlayerIds) {
-          const member = this.players.get(memberId);
-          if (member) member.roomId = null;
-        }
-        clearTurnTimer(room);
-        this.rooms.delete(room.id);
-        return {
-          ok: true,
-          room: null,
-          dissolved: true,
-          leftRoomId,
-          affectedPlayerIds,
-        };
+      const affectedPlayerIds = [
+        ...room.players.filter((p) => p.id !== playerId).map((p) => p.id),
+        ...room.observers.map((o) => o.id),
+      ];
+      for (const memberId of affectedPlayerIds) {
+        const member = this.players.get(memberId);
+        if (member) member.roomId = null;
       }
+      clearTurnTimer(room);
+      this.rooms.delete(room.id);
+      return {
+        ok: true,
+        room: null,
+        dissolved: true,
+        leftRoomId,
+        affectedPlayerIds,
+      };
     }
 
     room.players = room.players.filter((p) => p.id !== playerId);
