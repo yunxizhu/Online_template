@@ -20,12 +20,27 @@ if not exist "mqtt.off" (
 
 set "PORT=39200"
 set "OPEN_BROWSER=1"
+set "LIANJI_UPDATE_RESTART="
 
 echo Checking port %PORT% ...
 call :free_listen %PORT%
 
+:run
 echo Starting http://localhost:%PORT% ...
+if defined LIANJI_UPDATE_RESTART (
+  set "OPEN_BROWSER="
+)
 call npm start
+if exist "%~dp0.update\restart.flag" (
+  del /f /q "%~dp0.update\restart.flag" >nul 2>nul
+  set "LIANJI_UPDATE_RESTART=1"
+  echo.
+  echo [update] restarting after OTA...
+  timeout /t 1 /nobreak >nul
+  call :free_listen %PORT%
+  goto run
+)
+
 echo.
 if errorlevel 1 echo Start failed
 pause
@@ -43,4 +58,3 @@ for /f "tokens=5" %%a in ('netstat -ano ^| findstr /R /C:":%_p% .*LISTENING"') d
 )
 timeout /t 1 /nobreak >nul
 exit /b 0
-

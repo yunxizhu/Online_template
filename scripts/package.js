@@ -173,13 +173,24 @@ function writeWindowsLauncher(destDir, nodeExeName) {
     'cd /d "%~dp0"\r\n' +
     `set PORT=${DEFAULT_PORT}\r\n` +
     'set OPEN_BROWSER=1\r\n' +
+    'set LIANJI_UPDATE_RESTART=\r\n' +
     'echo Starting lianji server...\r\n' +
     `if not exist "%~dp0${nodeExeName}" (\r\n` +
     `  echo [ERROR] missing ${nodeExeName}\r\n` +
     '  pause\r\n' +
     '  exit /b 1\r\n' +
     ')\r\n' +
+    ':run\r\n' +
     `"%~dp0${nodeExeName}" "%~dp0server\\index.js"\r\n` +
+    'if exist "%~dp0.update\\restart.flag" (\r\n' +
+    '  del /f /q "%~dp0.update\\restart.flag" >nul 2>nul\r\n' +
+    '  set OPEN_BROWSER=\r\n' +
+    '  set LIANJI_UPDATE_RESTART=1\r\n' +
+    '  echo.\r\n' +
+    '  echo [update] restarting after OTA...\r\n' +
+    '  timeout /t 1 /nobreak >nul\r\n' +
+    '  goto run\r\n' +
+    ')\r\n' +
     'echo.\r\n' +
     'pause\r\n';
   writeUtf8(path.join(destDir, '启动.bat'), bat);
@@ -203,7 +214,14 @@ function windowsReadme(nodeExeName) {
     '- public/       前端\n' +
     '- node_modules/ 依赖\n' +
     '- .tools/       Cloudflare 隧道（cloudflared.exe）\n' +
-    '- 启动.bat      一键启动\n'
+    '- 启动.bat      一键启动（支持 OTA 后自动重启）\n' +
+    '\n' +
+    '主机差分更新\n' +
+    '--------\n' +
+    '启动后本机浏览器会检测更新；也可在菜单点「检查更新」。\n' +
+    '须用 http://localhost 打开本机页（不要用隧道域名点升级）。\n' +
+    '禁用：在目录下放 update.off\n' +
+    '自定义清单地址：update.url（一行 URL）\n'
   );
 }
 

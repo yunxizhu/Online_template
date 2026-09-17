@@ -112,6 +112,17 @@
     btnLeave: document.getElementById('btn-leave'),
     inviteToastSlot: document.getElementById('invite-toast-slot'),
     btnMenuInviteBlock: document.getElementById('btn-menu-invite-block'),
+    btnMenuCheckUpdate: document.getElementById('btn-menu-check-update'),
+    hostUpdateModal: document.getElementById('host-update-modal'),
+    hostUpdateVersion: document.getElementById('host-update-version'),
+    hostUpdateNotes: document.getElementById('host-update-notes'),
+    hostUpdateMeta: document.getElementById('host-update-meta'),
+    hostUpdateProgressWrap: document.getElementById('host-update-progress-wrap'),
+    hostUpdateProgressFill: document.getElementById('host-update-progress-fill'),
+    hostUpdateProgressText: document.getElementById('host-update-progress-text'),
+    hostUpdateActions: document.getElementById('host-update-actions'),
+    btnHostUpdateApply: document.getElementById('btn-host-update-apply'),
+    btnHostUpdateLater: document.getElementById('btn-host-update-later'),
     roomStartHint: document.getElementById('room-start-hint'),
     roomBanner: document.getElementById('room-banner'),
     roomBannerHint: document.querySelector('.room-banner-hint'),
@@ -5255,6 +5266,26 @@
       }
     });
   }
+  if (el.btnMenuCheckUpdate) {
+    el.btnMenuCheckUpdate.addEventListener('click', () => {
+      closeGameMenu();
+      checkHostUpdate({ manual: true }).catch((err) => {
+        showToast((err && err.message) || t('update.checkFail'));
+      });
+    });
+  }
+  if (el.btnHostUpdateApply) {
+    el.btnHostUpdateApply.addEventListener('click', () => {
+      applyHostUpdate().catch((err) => {
+        showToast((err && err.message) || t('update.applyFail'));
+      });
+    });
+  }
+  if (el.btnHostUpdateLater) {
+    el.btnHostUpdateLater.addEventListener('click', () => {
+      dismissHostUpdateModal();
+    });
+  }
   if (el.menuBgmRange && window.BgmVolume) {
     el.menuBgmRange.addEventListener('input', (ev) => {
       ev.stopPropagation();
@@ -6505,4 +6536,222 @@
     updateMatchClock();
     if (el.viewGame && !el.viewGame.hidden) updateTurnTimer();
   }, 250);
+
+  /* —— Windows 主机差分 OTA —— */
+  const HOST_UPDATE_DISMISS_KEY = 'lianji.hostUpdate.dismissed';
+  let hostUpdateApplying = false;
+  let hostUpdatePollTimer = null;
+
+  function formatBytes(n) {
+    const v = Number(n) || 0;
+    if (v < 1024) return v + ' B';
+    if (v < 1024 * 1024) return (v / 1024).toFixed(1) + ' KB';
+    return (v / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  function isHostUpdateDismissed(remoteVersion) {
+    try {
+      return localStorage.getItem(HOST_UPDATE_DISMISS_KEY) === String(remoteVersion || '');
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function dismissHostUpdateModal() {
+    if (!el.hostUpdateModal) return;
+    const ver =
+      (el.hostUpdateModal.dataset && el.hostUpdateModal.dataset.remoteVersion) ||
+      '';
+    if (ver && !el.hostUpdateModal.dataset.force) {
+      try {
+        localStorage.setItem(HOST_UPDATE_DISMISS_KEY, ver);
+      } catch (_) {}
+    }
+    el.hostUpdateModal.hidden = true;
+  }
+
+  function showHostUpdateModal(info) {
+    if (!el.hostUpdateModal || !info) return;
+    el.hostUpdateModal.dataset.remoteVersion = info.remoteVersion || '';
+    if (info.force) el.hostUpdateModal.dataset.force = '1';
+    else delete el.hostUpdateModal.dataset.force;
+
+    const lang = (I18n && I18n.getLang && I18n.getLang()) || 'zh';
+    const notes =
+      lang === 'en' && info.notesEn
+        ? info.notesEn
+        : info.notes || t('update.noNotes');
+
+    if (el.hostUpdateVersion) {
+      el.hostUpdateVersion.textContent = t('update.versionLine', {
+        local: info.localVersion || '?',
+        remote: info.remoteVersion || '?',
+      });
+    }
+    if (el.hostUpdateNotes) el.hostUpdateNotes.textContent = notes;
+    if (el.hostUpdateMeta) {
+      el.hostUpdateMeta.textContent = t('update.metaLine', {
+        count: info.changedCount || 0,
+        size: formatBytes(info.totalBytes),
+      });
+    }
+    if (el.hostUpdateProgressWrap) el.hostUpdateProgressWrap.hidden = true;
+    if (el.hostUpdateActions) el.hostUpdateActions.hidden = false;
+    if (el.btnHostUpdateApply) el.btnHostUpdateApply.disabled = !info.canApply;
+    if (el.btnHostUpdateLater) {
+      el.btnHostUpdateLater.hidden = Boolean(info.force);
+      el.btnHostUpdateLater.disabled = false;
+    }
+    el.hostUpdateModal.hidden = false;
+  }
+
+  async function fetchUpdateStatus(refresh) {
+    const origin = (net && net.getLocalOrigin && net.getLocalOrigin()) || '';
+    const q = refresh ? '?refresh=1' : '';
+    const res = await fetch(origin + '/api/update/status' + q, {
+      cache: 'no-store',
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }
+
+  async function checkHostUpdate(opts) {
+    opts = opts || {};
+    const manual = Boolean(opts.manual);
+    let info;
+    try {
+      if (manual) {
+        const origin = (net && net.getLocalOrigin && net.getLocalOrigin()) || '';
+        const res = await fetch(origin + '/api/update/check', {
+          method: 'POST',
+          cache: 'no-store',
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.message || t('update.checkFail'));
+        }
+        info = { ...data, canApply: true };
+      } else {
+        info = await fetchUpdateStatus(true);
+      }
+    } catch (err) {
+      if (manual) throw err;
+      return null;
+    }
+
+    if (!info || info.enabled === false) {
+      if (manual) showToast(t('update.disabled'));
+      return info;
+    }
+    if (!info.available) {
+      if (manual) {
+        showToast(
+          t('update.uptoDate', { version: info.localVersion || '?' })
+        );
+      }
+      return info;
+    }
+    if (!info.canApply) {
+      if (manual) showToast(t('update.localOnly'));
+      return info;
+    }
+    if (!manual && !info.force && isHostUpdateDismissed(info.remoteVersion)) {
+      return info;
+    }
+    showHostUpdateModal(info);
+    return info;
+  }
+
+  function setHostUpdateProgress(p) {
+    if (!el.hostUpdateProgressWrap) return;
+    el.hostUpdateProgressWrap.hidden = false;
+    if (el.hostUpdateActions) el.hostUpdateActions.hidden = true;
+    const total = (p && p.total) || 0;
+    const cur = (p && p.current) || 0;
+    const pct = total > 0 ? Math.min(100, Math.round((cur / total) * 100)) : 0;
+    if (el.hostUpdateProgressFill) {
+      el.hostUpdateProgressFill.style.width = pct + '%';
+    }
+    if (el.hostUpdateProgressText) {
+      el.hostUpdateProgressText.textContent =
+        (p && p.message) || t('update.working');
+    }
+  }
+
+  async function waitForServerRestart(timeoutMs) {
+    const origin = (net && net.getLocalOrigin && net.getLocalOrigin()) || '';
+    const deadline = Date.now() + (timeoutMs || 60000);
+    // 先等服务挂掉
+    for (let i = 0; i < 20; i++) {
+      try {
+        await fetch(origin + '/healthz', { cache: 'no-store' });
+        await new Promise((r) => setTimeout(r, 300));
+      } catch (_) {
+        break;
+      }
+    }
+    while (Date.now() < deadline) {
+      try {
+        const res = await fetch(origin + '/healthz', { cache: 'no-store' });
+        if (res.ok) return true;
+      } catch (_) {}
+      await new Promise((r) => setTimeout(r, 800));
+    }
+    return false;
+  }
+
+  async function applyHostUpdate() {
+    if (hostUpdateApplying) return;
+    hostUpdateApplying = true;
+    if (el.btnHostUpdateApply) el.btnHostUpdateApply.disabled = true;
+    if (el.btnHostUpdateLater) el.btnHostUpdateLater.disabled = true;
+    setHostUpdateProgress({ current: 0, total: 1, message: t('update.working') });
+
+    const origin = (net && net.getLocalOrigin && net.getLocalOrigin()) || '';
+    if (hostUpdatePollTimer) clearInterval(hostUpdatePollTimer);
+    hostUpdatePollTimer = setInterval(() => {
+      fetchUpdateStatus(false)
+        .then((st) => {
+          if (st && st.progress) setHostUpdateProgress(st.progress);
+        })
+        .catch(() => {});
+    }, 500);
+
+    try {
+      const res = await fetch(origin + '/api/update/apply', {
+        method: 'POST',
+        cache: 'no-store',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.message || t('update.applyFail'));
+      }
+      setHostUpdateProgress({
+        current: 1,
+        total: 1,
+        message: t('update.restarting'),
+      });
+      const ok = await waitForServerRestart(90000);
+      if (ok) {
+        try {
+          localStorage.removeItem(HOST_UPDATE_DISMISS_KEY);
+        } catch (_) {}
+        location.reload();
+      } else {
+        showToast(t('update.restartTimeout'));
+        if (el.hostUpdateModal) el.hostUpdateModal.hidden = true;
+      }
+    } finally {
+      if (hostUpdatePollTimer) {
+        clearInterval(hostUpdatePollTimer);
+        hostUpdatePollTimer = null;
+      }
+      hostUpdateApplying = false;
+    }
+  }
+
+  // 进入页后延迟检查（仅本机 canApply 时弹窗）
+  setTimeout(() => {
+    checkHostUpdate({ manual: false }).catch(() => {});
+  }, 5000);
 })();

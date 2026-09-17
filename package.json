@@ -13,6 +13,7 @@
     "smoke": "node server/games/gomoku/smoke/basic.js && node server/games/incan/smoke/basic.js && node server/games/lasidao/smoke/basic.js && node server/games/sgs/smoke/identity.js && node server/games/sgs/smoke/identity-death.js && node server/games/sgs/smoke/h2h.js && node server/games/sgs/smoke/1v2.js",
     "package": "node scripts/package.js",
     "package:all": "node scripts/package.js",
+    "publish:host-update": "node scripts/publish-host-update.js",
     "fetch-cloudflared": "node scripts/fetch-cloudflared.js"
   },
   "engines": {

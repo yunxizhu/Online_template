@@ -11,8 +11,24 @@ const { listGames, getGame } = require('./games');
 const { syncTurnTimer, clearTurnTimer } = require('./turnTimer');
 const { MqttBulletin, ROOM_OFFLINE_MS } = require('./mqttBulletin');
 const { QuickTunnel } = require('./tunnel');
+const { HostUpdateChecker } = require('./updateChecker');
 const crypto = require('crypto');
 const pathRoot = path.join(__dirname, '..');
+const hostUpdate = new HostUpdateChecker({ rootDir: pathRoot });
+
+function isHostConsoleRequest(req) {
+  const host = String(req.headers.host || '').toLowerCase();
+  const origin = String(req.headers.origin || '');
+  const referer = String(req.headers.referer || '');
+  const hostLocal =
+    /^localhost(?::\d+)?$/i.test(host) ||
+    /^127\.0\.0\.1(?::\d+)?$/.test(host) ||
+    /^\[::1\](?::\d+)?$/.test(host);
+  const pageLocal = (s) =>
+    /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?\/?/i.test(String(s || ''));
+  // 隧道访客 Host/Origin 为 trycloudflare 域名；本机控制台为 localhost
+  return hostLocal || pageLocal(origin) || pageLocal(referer);
+}
 
 function listLanIPv4() {
   const ips = [];
@@ -138,7 +154,79 @@ app.get('/api/info', (_req, res) => {
     mqttConnected: mqttBulletin ? mqttBulletin.isConnected() : false,
     publicUrl: tunnel ? tunnel.getPublicUrl() : null,
     games: listGames(),
+    version: hostUpdate.getLocalVersion(),
+    updateEnabled: !hostUpdate.disabled,
   });
+});
+
+/** 主机 OTA 状态；apply 仅本机可调用（防隧道访客乱升级） */
+app.get('/api/update/status', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const canApply = isHostConsoleRequest(req);
+  try {
+    if (req.query.refresh === '1' || req.query.check === '1') {
+      await hostUpdate.check({ force: true });
+    }
+  } catch (_) {
+    /* status 里带 error */
+  }
+  const st = hostUpdate.getStatus();
+  // 不把完整 changed.url 列表回给非本机，减少信息暴露
+  const changed =
+    canApply && Array.isArray(st.changed)
+      ? st.changed.map((f) => ({
+          path: f.path,
+          size: f.size,
+          sha256: f.sha256,
+        }))
+      : undefined;
+  res.json({
+    ...st,
+    changed,
+    canApply,
+  });
+});
+
+app.post('/api/update/check', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  if (!isHostConsoleRequest(req)) {
+    return res.status(403).json({ ok: false, message: '请在本机浏览器（localhost）操作升级' });
+  }
+  try {
+    const result = await hostUpdate.check({ force: true });
+    res.json({ ok: true, ...result, canApply: true });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      message: err && err.message ? err.message : String(err),
+    });
+  }
+});
+
+app.post('/api/update/apply', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  if (!isHostConsoleRequest(req)) {
+    return res.status(403).json({ ok: false, message: '请在本机浏览器（localhost）操作升级' });
+  }
+  if (hostUpdate.applying) {
+    return res.status(409).json({ ok: false, message: '正在更新中' });
+  }
+  try {
+    const result = await hostUpdate.apply({ restart: true });
+    res.json({ ok: true, ...result });
+    if (result.restart) {
+      setTimeout(() => {
+        console.log('[update] 更新完成，重启进程…');
+        process.exit(0);
+      }, 600);
+    }
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      message: err && err.message ? err.message : String(err),
+      progress: hostUpdate.progress,
+    });
+  }
 });
 
 function localBaseUrl() {
@@ -2271,8 +2359,37 @@ server.listen(PORT, '0.0.0.0', () => {
   }
 
   const openFlag = String(process.env.OPEN_BROWSER || '').toLowerCase();
-  if (openFlag === '1' || openFlag === 'true' || openFlag === 'yes') {
+  const skipBrowser =
+    String(process.env.LIANJI_UPDATE_RESTART || '') === '1' ||
+    fs.existsSync(path.join(pathRoot, '.update', 'skip-browser.flag'));
+  if (!skipBrowser && (openFlag === '1' || openFlag === 'true' || openFlag === 'yes')) {
     openBrowser(localUrl);
+  }
+  try {
+    fs.rmSync(path.join(pathRoot, '.update', 'skip-browser.flag'), {
+      force: true,
+    });
+  } catch (_) {}
+
+  // 启动数秒后后台检查主机差分更新（失败静默）
+  if (!hostUpdate.disabled) {
+    setTimeout(() => {
+      hostUpdate
+        .check()
+        .then((r) => {
+          if (r && r.available) {
+            console.log(
+              `[update] 发现新版本 ${r.remoteVersion}（本地 ${r.localVersion}），请在本机浏览器确认升级`
+            );
+          }
+        })
+        .catch((err) => {
+          console.warn(
+            '[update] 检查失败:',
+            err && err.message ? err.message : err
+          );
+        });
+    }, 4000);
   }
 });
 
