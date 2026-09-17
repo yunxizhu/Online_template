@@ -987,14 +987,14 @@ function scheduleBotTick(room) {
   if (!actors.length) return;
 
   // 判断 bot 是否刚摇完骰子准备派遣，是则停留更久让玩家看清骰子
-  let delay = 800 + Math.floor(Math.random() * 300); // 800-1100ms
+  let delay = 500 + Math.floor(Math.random() * 300); // 500-800ms
     for (const id of actors) {
     if (
       room.game.phase === 'produce' &&
       room.game.currentPlayerId === id &&
       !room.game.awaitingProduceRoll
     ) {
-      delay = 3500 + Math.floor(Math.random() * 300); // 3500-3800ms
+      delay = 4000 + Math.floor(Math.random() * 300); // 4000-4300ms
       break;
     }
   }
@@ -2371,17 +2371,15 @@ server.listen(PORT, '0.0.0.0', () => {
     });
   } catch (_) {}
 
-  // 启动数秒后后台检查主机差分更新（失败静默）
+  // 启动后检查主机差分更新（始终打印结果，方便对照 启动.bat 窗口）
   if (!hostUpdate.disabled) {
+    console.log('[update] 启动后将检查更新…');
+    console.log('[update] 清单地址: ' + hostUpdate.manifestUrl);
     setTimeout(() => {
       hostUpdate
-        .check()
+        .check({ force: true })
         .then((r) => {
-          if (r && r.available) {
-            console.log(
-              `[update] 发现新版本 ${r.remoteVersion}（本地 ${r.localVersion}），请在本机浏览器确认升级`
-            );
-          }
+          console.log(hostUpdate.formatCheckReport(r));
         })
         .catch((err) => {
           console.warn(
@@ -2389,7 +2387,9 @@ server.listen(PORT, '0.0.0.0', () => {
             err && err.message ? err.message : err
           );
         });
-    }, 4000);
+    }, 2500);
+  } else {
+    console.log('[update] 已禁用（存在 update.off）');
   }
 });
 

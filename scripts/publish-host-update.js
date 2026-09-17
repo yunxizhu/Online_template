@@ -11,10 +11,10 @@
  *   node scripts/publish-host-update.js --force
  *
  * 首次请添加 Gitee 远程（与 GitHub 同名仓库即可）：
- *   git remote add gitee https://gitee.com/yunxizhu/Online_template.git
+ *   git remote add gitee https://gitee.com/xiyunzhu/online_template.git
  *
  * 发布后他人检测地址（默认）：
- *   https://gitee.com/yunxizhu/Online_template/raw/ota/host-update.json
+ *   https://raw.giteeusercontent.com/xiyunzhu/online_template/raw/ota/host-update.json
  */
 
 const fs = require('fs');
@@ -22,15 +22,16 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const {
   isPathAllowed,
-  sha256File,
+  sha256Buffer,
   cmpSemver,
-  fetchBuffer,
+  fetchManifestObject,
+  readOtaBytes,
 } = require('../server/updateChecker');
 
 const ROOT = path.resolve(__dirname, '..');
 const OTA_BRANCH = 'ota';
-const DEFAULT_OWNER = 'yunxizhu';
-const DEFAULT_REPO = 'Online_template';
+const DEFAULT_OWNER = 'xiyunzhu';
+const DEFAULT_REPO = 'online_template';
 /** 推送 OTA 的 git remote 名；可用环境变量 LIANJI_OTA_REMOTE 覆盖 */
 const OTA_REMOTE =
   String(process.env.LIANJI_OTA_REMOTE || 'gitee').trim() || 'gitee';
@@ -191,7 +192,7 @@ function detectRepo(remoteName) {
 
 function rawBlobUrl(owner, repo, sha) {
   return (
-    'https://gitee.com/' +
+    'https://raw.giteeusercontent.com/' +
     owner +
     '/' +
     repo +
@@ -204,7 +205,7 @@ function rawBlobUrl(owner, repo, sha) {
 
 function rawManifestUrl(owner, repo) {
   return (
-    'https://gitee.com/' +
+    'https://raw.giteeusercontent.com/' +
     owner +
     '/' +
     repo +
@@ -293,9 +294,8 @@ function ensureOtaWorktree(worktreePath, remoteName) {
 
 async function fetchRemoteManifest(url) {
   try {
-    const bust = url + (url.includes('?') ? '&' : '?') + '_=' + Date.now();
-    const buf = await fetchBuffer(bust, { timeoutMs: 15000 });
-    return JSON.parse(buf.toString('utf8'));
+    const { manifest } = await fetchManifestObject(url);
+    return manifest;
   } catch (_) {
     return null;
   }
@@ -398,9 +398,9 @@ async function main() {
   let totalBytes = 0;
   for (const rel of relFiles) {
     const abs = path.join(ROOT, ...rel.split('/'));
-    const st = fs.statSync(abs);
-    const sha = sha256File(abs);
-    const size = st.size;
+    const body = readOtaBytes(abs, rel);
+    const sha = sha256Buffer(body);
+    const size = body.length;
     totalBytes += size;
     const entry = {
       path: rel,
@@ -410,7 +410,7 @@ async function main() {
     };
     files.push(entry);
     if (!existingBlobs.has(sha)) {
-      newBlobs.push({ sha, abs, size });
+      newBlobs.push({ sha, abs, rel, body, size });
     }
   }
 
@@ -460,12 +460,23 @@ async function main() {
   console.log('[publish] preparing worktree', worktreePath);
   ensureOtaWorktree(worktreePath, remoteName);
 
+  // 禁止 Git 改行尾，否则 blob 内容与 sha256 对不上（校验失败根因）
+  try {
+    runGit(['config', 'core.autocrlf', 'false'], { cwd: worktreePath });
+    runGit(['config', 'core.eol', 'lf'], { cwd: worktreePath });
+    runGit(['config', 'core.safecrlf', 'false'], { cwd: worktreePath });
+  } catch (err) {
+    console.warn('[publish] warn: git config in worktree:', err.message);
+  }
+
   let copied = 0;
   for (const b of newBlobs) {
     const dest = path.join(worktreePath, ...blobRelPath(b.sha).split('/'));
     fs.mkdirSync(path.dirname(dest), { recursive: true });
-    if (!fs.existsSync(dest)) {
-      fs.copyFileSync(b.abs, dest);
+    const needWrite =
+      !fs.existsSync(dest) || sha256Buffer(fs.readFileSync(dest)) !== b.sha;
+    if (needWrite) {
+      fs.writeFileSync(dest, b.body);
       copied += 1;
     }
   }
@@ -473,7 +484,7 @@ async function main() {
     path.join(stageDir, 'host-update.json'),
     path.join(worktreePath, 'host-update.json')
   );
-  console.log('[publish] copied new blobs:', copied);
+  console.log('[publish] wrote new blobs:', copied);
 
   runGit(['add', '-A'], { cwd: worktreePath });
   const status = runGit(['status', '--porcelain'], { cwd: worktreePath });

@@ -175,6 +175,7 @@ function writeWindowsLauncher(destDir, nodeExeName) {
     'set OPEN_BROWSER=1\r\n' +
     'set LIANJI_UPDATE_RESTART=\r\n' +
     'echo Starting lianji server...\r\n' +
+    'echo [update] OTA check runs after server starts; watch for [update] lines below.\r\n' +
     `if not exist "%~dp0${nodeExeName}" (\r\n` +
     `  echo [ERROR] missing ${nodeExeName}\r\n` +
     '  pause\r\n' +
@@ -222,7 +223,7 @@ function windowsReadme(nodeExeName) {
     '须用 http://localhost 打开本机页（不要用隧道域名点升级）。\n' +
     '禁用：在目录下放 update.off\n' +
     '自定义清单地址：update.url（一行 URL）\n' +
-    '默认：https://gitee.com/yunxizhu/Online_template/raw/ota/host-update.json\n'
+    '默认：https://raw.giteeusercontent.com/xiyunzhu/online_template/raw/ota/host-update.json\n'
   );
 }
 

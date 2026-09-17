@@ -3891,9 +3891,13 @@
 }
 
 .las-exchange-dialog {
-  width: min(96vw, 1200px);
-  max-width: 1200px;
-  max-height: 96vh;
+  /* 卡位按 60:97 加高后需更大弹窗，避免裁切卡面 */
+  --las-ex-card-w: calc(4.6 * var(--las-rem));
+  --las-ex-card-h: calc(var(--las-ex-card-w) * 97 / 60);
+  width: min(98vw, 1320px);
+  max-width: 1320px;
+  max-height: min(98vh, 920px);
+  padding: calc(1 * var(--las-rem)) calc(1.15 * var(--las-rem));
 }
 
 .las-exchange-head {
@@ -3909,7 +3913,7 @@
 .las-exchange-body {
   display: flex;
   align-items: stretch;
-  gap: calc(0.6 * var(--las-rem));
+  gap: calc(0.9 * var(--las-rem));
   margin-bottom: calc(0.6 * var(--las-rem));
 }
 
@@ -3918,6 +3922,11 @@
   display: flex;
   flex-direction: column;
   gap: calc(0.35 * var(--las-rem));
+  min-width: 0;
+  padding: calc(0.35 * var(--las-rem)) calc(0.45 * var(--las-rem));
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--border);
+  border-radius: 8px;
 }
 
 .las-ex-col h4 {
@@ -3938,7 +3947,7 @@
 .las-ex-list {
   display: flex;
   flex-direction: column;
-  gap: calc(0.5 * var(--las-rem));
+  gap: calc(0.55 * var(--las-rem));
 }
 
 .las-ex-item {
@@ -3958,9 +3967,10 @@
   align-items: center;
   justify-content: center;
   width: 100%;
-  gap: calc(0.25 * var(--las-rem));
+  gap: calc(0.35 * var(--las-rem));
   margin: 0;
   flex-wrap: nowrap;
+  min-height: var(--las-ex-card-h, calc(4.6 * var(--las-rem) * 97 / 60));
 }
 
 .las-ex-minus,
@@ -3990,8 +4000,11 @@
 
 .las-ex-card {
   position: relative;
-  width: calc(4 * var(--las-rem));
-  height: calc(5.25 * var(--las-rem));
+  /* 与资源卡图 60:97 一致，cover 不再裁切上下 */
+  width: var(--las-ex-card-w, calc(4.6 * var(--las-rem)));
+  height: var(--las-ex-card-h, calc(4.6 * var(--las-rem) * 97 / 60));
+  min-width: var(--las-ex-card-w, calc(4.6 * var(--las-rem)));
+  min-height: var(--las-ex-card-h, calc(4.6 * var(--las-rem) * 97 / 60));
   border-radius: 6px;
   border: 1px solid var(--border);
   background: #1a2228 center / cover no-repeat;

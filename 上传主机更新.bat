@@ -18,14 +18,15 @@ echo   Uploads new blobs to Gitee branch "ota"
 echo   Updates host-update.json for other hosts
 echo.
 echo   Need remote "gitee" with push permission:
-echo     git remote add gitee https://gitee.com/yunxizhu/Online_template.git
+echo     git remote add gitee https://gitee.com/xiyunzhu/online_template.git
 echo.
 
 set "LIANJI_OTA_NOTES="
 set /p LIANJI_OTA_NOTES=Update notes (optional): 
 
-set "LIANJI_OTA_BUMP="
-set /p LIANJI_OTA_BUMP=Bump version? empty=no, or patch/minor/major: 
+set "LIANJI_OTA_BUMP=patch"
+set /p LIANJI_OTA_BUMP=Bump version? [patch]/ empty=patch, or minor/major/no: 
+if /I "%LIANJI_OTA_BUMP%"=="no" set "LIANJI_OTA_BUMP="
 
 echo.
 echo Running publish...

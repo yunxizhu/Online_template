@@ -22,6 +22,11 @@ set "PORT=39200"
 set "OPEN_BROWSER=1"
 set "LIANJI_UPDATE_RESTART="
 
+echo.
+echo [update] checking host OTA before start...
+call node "%~dp0scripts\check-host-update.js"
+echo.
+
 echo Checking port %PORT% ...
 call :free_listen %PORT%
 

@@ -7,7 +7,8 @@
  *   update.off  — 存在则禁用自动检查
  *
  * 默认走 Gitee（国内可达）：
- *   https://gitee.com/yunxizhu/Online_template/raw/ota/host-update.json
+ *   https://raw.giteeusercontent.com/xiyunzhu/online_template/raw/ota/host-update.json
+ *   （也兼容 https://gitee.com/.../raw/ota/host-update.json，会 302 到上面）
  */
 
 const fs = require('fs');
@@ -18,7 +19,7 @@ const https = require('https');
 const { URL } = require('url');
 
 const DEFAULT_MANIFEST_URL =
-  'https://gitee.com/yunxizhu/Online_template/raw/ota/host-update.json';
+  'https://raw.giteeusercontent.com/xiyunzhu/online_template/raw/ota/host-update.json';
 
 const ALLOWED_PREFIXES = ['server/', 'public/'];
 const ALLOWED_FILES = new Set(['package.json']);
@@ -60,13 +61,67 @@ function cmpSemver(a, b) {
 }
 
 function sha256File(filePath) {
-  const hash = crypto.createHash('sha256');
-  hash.update(fs.readFileSync(filePath));
-  return hash.digest('hex');
+  return sha256Buffer(readOtaBytes(filePath));
 }
 
 function sha256Buffer(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+/** 文本扩展名：OTA 统一按 LF 计算/上传，避免 Windows CRLF + git autocrlf 导致校验失败 */
+const OTA_TEXT_EXT = new Set([
+  '.js',
+  '.mjs',
+  '.cjs',
+  '.json',
+  '.html',
+  '.htm',
+  '.css',
+  '.md',
+  '.txt',
+  '.svg',
+  '.xml',
+  '.yml',
+  '.yaml',
+  '.tsv',
+  '.csv',
+  '.map',
+  '.bat',
+  '.cmd',
+  '.ps1',
+  '.sh',
+]);
+
+function isOtaTextPath(relPath) {
+  const ext = path.extname(String(relPath || '')).toLowerCase();
+  return OTA_TEXT_EXT.has(ext);
+}
+
+/**
+ * 读取文件并规范化为 OTA 内容（文本去 \\r，二进制原样）。
+ * @returns {Buffer}
+ */
+function readOtaBytes(filePath, relPathHint) {
+  const buf = fs.readFileSync(filePath);
+  const rel = relPathHint || filePath;
+  if (!isOtaTextPath(rel)) {
+    // 含 NUL 的当二进制；无扩展名的小文本也尝试去 \\r
+    if (buf.includes(0)) return buf;
+    const base = path.basename(rel);
+    if (base === 'package.json' || !path.extname(base)) {
+      return normalizeTextBuffer(buf);
+    }
+    return buf;
+  }
+  return normalizeTextBuffer(buf);
+}
+
+function normalizeTextBuffer(buf) {
+  // 已是合法 UTF-8 文本时去掉 CR；否则原样（避免误伤）
+  const s = buf.toString('utf8');
+  if (Buffer.byteLength(s, 'utf8') !== buf.length) return buf;
+  if (!s.includes('\r')) return buf;
+  return Buffer.from(s.replace(/\r\n/g, '\n').replace(/\r/g, '\n'), 'utf8');
 }
 
 function ensureDir(dir) {
@@ -177,6 +232,75 @@ function fetchBuffer(url, opts = {}) {
   });
 }
 
+/**
+ * 解析 Gitee raw / CDN 清单 URL → API contents 参数
+ * 例: https://raw.giteeusercontent.com/owner/repo/raw/ota/host-update.json
+ */
+function parseGiteeManifestUrl(url) {
+  const s = String(url || '').split('?')[0];
+  let m = s.match(
+    /raw\.giteeusercontent\.com\/([^/]+)\/([^/]+)\/raw\/([^/]+)\/(.+)$/i
+  );
+  if (m) {
+    return { owner: m[1], repo: m[2], branch: m[3], filePath: m[4] };
+  }
+  m = s.match(/gitee\.com\/([^/]+)\/([^/]+)\/raw\/([^/]+)\/(.+)$/i);
+  if (m) {
+    return { owner: m[1], repo: m[2], branch: m[3], filePath: m[4] };
+  }
+  return null;
+}
+
+/**
+ * 拉 host-update.json。优先 Gitee API（无 CDN 缓存），失败再走 raw URL。
+ */
+async function fetchManifestObject(manifestUrl) {
+  const parsed = parseGiteeManifestUrl(manifestUrl);
+  const errors = [];
+  if (parsed) {
+    const api =
+      'https://gitee.com/api/v5/repos/' +
+      encodeURIComponent(parsed.owner) +
+      '/' +
+      encodeURIComponent(parsed.repo) +
+      '/contents/' +
+      parsed.filePath
+        .split('/')
+        .map(encodeURIComponent)
+        .join('/') +
+      '?ref=' +
+      encodeURIComponent(parsed.branch) +
+      '&t=' +
+      Date.now();
+    try {
+      const buf = await fetchBuffer(api, { timeoutMs: 25000 });
+      const meta = JSON.parse(buf.toString('utf8'));
+      if (!meta || !meta.content) {
+        throw new Error('API 未返回 content');
+      }
+      const raw = Buffer.from(String(meta.content).replace(/\s/g, ''), 'base64');
+      const manifest = JSON.parse(raw.toString('utf8'));
+      return { manifest, source: 'gitee-api', api };
+    } catch (err) {
+      errors.push('api: ' + (err && err.message ? err.message : err));
+    }
+  }
+
+  const bust =
+    manifestUrl +
+    (manifestUrl.includes('?') ? '&' : '?') +
+    '_=' +
+    Date.now();
+  try {
+    const buf = await fetchBuffer(bust, { timeoutMs: 20000 });
+    const manifest = JSON.parse(buf.toString('utf8'));
+    return { manifest, source: 'raw-cdn', url: bust };
+  } catch (err) {
+    errors.push('raw: ' + (err && err.message ? err.message : err));
+    throw new Error('拉取 update manifest 失败: ' + errors.join(' | '));
+  }
+}
+
 class HostUpdateChecker {
   /**
    * @param {{ rootDir: string, manifestUrl?: string }} opts
@@ -265,18 +389,7 @@ class HostUpdateChecker {
 
   async _doCheck() {
     const localVersion = this.getLocalVersion();
-    const bust =
-      this.manifestUrl +
-      (this.manifestUrl.includes('?') ? '&' : '?') +
-      '_=' +
-      Date.now();
-    const buf = await fetchBuffer(bust, { timeoutMs: 20000 });
-    let manifest;
-    try {
-      manifest = JSON.parse(buf.toString('utf8'));
-    } catch (_) {
-      throw new Error('update manifest 不是合法 JSON');
-    }
+    const { manifest, source } = await fetchManifestObject(this.manifestUrl);
     if (!manifest || typeof manifest !== 'object') {
       throw new Error('update manifest 无效');
     }
@@ -306,7 +419,7 @@ class HostUpdateChecker {
       try {
         const abs = resolveUnderRoot(this.rootDir, rel);
         if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
-          localHash = sha256File(abs);
+          localHash = sha256Buffer(readOtaBytes(abs, rel));
         }
       } catch (_) {
         localHash = '';
@@ -342,6 +455,7 @@ class HostUpdateChecker {
       changedCount: changed.length,
       totalBytes,
       changed,
+      manifestSource: source || '',
       repair: !newer && changed.length > 0 && cmpSemver(localVersion, remoteVersion) >= 0,
     };
     // 同版本但有文件差异 → 也允许修复升级
@@ -352,6 +466,69 @@ class HostUpdateChecker {
     void repairOnly;
     this.lastCheck = result;
     return result;
+  }
+
+  /** 控制台可读的检测摘要（启动.bat / 日志用） */
+  formatCheckReport(result) {
+    const r = result || this.lastCheck || {};
+    const lines = [];
+    lines.push('[update] -------- 主机更新检测 --------');
+    lines.push('[update] 清单: ' + this.manifestUrl);
+    if (r.manifestSource) {
+      lines.push('[update] 来源: ' + r.manifestSource);
+    }
+    if (this.disabled) {
+      lines.push('[update] 状态: 已禁用（存在 update.off）');
+      lines.push('[update] --------------------------------');
+      return lines.join('\n');
+    }
+    if (r.error) {
+      lines.push('[update] 状态: 检查失败');
+      lines.push('[update] 错误: ' + r.error);
+      lines.push('[update] 本地版本: ' + (r.localVersion || this.getLocalVersion()));
+      lines.push('[update] --------------------------------');
+      return lines.join('\n');
+    }
+    if (r.skipped) {
+      lines.push('[update] 状态: 已跳过 (' + (r.reason || '') + ')');
+      lines.push('[update] --------------------------------');
+      return lines.join('\n');
+    }
+    lines.push(
+      '[update] 本地: ' +
+        (r.localVersion || this.getLocalVersion()) +
+        '  |  线上: ' +
+        (r.remoteVersion || '?')
+    );
+    if (r.publishedAt) lines.push('[update] 发布时间: ' + r.publishedAt);
+    if (r.notes) lines.push('[update] 说明: ' + r.notes);
+    if (r.available) {
+      lines.push(
+        '[update] 结果: 有更新可用 — ' +
+          (r.changedCount || 0) +
+          ' 个文件 / 约 ' +
+          formatBytes(r.totalBytes || 0)
+      );
+      lines.push(
+        '[update] 请用本机浏览器打开 http://localhost 后点「立即更新」'
+      );
+    } else {
+      const local = r.localVersion || this.getLocalVersion();
+      const remote = r.remoteVersion || '';
+      if (remote && cmpSemver(local, remote) > 0) {
+        lines.push(
+          '[update] 结果: 本地版本新于线上（无需升级；若刚发版请确认已 push 成功）'
+        );
+      } else if (remote && cmpSemver(local, remote) === 0) {
+        lines.push(
+          '[update] 结果: 已是最新（本地与线上版本相同，不会弹窗）'
+        );
+      } else {
+        lines.push('[update] 结果: 无需更新');
+      }
+    }
+    lines.push('[update] --------------------------------');
+    return lines.join('\n');
   }
 
   /**
@@ -408,13 +585,23 @@ class HostUpdateChecker {
             if (this.progress) this.progress.bytes = bytesDone + n;
           },
         });
-        const got = sha256Buffer(buf);
+        // 文本再规范化一次，兼容旧版误传的 CRLF blob / CDN 改写
+        const body = isOtaTextPath(f.path) ? normalizeTextBuffer(buf) : buf;
+        const got = sha256Buffer(body);
         if (got !== f.sha256) {
-          throw new Error('校验失败: ' + f.path);
+          throw new Error(
+            '校验失败: ' +
+              f.path +
+              '（下载 ' +
+              buf.length +
+              ' 字节，期望 sha ' +
+              f.sha256.slice(0, 8) +
+              '…）'
+          );
         }
         const dest = path.join(this.stagingDir, ...f.path.split('/'));
         ensureDir(path.dirname(dest));
-        fs.writeFileSync(dest, buf);
+        fs.writeFileSync(dest, body);
         bytesDone += buf.length;
         this.progress = {
           phase: 'download',
@@ -550,6 +737,13 @@ class HostUpdateChecker {
   }
 }
 
+function formatBytes(n) {
+  const v = Number(n) || 0;
+  if (v < 1024) return v + ' B';
+  if (v < 1024 * 1024) return (v / 1024).toFixed(1) + ' KB';
+  return (v / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
 HostUpdateChecker.DEFAULT_MANIFEST_URL = DEFAULT_MANIFEST_URL;
 HostUpdateChecker.cmpSemver = cmpSemver;
 HostUpdateChecker.isPathAllowed = isPathAllowed;
@@ -561,5 +755,11 @@ module.exports = {
   cmpSemver,
   isPathAllowed,
   sha256File,
+  sha256Buffer,
   fetchBuffer,
+  fetchManifestObject,
+  parseGiteeManifestUrl,
+  readOtaBytes,
+  normalizeTextBuffer,
+  isOtaTextPath,
 };

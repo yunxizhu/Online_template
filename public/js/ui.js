@@ -6741,6 +6741,19 @@
         showToast(t('update.restartTimeout'));
         if (el.hostUpdateModal) el.hostUpdateModal.hidden = true;
       }
+    } catch (err) {
+      setHostUpdateProgress({
+        current: 0,
+        total: 1,
+        message: (err && err.message) || t('update.applyFail'),
+      });
+      if (el.hostUpdateActions) el.hostUpdateActions.hidden = false;
+      if (el.btnHostUpdateApply) el.btnHostUpdateApply.disabled = false;
+      if (el.btnHostUpdateLater) {
+        el.btnHostUpdateLater.disabled = false;
+        el.btnHostUpdateLater.hidden = false;
+      }
+      throw err;
     } finally {
       if (hostUpdatePollTimer) {
         clearInterval(hostUpdatePollTimer);
