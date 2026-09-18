@@ -2754,6 +2754,20 @@ function slotPlayerDieCounts(areaBoard, number, targetId) {
   return { physical, normal: physical - enhanced, enhanced };
 }
 
+/**
+ * 传送/移除未指定种类时：仅强化→true，仅普通→false，混有则默认普通
+ *（避免 pending.fromDieKind 为空导致 eventTeleportTo 永久失败卡死）
+ */
+function resolveAmbiguousDieKind(areaBoard, number, targetId, preferred) {
+  if (targetId === NEUTRAL_WORKER_ID) return false;
+  if (typeof preferred === 'boolean') return preferred;
+  const counts = slotPlayerDieCounts(areaBoard, number, targetId);
+  if (counts.enhanced > 0 && counts.normal <= 0) return true;
+  if (counts.normal > 0 && counts.enhanced <= 0) return false;
+  if (counts.enhanced > 0 && counts.normal > 0) return false;
+  return false;
+}
+
 /** 可召回的骰种类：派遣目标格会扣除刚放置的普通/强化数量 */
 function recallableDieCountsForPending(game, area, number, playerId, pending) {
   const ab = game.board[area];
@@ -2982,10 +2996,14 @@ function actEventTeleportFrom(game, player, payload) {
   if ((slotW[targetId] || 0) < 1) {
     return { ok: false, error: '该格没有可传送的骰子' };
   }
-  const dieKind =
+  const dieKind = resolveAmbiguousDieKind(
+    game.board[area],
+    number,
+    targetId,
     payload && typeof payload.enhanced === 'boolean'
       ? payload.enhanced
-      : undefined;
+      : undefined
+  );
   game.pendingEventChoice = {
     ...pending,
     teleportStep: 'to',
@@ -3021,12 +3039,19 @@ function actEventTeleportTo(game, player, payload) {
   if (fromArea === toArea && fromNumber === toNumber) {
     return { ok: false, error: '传送目标不能与来源相同' };
   }
+  const fromDieKind = resolveAmbiguousDieKind(
+    game.board[fromArea],
+    fromNumber,
+    fromTargetId,
+    typeof pending.fromDieKind === 'boolean' ? pending.fromDieKind : undefined
+  );
+  pending.fromDieKind = fromDieKind;
   const removed = removeOneDieFromBoardSlot(
     game,
     fromArea,
     fromNumber,
     fromTargetId,
-    pending.fromDieKind
+    fromDieKind
   );
   if (!removed.ok) return removed;
   const placed = placeOneDieOnBoardSlot(
@@ -7145,15 +7170,29 @@ function forceTimeout(game, playerId) {
   const p = playerById(game, playerId);
   if (!p || game.over) return { ok: false, error: '无法超时处理' };
 
+  /** 事件选择无法合法完成时：跳过并推进，避免人机/超时卡死 */
+  const skipPendingEvent = (reason) => {
+    const pending = game.pendingEventChoice;
+    if (!pending || pending.playerId !== playerId) return null;
+    const label = pending.label || '事件';
+    pushLog(game, `${p.name} ${reason || '超时'}跳过「${label}」选择`);
+    finishPendingEventChoice(game);
+    return { ok: true, skippedEvent: true };
+  };
+
   if (game.pendingWelfareMinimumChoices && game.pendingWelfareMinimumChoices[playerId]) {
     const count =
       (game.pendingWelfareMinimumChoices[playerId] &&
         game.pendingWelfareMinimumChoices[playerId].count) ||
       2;
-    return applyAction(game, playerId, {
+    const r = applyAction(game, playerId, {
       type: 'eventPickTwoResources',
       payload: { amounts: { wood: count } },
     });
+    if (r && r.ok) return r;
+    delete game.pendingWelfareMinimumChoices[playerId];
+    tryFinishWelfareMinimumConcurrent(game);
+    return { ok: true };
   }
 
   if (
@@ -7162,20 +7201,32 @@ function forceTimeout(game, playerId) {
     sumRes(p.resources) > maxResourceHandFor(p)
   ) {
     const pick = RESOURCES.find((r) => (p.resources[r] || 0) > 0);
-    return applyAction(game, playerId, {
-      type: 'discardResource',
-      payload: { resource: pick },
-    });
+    if (pick) {
+      const r = applyAction(game, playerId, {
+        type: 'discardResource',
+        payload: { resource: pick },
+      });
+      if (r && r.ok) return r;
+    }
+    p.pendingDiscardRes = false;
+    tryFinishConcurrentDiscardPhase(game);
+    return { ok: true };
   }
   if (
     game.phase === 'settle_act' &&
     p.pendingDiscardFunc &&
     p.funcCards.length > maxFuncHandFor(p)
   ) {
-    return applyAction(game, playerId, {
-      type: 'discardFunc',
-      payload: { cardId: p.funcCards[p.funcCards.length - 1].id },
-    });
+    if (p.funcCards.length) {
+      const r = applyAction(game, playerId, {
+        type: 'discardFunc',
+        payload: { cardId: p.funcCards[p.funcCards.length - 1].id },
+      });
+      if (r && r.ok) return r;
+    }
+    p.pendingDiscardFunc = false;
+    tryFinishConcurrentDiscardPhase(game);
+    return { ok: true };
   }
   if (
     game.phase === 'build' &&
@@ -7183,41 +7234,56 @@ function forceTimeout(game, playerId) {
     p.pendingDiscardFunc &&
     p.funcCards.length > maxFuncHandFor(p)
   ) {
-    return applyAction(game, playerId, {
-      type: 'discardFunc',
-      payload: { cardId: p.funcCards[p.funcCards.length - 1].id },
-    });
+    if (p.funcCards.length) {
+      const r = applyAction(game, playerId, {
+        type: 'discardFunc',
+        payload: { cardId: p.funcCards[p.funcCards.length - 1].id },
+      });
+      if (r && r.ok) return r;
+    }
+    p.pendingDiscardFunc = false;
+    return { ok: true };
   }
   if (game.phase === 'build' && p.pendingDiscardBuild) {
     const unbuilt = p.buildings.find((b) => !b.built);
     if (unbuilt) {
-      return applyAction(game, playerId, {
+      const r = applyAction(game, playerId, {
         type: 'discardUnbuilt',
         payload: { buildingId: unbuilt.id },
       });
+      if (r && r.ok) return r;
     }
-    return applyAction(game, playerId, { type: 'discardPendingBuild' });
+    const r2 = applyAction(game, playerId, { type: 'discardPendingBuild' });
+    if (r2 && r2.ok) return r2;
+    p.pendingDiscardBuild = null;
+    return { ok: true };
   }
-  if (
-    game.phase === 'settle_act' &&
-    p.pendingDiscardBuild
-  ) {
+  if (game.phase === 'settle_act' && p.pendingDiscardBuild) {
     const unbuilt = p.buildings.find((b) => !b.built);
     if (unbuilt) {
-      return applyAction(game, playerId, {
+      const r = applyAction(game, playerId, {
         type: 'discardUnbuilt',
         payload: { buildingId: unbuilt.id },
       });
+      if (r && r.ok) return r;
     }
-    return applyAction(game, playerId, { type: 'discardPendingBuild' });
+    const r2 = applyAction(game, playerId, { type: 'discardPendingBuild' });
+    if (r2 && r2.ok) return r2;
+    p.pendingDiscardBuild = null;
+    tryFinishConcurrentDiscardPhase(game);
+    return { ok: true };
   }
   if (game.phase === 'wish_well' && (p.pendingWishWellBonus || 0) > 0) {
     const alloc = emptyRes();
     alloc.wood = Number(p.pendingWishWellBonus) || 0;
-    return applyAction(game, playerId, {
+    const r = applyAction(game, playerId, {
       type: 'allocateWishWell',
       payload: { alloc },
     });
+    if (r && r.ok) return r;
+    p.pendingWishWellBonus = 0;
+    tryFinishWishWellPhase(game);
+    return { ok: true };
   }
 
   if (
@@ -7226,11 +7292,15 @@ function forceTimeout(game, playerId) {
   ) {
     const opt = (game.pendingRedrawChoice.options || [])[0];
     if (opt) {
-      return applyAction(game, playerId, {
+      const r = applyAction(game, playerId, {
         type: 'redrawPick',
         payload: { keepId: opt.id },
       });
+      if (r && r.ok) return r;
     }
+    game.pendingRedrawChoice = null;
+    pushLog(game, `${p.name} 超时跳过抽牌选择`);
+    return { ok: true };
   }
 
   if (
@@ -7239,11 +7309,16 @@ function forceTimeout(game, playerId) {
   ) {
     const opt = (game.pendingRobberyPick.options || [])[0];
     if (opt) {
-      return applyAction(game, playerId, {
+      const r = applyAction(game, playerId, {
         type: 'robberyPick',
         payload: { cardId: opt.id },
       });
+      if (r && r.ok) return r;
     }
+    // 目标无牌可交 / 选择失败：直接清 pending（cancel 仅发动者可用）
+    game.pendingRobberyPick = null;
+    pushLog(game, `${p.name} 超时跳过抢劫交牌`);
+    return { ok: true };
   }
 
   if (
@@ -7252,15 +7327,23 @@ function forceTimeout(game, playerId) {
   ) {
     const built = (p.buildings || []).find((b) => b.built);
     if (built) {
-      return applyAction(game, playerId, {
+      const r = applyAction(game, playerId, {
         type: 'illegalBuildPick',
         payload: { buildingId: built.id },
       });
+      if (r && r.ok) return r;
     }
+    // 目标无已建造筑 / 选择失败：直接清 pending（cancel 仅发动者可用）
+    game.pendingIllegalBuild = null;
+    pushLog(game, `${p.name} 超时跳过拆迁选择`);
+    return { ok: true };
   }
 
   if (game.pendingTrade && game.pendingTrade.toId === playerId) {
-    return applyAction(game, playerId, { type: 'rejectTrade', payload: {} });
+    const r = applyAction(game, playerId, { type: 'rejectTrade', payload: {} });
+    if (r && r.ok) return r;
+    game.pendingTrade = null;
+    return { ok: true };
   }
 
   if (
@@ -7268,38 +7351,63 @@ function forceTimeout(game, playerId) {
     game.pendingEventChoice.playerId === playerId
   ) {
     const need = game.pendingEventChoice.needChoice;
+    const ch = game.pendingEventChoice;
+
     if (need === 'pickResource') {
-      return applyAction(game, playerId, {
+      const r = applyAction(game, playerId, {
         type: 'eventPickResource',
         payload: { resource: 'wood' },
       });
+      if (r && r.ok) return r;
+      return skipPendingEvent('超时') || { ok: true };
     }
     if (need === 'pickTwoResources') {
-      const count = game.pendingEventChoice.count || 2;
-      return applyAction(game, playerId, {
+      const count = ch.count || 2;
+      const r = applyAction(game, playerId, {
         type: 'eventPickTwoResources',
         payload: { amounts: { wood: count } },
       });
+      if (r && r.ok) return r;
+      return skipPendingEvent('超时') || { ok: true };
     }
     if (need === 'moveBarrenMarker') {
-      return applyAction(game, playerId, {
-        type: 'eventMoveBarrenMarker',
-        payload: { number: Number(game.pendingEventChoice.envNumber) || 4 },
-      });
+      for (const area of BOARD_AREAS) {
+        for (let num = 1; num <= 6; num++) {
+          if (
+            area === 'special' &&
+            num > areaOpenSlotCount('special', game.round)
+          ) {
+            continue;
+          }
+          const r = applyAction(game, playerId, {
+            type: 'eventMoveBarrenMarker',
+            payload: { area, number: num },
+          });
+          if (r && r.ok) return r;
+        }
+      }
+      return skipPendingEvent('超时') || { ok: true };
     }
     if (need === 'moveNeutral') {
-      return applyAction(game, playerId, {
-        type: 'eventMoveNeutral',
-        payload: {
-          area: 'resource',
-          number: Number(game.pendingEventChoice.envNumber) || 4,
-        },
-      });
+      for (const area of BOARD_AREAS) {
+        for (let num = 1; num <= 6; num++) {
+          if (
+            area === 'special' &&
+            num > areaOpenSlotCount('special', game.round)
+          ) {
+            continue;
+          }
+          const r = applyAction(game, playerId, {
+            type: 'eventMoveNeutral',
+            payload: { area, number: num },
+          });
+          if (r && r.ok) return r;
+        }
+      }
+      return skipPendingEvent('超时') || { ok: true };
     }
     if (need === 'recallDie') {
-      const ch = game.pendingEventChoice;
       for (const area of ['resource', 'special']) {
-        const workers = (game.board[area] && game.board[area].workers) || {};
         for (let num = 1; num <= 6; num++) {
           const recallable = recallableDieCountsForPending(
             game,
@@ -7310,23 +7418,32 @@ function forceTimeout(game, playerId) {
           );
           if (recallable.total <= 0) continue;
           const enhanced =
-            recallable.enhanced > 0 && recallable.normal <= 0
-              ? true
-              : recallable.normal > 0 && recallable.enhanced <= 0
-                ? false
-                : recallable.enhanced > 0;
-          return applyAction(game, playerId, {
+            recallable.enhanced > 0 && recallable.normal <= 0 ? true : false;
+          const r = applyAction(game, playerId, {
             type: 'eventRecallDie',
             payload: { area, number: num, enhanced },
           });
+          if (r && r.ok) return r;
         }
       }
+      return skipPendingEvent('超时') || { ok: true };
     }
     if (need === 'teleportDie') {
-      const ch = game.pendingEventChoice;
       if (ch.teleportStep === 'to') {
         const fa = ch.fromArea;
         const fn = Number(ch.fromNumber);
+        if (
+          ch.fromTargetId &&
+          ch.fromTargetId !== NEUTRAL_WORKER_ID &&
+          typeof ch.fromDieKind !== 'boolean'
+        ) {
+          ch.fromDieKind = resolveAmbiguousDieKind(
+            game.board[fa],
+            fn,
+            ch.fromTargetId,
+            undefined
+          );
+        }
         for (const area of BOARD_AREAS) {
           for (let num = 1; num <= 6; num++) {
             if (area === fa && num === fn) continue;
@@ -7338,12 +7455,14 @@ function forceTimeout(game, playerId) {
             }
             const tiles = tilesOnNumber(game.board[area], num);
             if (!tiles.length) continue;
-            return applyAction(game, playerId, {
+            const r = applyAction(game, playerId, {
               type: 'eventTeleportTo',
               payload: { area, number: num },
             });
+            if (r && r.ok) return r;
           }
         }
+        return skipPendingEvent('超时') || { ok: true };
       }
       for (const area of BOARD_AREAS) {
         const workers = (game.board[area] && game.board[area].workers) || {};
@@ -7351,17 +7470,24 @@ function forceTimeout(game, playerId) {
           const w = workers[num] || {};
           for (const [targetId, count] of Object.entries(w)) {
             if ((Number(count) || 0) > 0) {
-              return applyAction(game, playerId, {
+              const enhanced = resolveAmbiguousDieKind(
+                game.board[area],
+                num,
+                targetId,
+                undefined
+              );
+              const r = applyAction(game, playerId, {
                 type: 'eventTeleportFrom',
-                payload: { area, number: num, targetId },
+                payload: { area, number: num, targetId, enhanced },
               });
+              if (r && r.ok) return r;
             }
           }
         }
       }
+      return skipPendingEvent('超时') || { ok: true };
     }
     if (need === 'gatherNeutrals') {
-      const ch = game.pendingEventChoice;
       const toArea = ch.toArea || 'resource';
       const toNumber = Number(ch.toNumber != null ? ch.toNumber : ch.number);
       for (const area of ['resource', 'special']) {
@@ -7370,23 +7496,39 @@ function forceTimeout(game, playerId) {
           if (area === toArea && num === toNumber) continue;
           const w = workers[num] || {};
           if ((Number(w[NEUTRAL_WORKER_ID]) || 0) > 0) {
-            return applyAction(game, playerId, {
+            const r = applyAction(game, playerId, {
               type: 'eventGatherNeutrals',
               payload: { area, number: num },
             });
+            if (r && r.ok) return r;
           }
         }
       }
+      return skipPendingEvent('超时') || { ok: true };
     }
+    // 未知 needChoice：直接跳过
+    return skipPendingEvent('超时') || { ok: true };
   }
 
   if (game.phase === 'event_mercenary') {
     const cur = (game.pendingMercenaryQueue || [])[0];
     if (cur && cur.playerId === playerId) {
-      return applyAction(game, playerId, {
+      const r = applyAction(game, playerId, {
         type: 'mercenarySkipAll',
         payload: {},
       });
+      if (r && r.ok) return r;
+      game.mercenaryRoll = null;
+      game.mercenaryPlaced = [];
+      if ((game.pendingMercenaryQueue || []).length) {
+        game.pendingMercenaryQueue.shift();
+      }
+      if ((game.pendingMercenaryQueue || []).length) {
+        beginMercenaryPhase(game);
+      } else {
+        finishMercenaryGate(game);
+      }
+      return { ok: true };
     }
   }
 
@@ -7396,12 +7538,12 @@ function forceTimeout(game, playerId) {
   ) {
     const pick = RESOURCES.find((r) => (p.resources[r] || 0) > 0);
     if (pick) {
-      return applyAction(game, playerId, {
+      const r = applyAction(game, playerId, {
         type: 'eventDiscard',
         payload: { kind: 'resource', resource: pick },
       });
+      if (r && r.ok) return r;
     }
-    // 无资源可弃：清零并推进
     delete game.pendingPrisonerDiscards[playerId];
     ensurePrisonerDiscardPlayer(game);
     return { ok: true };
@@ -7411,10 +7553,11 @@ function forceTimeout(game, playerId) {
   if (unplaced) {
     const slot = nextFreeBuildSlot(p);
     if (slot != null) {
-      return applyAction(game, playerId, {
+      const r = applyAction(game, playerId, {
         type: 'placeBuildingSlot',
         payload: { buildingId: unplaced.id, slot },
       });
+      if (r && r.ok) return r;
     }
   }
 
@@ -7426,19 +7569,36 @@ function forceTimeout(game, playerId) {
   }
   if (game.phase === 'produce' && game.currentPlayerId === playerId) {
     if (game.awaitingProduceRoll) {
-      return applyAction(game, playerId, { type: 'produceRoll', payload: {} });
+      const r = applyAction(game, playerId, {
+        type: 'produceRoll',
+        payload: {},
+      });
+      if (r && r.ok) return r;
     }
-    return applyAction(game, playerId, {
+    const burn = applyAction(game, playerId, {
       type: 'voidSkip',
-      payload: { resource: 'wood' },
+      payload: { mode: 'burn', resource: 'wood' },
     });
+    if (burn && burn.ok) return burn;
+    afterProduceAction(game, playerId);
+    return { ok: true };
   }
   if (
-    (game.phase === 'settle_act' ||
-      game.phase === 'build') &&
+    (game.phase === 'settle_act' || game.phase === 'build') &&
     game.currentPlayerId === playerId
   ) {
-    return applyAction(game, playerId, { type: 'pass', payload: {} });
+    const r = applyAction(game, playerId, { type: 'pass', payload: {} });
+    if (r && r.ok) return r;
+    if (game.phase === 'build') {
+      game.buildPassed[playerId] = true;
+      afterBuildAction(game, playerId, false);
+      return { ok: true };
+    }
+  }
+
+  // 最终托底：仍挂着本玩家的事件选择则跳过
+  if (game.pendingEventChoice && game.pendingEventChoice.playerId === playerId) {
+    return skipPendingEvent('强制') || { ok: true };
   }
   return { ok: true };
 }

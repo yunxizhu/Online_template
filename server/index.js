@@ -1412,6 +1412,35 @@ function seatAutoDifficulty(seat) {
   return (seat && seat.botDifficulty) || 'normal';
 }
 
+/** 人机行动指纹：用于检测「决策/超时后状态未变」的卡死 */
+function botActingFingerprint(game, playerId) {
+  if (!game || !playerId) return '';
+  const ev = game.pendingEventChoice;
+  const parts = [
+    game.phase || '',
+    game.currentPlayerId || '',
+    game.awaitingProduceRoll ? '1' : '0',
+    ev && ev.playerId === playerId
+      ? `ev:${ev.needChoice || ''}:${ev.teleportStep || ''}:${ev.fromNumber || ''}`
+      : '',
+    game.pendingRedrawChoice && game.pendingRedrawChoice.playerId === playerId
+      ? 'redraw'
+      : '',
+    game.pendingRobberyPick && game.pendingRobberyPick.targetId === playerId
+      ? 'robbery'
+      : '',
+    game.pendingIllegalBuild && game.pendingIllegalBuild.targetId === playerId
+      ? 'illegal'
+      : '',
+    game.pendingTrade && game.pendingTrade.toId === playerId ? 'trade' : '',
+    game.pendingWelfareMinimumChoices &&
+    game.pendingWelfareMinimumChoices[playerId]
+      ? 'welfare'
+      : '',
+  ];
+  return parts.join('|');
+}
+
 /**
  * 当游戏状态变化后，安排 bot / 托管 自动行动（不限时模式下也适用）。
  */
@@ -1454,6 +1483,7 @@ function scheduleBotTick(room) {
     for (const id of freshActors) {
       const seat = (room.players || []).find((p) => p.id === id);
       if (!seatAutoPlays(seat)) continue;
+      const beforeKey = botActingFingerprint(room.game, id);
       try {
         const botAction = mod.decideBotAction(
           room.game,
@@ -1476,6 +1506,16 @@ function scheduleBotTick(room) {
           if (typeof mod.forceTimeout === 'function') {
             mod.forceTimeout(room.game, id);
           }
+        } catch (__) {}
+      }
+      // 仍卡在同一待处理状态：再强制超时一次（forceTimeout 内有事件跳过托底）
+      if (
+        typeof mod.forceTimeout === 'function' &&
+        beforeKey &&
+        beforeKey === botActingFingerprint(room.game, id)
+      ) {
+        try {
+          mod.forceTimeout(room.game, id);
         } catch (__) {}
       }
       if (room.game.over) break;

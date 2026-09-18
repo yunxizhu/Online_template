@@ -3370,55 +3370,48 @@ function decidePendingAction(game, player, diff, botState) {
 
   // pendingIllegalBuild / pendingRobberyPick????????????????????
   if (game.pendingIllegalBuild && game.pendingIllegalBuild.targetId === player.id) {
-    // ?????????????????????????????
+    // 目标玩家只能选建筑；无已建造筑时返回 null，由 forceTimeout 清 pending
     const built = (player.buildings || []).filter((b) => b.built);
     if (built.length) {
       built.sort((a, b) => (a.score || 0) - (b.score || 0));
       return { type: 'illegalBuildPick', payload: { buildingId: built[0].id } };
     }
-    return { type: 'cancelIllegalBuild' };
+    return null;
   }
 
   if (game.pendingRobberyPick && game.pendingRobberyPick.targetId === player.id) {
-    // ?????????????
+    // 目标只能交牌；无牌时返回 null，由 forceTimeout 清 pending（cancel 仅发动者可用）
     const cards = player.funcCards || [];
-    if (cards.length) {
-      // ????????
-      const priority = {
-        welfareHouse: 1, shelter: 2, caravan: 3, banditRaid: 4,
-        exile: 5, remoteDice: 5, expand: 6, enhance: 7, recruit: 8,
-        redraw: 9, harvest: 10, illegalBuild: 11, robbery: 12,
-      };
-      const sorted = [...cards].sort((a, b) =>
-        (priority[a.funcType] || 5) - (priority[b.funcType] || 5)
-      );
-      return { type: 'robberyPick', payload: { cardId: sorted[0].id } };
+    const unbuilt = (player.buildings || []).filter((b) => !b.built);
+    const options = game.pendingRobberyPick.options || [];
+    if (options.length) {
+      const ids = new Set(options.map((o) => o.id));
+      const fromFunc = cards.find((c) => ids.has(c.id));
+      if (fromFunc) {
+        return { type: 'robberyPick', payload: { cardId: fromFunc.id } };
+      }
+      return { type: 'robberyPick', payload: { cardId: options[0].id } };
     }
-    return { type: 'cancelRobberyPick' };
+    void unbuilt;
+    return null;
   }
 
-  // pendingTrade
-  if (game.pendingTrade) {
-    return { type: 'rejectTrade' };
-    if (game.pendingTrade.toId === player.id) {
-      // ?????????????????
-      // normal/hard ????????
+  // pendingTrade：仅被邀请方决策；一律拒绝以免卡流程（详细估价保留在下方死代码前）
+  if (game.pendingTrade && game.pendingTrade.toId === player.id) {
+    if (diff === 'hard') {
       const trade = game.pendingTrade;
-      if (diff === 'hard') {
-        const give = trade.take || {}; // ??????take????????
-        const get = trade.give || {};
-        const need = estimateResourceNeeds(player);
-        let getVal = 0;
-        let giveVal = 0;
-        for (const r of RESOURCES) {
-          getVal += (get[r] || 0) * ((need[r] || 0) > 0 ? 2 : 1);
-          giveVal += (give[r] || 0) * ((need[r] || 0) > 0 ? 2 : 1);
-        }
-        if (getVal >= giveVal) return { type: 'acceptTrade' };
-        return { type: 'rejectTrade' };
+      const give = trade.take || {};
+      const get = trade.give || {};
+      const need = estimateResourceNeeds(player);
+      let getVal = 0;
+      let giveVal = 0;
+      for (const r of RESOURCES) {
+        getVal += (get[r] || 0) * ((need[r] || 0) > 0 ? 2 : 1);
+        giveVal += (give[r] || 0) * ((need[r] || 0) > 0 ? 2 : 1);
       }
-      
+      if (getVal >= giveVal) return { type: 'acceptTrade' };
     }
+    return { type: 'rejectTrade' };
   }
 
   // wish well ????????
@@ -3913,6 +3906,28 @@ function _listTeleportFromCandidates(game) {
   return out;
 }
 
+/** 传送来源骰种类：混有时自己优先挪普通（留强化保强度），对手优先挪强化 */
+function _pickTeleportEnhanced(game, area, number, targetId, selfId) {
+  if (targetId === '__neutral__') return false;
+  const board = game.board && game.board[area];
+  if (!board) return false;
+  const physical = Number((board.workers && board.workers[number] && board.workers[number][targetId]) || 0);
+  if (physical <= 0) return false;
+  const boost = Math.min(
+    Math.max(
+      0,
+      Number(
+        (board.boosts && board.boosts[number] && board.boosts[number][targetId]) || 0
+      )
+    ),
+    physical
+  );
+  const normal = physical - boost;
+  if (boost <= 0) return false;
+  if (normal <= 0) return true;
+  return targetId !== selfId;
+}
+
 function _bestTeleportDestination(game, player, fromArea, fromNumber, moverId, diff) {
   let best = null;
   let bestScore = -Infinity;
@@ -3989,6 +4004,13 @@ function _decideTeleport(game, player, ev, diff) {
         area: best.area,
         number: best.number,
         targetId: best.targetId,
+        enhanced: _pickTeleportEnhanced(
+          game,
+          best.area,
+          best.number,
+          best.targetId,
+          player.id
+        ),
       },
     };
   }

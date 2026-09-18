@@ -1,6 +1,6 @@
 'use strict';
 
-const { getGame, resolveGameType } = require('./games');
+const { getGame, resolveGameType, gameSupportsBot, gameSupportsHosting } = require('./games');
 const {
   normalizeTurnTimeSec,
   clearTurnTimer,
@@ -1622,6 +1622,9 @@ class RoomManager {
     if (room.status !== 'waiting') {
       return { ok: false, error: '对局已开始，无法添加电脑' };
     }
+    if (!gameSupportsBot(getGame(room.gameType))) {
+      return { ok: false, error: '当前游戏未接入电脑AI' };
+    }
 
     const idx = Number(seatIndex);
     const maxSlots = room.maxPlayers || (room.players || []).length || 0;
@@ -1763,7 +1766,8 @@ class RoomManager {
   }
 
   /**
-   * 卡拉斯坦对局中：玩家开关托管（由困难电脑代决策）
+   * 对局中：玩家开关托管（由困难电脑代决策）
+   * 仅 supportsHosting 的游戏可用（当前为卡拉斯坦）
    * @param {string} playerId
    * @param {boolean} hosted
    */
@@ -1777,7 +1781,7 @@ class RoomManager {
     if (room.status !== 'playing' || !room.game) {
       return { ok: false, error: '对局未开始' };
     }
-    if (room.gameType !== 'lasidao') {
+    if (!gameSupportsHosting(getGame(room.gameType))) {
       return { ok: false, error: '当前游戏不支持托管' };
     }
     if ((room.observers || []).some((o) => o.id === playerId)) {

@@ -2960,9 +2960,15 @@
     const inGameView =
       currentViewName === 'game' ||
       (state.room && state.room.status === 'playing' && !el.viewGame.hidden);
-    const isLasidao =
-      (state.game && state.game.type === 'lasidao') ||
-      (state.room && state.room.gameType === 'lasidao');
+    const gameMeta =
+      (state.games || []).find(
+        (g) =>
+          g &&
+          g.id ===
+            ((state.game && state.game.type) ||
+              (state.room && state.room.gameType))
+      ) || null;
+    const allowsHosting = Boolean(gameMeta && gameMeta.supportsHosting);
     const seated =
       Boolean(state.me && state.me.id) &&
       !state.isSpectator &&
@@ -2974,7 +2980,9 @@
           )
       );
     const gameOver = Boolean(state.game && state.game.over);
-    const show = Boolean(state.room && inGameView && isLasidao && seated && !gameOver);
+    const show = Boolean(
+      state.room && inGameView && allowsHosting && seated && !gameOver
+    );
     const hosted = isSelfHosted();
 
     if (el.btnHosting) {
@@ -4126,7 +4134,10 @@
         empty.textContent = t('room.emptySeat');
         slot.appendChild(empty);
 
-        if (isHost && room.status !== 'playing') {
+        const gameMeta =
+          (state.games || []).find((g) => g && g.id === room.gameType) || null;
+        const supportsBot = Boolean(gameMeta && gameMeta.supportsBot);
+        if (isHost && room.status !== 'playing' && supportsBot) {
           const actions = document.createElement('div');
           actions.className = 'slot-actions';
           const btnAdd = document.createElement('button');
@@ -5239,6 +5250,10 @@
   }
 
   function openAddBotModal(seatIndex) {
+    const room = state.room;
+    const gameMeta =
+      room && (state.games || []).find((g) => g && g.id === room.gameType);
+    if (!gameMeta || !gameMeta.supportsBot) return;
     setAddBotOpen(true, seatIndex);
   }
 
@@ -6396,6 +6411,15 @@
     el.btnHosting.addEventListener('click', (ev) => {
       ev.stopPropagation();
       if (!net.setHosted) return;
+      const gameMeta =
+        (state.games || []).find(
+          (g) =>
+            g &&
+            g.id ===
+              ((state.game && state.game.type) ||
+                (state.room && state.room.gameType))
+        ) || null;
+      if (!gameMeta || !gameMeta.supportsHosting) return;
       net.setHosted(!isSelfHosted());
     });
   }

@@ -12,6 +12,7 @@ const {
   getActingPlayerIds,
   finishInitAnnounce,
   startSettle,
+  forceTimeout,
 } = require('../engine');
 
 function room(n) {
@@ -8786,6 +8787,186 @@ console.log('— bot no stack teleport when already leader prefers enhance —')
   assert.strictEqual(act.payload.area, 'special', '应放到功能区强化');
   assert.strictEqual(act.payload.face, 1, '应放到 1 号格');
   console.log('✓ bot no stack teleport when already leader prefers enhance');
+}
+
+console.log('— bot teleport mixed normal+enhanced does not stick —');
+{
+  const { decideBotAction } = require('../bot');
+  // forceTimeout 已在文件顶部从 engine 导入
+  const g = createGameState(room(2));
+  finishInit(g);
+  const bot = g.players[0];
+  const rival = g.players[1];
+  g.phase = 'produce';
+  g.currentPlayerId = bot.id;
+  g.awaitingProduceRoll = false;
+  g.board.resource.tiles = [];
+  for (let n = 1; n <= 6; n++) {
+    g.board.resource.tiles.push({
+      id: `r${n}`,
+      kind: 'resource',
+      resource: 'wood',
+      large: 2,
+      small: 1,
+      number: n,
+      label: '木',
+    });
+  }
+  g.board.special.tiles = [
+    { id: 's1', kind: 'function', funcType: 'enhance', label: '强化', number: 1 },
+  ];
+  g.board.resource.environments = {
+    1: null,
+    2: null,
+    3: null,
+    4: null,
+    5: { id: 'e5', envType: 'teleport', label: '传送', trigger: 'dispatch' },
+    6: null,
+  };
+  g.board.resource.workers = {
+    1: { __neutral__: 1 },
+    2: {},
+    3: { [rival.id]: 2 },
+    4: {},
+    5: {},
+    6: {},
+  };
+  g.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  bot.villagers = 5;
+  bot.dispatched = 0;
+  bot.enhancedDice = 1;
+  bot.enhancedPlaced = 0;
+  g.dice[bot.id] = [5, 5, 3];
+  g.diceBoosted = { [bot.id]: [true, false, false] };
+
+  ok(
+    applyAction(g, bot.id, {
+      type: 'placeDice',
+      payload: { area: 'resource', face: 5, count: 2 },
+    })
+  );
+  assert.ok(
+    g.pendingEventChoice && g.pendingEventChoice.needChoice === 'teleportDie',
+    '应触发传送'
+  );
+  assert.strictEqual(
+    (g.board.resource.boosts[5] || {})[bot.id] || 0,
+    1,
+    '5 号格应有 1 强化'
+  );
+  assert.strictEqual(
+    (g.board.resource.workers[5] || {})[bot.id] || 0,
+    2,
+    '5 号格应有 2 枚'
+  );
+
+  const fromAct = decideBotAction(g, bot.id, 'hard');
+  assert.ok(fromAct && fromAct.type === 'eventTeleportFrom');
+  assert.strictEqual(
+    typeof fromAct.payload.enhanced,
+    'boolean',
+    '来源须带 enhanced'
+  );
+  ok(applyAction(g, bot.id, fromAct));
+  assert.strictEqual(g.pendingEventChoice.teleportStep, 'to');
+  assert.strictEqual(
+    typeof g.pendingEventChoice.fromDieKind,
+    'boolean',
+    'fromDieKind 须已解析'
+  );
+
+  const toAct = decideBotAction(g, bot.id, 'hard');
+  assert.ok(toAct && toAct.type === 'eventTeleportTo');
+  ok(applyAction(g, bot.id, toAct), '混有普通+强化时传送落点不得失败');
+  assert.ok(
+    !g.pendingEventChoice || g.pendingEventChoice.needChoice !== 'teleportDie',
+    '传送选择应已结束'
+  );
+  console.log('✓ bot teleport mixed normal+enhanced does not stick');
+
+  // 旧 pending（fromDieKind 缺失）也能被 forceTimeout 解开，不再卡在同一步
+  const g2 = createGameState(room(2));
+  finishInit(g2);
+  const b2 = g2.players[0];
+  g2.phase = 'produce';
+  g2.currentPlayerId = b2.id;
+  g2.awaitingProduceRoll = false;
+  g2.board.resource.tiles = [
+    {
+      id: 'r1',
+      kind: 'resource',
+      resource: 'wood',
+      large: 2,
+      small: 1,
+      number: 1,
+      label: '木',
+    },
+    {
+      id: 'r2',
+      kind: 'resource',
+      resource: 'food',
+      large: 2,
+      small: 1,
+      number: 2,
+      label: '粮',
+    },
+  ];
+  g2.board.special.tiles = [];
+  g2.board.resource.environments = {
+    1: null,
+    2: null,
+    3: null,
+    4: null,
+    5: null,
+    6: null,
+  };
+  g2.board.resource.workers = {
+    1: { [b2.id]: 2 },
+    2: {},
+    3: {},
+    4: {},
+    5: {},
+    6: {},
+  };
+  g2.board.resource.boosts = {
+    1: { [b2.id]: 1 },
+    2: {},
+    3: {},
+    4: {},
+    5: {},
+    6: {},
+  };
+  g2.pendingEventChoice = {
+    needChoice: 'teleportDie',
+    teleportStep: 'to',
+    envType: 'teleport',
+    label: '传送',
+    number: 1,
+    playerId: b2.id,
+    fromArea: 'resource',
+    fromNumber: 1,
+    fromTargetId: b2.id,
+    fromDieKind: undefined,
+  };
+  const ft = forceTimeout(g2, b2.id);
+  assert.ok(ft && ft.ok, 'forceTimeout 应解开缺失 fromDieKind 的传送');
+  assert.ok(!g2.pendingEventChoice, '无落点事件时应清掉 pending');
+  assert.strictEqual(
+    (g2.board.resource.workers[1] || {})[b2.id] || 0,
+    1,
+    '应移走 1 枚'
+  );
+  assert.strictEqual(
+    (g2.board.resource.workers[2] || {})[b2.id] || 0,
+    1,
+    '应落到 2 号格'
+  );
+  assert.strictEqual(
+    (g2.board.resource.boosts[1] || {})[b2.id] || 0,
+    1,
+    '默认挪普通，强化应留在来源格'
+  );
+  console.log('✓ forceTimeout repairs missing teleport fromDieKind');
 }
 
 console.log('— bot resistBarbarians score 0 when threshold already met —');

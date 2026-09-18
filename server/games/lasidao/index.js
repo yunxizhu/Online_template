@@ -32,4 +32,5 @@ module.exports = {
   INIT_ANNOUNCE_MS: engine.INIT_ANNOUNCE_MS,
   SETTLE_ANIM_MAX_MS: engine.SETTLE_ANIM_MAX_MS,
   decideBotAction: bot.decideBotAction,
+  supportsHosting: true,
 };

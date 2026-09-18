@@ -13,6 +13,15 @@ const GAMES = {
   [lasidao.id]: lasidao,
 };
 
+function gameSupportsBot(game) {
+  return Boolean(game && typeof game.decideBotAction === 'function');
+}
+
+/** 对局中玩家托管（由电脑代操作）；默认仅显式声明的游戏支持 */
+function gameSupportsHosting(game) {
+  return Boolean(game && game.supportsHosting === true);
+}
+
 function listGames() {
   return Object.values(GAMES).map((g) => ({
     id: g.id,
@@ -21,6 +30,10 @@ function listGames() {
     maxPlayers: g.maxPlayers,
     modes: g.modes || null,
     client: g.client || null,
+    /** 是否接入 AI（游戏模块导出 decideBotAction，通常来自 bot.js） */
+    supportsBot: gameSupportsBot(g),
+    /** 是否允许对局中玩家托管 */
+    supportsHosting: gameSupportsHosting(g),
   }));
 }
 
@@ -38,4 +51,6 @@ module.exports = {
   listGames,
   getGame,
   resolveGameType,
+  gameSupportsBot,
+  gameSupportsHosting,
 };

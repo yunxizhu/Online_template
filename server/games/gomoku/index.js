@@ -1,5 +1,7 @@
 'use strict';
 
+const bot = require('./bot');
+
 const SIZE = 15;
 const EMPTY = 0;
 const BLACK = 1;
@@ -240,4 +242,7 @@ module.exports = {
   getActingPlayerIds,
   onPlayerQuit,
   forceTimeout,
+  decideBotAction: bot.decideBotAction,
+  /** 五子棋仅支持添加电脑，对局中不允许玩家托管 */
+  supportsHosting: false,
 };
