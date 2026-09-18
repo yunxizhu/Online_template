@@ -1412,10 +1412,26 @@ function seatAutoDifficulty(seat) {
   return (seat && seat.botDifficulty) || 'normal';
 }
 
-/** 人机行动指纹：用于检测「决策/超时后状态未变」的卡死 */
+/** 人机行动指纹：用于检测「决策/超时后状态未变」的卡死。
+ * 建造/生产可以连续行动且不换人，必须把资源、繁殖、日志也算进去，
+ * 否则一次成功的繁殖会被当成卡死并强制跳过。
+ */
 function botActingFingerprint(game, playerId) {
   if (!game || !playerId) return '';
   const ev = game.pendingEventChoice;
+  const p = Array.isArray(game.players)
+    ? game.players.find((x) => x && x.id === playerId)
+    : null;
+  const res = (p && p.resources) || {};
+  const log = game.log;
+  const lastLog =
+    log && log.length
+      ? String(
+          (log[log.length - 1] && (log[log.length - 1].text || log[log.length - 1])) ||
+            ''
+        )
+      : '';
+  const dice = (game.dice && game.dice[playerId]) || [];
   const parts = [
     game.phase || '',
     game.currentPlayerId || '',
@@ -1437,6 +1453,28 @@ function botActingFingerprint(game, playerId) {
     game.pendingWelfareMinimumChoices[playerId]
       ? 'welfare'
       : '',
+    p
+      ? [
+          p.villagers,
+          p.houses,
+          p.roundBred ? 1 : 0,
+          p.roundBuiltHouse ? 1 : 0,
+          p.expandResSlots,
+          p.expandSlots,
+          p.dispatched,
+          p.voided,
+          res.wood,
+          res.stone,
+          res.food,
+          res.iron,
+          (p.funcCards || []).length,
+          (p.buildings || []).length,
+          p.buildTurnBuyFuncCount,
+          game.buildPassed && game.buildPassed[playerId] ? 1 : 0,
+          dice.length,
+        ].join(',')
+      : '',
+    lastLog,
   ];
   return parts.join('|');
 }

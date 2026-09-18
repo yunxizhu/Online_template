@@ -856,7 +856,8 @@ function estimateEventSettleGain(game, player, number, selfRank, count = null) {
 
 /**
  * 先到先得 / 抵抗南蛮：本次未达触发门槛时的「追梦」分。
- * 剩余空闲村民较多时，占坑降低后续触发难度；库存已领走 / 南蛮格对手骰过多则不加。
+ * 只算手里还能落到本点数的骰；别的点数放不上这格。
+ * 库存已领走 / 南蛮格对手骰过多则不加。
  */
 function estimateThresholdChaseBonus(game, player, number, count, selfRank) {
   const env = envOnResourceSlot(game, number);
@@ -865,9 +866,12 @@ function estimateThresholdChaseBonus(game, player, number, count, selfRank) {
   const myPrev = Number(wk[player.id]) || 0;
   const placed = Math.max(0, Number(count) || 0);
   const after = myPrev + placed;
-  const remAfter = Math.max(0, remainingDiceCount(player) - placed);
+  const hand = (game.dice && player && game.dice[player.id]) || [];
+  let sameFace = 0;
+  for (const d of hand) if (Number(d) === Number(number)) sameFace += 1;
+  const remAfter = Math.max(0, sameFace - placed);
   const villagers = Number(player.villagers) || 0;
-  // 剩余较多才值得追：≥3，或村民池大且仍有 ≥2
+  // 同点剩余较多才值得追：≥3，或村民池大且同点仍有 ≥2
   const diceRich = remAfter >= 3 || (remAfter >= 2 && villagers >= 5);
 
   if (env.envType === 'firstCome') {
@@ -1091,7 +1095,7 @@ function estimateSpecialTilePlaceValue(game, player, tile, diff) {
   if (tile.funcType || tile.kind === 'function') {
     if (diff === 'hard') {
       const vals = {
-        enhance: 26,
+        enhance: 40, // 空强化应压过空的 3 资源大份（含最后一骰独占），仍低于真正触发的先到先得
         shelter: 22,
         recruit: 22,
         redraw: 18,

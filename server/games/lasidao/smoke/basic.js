@@ -7828,14 +7828,14 @@ console.log('— bot chases firstCome when dice-rich —');
   bot.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
   bot.buildings = [];
   bot.funcCards = [];
-  bot.villagers = 6;
+  bot.villagers = 4;
   bot.dispatched = 0;
   bot.voided = 0;
   rival.villagers = 3;
   rival.dispatched = 3;
   rival.voided = 0;
-  g.dice = { [bot.id]: [2], [rival.id]: [] };
-  g.diceBoosted = { [bot.id]: [false] };
+  g.dice = { [bot.id]: [2, 2, 2, 2], [rival.id]: [] };
+  g.diceBoosted = { [bot.id]: [false, false, false, false] };
 
   const fcScore = scoreProduceMove(g, bot, 2, 'resource', 1, 0, 'hard', {});
   const plainScore = scoreProduceMove(g, bot, 4, 'resource', 1, 0, 'hard', {});
