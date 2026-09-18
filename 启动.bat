@@ -23,7 +23,7 @@ set "OPEN_BROWSER=1"
 set "LIANJI_UPDATE_RESTART="
 
 echo.
-echo [update] checking host OTA before start...
+echo [update] 启动前检查并自动升级（无需确认）...
 call node "%~dp0scripts\check-host-update.js"
 echo.
 
@@ -31,7 +31,7 @@ echo Checking port %PORT% ...
 call :free_listen %PORT%
 
 :run
-echo Starting http://localhost:%PORT% ...
+echo [update] 启动中... http://localhost:%PORT%
 if defined LIANJI_UPDATE_RESTART (
   set "OPEN_BROWSER="
 )
@@ -40,7 +40,7 @@ if exist "%~dp0.update\restart.flag" (
   del /f /q "%~dp0.update\restart.flag" >nul 2>nul
   set "LIANJI_UPDATE_RESTART=1"
   echo.
-  echo [update] restarting after OTA...
+  echo [update] 升级后重启中...
   timeout /t 1 /nobreak >nul
   call :free_listen %PORT%
   goto run

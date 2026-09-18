@@ -6763,8 +6763,5 @@
     }
   }
 
-  // 进入页后延迟检查（仅本机 canApply 时弹窗）
-  setTimeout(() => {
-    checkHostUpdate({ manual: false }).catch(() => {});
-  }, 5000);
+  // 自动升级已改到启动.bat 命令行完成；大厅不再自动弹窗（菜单「检查更新」仍可用）
 })();

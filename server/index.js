@@ -2371,25 +2371,13 @@ server.listen(PORT, '0.0.0.0', () => {
     });
   } catch (_) {}
 
-  // 启动后检查主机差分更新（始终打印结果，方便对照 启动.bat 窗口）
-  if (!hostUpdate.disabled) {
-    console.log('[update] 启动后将检查更新…');
-    console.log('[update] 清单地址: ' + hostUpdate.manifestUrl);
-    setTimeout(() => {
-      hostUpdate
-        .check({ force: true })
-        .then((r) => {
-          console.log(hostUpdate.formatCheckReport(r));
-        })
-        .catch((err) => {
-          console.warn(
-            '[update] 检查失败:',
-            err && err.message ? err.message : err
-          );
-        });
-    }, 2500);
-  } else {
+  // 主机 OTA 已在 启动.bat → scripts/check-host-update.js 启动前完成；此处仅标记状态
+  if (hostUpdate.disabled) {
     console.log('[update] 已禁用（存在 update.off）');
+  } else {
+    console.log(
+      '[update] 启动前已检查/升级（清单: ' + hostUpdate.manifestUrl + '）'
+    );
   }
 });
 

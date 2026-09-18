@@ -112,7 +112,16 @@ function copyAppSources(destDir) {
     cpDir(src, path.join(destDir, dir));
     console.log(`    ${dir}/`);
   }
+  // 启动前 OTA（发行包允许升级；本地 update.off 不会打进包）
+  ensureDir(path.join(destDir, 'scripts'));
+  copyFile(
+    path.join(ROOT, 'scripts', 'check-host-update.js'),
+    path.join(destDir, 'scripts', 'check-host-update.js')
+  );
   copyFile(path.join(ROOT, 'mqtt.channel'), path.join(destDir, 'mqtt.channel'));
+  // 本地开发用的禁升级标记绝不能进入发行包
+  removeFile(path.join(destDir, 'update.off'));
+  removeFile(path.join(destDir, 'update.url'));
   console.log('  copy node_modules...');
   cpDir(path.join(ROOT, 'node_modules'), path.join(destDir, 'node_modules'), {
     skipNames: ['.cache'],
@@ -174,13 +183,18 @@ function writeWindowsLauncher(destDir, nodeExeName) {
     `set PORT=${DEFAULT_PORT}\r\n` +
     'set OPEN_BROWSER=1\r\n' +
     'set LIANJI_UPDATE_RESTART=\r\n' +
-    'echo Starting lianji server...\r\n' +
-    'echo [update] OTA check runs after server starts; watch for [update] lines below.\r\n' +
     `if not exist "%~dp0${nodeExeName}" (\r\n` +
     `  echo [ERROR] missing ${nodeExeName}\r\n` +
     '  pause\r\n' +
     '  exit /b 1\r\n' +
     ')\r\n' +
+    'echo.\r\n' +
+    'echo [update] 启动前检查并自动升级（无需确认）...\r\n' +
+    `if exist "%~dp0scripts\\check-host-update.js" (\r\n` +
+    `  "%~dp0${nodeExeName}" "%~dp0scripts\\check-host-update.js"\r\n` +
+    ')\r\n' +
+    'echo.\r\n' +
+    'echo [update] 启动中...\r\n' +
     ':run\r\n' +
     `"%~dp0${nodeExeName}" "%~dp0server\\index.js"\r\n` +
     'if exist "%~dp0.update\\restart.flag" (\r\n' +
@@ -188,7 +202,7 @@ function writeWindowsLauncher(destDir, nodeExeName) {
     '  set OPEN_BROWSER=\r\n' +
     '  set LIANJI_UPDATE_RESTART=1\r\n' +
     '  echo.\r\n' +
-    '  echo [update] restarting after OTA...\r\n' +
+    '  echo [update] 升级后重启中...\r\n' +
     '  timeout /t 1 /nobreak >nul\r\n' +
     '  goto run\r\n' +
     ')\r\n' +
@@ -219,8 +233,8 @@ function windowsReadme(nodeExeName) {
     '\n' +
     '主机差分更新（默认 Gitee）\n' +
     '--------\n' +
-    '启动后本机浏览器会检测更新；也可在菜单点「检查更新」。\n' +
-    '须用 http://localhost 打开本机页（不要用隧道域名点升级）。\n' +
+    '双击启动时会在命令行自动检查并升级，完成后打开客户端。\n' +
+    '也可在菜单点「检查更新」手动升级。\n' +
     '禁用：在目录下放 update.off\n' +
     '自定义清单地址：update.url（一行 URL）\n' +
     '默认：https://raw.giteeusercontent.com/xiyunzhu/online_template/raw/ota/host-update.json\n'

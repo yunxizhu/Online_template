@@ -504,14 +504,12 @@ class HostUpdateChecker {
     if (r.notes) lines.push('[update] 说明: ' + r.notes);
     if (r.available) {
       lines.push(
-        '[update] 结果: 有更新可用 — ' +
+        '[update] 结果: 检测到升级 — ' +
           (r.changedCount || 0) +
           ' 个文件 / 约 ' +
           formatBytes(r.totalBytes || 0)
       );
-      lines.push(
-        '[update] 请用本机浏览器打开 http://localhost 后点「立即更新」'
-      );
+      lines.push('[update] 目标版本: ' + (r.remoteVersion || '?'));
     } else {
       const local = r.localVersion || this.getLocalVersion();
       const remote = r.remoteVersion || '';
@@ -521,7 +519,7 @@ class HostUpdateChecker {
         );
       } else if (remote && cmpSemver(local, remote) === 0) {
         lines.push(
-          '[update] 结果: 已是最新（本地与线上版本相同，不会弹窗）'
+          '[update] 结果: 已是最新（本地与线上版本相同）'
         );
       } else {
         lines.push('[update] 结果: 无需更新');
@@ -532,19 +530,27 @@ class HostUpdateChecker {
   }
 
   /**
-   * @param {{ restart?: boolean }} opts
+   * @param {{ restart?: boolean, onProgress?: (p: object) => void }} opts
    */
   async apply(opts = {}) {
     if (this.applying) throw new Error('正在更新中');
     this.applying = true;
-    this.progress = {
+    const setProgress = (p) => {
+      this.progress = p;
+      if (typeof opts.onProgress === 'function') {
+        try {
+          opts.onProgress(p);
+        } catch (_) {}
+      }
+    };
+    setProgress({
       phase: 'prepare',
       message: '准备更新…',
       current: 0,
       total: 0,
       bytes: 0,
       totalBytes: 0,
-    };
+    });
     try {
       let check = this.lastCheck;
       if (!check || !check.available || !Array.isArray(check.changed)) {
@@ -556,14 +562,14 @@ class HostUpdateChecker {
 
       const list = check.changed;
       const totalBytes = list.reduce((s, f) => s + (Number(f.size) || 0), 0);
-      this.progress = {
+      setProgress({
         phase: 'download',
         message: '下载文件…',
         current: 0,
         total: list.length,
         bytes: 0,
         totalBytes,
-      };
+      });
 
       rmDirSafe(this.stagingDir);
       ensureDir(this.stagingDir);
@@ -571,14 +577,15 @@ class HostUpdateChecker {
       let bytesDone = 0;
       for (let i = 0; i < list.length; i++) {
         const f = list[i];
-        this.progress = {
+        setProgress({
           phase: 'download',
           message: '下载 ' + f.path,
           current: i,
           total: list.length,
           bytes: bytesDone,
           totalBytes,
-        };
+          file: f.path,
+        });
         const buf = await fetchBuffer(f.url, {
           timeoutMs: 120000,
           onData: (n) => {
@@ -603,24 +610,25 @@ class HostUpdateChecker {
         ensureDir(path.dirname(dest));
         fs.writeFileSync(dest, body);
         bytesDone += buf.length;
-        this.progress = {
+        setProgress({
           phase: 'download',
           message: '已下载 ' + f.path,
           current: i + 1,
           total: list.length,
           bytes: bytesDone,
           totalBytes,
-        };
+          file: f.path,
+        });
       }
 
-      this.progress = {
+      setProgress({
         phase: 'apply',
         message: '写入文件…',
         current: 0,
         total: list.length,
         bytes: bytesDone,
         totalBytes,
-      };
+      });
 
       rmDirSafe(this.prevDir);
       ensureDir(this.prevDir);
@@ -636,14 +644,15 @@ class HostUpdateChecker {
           fs.copyFileSync(target, bak);
         }
         fs.copyFileSync(staged, target);
-        this.progress = {
+        setProgress({
           phase: 'apply',
           message: '已写入 ' + f.path,
           current: i + 1,
           total: list.length,
           bytes: bytesDone,
           totalBytes,
-        };
+          file: f.path,
+        });
       }
 
       // 若 package.json 未在变更列表里，仍把版本号对齐到远端（避免反复提示）
@@ -679,14 +688,14 @@ class HostUpdateChecker {
         ) + '\n'
       );
 
-      this.progress = {
+      setProgress({
         phase: 'done',
         message: '更新完成',
         current: list.length,
         total: list.length,
         bytes: bytesDone,
         totalBytes,
-      };
+      });
 
       this.lastCheck = {
         ...check,
@@ -706,11 +715,11 @@ class HostUpdateChecker {
           path.join(this.updateDir, 'skip-browser.flag'),
           '1\n'
         );
-        this.progress = {
+        setProgress({
           ...this.progress,
           phase: 'restart',
           message: '即将重启服务…',
-        };
+        });
       }
 
       return {
@@ -721,7 +730,7 @@ class HostUpdateChecker {
         restart: doRestart,
       };
     } catch (err) {
-      this.progress = {
+      setProgress({
         phase: 'error',
         message: err && err.message ? err.message : String(err),
         current: (this.progress && this.progress.current) || 0,
@@ -729,7 +738,7 @@ class HostUpdateChecker {
         bytes: (this.progress && this.progress.bytes) || 0,
         totalBytes: (this.progress && this.progress.totalBytes) || 0,
         error: err && err.message ? err.message : String(err),
-      };
+      });
       throw err;
     } finally {
       this.applying = false;
