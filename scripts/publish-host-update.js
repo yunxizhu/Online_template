@@ -320,10 +320,28 @@ function ensureOtaRemote(remoteName, owner, repo) {
   );
 }
 
+function clearStaleOtaWorktree(worktreePath) {
+  try {
+    runGit(['worktree', 'prune']);
+  } catch (_) {}
+  if (fs.existsSync(worktreePath)) return;
+  // 目录已删但 git 仍登记时，强制注销（prune 偶尔不够）
+  try {
+    runGit(['worktree', 'remove', '--force', worktreePath]);
+  } catch (_) {}
+  try {
+    runGit(['worktree', 'prune']);
+  } catch (_) {}
+}
+
 async function ensureOtaWorktree(worktreePath, remoteName) {
   const label = 'preparing worktree';
   const state = { last: -1 };
   writeProgress(label, 0, state);
+
+  if (!fs.existsSync(worktreePath)) {
+    clearStaleOtaWorktree(worktreePath);
+  }
 
   if (fs.existsSync(worktreePath)) {
     try {
@@ -357,7 +375,10 @@ async function ensureOtaWorktree(worktreePath, remoteName) {
       finishProgress(label);
       return;
     } catch (_) {
-      fs.rmSync(worktreePath, { recursive: true, force: true });
+      try {
+        fs.rmSync(worktreePath, { recursive: true, force: true });
+      } catch (_) {}
+      clearStaleOtaWorktree(worktreePath);
     }
   }
 
@@ -377,6 +398,7 @@ async function ensureOtaWorktree(worktreePath, remoteName) {
 
   if (remoteHas) {
     writeProgress(label, 65, state);
+    clearStaleOtaWorktree(worktreePath);
     runGit(['worktree', 'add', worktreePath, remoteName + '/' + OTA_BRANCH]);
     writeProgress(label, 90, state);
     try {
@@ -389,11 +411,13 @@ async function ensureOtaWorktree(worktreePath, remoteName) {
   const branches = runGit(['branch', '--list', OTA_BRANCH]);
   writeProgress(label, 70, state);
   if (branches) {
+    clearStaleOtaWorktree(worktreePath);
     runGit(['worktree', 'add', worktreePath, OTA_BRANCH]);
     finishProgress(label);
     return;
   }
 
+  clearStaleOtaWorktree(worktreePath);
   runGit(['worktree', 'add', '--detach', worktreePath, 'HEAD']);
   writeProgress(label, 80, state);
   runGit(['checkout', '--orphan', OTA_BRANCH], { cwd: worktreePath });
