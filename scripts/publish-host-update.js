@@ -2,6 +2,7 @@
 
 /**
  * 一键发布 Windows 主机差分更新到 Gitee ota 分支。
+ * 扫描范围与绿版打包内容对齐（不含 node_modules / node.exe / .tools）。
  *
  * 用法：
  *   node scripts/publish-host-update.js
@@ -29,6 +30,12 @@ const {
   fetchManifestObject,
   readOtaBytes,
 } = require('../server/updateChecker');
+const {
+  DEFAULT_PORT,
+  PACK_SUFFIX,
+  PACK_LAUNCHER_FILES,
+  writeWindowsPackLaunchers,
+} = require('./windows-pack-launchers');
 
 const ROOT = path.resolve(__dirname, '..');
 const OTA_BRANCH = 'ota';
@@ -37,8 +44,11 @@ const DEFAULT_REPO = 'online_template';
 /** 推送 OTA 的 git remote 名；可用环境变量 LIANJI_OTA_REMOTE 覆盖 */
 const OTA_REMOTE =
   String(process.env.LIANJI_OTA_REMOTE || 'gitee').trim() || 'gitee';
-const SCAN_DIRS = ['server', 'public'];
+/** 与 Windows 绿版打包同源（排除 node_modules / node.exe / .tools） */
+const SCAN_DIRS = ['server', 'public', 'docs'];
 const ROOT_FILES = ['package.json'];
+const PACK_EXTRA_FILES = ['scripts/check-host-update.js'];
+const OTA_PACK_STAGE = path.join(ROOT, 'dist', 'ota-pack-files');
 const SKIP_DIR_NAMES = new Set([
   'node_modules',
   '.git',
@@ -130,7 +140,7 @@ function walkFiles(dir, relBase, out) {
   }
 }
 
-function collectHostFiles() {
+function collectHostFiles(version) {
   const list = [];
   for (const d of SCAN_DIRS) {
     walkFiles(path.join(ROOT, d), d, list);
@@ -138,8 +148,33 @@ function collectHostFiles() {
   for (const f of ROOT_FILES) {
     if (fs.existsSync(path.join(ROOT, f)) && isPathAllowed(f)) list.push(f);
   }
+  for (const f of PACK_EXTRA_FILES) {
+    if (fs.existsSync(path.join(ROOT, f)) && isPathAllowed(f)) list.push(f);
+  }
+
+  // 生成与绿版一致的启动脚本 / README，供 OTA 下发
+  fs.rmSync(OTA_PACK_STAGE, { recursive: true, force: true });
+  writeWindowsPackLaunchers(OTA_PACK_STAGE, {
+    nodeExeName: 'node.exe',
+    version: version || '0.0.0',
+    suffix: PACK_SUFFIX,
+    port: DEFAULT_PORT,
+  });
+  for (const f of PACK_LAUNCHER_FILES) {
+    if (isPathAllowed(f)) list.push(f);
+  }
+
   list.sort();
-  return list;
+  return [...new Set(list)];
+}
+
+/** 启动脚本读自 ota-pack-files；其余读仓库根 */
+function resolvePublishAbs(rel) {
+  const norm = String(rel || '').replace(/\\/g, '/');
+  if (PACK_LAUNCHER_FILES.includes(norm)) {
+    return path.join(OTA_PACK_STAGE, ...norm.split('/'));
+  }
+  return path.join(ROOT, ...norm.split('/'));
 }
 
 function blobRelPath(sha) {
@@ -447,6 +482,11 @@ function printHelp() {
 
   node scripts/publish-host-update.js [options]
 
+扫描范围（与绿版打包一致，不含 node_modules / node.exe / .tools）:
+  server/  public/  docs/  package.json
+  scripts/check-host-update.js
+  启动.bat  本机多开测试.bat  _start-one.bat  README.txt
+
 选项:
   --notes "说明"       更新说明（中文）
   --notes-en "..."     英文说明
@@ -524,8 +564,8 @@ async function main() {
     );
   }
 
-  const relFiles = collectHostFiles();
-  console.log('[publish] scanning', relFiles.length, 'files…');
+  const relFiles = collectHostFiles(version);
+  console.log('[publish] scanning', relFiles.length, 'files (windows pack set)…');
 
   const existingBlobs = new Set();
   if (remote && Array.isArray(remote.files)) {
@@ -538,7 +578,7 @@ async function main() {
   const newBlobs = [];
   let totalBytes = 0;
   for (const rel of relFiles) {
-    const abs = path.join(ROOT, ...rel.split('/'));
+    const abs = resolvePublishAbs(rel);
     const body = readOtaBytes(abs, rel);
     const sha = sha256Buffer(body);
     const size = body.length;

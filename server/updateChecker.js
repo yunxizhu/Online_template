@@ -2,6 +2,7 @@
 
 /**
  * Windows 主机差分 OTA：拉取远端 host-update.json，按 sha256 只下载变更文件并热替换。
+ * 允许路径与绿版打包内容对齐（server/public/docs + 启动脚本等；不含 node_modules/node.exe/.tools）。
  * 本地配置（可选）：
  *   update.url  — 一行，manifest URL（覆盖默认）
  *   update.off  — 存在则禁用自动检查
@@ -21,8 +22,16 @@ const { URL } = require('url');
 const DEFAULT_MANIFEST_URL =
   'https://raw.giteeusercontent.com/xiyunzhu/online_template/raw/ota/host-update.json';
 
-const ALLOWED_PREFIXES = ['server/', 'public/'];
-const ALLOWED_FILES = new Set(['package.json']);
+const ALLOWED_PREFIXES = ['server/', 'public/', 'docs/'];
+/** 与 Windows 绿版打包内容对齐（不含 node_modules / node.exe / .tools） */
+const ALLOWED_FILES = new Set([
+  'package.json',
+  'scripts/check-host-update.js',
+  '启动.bat',
+  '_start-one.bat',
+  '本机多开测试.bat',
+  'README.txt',
+]);
 const PROTECTED_NAMES = new Set([
   'update.url',
   'update.off',
@@ -30,7 +39,6 @@ const PROTECTED_NAMES = new Set([
   'mqtt.broker',
   'mqtt.off',
   'node.exe',
-  '启动.bat',
 ]);
 
 function readOptionalLine(file) {

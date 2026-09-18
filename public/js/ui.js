@@ -33,6 +33,7 @@
     btnEnterLobby: document.getElementById('btn-enter-lobby'),
     lobbyGate: document.getElementById('lobby-gate'),
     lobbyMain: document.getElementById('lobby-main'),
+    hostOccupiedHint: document.getElementById('host-occupied-hint'),
     btnToggleCreate: document.getElementById('btn-toggle-create'),
     btnToggleJoin: document.getElementById('btn-toggle-join'),
     chkPassiveMode: document.getElementById('chk-passive-mode'),
@@ -168,6 +169,7 @@
     people: [],
     lobbyRooms: [],
     inLobby: false,
+    hostOccupied: false,
     playerName: '',
     pendingRejoin: null,
     ctxTarget: null,
@@ -4142,12 +4144,58 @@
     if (el.lobbyPeopleAside) {
       el.lobbyPeopleAside.hidden = !state.inLobby;
     }
+    if (el.hostOccupiedHint) {
+      el.hostOccupiedHint.hidden = !state.hostOccupied;
+      if (state.hostOccupied) {
+        el.hostOccupiedHint.textContent = t('toast.hostOccupied');
+      }
+    }
     syncGuestChrome();
     syncChatVisibility();
     refreshNickUi();
     updateMeLabel();
     if (state.inLobby) startLobbyAutoRefresh();
     else stopLobbyAutoRefresh();
+  }
+
+  function formatHostOccupiedText(data) {
+    if (data && data.message) return String(data.message);
+    const who =
+      (data && data.occupant && data.occupant.who) ||
+      (data && data.who) ||
+      '';
+    if (who) {
+      const labeled = t('toast.hostOccupiedBy', { who });
+      return labeled === 'toast.hostOccupiedBy'
+        ? `${t('toast.hostOccupied')}（占用者：${who}）`
+        : labeled;
+    }
+    return t('toast.hostOccupied');
+  }
+
+  function applyHostOccupied(data) {
+    const message =
+      typeof data === 'string' ? data : formatHostOccupiedText(data);
+    state.inLobby = false;
+    state.hostOccupied = true;
+    if (el.hostOccupiedHint) {
+      el.hostOccupiedHint.hidden = false;
+      el.hostOccupiedHint.textContent = message;
+    }
+    showLobbyHome();
+    showToast(message);
+  }
+
+  function clearHostOccupied() {
+    state.hostOccupied = false;
+    if (el.hostOccupiedHint) el.hostOccupiedHint.hidden = true;
+  }
+
+  function applyHostFreed(message) {
+    if (!state.hostOccupied) return;
+    clearHostOccupied();
+    showLobbyHome();
+    showToast(message || t('toast.hostFreed'));
   }
 
   function syncCreateModalChrome() {
@@ -4355,16 +4403,20 @@
     state.pendingRejoin = null;
 
     await net.connect(net.getLocalOrigin());
-    // 访客深链进房：须等 lobby:join 完成后再 room:join
-    if (skipRejoin) {
+    // 须等 lobby:join 结果：占用锁拒绝时不能乐观进大厅
+    try {
       await net.joinLobbyAndWait(next, {
         ...lobbyJoinOpts(),
         timeoutMs: 10000,
         requireMe: true,
       });
-    } else {
-      net.joinLobby(next, lobbyJoinOpts());
+    } catch (err) {
+      if (err && err.code === 'HOST_OCCUPIED') {
+        applyHostOccupied(err);
+      }
+      throw err;
     }
+    clearHostOccupied();
     state.inLobby = true;
     setCreatePanelOpen(false);
     setJoinPanelOpen(false);
@@ -4545,6 +4597,7 @@
     try {
       await enterLobbyWithName(name);
     } catch (err) {
+      if (err && err.code === 'HOST_OCCUPIED') return;
       showToast(err.message || t('toast.localFail'));
     }
   });
@@ -6206,6 +6259,14 @@
     showToast(t('toast.tunnelHostReady'));
   });
 
+  net.on('host:occupied', (data) => {
+    applyHostOccupied(data || {});
+  });
+
+  net.on('host:free', (data) => {
+    applyHostFreed((data && data.message) || t('toast.hostFreed'));
+  });
+
   net.on('disconnect', () => {
     if (leavingToLocal) return;
     // 代开端：被动服务端关闭 / 隧道断开 → 退出代开，回自己的网页端
@@ -6552,6 +6613,7 @@
       if (el.playerName) el.playerName.value = savedNick;
       refreshNickUi();
       enterLobbyWithName(savedNick, { silent: true }).catch((err) => {
+        if (err && err.code === 'HOST_OCCUPIED') return;
         showToast(err.message || t('toast.autoLobbyFail'));
         state.inLobby = false;
         showLobbyHome();

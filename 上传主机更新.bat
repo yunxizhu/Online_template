@@ -13,7 +13,11 @@ echo ========================================
 echo   Publish Windows host OTA (Gitee)
 echo ========================================
 echo.
-echo   Scans server/ + public/ + package.json
+echo   Scans Windows green-pack content:
+echo     server/ public/ docs/ package.json
+echo     scripts/check-host-update.js
+echo     启动.bat / 本机多开测试.bat / _start-one.bat / README.txt
+echo   (skips node_modules, node.exe, .tools)
 echo   Uploads new blobs to Gitee branch "ota"
 echo   Updates host-update.json for other hosts
 echo.

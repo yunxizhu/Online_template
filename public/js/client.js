@@ -278,6 +278,8 @@ window.GameNet = (function () {
       'player:me',
       'session:reclaimed',
       'session:reclaim-failed',
+      'host:occupied',
+      'host:free',
       'room:update',
       'room:creating',
       'room:error',
@@ -528,6 +530,7 @@ window.GameNet = (function () {
         clearTimeout(timer);
         s.off('player:me', onMe);
         s.off('session:reclaimed', onMe);
+        s.off('host:occupied', onOccupied);
         if (err) reject(err);
         else resolve();
       };
@@ -542,8 +545,17 @@ window.GameNet = (function () {
         gotMe = true;
         finish();
       }
+      function onOccupied(data) {
+        const err = new Error(
+          (data && data.message) || '本机已被占用'
+        );
+        err.code = 'HOST_OCCUPIED';
+        err.occupant = (data && data.occupant) || null;
+        finish(err);
+      }
       s.once('player:me', onMe);
       s.once('session:reclaimed', onMe);
+      s.once('host:occupied', onOccupied);
       s.emit('lobby:join', {
         playerName,
         playerTag: opts.playerTag || window.PlayerNick.ensureTag(),

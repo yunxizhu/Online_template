@@ -1018,6 +1018,12 @@ button.secondary:hover {
   font-size: 0.9rem;
 }
 
+.host-occupied-hint {
+  margin: 0.75rem 0 0;
+  color: #b42318;
+  font-weight: 600;
+}
+
 .badge {
   display: inline-block;
   margin-left: 0.4rem;

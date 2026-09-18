@@ -12,22 +12,75 @@ const { syncTurnTimer, clearTurnTimer } = require('./turnTimer');
 const { MqttBulletin, ROOM_OFFLINE_MS } = require('./mqttBulletin');
 const { QuickTunnel } = require('./tunnel');
 const { HostUpdateChecker } = require('./updateChecker');
+const { HostOccupancy } = require('./hostOccupancy');
 const crypto = require('crypto');
 const pathRoot = path.join(__dirname, '..');
 const hostUpdate = new HostUpdateChecker({ rootDir: pathRoot });
+const hostOccupancy = new HostOccupancy();
 
-function isHostConsoleRequest(req) {
-  const host = String(req.headers.host || '').toLowerCase();
-  const origin = String(req.headers.origin || '');
-  const referer = String(req.headers.referer || '');
+function isLocalPageHeaders(host, origin, referer) {
+  const h = String(host || '').toLowerCase();
   const hostLocal =
-    /^localhost(?::\d+)?$/i.test(host) ||
-    /^127\.0\.0\.1(?::\d+)?$/.test(host) ||
-    /^\[::1\](?::\d+)?$/.test(host);
+    /^localhost(?::\d+)?$/i.test(h) ||
+    /^127\.0\.0\.1(?::\d+)?$/.test(h) ||
+    /^\[::1\](?::\d+)?$/.test(h);
   const pageLocal = (s) =>
     /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?\/?/i.test(String(s || ''));
   // 隧道访客 Host/Origin 为 trycloudflare 域名；本机控制台为 localhost
   return hostLocal || pageLocal(origin) || pageLocal(referer);
+}
+
+function isHostConsoleRequest(req) {
+  return isLocalPageHeaders(
+    req.headers.host,
+    req.headers.origin,
+    req.headers.referer
+  );
+}
+
+function isHostConsoleSocket(socket) {
+  const hs = (socket && socket.handshake) || {};
+  const headers = hs.headers || {};
+  return isLocalPageHeaders(headers.host, headers.origin, headers.referer);
+}
+
+const HOST_OCCUPIED_MSG = '本机已被占用';
+
+function occupantPayload() {
+  const snap = hostOccupancy.getSnapshot();
+  if (!snap) return null;
+  return {
+    name: snap.name || '',
+    tag: snap.tag || '',
+    sessionId: snap.sessionId || '',
+    who: snap.who || '',
+  };
+}
+
+function hostOccupiedMessage() {
+  const who = hostOccupancy.formatWho();
+  if (who) return `${HOST_OCCUPIED_MSG}（占用者：${who}）`;
+  return HOST_OCCUPIED_MSG;
+}
+
+function emitHostOccupied(socket) {
+  if (!socket) return;
+  socket.emit('host:occupied', {
+    message: hostOccupiedMessage(),
+    occupant: occupantPayload(),
+  });
+}
+
+/** 非占用者禁止开房/被动等主机操作 */
+function assertHostOccupant(socket, sessionId) {
+  const sid =
+    sessionId ||
+    (rooms.getPlayer(socket.id) && rooms.getPlayer(socket.id).sessionId) ||
+    null;
+  if (hostOccupancy.isBlockedFor(sid, socket.id)) {
+    return { ok: false, error: hostOccupiedMessage(), occupant: occupantPayload() };
+  }
+  return { ok: true };
 }
 
 function listLanIPv4() {
@@ -85,6 +138,25 @@ const io = new Server(server, {
     skipMiddlewares: true,
   },
 });
+
+hostOccupancy.onRelease = () => {
+  try {
+    io.emit('host:free', { message: '本机已空闲' });
+  } catch (_) {}
+};
+
+function findLiveSessionPeer(sessionId, exceptSocketId) {
+  const sid = sessionId ? String(sessionId).slice(0, 64) : '';
+  if (!sid) return null;
+  for (const [id, sock] of io.sockets.sockets) {
+    if (id === exceptSocketId || !sock || !sock.connected) continue;
+    const p = rooms.getPlayer(id);
+    if (p && p.sessionId && String(p.sessionId).slice(0, 64) === sid) {
+      return id;
+    }
+  }
+  return null;
+}
 
 const rooms = new RoomManager();
 let mqttBulletin = null;
@@ -1134,6 +1206,10 @@ io.on('connection', (socket) => {
     const playerTag = data.playerTag || null;
     // 仅在明确「重新加入」时认领座位；普通进大厅不自动回桌
     const wantRejoin = Boolean(data.rejoin);
+    // 进房通行：带有效本机 roomId 且非「重连认领」路径（joinRoomOnHost 先 lobby 再 room）
+    const joinTransit =
+      !wantRejoin && hostOccupancy.isJoinTransit(roomIdHint, rooms);
+
     const reclaimed = wantRejoin
       ? rooms.tryReclaimSeat(
           socket.id,
@@ -1163,6 +1239,13 @@ io.on('connection', (socket) => {
       socket.join(reclaimed.room.id);
       joinHallChat(socket);
       socket.data.playerName = player.name;
+      // 座位重连：不抢占主机占用权；若本就是占用者则续占
+      if (hostOccupancy.isOwner(sessionId, socket.id)) {
+        hostOccupancy.claim(sessionId, socket.id, {
+          name: player.name,
+          tag: player.tag,
+        });
+      }
       mqttOnLogin();
       emitLobbyUpdate();
       emitPlayerMe(socket, player, data.playerName);
@@ -1179,6 +1262,18 @@ io.on('connection', (socket) => {
         scheduleLasidaoInitAnnounce(reclaimed.room);
       }
       return;
+    }
+
+    // 大厅占用锁：本机/隧道统一按 sessionId；进房通行放行
+    if (!joinTransit) {
+      if (hostOccupancy.isBlockedFor(sessionId, socket.id)) {
+        emitHostOccupied(socket);
+        return;
+      }
+      hostOccupancy.claim(sessionId, socket.id, {
+        name: data.playerName,
+        tag: playerTag,
+      });
     }
 
     if (wantRejoin) {
@@ -1219,6 +1314,12 @@ io.on('connection', (socket) => {
       role: data.role,
     });
     socket.data.playerName = player.name;
+    if (!joinTransit && hostOccupancy.isOwner(sessionId, socket.id)) {
+      hostOccupancy.claim(sessionId, socket.id, {
+        name: player.name,
+        tag: player.tag,
+      });
+    }
     joinHallChat(socket);
     if (data.playerName) mqttOnLogin();
     emitLobbyUpdate();
@@ -1406,13 +1507,22 @@ io.on('connection', (socket) => {
   });
 
   socket.on('room:create', async (data = {}) => {
+    const wantPassive = Boolean(data.passiveHost);
+    // 被动代开：由空闲被动主机接待，不走大厅占用锁
+    if (!wantPassive) {
+      const gate = assertHostOccupant(socket, data.sessionId);
+      if (!gate.ok) {
+        socket.emit('room:error', { message: gate.error });
+        return;
+      }
+    }
+
     if (!rooms.getPlayer(socket.id)) {
       rooms.registerPlayer(socket.id, data.playerName || '玩家', playerRegisterOpts(data));
     } else if (data.sessionId || data.playerTag || data.client) {
       rooms.registerPlayer(socket.id, data.playerName || '玩家', playerRegisterOpts(data));
     }
 
-    const wantPassive = Boolean(data.passiveHost);
     let operatorId = null;
     if (wantPassive) {
       // 被动开房：找本机已开启被动模式、且空闲（未被占用）的主机
@@ -1870,6 +1980,19 @@ io.on('connection', (socket) => {
       return;
     }
 
+    const gate = assertHostOccupant(
+      socket,
+      data && data.sessionId
+    );
+    if (!gate.ok) {
+      socket.emit('lobby:error', { message: gate.error });
+      const p = rooms.getPlayer(socket.id);
+      socket.emit('lobby:passive', {
+        passive: Boolean(p && p.passive),
+      });
+      return;
+    }
+
     // 关闭被动：对局进行中禁止；若已在房间则解散房间后再关
     if (!on) {
       // 取消正在进行的「进入被动」准备
@@ -2314,6 +2437,15 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     lastInviteAt.delete(socket.id);
+    const me = rooms.getPlayer(socket.id);
+    if (hostOccupancy.isOwner(me && me.sessionId, socket.id)) {
+      const peerId = findLiveSessionPeer(me && me.sessionId, socket.id);
+      const peer = peerId ? rooms.getPlayer(peerId) : null;
+      hostOccupancy.transferOrRelease(me && me.sessionId, peerId, {
+        name: (peer && peer.name) || (me && me.name),
+        tag: (peer && peer.tag) || (me && me.tag),
+      });
+    }
     // 对局中断线：标记离线并保留牌局，便于重连；大厅/等待房仍直接离开
     const result = rooms.markOffline(socket.id);
     if (result.leftRoomId && result.room) {

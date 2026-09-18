@@ -15,12 +15,16 @@ const {
   copyVendoredCloudflaredTo,
   vendoredCloudflaredFilesFor,
 } = require('../server/tunnel');
+const {
+  DEFAULT_PORT,
+  PACK_SUFFIX,
+  writeWindowsPackLaunchers,
+} = require('./windows-pack-launchers');
 
 const ROOT = path.resolve(__dirname, '..');
 const DIST = path.join(ROOT, 'dist');
 const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const PACK_VERSION = String(PKG.version || '0.0.0');
-const PACK_SUFFIX = 'carastan';
 
 function packDirName(target) {
   return `${PACK_VERSION}-${target}-${PACK_SUFFIX}`;
@@ -60,7 +64,6 @@ const DIR_WIN = path.join(DIST, packDirName('windows'));
 const DIR_ANDROID = path.join(DIST, packDirName('android'));
 const DIR_CLIENT_WIN = path.join(DIST, packDirName('client-windows'));
 const APK_BASENAME = packApkName();
-const DEFAULT_PORT = '39200';
 const CLIENT_DEFAULT_PORT = '39199';
 const MOBILE_WWW = path.join(ROOT, 'mobile', 'www');
 
@@ -192,79 +195,21 @@ function buildWindowsPack() {
   bundleCloudflaredTools(DIR_WIN, 'win32');
 
   if (process.platform === 'win32') {
-    writeWindowsLauncher(DIR_WIN, nodeExeName);
-    writeUtf8(path.join(DIR_WIN, 'README.txt'), windowsReadme(nodeExeName));
+    writeWindowsPackLaunchers(DIR_WIN, {
+      nodeExeName,
+      version: PACK_VERSION,
+      suffix: PACK_SUFFIX,
+      port: DEFAULT_PORT,
+    });
     return Promise.resolve();
   }
-  writeWindowsLauncher(DIR_WIN, 'node.exe');
-  writeUtf8(path.join(DIR_WIN, 'README.txt'), windowsReadme('node.exe'));
+  writeWindowsPackLaunchers(DIR_WIN, {
+    nodeExeName: 'node.exe',
+    version: PACK_VERSION,
+    suffix: PACK_SUFFIX,
+    port: DEFAULT_PORT,
+  });
   return Promise.resolve();
-}
-
-function writeWindowsLauncher(destDir, nodeExeName) {
-  const bat =
-    '@echo off\r\n' +
-    'setlocal\r\n' +
-    'cd /d "%~dp0"\r\n' +
-    `set PORT=${DEFAULT_PORT}\r\n` +
-    'set OPEN_BROWSER=1\r\n' +
-    'set LIANJI_UPDATE_RESTART=\r\n' +
-    `if not exist "%~dp0${nodeExeName}" (\r\n` +
-    `  echo [ERROR] missing ${nodeExeName}\r\n` +
-    '  pause\r\n' +
-    '  exit /b 1\r\n' +
-    ')\r\n' +
-    'echo.\r\n' +
-    'echo [update] 启动前检查并自动升级（无需确认）...\r\n' +
-    `if exist "%~dp0scripts\\check-host-update.js" (\r\n` +
-    `  "%~dp0${nodeExeName}" "%~dp0scripts\\check-host-update.js"\r\n` +
-    ')\r\n' +
-    'echo.\r\n' +
-    'echo [update] 启动中...\r\n' +
-    ':run\r\n' +
-    `"%~dp0${nodeExeName}" "%~dp0server\\index.js"\r\n` +
-    'if exist "%~dp0.update\\restart.flag" (\r\n' +
-    '  del /f /q "%~dp0.update\\restart.flag" >nul 2>nul\r\n' +
-    '  set OPEN_BROWSER=\r\n' +
-    '  set LIANJI_UPDATE_RESTART=1\r\n' +
-    '  echo.\r\n' +
-    '  echo [update] 升级后重启中...\r\n' +
-    '  timeout /t 1 /nobreak >nul\r\n' +
-    '  goto run\r\n' +
-    ')\r\n' +
-    'echo.\r\n' +
-    'pause\r\n';
-  writeUtf8(path.join(destDir, '启动.bat'), bat);
-}
-
-function windowsReadme(nodeExeName) {
-  return (
-    '联机大厅 · Windows 绿色版\n' +
-    '========================\n' +
-    `版本 ${PACK_VERSION}（${PACK_SUFFIX}）\n\n` +
-    '不需要安装 Node.js，双击即可运行。\n\n' +
-    '用法\n' +
-    '----\n' +
-    '1. 双击「启动.bat」\n' +
-    `2. 浏览器打开 http://localhost:${DEFAULT_PORT}\n` +
-    '3. 建房后把公网地址发给朋友，或让对方用安卓 App / 浏览器加入\n\n' +
-    '目录\n' +
-    '----\n' +
-    `- ${nodeExeName}  Node 运行时\n` +
-    '- server/       服务端\n' +
-    '- public/       前端\n' +
-    '- node_modules/ 依赖\n' +
-    '- .tools/       Cloudflare 隧道（cloudflared.exe）\n' +
-    '- 启动.bat      一键启动（支持 OTA 后自动重启）\n' +
-    '\n' +
-    '主机差分更新（默认 Gitee）\n' +
-    '--------\n' +
-    '双击启动时会在命令行自动检查并升级，完成后打开客户端。\n' +
-    '也可在菜单点「检查更新」手动升级。\n' +
-    '禁用：在目录下放 update.off\n' +
-    '自定义清单地址：update.url（一行 URL）\n' +
-    '默认：https://raw.giteeusercontent.com/xiyunzhu/online_template/raw/ota/host-update.json\n'
-  );
 }
 
 function findExistingApk() {
