@@ -7546,7 +7546,7 @@ console.log('— bot prefers keepOverflow wood over wishWell —');
   console.log('✓ bot prefers keepOverflow wood over wishWell');
 }
 
-console.log('— bot voids triple same face when uncontested —');
+console.log('— bot places one of triple same face when uncontested —');
 {
   const { decidePlaceDice, scoreProduceMove, scoreVoidSkipOption } = require('../bot');
   const g = createGameState(room(2));
@@ -7603,26 +7603,33 @@ console.log('— bot voids triple same face when uncontested —');
   g.dice = { [bot.id]: [3, 3, 3], [rival.id]: [] };
   g.diceBoosted = { [bot.id]: [false, false, false] };
 
-  const placeScore = scoreProduceMove(g, bot, 3, 'resource', 3, 0, 'hard', {});
+  const placeAll = scoreProduceMove(g, bot, 3, 'resource', 3, 0, 'hard', {});
+  const placeOne = scoreProduceMove(g, bot, 3, 'resource', 1, 0, 'hard', {});
   const voidScore = scoreVoidSkipOption(g, bot, 'hard');
   assert.ok(
-    voidScore > placeScore,
-    `三枚同点无人争时应爆骰更优: void=${voidScore} place=${placeScore}`
+    voidScore > placeAll,
+    `三枚一次塞满仍劣于爆骰: void=${voidScore} placeAll=${placeAll}`
+  );
+  assert.ok(
+    placeOne > voidScore,
+    `只放1枚独占应优于爆骰: placeOne=${placeOne} void=${voidScore}`
   );
 
   for (const diff of ['hard', 'normal']) {
     const act = decidePlaceDice(g, bot, diff, {});
-    assert.ok(act && act.type === 'voidSkip', `${diff} 应选择 voidSkip，实际=${act && act.type}`);
-    assert.strictEqual(act.payload.mode, 'burn', `${diff} 应为 burn`);
-    assert.ok(
-      ['wood', 'stone', 'food', 'iron'].includes(act.payload.resource),
-      `${diff} 应选任意资源`
+    assert.ok(act && act.type === 'placeDice', `${diff} 应放置，实际=${act && act.type}`);
+    assert.strictEqual(act.payload.face, 3);
+    assert.strictEqual(act.payload.area, 'resource');
+    assert.strictEqual(
+      act.payload.count,
+      1,
+      `${diff} 应只放1枚，实际 count=${act.payload.count}`
     );
   }
-  console.log('✓ bot voids triple same face when uncontested');
+  console.log('✓ bot places one of triple same face when uncontested');
 }
 
-console.log('— bot voids double same face on unclaimed slot —');
+console.log('— bot places one of double same face on unclaimed slot —');
 {
   const { decidePlaceDice, scoreProduceMove, scoreVoidSkipOption } = require('../bot');
   const g = createGameState(room(2));
@@ -7668,18 +7675,29 @@ console.log('— bot voids double same face on unclaimed slot —');
   g.dice = { [bot.id]: [2, 2], [rival.id]: [] };
   g.diceBoosted = { [bot.id]: [false, false] };
 
-  const placeScore = scoreProduceMove(g, bot, 2, 'resource', 2, 0, 'hard', {});
+  const placeAll = scoreProduceMove(g, bot, 2, 'resource', 2, 0, 'hard', {});
+  const placeOne = scoreProduceMove(g, bot, 2, 'resource', 1, 0, 'hard', {});
   const voidScore = scoreVoidSkipOption(g, bot, 'hard');
   assert.ok(
-    voidScore > placeScore,
-    `无归属双同点应先爆骰: void=${voidScore} place=${placeScore}`
+    voidScore > placeAll,
+    `无归属双同点一次放满仍劣于爆骰: void=${voidScore} placeAll=${placeAll}`
+  );
+  assert.ok(
+    placeOne > voidScore,
+    `只放1枚应优于爆骰: placeOne=${placeOne} void=${voidScore}`
   );
 
   for (const diff of ['hard', 'normal']) {
     const act = decidePlaceDice(g, bot, diff, {});
-    assert.ok(act && act.type === 'voidSkip', `${diff} 应 voidSkip，实际=${act && act.type}`);
+    assert.ok(act && act.type === 'placeDice', `${diff} 应放置，实际=${act && act.type}`);
+    assert.strictEqual(act.payload.face, 2);
+    assert.strictEqual(
+      act.payload.count,
+      1,
+      `${diff} 应只放1枚，实际 count=${act.payload.count}`
+    );
   }
-  console.log('✓ bot voids double same face on unclaimed slot');
+  console.log('✓ bot places one of double same face on unclaimed slot');
 }
 
 console.log('— bot still places double for resistBarbarians —');
@@ -8071,6 +8089,196 @@ console.log('— bot prefers enterFray to cancel rival monopoly —');
   assert.strictEqual(act.payload.face, 3, `应占以身入局，实际 face=${act.payload.face}`);
   assert.strictEqual(act.payload.area, 'resource');
   console.log('✓ bot prefers enterFray to cancel rival monopoly');
+}
+
+console.log('— bot skips enterFray when 1 neutral cannot cancel —');
+{
+  const { decidePlaceDice, scoreProduceMove } = require('../bot');
+  const g = createGameState(room(2));
+  finishInit(g);
+  g.round = 1;
+  g.phase = 'produce';
+  g.awaitingProduceRoll = false;
+  g.currentPlayerId = g.players[0].id;
+  const bot = g.players[0];
+  const rival = g.players[1];
+  g.board.resource.environments = {
+    1: null,
+    2: null,
+    3: {
+      id: 'env_fray_nocancel',
+      kind: 'environment',
+      label: '以身入局',
+      envType: 'enterFray',
+      trigger: 'dispatch',
+      setup: 'neutral3',
+      number: 3,
+    },
+    4: null,
+    5: null,
+    6: null,
+  };
+  g.board.resource.tiles = [
+    {
+      id: 'res_fray3b',
+      kind: 'resource',
+      resource: 'wood',
+      rich: false,
+      large: 1,
+      small: 1,
+      number: 3,
+      label: '灌木',
+    },
+    {
+      id: 'res_fat5b',
+      kind: 'resource',
+      resource: 'stone',
+      rich: true,
+      large: 3,
+      small: 1,
+      number: 5,
+      label: '采石场',
+    },
+    {
+      id: 'res_riv4b',
+      kind: 'resource',
+      resource: 'food',
+      rich: false,
+      large: 2,
+      small: 1,
+      number: 4,
+      label: '农田',
+    },
+  ];
+  g.board.special.tiles = [];
+  // 对手 4 号格已有 2 枚：只挪 1 中立无法对冲，对冲资源分应为 0
+  g.board.resource.workers = {
+    1: {},
+    2: {},
+    3: { __neutral__: 3 },
+    4: { [rival.id]: 2 },
+    5: {},
+    6: {},
+  };
+  g.board.special.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  bot.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+  bot.buildings = [];
+  bot.funcCards = [];
+  bot.villagers = 4;
+  bot.dispatched = 0;
+  bot.voided = 0;
+  rival.villagers = 3;
+  rival.dispatched = 3;
+  rival.voided = 0;
+  g.dice = { [bot.id]: [3, 5], [rival.id]: [] };
+  g.diceBoosted = { [bot.id]: [false, false] };
+
+  const frayScore = scoreProduceMove(g, bot, 3, 'resource', 1, 0, 'hard', {});
+  const fatScore = scoreProduceMove(g, bot, 5, 'resource', 1, 0, 'hard', {});
+  assert.ok(
+    fatScore > frayScore,
+    `无法对冲时应优先肥空格: fray=${frayScore} fat=${fatScore}`
+  );
+  const act = decidePlaceDice(g, bot, 'hard', {});
+  assert.ok(act && act.type === 'placeDice');
+  assert.strictEqual(act.payload.face, 5, `应占肥空格，实际 face=${act.payload.face}`);
+  console.log('✓ bot skips enterFray when 1 neutral cannot cancel');
+}
+
+console.log('— bot prefers unowned over enterFray deny in multiplayer —');
+{
+  const { decidePlaceDice, scoreProduceMove } = require('../bot');
+  const g = createGameState(room(4));
+  finishInit(g);
+  g.round = 1;
+  g.phase = 'produce';
+  g.awaitingProduceRoll = false;
+  g.currentPlayerId = g.players[0].id;
+  const bot = g.players[0];
+  const rival = g.players[1];
+  g.board.resource.environments = {
+    1: null,
+    2: null,
+    3: {
+      id: 'env_fray_mp',
+      kind: 'environment',
+      label: '以身入局',
+      envType: 'enterFray',
+      trigger: 'dispatch',
+      setup: 'neutral3',
+      number: 3,
+    },
+    4: null,
+    5: null,
+    6: null,
+  };
+  g.board.resource.tiles = [
+    {
+      id: 'res_fray3c',
+      kind: 'resource',
+      resource: 'wood',
+      rich: false,
+      large: 1,
+      small: 1,
+      number: 3,
+      label: '灌木',
+    },
+    {
+      id: 'res_empty2',
+      kind: 'resource',
+      resource: 'stone',
+      rich: false,
+      large: 2,
+      small: 1,
+      number: 2,
+      label: '石堆',
+    },
+    {
+      id: 'res_riv4c',
+      kind: 'resource',
+      resource: 'food',
+      rich: false,
+      large: 2,
+      small: 1,
+      number: 4,
+      label: '农田',
+    },
+  ];
+  g.board.special.tiles = [];
+  // 4 人局：砸掉对手独占大份=2，与空格独占大份=2 等量，应更偏向独自占无主格
+  g.board.resource.workers = {
+    1: {},
+    2: {},
+    3: { __neutral__: 3 },
+    4: { [rival.id]: 1 },
+    5: {},
+    6: {},
+  };
+  g.board.special.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  for (const p of g.players) {
+    p.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+    p.buildings = [];
+    p.funcCards = [];
+    p.villagers = 4;
+    p.dispatched = p.id === bot.id ? 0 : 4;
+    p.voided = 0;
+  }
+  g.dice = { [bot.id]: [3, 2] };
+  for (const p of g.players) {
+    if (p.id !== bot.id) g.dice[p.id] = [];
+  }
+  g.diceBoosted = { [bot.id]: [false, false] };
+
+  const frayScore = scoreProduceMove(g, bot, 3, 'resource', 1, 0, 'hard', {});
+  const emptyScore = scoreProduceMove(g, bot, 2, 'resource', 1, 0, 'hard', {});
+  assert.ok(
+    emptyScore > frayScore,
+    `多人局等额损手应让位于独占无主: fray=${frayScore} empty=${emptyScore}`
+  );
+  const act = decidePlaceDice(g, bot, 'hard', {});
+  assert.ok(act && act.type === 'placeDice');
+  assert.strictEqual(act.payload.face, 2, `应占无主格，实际 face=${act.payload.face}`);
+  console.log('✓ bot prefers unowned over enterFray deny in multiplayer');
 }
 
 console.log('— bot still places when triple needed to contest —');
@@ -8516,21 +8724,28 @@ console.log('— bot places luckyDraw wood over voidSkip —');
   for (const dice of [[4], [4, 4], [4, 4, 4]]) {
     g.dice = { [bot.id]: dice, [rival.id]: [] };
     g.diceBoosted = { [bot.id]: dice.map(() => false) };
-    const placeScore = scoreProduceMove(
-      g,
-      bot,
-      4,
-      'resource',
-      dice.length,
-      0,
-      'hard',
-      {}
-    );
+    const placeOne = scoreProduceMove(g, bot, 4, 'resource', 1, 0, 'hard', {});
     const voidScore = scoreVoidSkipOption(g, bot, 'hard');
     assert.ok(
-      placeScore > voidScore,
-      `幸运一抽+2木应优于爆骰 dice=${dice}: place=${placeScore} void=${voidScore}`
+      placeOne > voidScore,
+      `幸运一抽+2木放1应优于爆骰 dice=${dice}: place1=${placeOne} void=${voidScore}`
     );
+    if (dice.length >= 2) {
+      const placeAll = scoreProduceMove(
+        g,
+        bot,
+        4,
+        'resource',
+        dice.length,
+        0,
+        'hard',
+        {}
+      );
+      assert.ok(
+        placeOne > placeAll,
+        `幸运一抽不应一次塞满: place1=${placeOne} placeAll=${placeAll}`
+      );
+    }
     for (const diff of ['hard', 'normal']) {
       const act = decidePlaceDice(g, bot, diff, {});
       assert.ok(
@@ -8539,6 +8754,13 @@ console.log('— bot places luckyDraw wood over voidSkip —');
       );
       assert.strictEqual(act.payload.face, 4, `${diff} face`);
       assert.strictEqual(act.payload.area, 'resource', `${diff} area`);
+      if (dice.length > 1) {
+        assert.strictEqual(
+          act.payload.count,
+          1,
+          `${diff} dice=${dice} 应只放1枚，实际 count=${act.payload.count}`
+        );
+      }
     }
   }
   console.log('✓ bot places luckyDraw wood over voidSkip');
@@ -9247,6 +9469,14 @@ console.log('— bot places on prisonersDilemma 1v1 neutral over void —');
     place2 < placeScore,
     `囚徒放2对冲应劣于放1: place1=${placeScore} place2=${place2}`
   );
+  const act2 = decidePlaceDice(g, bot, 'hard', {});
+  assert.ok(act2 && act2.type === 'placeDice', `双6仍应放置，实际=${act2 && act2.type}`);
+  assert.strictEqual(act2.payload.face, 6);
+  assert.strictEqual(
+    act2.payload.count,
+    1,
+    `双6应只放1枚，实际 count=${act2.payload.count}`
+  );
 
   console.log('✓ bot places on prisonersDilemma 1v1 neutral over void');
 }
@@ -9344,6 +9574,76 @@ console.log('— bot voids last die on locked resource monopoly —');
   );
 
   console.log('✓ bot voids last die on locked resource monopoly');
+}
+
+console.log('— bot voids last die vs 2-res monopoly in 3p —');
+{
+  const { decidePlaceDice, scoreProduceMove, scoreVoidSkipOption } = require('../bot');
+  const g = createGameState(room(3));
+  finishInit(g);
+  g.round = 1;
+  g.phase = 'produce';
+  g.awaitingProduceRoll = false;
+  const bot = g.players[0];
+  const rival = g.players[1];
+  g.currentPlayerId = bot.id;
+  // 对手 1 骰独占大份=2、无事件；自己最后 1 骰摇到该点 → 应爆骰拿 1 任意资源，而非对冲
+  g.board.resource.tiles = [
+    {
+      id: 'r4mono',
+      kind: 'resource',
+      resource: 'wood',
+      rich: false,
+      large: 2,
+      small: 1,
+      number: 4,
+      label: '木',
+    },
+  ];
+  g.board.special.tiles = [];
+  g.board.resource.environments = {
+    1: null,
+    2: null,
+    3: null,
+    4: null,
+    5: null,
+    6: null,
+  };
+  g.board.resource.workers = {
+    1: {},
+    2: {},
+    3: {},
+    4: { [rival.id]: 1 },
+    5: {},
+    6: {},
+  };
+  g.board.special.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  g.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  g.board.special.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  for (const p of g.players) {
+    p.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+    p.buildings = [];
+    p.funcCards = [];
+    p.villagers = 4;
+    p.dispatched = p.id === bot.id ? 3 : 4;
+    p.voided = 0;
+  }
+  g.dice = { [bot.id]: [4] };
+  for (const p of g.players) {
+    if (p.id !== bot.id) g.dice[p.id] = [];
+  }
+  g.diceBoosted = { [bot.id]: [false] };
+
+  const placeScore = scoreProduceMove(g, bot, 4, 'resource', 1, 0, 'hard', {});
+  const voidScore = scoreVoidSkipOption(g, bot, 'hard');
+  assert.ok(
+    voidScore > placeScore,
+    `3人局对冲2资源独占应劣于爆骰: place=${placeScore} void=${voidScore}`
+  );
+  const act = decidePlaceDice(g, bot, 'hard', {});
+  assert.ok(act && act.type === 'voidSkip', `应 voidSkip，实际=${JSON.stringify(act)}`);
+  assert.strictEqual(act.payload.mode, 'burn', '应爆骰换 1 任意资源');
+  console.log('✓ bot voids last die vs 2-res monopoly in 3p');
 }
 
 console.log('— bot stack score falls as rival dice remain fewer —');
@@ -9458,7 +9758,7 @@ console.log('— bot build spends full hand instead of empty pass —');
     ok(applyAction(g, bot.id, act));
   }
 
-  // 满房 + 能凑建房：优先建房/兑换向建房
+  // 满房 + 能凑建房：优先建房（付完后仍须留得起繁殖粮）
   {
     const g = createGameState(room(2));
     finishInit(g);
@@ -9469,10 +9769,11 @@ console.log('— bot build spends full hand instead of empty pass —');
     bot.houses = 2;
     bot.villagers = 4;
     bot.houseScore = 0;
+    const breedNeed = breedFoodCost(bot.villagers);
     bot.resources = {
       wood: BUILD_HOUSE_COST.wood,
       stone: BUILD_HOUSE_COST.stone,
-      food: 0,
+      food: breedNeed,
       iron: BUILD_HOUSE_COST.iron,
     };
     bot.buildings = [];
@@ -9483,7 +9784,7 @@ console.log('— bot build spends full hand instead of empty pass —');
     assert.ok(act && act.type === 'buildHousePermanent', `满房应付得起时建房: ${JSON.stringify(act)}`);
   }
 
-  // ≥6 分时优先建房（手牌不超过上限，避免先走溢出兑换）
+  // ≥6 分时建房（空位放宽以免先被扩容抢走木石）
   {
     const g = createGameState(room(2));
     finishInit(g);
@@ -9494,6 +9795,7 @@ console.log('— bot build spends full hand instead of empty pass —');
     bot.houses = 3;
     bot.villagers = 4; // 仍有空位
     bot.houseScore = 6;
+    bot.expandResSlots = 4; // 上限 21，手牌 5 → 空位>9
     bot.resources = {
       wood: BUILD_HOUSE_COST.wood,
       stone: BUILD_HOUSE_COST.stone,
@@ -9503,12 +9805,12 @@ console.log('— bot build spends full hand instead of empty pass —');
     bot.buildings = [];
     bot.funcCards = [];
     bot.roundBuiltHouse = false;
-    bot.roundBred = false;
+    bot.roundBred = true; // 已繁殖，避免无兑换繁殖抢先
 
     const act = decideBotAction(g, bot.id, 'hard');
     assert.ok(
       act && act.type === 'buildHousePermanent',
-      `≥6 分应优先建房: ${JSON.stringify(act)}`
+      `≥6 分应建房: ${JSON.stringify(act)}`
     );
   }
 
@@ -9533,7 +9835,7 @@ console.log('— bot build spends full hand instead of empty pass —');
     assert.ok(act && act.type === 'breedPermanent', `有空位应繁殖: ${JSON.stringify(act)}`);
   }
 
-  // 有空位、缺粮但可银行兑换：应先兑换
+  // 有空位、缺粮但可银行兑换：空位放宽（>9）后应先兑换凑繁殖
   {
     const g = createGameState(room(2));
     finishInit(g);
@@ -9543,6 +9845,7 @@ console.log('— bot build spends full hand instead of empty pass —');
     g.buildPassed = {};
     bot.houses = 2;
     bot.villagers = 3;
+    bot.expandResSlots = 4; // 上限 21，9 木时空位>9，不必先扩容
     const need = breedFoodCost(bot.villagers);
     bot.resources = { wood: 9, stone: 0, food: 0, iron: 0 };
     bot.buildings = [];
@@ -9562,6 +9865,408 @@ console.log('— bot build spends full hand instead of empty pass —');
   }
 
   console.log('✓ bot build spends full hand instead of empty pass');
+}
+
+console.log('— bot expands resource cap when free slots <= 9 —');
+{
+  const { decideBotAction } = require('../bot');
+  // 手牌≥12 且四色齐全：流水线第 1 步应购发展卡
+  {
+    const g = createGameState(room(2));
+    finishInit(g);
+    const bot = g.players[0];
+    g.phase = 'build';
+    g.currentPlayerId = bot.id;
+    g.buildPassed = {};
+    bot.houses = 3;
+    bot.villagers = 4;
+    bot.expandResSlots = 1;
+    bot.resources = { wood: 3, stone: 3, food: 3, iron: 3 };
+    bot.buildings = [];
+    bot.funcCards = [];
+    bot.roundBuiltHouse = false;
+    bot.roundBred = true;
+    bot.roundExpanded = false;
+    bot.buildTurnUsedBuyFunc = false;
+    bot.buildTurnBuyFuncCount = 0;
+    bot.houseScore = 0;
+
+    const act = decideBotAction(g, bot.id, 'hard');
+    assert.strictEqual(
+      act && act.type,
+      'buyFuncCardPermanent',
+      `手牌≥12 应先购发展卡: ${JSON.stringify(act)}`
+    );
+  }
+  // 上限 12、手牌 12 但缺铁无法购卡 → 应扩资源上限
+  {
+    const g = createGameState(room(2));
+    finishInit(g);
+    const bot = g.players[0];
+    g.phase = 'build';
+    g.currentPlayerId = bot.id;
+    g.buildPassed = {};
+    bot.houses = 3;
+    bot.villagers = 4;
+    bot.expandResSlots = 1;
+    bot.resources = { wood: 4, stone: 4, food: 4, iron: 0 };
+    bot.buildings = [];
+    bot.funcCards = [];
+    bot.roundBuiltHouse = false;
+    bot.roundBred = true;
+    bot.roundExpanded = false;
+    bot.buildTurnUsedBuyFunc = false;
+    bot.buildTurnBuyFuncCount = 0;
+    bot.houseScore = 0;
+
+    const act = decideBotAction(g, bot.id, 'hard');
+    assert.ok(act, '应有行动');
+    assert.strictEqual(
+      act.type,
+      'expandPermanent',
+      `空位≤9 应扩资源上限: ${JSON.stringify(act)}`
+    );
+    assert.strictEqual(act.payload.direction, 'resource');
+  }
+  // 上限 12、手牌 2（空位 10>9）→ 不必强行扩
+  {
+    const g = createGameState(room(2));
+    finishInit(g);
+    const bot = g.players[0];
+    g.phase = 'build';
+    g.currentPlayerId = bot.id;
+    g.buildPassed = {};
+    bot.houses = 3;
+    bot.villagers = 4;
+    bot.expandResSlots = 1;
+    bot.resources = { wood: 1, stone: 1, food: 0, iron: 0 };
+    bot.buildings = [];
+    bot.funcCards = [];
+    bot.roundBuiltHouse = true;
+    bot.roundBred = true;
+    bot.buildTurnUsedBuyFunc = true;
+    bot.buildTurnBuyFuncCount = 1;
+    bot.houseScore = 0;
+
+    const act = decideBotAction(g, bot.id, 'hard');
+    assert.ok(
+      !act ||
+        act.type === 'pass' ||
+        !(
+          act.type === 'expandPermanent' &&
+          act.payload &&
+          act.payload.direction === 'resource'
+        ),
+      `空位>9 不应强行扩资源: ${JSON.stringify(act)}`
+    );
+  }
+  // 进场空位 6（上限 12、手牌 6）超过 5，不为扩建兑换
+  {
+    const g = createGameState(room(2));
+    finishInit(g);
+    const bot = g.players[0];
+    const rival = g.players[1];
+    g.phase = 'build';
+    g.currentPlayerId = bot.id;
+    g.buildPassed = { [rival.id]: true };
+    bot.houses = 3;
+    bot.villagers = 4;
+    bot.expandResSlots = 1;
+    bot.resources = { wood: 0, stone: 0, food: 6, iron: 0 };
+    bot.buildings = [];
+    bot.funcCards = [];
+    bot.roundBuiltHouse = true;
+    bot.roundBred = true;
+    bot.houseScore = 0;
+    bot.buildTurnEntryFreeRes = null;
+
+    let guard = 0;
+    while (g.phase === 'build' && !g.buildPassed[bot.id] && guard++ < 8) {
+      const act = decideBotAction(g, bot.id, 'hard');
+      assert.ok(act, '应有行动');
+      assert.ok(
+        !(
+          act.type === 'expandPermanent' &&
+          act.payload &&
+          act.payload.direction === 'resource'
+        ),
+        `进场空位 6 不应扩资源: ${act.type}`
+      );
+      ok(applyAction(g, bot.id, act), JSON.stringify(act));
+      if (act.type === 'pass') break;
+    }
+    assert.strictEqual(bot.expandResSlots, 1);
+  }
+  // 进场空位 6（>5）不扩；空位 5 有木石则不兑换直接扩；空位 3 才兑换扩
+  {
+    const g = createGameState(room(2));
+    finishInit(g);
+    const bot = g.players[0];
+    g.phase = 'build';
+    g.currentPlayerId = bot.id;
+    g.buildPassed = {};
+    bot.houses = 3;
+    bot.villagers = 4;
+    bot.expandResSlots = 1; // 上限 12
+    bot.buildings = [];
+    bot.funcCards = [];
+    bot.roundBuiltHouse = true;
+    bot.roundBred = true;
+    bot.houseScore = 0;
+    bot.buildTurnEntryFreeRes = null;
+
+    bot.resources = { wood: 1, stone: 1, food: 5, iron: 0 }; // 手牌 7，进场空位 5
+    const payAct = decideBotAction(g, bot.id, 'hard');
+    assert.strictEqual(
+      payAct && payAct.type,
+      'expandPermanent',
+      `进场空位≤5 且付得起应直接扩: ${JSON.stringify(payAct)}`
+    );
+
+    bot.buildTurnEntryFreeRes = null;
+    bot.resources = { wood: 0, stone: 0, food: 8, iron: 0 }; // 手牌 8，进场空位 4
+    bot.expandResSlots = 1;
+    bot.buildTurnBuyFuncCount = 2;
+    bot.buildTurnUsedBuyFunc = true;
+    const mid = decideBotAction(g, bot.id, 'hard');
+    assert.ok(
+      !mid || mid.type === 'pass',
+      `进场空位 4 且不能直接付扩建费时不应兑换扩建: ${JSON.stringify(mid)}`
+    );
+
+    g.phase = 'build';
+    g.buildPassed = {};
+    g.currentPlayerId = bot.id;
+    bot.buildTurnEntryFreeRes = null;
+    bot.expandResSlots = 1;
+    bot.buildTurnBuyFuncCount = 2;
+    bot.buildTurnUsedBuyFunc = true;
+    bot.roundBuiltHouse = true;
+    bot.roundBred = true;
+    bot.resources = { wood: 0, stone: 0, food: 9, iron: 0 }; // 手牌 9，进场空位 3
+    const tight = decideBotAction(g, bot.id, 'hard');
+    assert.strictEqual(
+      tight && tight.type,
+      'exchange',
+      `进场空位≤3 应兑换凑扩建: ${JSON.stringify(tight)}`
+    );
+    assert.ok(
+      tight.payload &&
+        (tight.payload.to === 'wood' || tight.payload.to === 'stone'),
+      `应兑出木或石: ${JSON.stringify(tight.payload)}`
+    );
+  }
+  console.log('✓ bot expands resource cap when free slots <= 9');
+}
+
+console.log('— bot builds house via exchange after resource expand step —');
+{
+  const { decideBotAction } = require('../bot');
+  const { BUILD_HOUSE_COST } = require('../decks');
+  const g = createGameState(room(2));
+  finishInit(g);
+  const bot = g.players[0];
+  g.phase = 'build';
+  g.currentPlayerId = bot.id;
+  g.buildPassed = {};
+  bot.houses = 3;
+  bot.villagers = 4;
+  bot.expandResSlots = 4; // 上限 21，空位宽，不先扩资源
+  bot.houseScore = 0;
+  bot.roundBuiltHouse = false;
+  bot.roundBred = true;
+  bot.buildings = [];
+  bot.funcCards = [];
+  bot.buildTurnBuyFuncCount = 0;
+  bot.resources = {
+    wood: BUILD_HOUSE_COST.wood,
+    stone: BUILD_HOUSE_COST.stone,
+    food: 3,
+    iron: 0,
+  };
+
+  const act = decideBotAction(g, bot.id, 'hard');
+  assert.ok(act && act.type === 'exchange', `低分也应兑换凑建房: ${JSON.stringify(act)}`);
+  assert.ok(
+    act.payload &&
+      (act.payload.to === 'iron' || (act.payload.to && act.payload.to.iron > 0)),
+    `应兑出铁: ${JSON.stringify(act.payload)}`
+  );
+  console.log('✓ bot builds house via exchange after resource expand step');
+}
+
+console.log('— bot 8/12 still exchange-expands after func cards —');
+{
+  const { decideBotAction } = require('../bot');
+  // 丰收以前没带资源选择，引擎拒绝后超时会直接跳过建造，8/12 空位 4 却不扩建
+  {
+    const g = createGameState(room(2));
+    finishInit(g);
+    const bot = g.players[0];
+    const rival = g.players[1];
+    g.phase = 'build';
+    g.currentPlayerId = bot.id;
+    g.buildPassed = { [rival.id]: true };
+    bot.houses = 3;
+    bot.villagers = 4;
+    bot.expandResSlots = 1;
+    bot.resources = { wood: 0, stone: 1, food: 4, iron: 3 };
+    bot.buildings = [];
+    bot.funcCards = [
+      { id: 'h', kind: 'function', funcType: 'harvest', label: '丰收' },
+    ];
+    bot.roundBuiltHouse = true;
+    bot.roundBred = true;
+    bot.houseScore = 0;
+    rival.resources = { wood: 2, stone: 2, food: 0, iron: 0 };
+
+    const first = decideBotAction(g, bot.id, 'hard');
+    assert.ok(first && first.type === 'useFunc', JSON.stringify(first));
+    assert.deepStrictEqual(
+      first.payload.resources,
+      ['wood', 'wood', 'stone'],
+      `丰收应补木石: ${JSON.stringify(first.payload)}`
+    );
+    ok(applyAction(g, bot.id, first));
+    let guard = 0;
+    let expanded = false;
+    while (g.phase === 'build' && !g.buildPassed[bot.id] && guard++ < 8) {
+      const act = decideBotAction(g, bot.id, 'hard');
+      assert.ok(act, '不应无行动');
+      if (
+        act.type === 'expandPermanent' &&
+        act.payload &&
+        act.payload.direction === 'resource'
+      ) {
+        expanded = true;
+      }
+      ok(applyAction(g, bot.id, act), JSON.stringify(act));
+      if (act.type === 'pass' || expanded) break;
+    }
+    assert.ok(expanded, '8/12 空位 4 应在跳过前兑换扩建');
+  }
+  // 抢劫 mode 必须是 cards，否则非法行动同样会超时跳过扩建
+  {
+    const g = createGameState(room(2));
+    finishInit(g);
+    const bot = g.players[0];
+    const rival = g.players[1];
+    g.phase = 'build';
+    g.currentPlayerId = bot.id;
+    g.buildPassed = {};
+    bot.houses = 3;
+    bot.villagers = 4;
+    bot.expandResSlots = 1;
+    bot.resources = { wood: 0, stone: 0, food: 4, iron: 4 };
+    bot.buildings = [];
+    bot.funcCards = [
+      { id: 'rb', kind: 'function', funcType: 'robbery', label: '抢劫' },
+    ];
+    bot.roundBuiltHouse = true;
+    bot.roundBred = true;
+    rival.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+    rival.funcCards = [
+      { id: 'rf', kind: 'function', funcType: 'enhance', label: '强化' },
+    ];
+    rival.buildings = [];
+
+    const act = decideBotAction(g, bot.id, 'hard');
+    assert.ok(act && act.type === 'useFunc', JSON.stringify(act));
+    assert.strictEqual(act.payload.mode, 'cards');
+    ok(applyAction(g, bot.id, act), JSON.stringify(act));
+  }
+  console.log('✓ bot 8/12 still exchange-expands after func cards');
+}
+
+console.log('— bot discard keeps pipeline cards —');
+{
+  const { decideBotAction } = require('../bot');
+  // 功能卡超限：应弃低优先级，保留扩建
+  {
+    const g = createGameState(room(2));
+    finishInit(g);
+    const bot = g.players[0];
+    g.phase = 'build';
+    g.currentPlayerId = bot.id;
+    g.buildPassed = {};
+    bot.houses = 2;
+    bot.villagers = 3;
+    bot.roundBred = false;
+    bot.expandResSlots = 0;
+    bot.resources = { wood: 1, stone: 1, food: 2, iron: 0 };
+    bot.buildings = [];
+    bot.funcCards = [
+      { id: 'f_bad', kind: 'function', funcType: 'welfareHouse', label: '福利房' },
+      { id: 'f_exp', kind: 'function', funcType: 'expand', label: '扩建' },
+      { id: 'f_raid', kind: 'function', funcType: 'banditRaid', label: '强盗' },
+      { id: 'f_rob', kind: 'function', funcType: 'robbery', label: '抢劫' },
+    ];
+    bot.pendingDiscardFunc = true;
+
+    const act = decideBotAction(g, bot.id, 'hard');
+    assert.ok(act && act.type === 'discardFunc', `应弃功能卡: ${JSON.stringify(act)}`);
+    assert.notStrictEqual(
+      act.payload.cardId,
+      'f_exp',
+      `应保留扩建卡，实际弃=${act.payload.cardId}`
+    );
+  }
+  // 建筑格取舍：弃低价值未建，保留朝称号的集市
+  {
+    const g = createGameState(room(2));
+    finishInit(g);
+    const bot = g.players[0];
+    g.phase = 'build';
+    g.currentPlayerId = bot.id;
+    g.buildPassed = {};
+    bot.houses = 3;
+    bot.villagers = 4;
+    bot.resources = { wood: 2, stone: 0, food: 0, iron: 0 };
+    bot.funcCards = [];
+    bot.buildings = [
+      {
+        id: 'b_ex',
+        kind: 'building',
+        buildType: 'exchange',
+        label: '集市',
+        cost: { wood: 1, stone: 1 },
+        built: false,
+        slot: 'none:1',
+      },
+      {
+        id: 'b_junk',
+        kind: 'building',
+        buildType: 'produce',
+        resource: 'wood',
+        label: '灌木',
+        cost: { wood: 4 },
+        built: false,
+        slot: 'none:2',
+        score: 0,
+      },
+    ];
+    const neu = {
+      id: 'b_new',
+      kind: 'building',
+      buildType: 'score1',
+      label: '学堂',
+      cost: { wood: 1 },
+      score: 1,
+    };
+    bot.pendingDiscardBuild = { newCard: neu, newCards: [neu] };
+
+    const act = decideBotAction(g, bot.id, 'hard');
+    assert.ok(
+      act && act.type === 'discardUnbuilt',
+      `应弃未建建筑: ${JSON.stringify(act)}`
+    );
+    assert.strictEqual(
+      act.payload.buildingId,
+      'b_junk',
+      `应弃低价值建筑保留集市，实际=${act.payload.buildingId}`
+    );
+  }
+  console.log('✓ bot discard keeps pipeline cards');
 }
 
 console.log('— bot pay-voidSkip mediocre double-4 with full hand —');
@@ -9650,6 +10355,100 @@ console.log('— bot pay-voidSkip mediocre double-4 with full hand —');
   );
 
   console.log('✓ bot pay-voidSkip mediocre double-4 with full hand');
+}
+
+console.log('— bot prefers empty 5 over dumping three 3s on prisonersDilemma —');
+{
+  const { decidePlaceDice, scoreProduceMove } = require('../bot');
+  const g = createGameState(room(3));
+  finishInit(g);
+  g.round = 1;
+  g.phase = 'produce';
+  g.awaitingProduceRoll = false;
+  const bot = g.players[0];
+  const rival = g.players[1];
+  g.currentPlayerId = bot.id;
+  g.board.resource.tiles = [];
+  for (let n = 1; n <= 6; n++) {
+    g.board.resource.tiles.push({
+      id: `r${n}`,
+      kind: 'resource',
+      resource: 'wood',
+      large: 2,
+      small: 1,
+      number: n,
+      label: `木${n}`,
+    });
+  }
+  g.board.special.tiles = [];
+  g.board.resource.environments = {
+    1: null,
+    2: null,
+    3: {
+      id: 'pd3',
+      kind: 'environment',
+      label: '囚徒困境',
+      envType: 'prisonersDilemma',
+      trigger: 'settle',
+      dispatchAlso: true,
+      setup: 'neutral1',
+      number: 3,
+    },
+    4: null,
+    5: null,
+    6: null,
+  };
+  // 若干格已有对手，仍剩无主 5；骰 [5,3,3,3] 不应把 3 个 3 塞进囚徒
+  g.board.resource.workers = {
+    1: { [rival.id]: 1 },
+    2: { [rival.id]: 1 },
+    3: { __neutral__: 1 },
+    4: { [rival.id]: 1 },
+    5: {},
+    6: { [rival.id]: 1 },
+  };
+  g.board.resource.boosts = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  g.board.special.workers = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };
+  for (const p of g.players) {
+    p.resources = { wood: 0, stone: 0, food: 0, iron: 0 };
+    p.villagers = 4;
+    p.dispatched = p.id === bot.id ? 0 : 4;
+    p.voided = 0;
+  }
+  g.dice = { [bot.id]: [5, 3, 3, 3] };
+  for (const p of g.players) {
+    if (p.id !== bot.id) g.dice[p.id] = [];
+  }
+  g.diceBoosted = { [bot.id]: [false, false, false, false] };
+
+  const pd3 = scoreProduceMove(g, bot, 3, 'resource', 3, 0, 'hard', {});
+  const empty5 = scoreProduceMove(g, bot, 5, 'resource', 1, 0, 'hard', {});
+  assert.ok(
+    empty5 > pd3,
+    `无主5应优于囚徒塞3: empty5=${empty5} pd3x3=${pd3}`
+  );
+  const act = decidePlaceDice(g, bot, 'hard', {});
+  assert.ok(act && act.type === 'placeDice', `应放置，实际=${act && act.type}`);
+  assert.strictEqual(act.payload.face, 5, `应占无主5，实际 face=${act.payload.face}`);
+  assert.strictEqual(act.payload.area, 'resource');
+  assert.ok(
+    act.payload.count == null || act.payload.count === 1,
+    `占5只需1枚，实际 count=${act.payload.count}`
+  );
+
+  // 仅有 3 点时也不该一次放满 3 枚抢囚徒第一（放1即可拿小份/避弃）
+  g.dice = { [bot.id]: [3, 3, 3] };
+  g.diceBoosted = { [bot.id]: [false, false, false] };
+  const only3 = decidePlaceDice(g, bot, 'hard', {});
+  assert.ok(only3 && only3.type === 'placeDice');
+  assert.strictEqual(only3.payload.face, 3);
+  assert.strictEqual(
+    only3.payload.count,
+    1,
+    `仅3点也不应塞满，实际 count=${only3.payload.count}`
+  );
+
+  console.log('✓ bot prefers empty 5 over dumping three 3s on prisonersDilemma');
 }
 
 console.log('全部通过');

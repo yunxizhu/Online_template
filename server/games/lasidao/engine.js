@@ -67,6 +67,8 @@ const START_ENHANCED_DICE = 1;
 const ENHANCED_DIE_STRENGTH = 1.5;
 /** 重抽 / 购买功能卡：从合堆顶抽几张再选 1 保留 */
 const SPECIAL_DRAW_PICK_COUNT = 3;
+/** 每建造回合常驻购买功能卡次数上限 */
+const MAX_BUY_FUNC_PER_TURN = 2;
 /** 征召：下一轮生产临时村民数量 */
 const RECRUIT_TEMP_VILLAGERS = 2;
 const EXPAND_RESOURCE_BONUS = 3;
@@ -1686,7 +1688,8 @@ function createGameState(room) {
     expandSlots: 0, // 扩建建筑格后增加的无数字格数量
     expandFuncSlots: 0, // 扩建功能卡格后增加的上限
     expandResSlots: 0, // 扩建资源卡位次数（每次 +3 手牌资源上限）
-    buildTurnUsedBuyFunc: false, // 本建造回合已购买功能卡（不可重置）
+    buildTurnUsedBuyFunc: false, // 本建造回合已购买过功能卡（不可重置）
+    buildTurnBuyFuncCount: 0, // 本建造回合已购买功能卡次数（上限 2）
     buildTurnUsedRedraw: false, // 本建造回合已使用重抽（不可重置）
   }));
 
@@ -3464,6 +3467,15 @@ function ensureSettleActPlayer(game) {
   finishSettleActPhase(game);
 }
 
+/** 轮到该玩家建造时记下资源空位，本回合扩建只看这个数 */
+function noteBuildTurnEntryFree(player) {
+  if (!player) return;
+  player.buildTurnEntryFreeRes = Math.max(
+    0,
+    maxResourceHandFor(player) - sumRes(player.resources || {})
+  );
+}
+
 function beginBuild(game) {
   if (game.over) return;
   clearPostProduceBoard(game);
@@ -3474,7 +3486,9 @@ function beginBuild(game) {
   for (const p of alivePlayers(game)) {
     p.pendingDiscardRes = false;
     p.buildTurnUsedBuyFunc = false;
+    p.buildTurnBuyFuncCount = 0;
     p.buildTurnUsedRedraw = false;
+    p.buildTurnEntryFreeRes = null;
   }
   // 按生产阶段派遣完毕顺序决定建造阶段行动顺序（第一个派遣完的先建造）
   const order = game.produceFinishOrder || [];
@@ -3485,6 +3499,8 @@ function beginBuild(game) {
   const p = playerById(game, startId);
   if (!p || p.left) {
     advanceBuildTurn(game);
+  } else {
+    noteBuildTurnEntryFree(p);
   }
   // 为每位玩家保存建造阶段初始快照，用于重置回合
   game.buildSnapshots = {};
@@ -3642,14 +3658,16 @@ function advanceBuildTurn(game) {
     const p = playerById(game, pid);
     if (p && !p.left) {
       game.currentPlayerId = pid;
-        return;
-      }
+      noteBuildTurnEntryFree(p);
+      return;
+    }
   }
 
   // 后备：按座位顺序找未 pass 的存活玩家
   for (const p of alive) {
     if (!game.buildPassed[p.id]) {
       game.currentPlayerId = p.id;
+      noteBuildTurnEntryFree(p);
       return;
     }
   }
@@ -4040,11 +4058,17 @@ function actPlaceDice(game, player, payload) {
       return { ok: false, error: `最多派遣 ${wild} 枚` };
     }
   } else {
-  const matching = dice.filter((d) => d === face);
-  if (!matching.length) {
-    return { ok: false, error: '没有该点数的骰子' };
-  }
-    count = matching.length;
+    const matching = dice.filter((d) => d === face);
+    if (!matching.length) {
+      return { ok: false, error: '没有该点数的骰子' };
+    }
+    // 人机可指定部分同点骰；未传/非法则仍一次放满
+    const want = Number(payload.count);
+    if (Number.isInteger(want) && want >= 1 && want <= matching.length) {
+      count = want;
+    } else {
+      count = matching.length;
+    }
   }
 
   if (!BOARD_AREAS.includes(area)) {
@@ -4081,12 +4105,14 @@ function actPlaceDice(game, player, payload) {
     if (!game.diceBoosted) game.diceBoosted = {};
     game.diceBoosted[player.id] = nextBoost;
   } else {
+    let left = count;
     const nextDice = [];
     const nextBoost = [];
     for (let i = 0; i < dice.length; i++) {
       const d = dice[i];
       const b = Boolean(boostFlags[i]);
-      if (d === face) {
+      if (d === face && left > 0) {
+        left -= 1;
         if (b) boostAdd += 1;
         continue;
       }
@@ -6329,6 +6355,14 @@ function useRedraw(game, player, payload) {
 function actBuyFuncCardPermanent(game, player) {
   const block = rejectIfBuildPhaseCardDiscardPending(player);
   if (block) return block;
+  const bought = Math.max(
+    0,
+    Number(player.buildTurnBuyFuncCount) || 0,
+    player.buildTurnUsedBuyFunc ? 1 : 0
+  );
+  if (bought >= MAX_BUY_FUNC_PER_TURN) {
+    return { ok: false, error: `本回合最多购买 ${MAX_BUY_FUNC_PER_TURN} 次功能卡` };
+  }
   if (!canPay(player.resources, BUY_FUNC_COST)) {
     return { ok: false, error: '需要 1 木 1 石 1 小麦 1 铁' };
   }
@@ -6396,8 +6430,17 @@ function startDrawPickOne(game, player, meta) {
     redrawCardId: meta.redrawCardId || null,
     options: drawn,
   };
-  if (meta.source === 'buyFunc') player.buildTurnUsedBuyFunc = true;
-  else if (meta.source === 'redraw') player.buildTurnUsedRedraw = true;
+  if (meta.source === 'buyFunc') {
+    const prev = Math.max(
+      0,
+      Number(player.buildTurnBuyFuncCount) || 0,
+      player.buildTurnUsedBuyFunc ? 1 : 0
+    );
+    player.buildTurnBuyFuncCount = prev + 1;
+    player.buildTurnUsedBuyFunc = true;
+  } else if (meta.source === 'redraw') {
+    player.buildTurnUsedRedraw = true;
+  }
   if (meta.logText) pushLog(game, meta.logText);
   return { ok: true, awaitingPick: true };
 }

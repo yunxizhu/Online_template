@@ -147,23 +147,35 @@ function rivalScarceStackPenalty(game, player, stackCount) {
 
 /**
  * 先到先得 / 抵抗南蛮：尚未达到触发门槛时，可无视「对手骰少→堆骰扣分」。
+ * 加码能升名次（如被中立抵消后夺回第一）同样不是浪费堆骰。
  */
-function canIgnoreRivalScarceStackPenalty(game, player, face, count, env) {
-  if (!env || !player) return false;
+function canIgnoreRivalScarceStackPenalty(game, player, face, count, env, boostAdd) {
+  if (!player) return false;
   const wk = slotWorkers(game.board && game.board.resource, face) || {};
   const myPrev = Number(wk[player.id]) || 0;
   const after = myPrev + Math.max(0, Number(count) || 0);
-  if (env.envType === 'firstCome' && !env.stashClaimed) {
+  if (env && env.envType === 'firstCome' && !env.stashClaimed) {
     const required =
       env.firstComeRequired != null
         ? Number(env.firstComeRequired)
         : firstComeRequiredWorkers(game.round);
     return myPrev < required && after > myPrev;
   }
-  if (env.envType === 'resistBarbarians') {
+  if (env && env.envType === 'resistBarbarians') {
     const need = _resistBarbariansNeedDice(game.round);
     return myPrev < need && after > myPrev;
   }
+  // 名次变好（无名次→有、第二→第一等）：必要加码，不扣稀缺堆骰
+  const beforeEst = estimateProduceGain(game, player, 'resource', face, 0, 0);
+  const afterEst = estimateProduceGain(
+    game,
+    player,
+    'resource',
+    face,
+    count,
+    boostAdd || 0
+  );
+  if (afterEst.myRank < beforeEst.myRank) return true;
   return false;
 }
 
@@ -204,13 +216,19 @@ function wantsExpandResource(botState) {
   return Boolean(botState && (botState.needExpandRes || botState.wasOverCap));
 }
 
-function markExpandedResource(botState) {
-  if (!botState) return;
-  // 清掉本次标记；下轮再生产若再爆牌可再扩
-  botState.needExpandRes = false;
-  botState.wasOverCap = false;
-  botState.didExpand = true;
-  botState.expandedResOnce = true;
+function markExpandedResource(botState, player) {
+  if (botState) {
+    // 清掉本次标记；下轮再生产若再爆牌可再扩
+    botState.needExpandRes = false;
+    botState.wasOverCap = false;
+    botState.didExpand = true;
+    botState.expandedResOnce = true;
+  }
+  clearExpandResourceIntent(player);
+}
+
+function clearExpandResourceIntent(player) {
+  if (player) player.__botWantExpandRes = false;
 }
 function countBuiltExchanges(player) {
   return (player.buildings || []).filter((b) => b.built && b.buildType === 'exchange').length;
@@ -278,22 +296,28 @@ function playerCount(game) {
   return Math.max(2, (game.players || []).filter(p => !p.left).length);
 }
 
-/** ????????????2??00%, 3??0%, 4??7.5%, 5??5% */
+/**
+ * 对手损失权重：人数越多越低（对冲只让第三人得利）。
+ * 2 人 100%，3 人 40%，4 人 28%，5 人 20%。
+ */
 function rivalsLossFactor(game) {
   const n = playerCount(game);
   if (n <= 2) return 1.0;
-  if (n === 3) return 0.50;
-  if (n === 4) return 0.375;
-  return 0.25;
+  if (n === 3) return 0.4;
+  if (n === 4) return 0.28;
+  return 0.2;
 }
 
-/** ????????????2??00%, 3??15%, 4??30%, 5??45% */
+/**
+ * 自身收益权重：人数越多越高（独占无主格的相对价值更大）。
+ * 2 人 100%，3 人 125%，4 人 145%，5 人 165%。
+ */
 function selfGainFactor(game) {
   const n = playerCount(game);
   if (n <= 2) return 1.0;
-  if (n === 3) return 1.15;
-  if (n === 4) return 1.30;
-  return 1.45;
+  if (n === 3) return 1.25;
+  if (n === 4) return 1.45;
+  return 1.65;
 }
 
 /**
@@ -490,7 +514,8 @@ function envTriggersDispatch(env) {
 
 /**
  * 以身入局：把 moveCount 枚中立砸到某格。
- * 核心分 = 对手因此丢掉的资源收益（大份/降级），而非固定低额奖励。
+ * 只计「真改变结算」：对手被对冲掉/降级丢收益，或自己因此升到第一。
+ * 挪完仍不改变任何人收益 → 0（无效对冲无安慰分）。
  */
 function _scoreEnterFrayNeutralDrop(game, player, toArea, toNumber, moveCount, fromNumber) {
   if (toArea === 'resource' && toNumber === fromNumber) return -Infinity;
@@ -555,24 +580,24 @@ function _scoreEnterFrayNeutralDrop(game, player, toArea, toNumber, moveCount, f
   if (toArea === 'special') {
     if (rivalCancelled) {
       const hasEnhance = tiles.some((t) => t.funcType === 'enhance');
-      score += 70 + (hasEnhance ? 45 : 18);
+      score += (70 + (hasEnhance ? 45 : 18)) * rFactor;
     } else if (rivalDemoted) {
-      score += 32;
+      score += 32 * rFactor;
     }
+    // 未改变牌权：0
   } else if (rivalCancelled) {
-    // 对手失去第一名大份（全额按对手损失计）
+    // 对手失去第一名大份（按人数折扣；多人下纯损手权重很低）
     score += large * 8 * rFactor;
-    // 额外：拆独占/搅局溢价
-    score += 18;
-    if (env && env.envType === 'mercenaries') score += 50;
+    // 轻量搅局溢价，同样随人数衰减
+    score += 6 * rFactor;
+    if (env && env.envType === 'mercenaries') score += 50 * rFactor;
   } else if (rivalDemoted) {
     // 第一→第二：损失大份与小份之差
-    score += Math.max(0, large - small) * 8 * rFactor + 10;
-  } else if (rivalId && (Number(beforeWk[rivalId]) || 0) > 0) {
-    score += 8 + Math.min(n, 2) * 4;
+    score += Math.max(0, large - small) * 8 * rFactor + 4 * rFactor;
   }
+  // 否则：挪中立不改任何人收益 → 该格资源对冲分保持 0（无安慰分）
 
-  // 砸完后自己变第一：额外拿到该格大份
+  // 砸完后自己变第一：按自身收益系数拿大份
   if (!beforeAiFirst && afterAiFirst && toArea === 'resource') {
     score += large * 8 * sFactor * 0.85;
   }
@@ -634,7 +659,8 @@ function _enterFrayPostMoveSlotSelf(game, player, fromNumber, placeCount, boostA
 }
 
 /**
- * 以身入局派遣估值 = 最佳中立对冲（含对手损失大份）+ 保底。
+ * 以身入局派遣估值 = 最佳中立落点（仅真对冲/自升第一）。
+ * 无有效目标时为 0（不再保底），避免无脑占以身入局。
  * 本格名次资源由 scoreProduceMove 按「挪走中立后」计入，避免重复。
  */
 function _bestEnterFrayMoveValue(game, player, fromNumber, count) {
@@ -656,13 +682,12 @@ function _bestEnterFrayMoveValue(game, player, fromNumber, count) {
       if (sc > bestDrop) bestDrop = sc;
     }
   }
-  if (!Number.isFinite(bestDrop)) bestDrop = 0;
+  if (!Number.isFinite(bestDrop) || bestDrop <= 0) return 0;
 
-  // 有可对冲目标时：对冲分 + 发动溢价；无目标时给低保底
-  if (bestDrop > 0) {
-    return Math.round(bestDrop + 16 + Math.min(moveN, 3) * 3);
-  }
-  return 10;
+  // 有效对冲才给轻量发动溢价（随人数衰减，避免多人纯损手虚高）
+  const act =
+    (6 + Math.min(moveN, 3) * 2) * Math.min(1, rivalsLossFactor(game) + 0.2);
+  return Math.round(bestDrop + act);
 }
 
 /**
@@ -1367,6 +1392,25 @@ function _dispatchCountOutcomeKey(game, player, area, face, count, selfRank) {
   return 'base';
 }
 
+/** 手中是否另有点数，能落到「玩家无主」的资源格（不含当前点数） */
+function hasOtherUnownedResourceClaimFace(game, player, excludeFace) {
+  if (!game || !player) return false;
+  const dice = (game.dice && game.dice[player.id]) || [];
+  const faces = new Set();
+  for (const d of dice) {
+    const f = Number(d);
+    if (f >= 1 && f <= 6 && f !== Number(excludeFace)) faces.add(f);
+  }
+  if (!faces.size) return false;
+  const board = game.board && game.board.resource;
+  if (!board) return false;
+  for (const face of faces) {
+    if (!tilesOnNumber(board, face).length) continue;
+    if (isSlotUnownedByPlayers(slotWorkers(board, face))) return true;
+  }
+  return false;
+}
+
 /**
  * 放满 count 枚时的名次/收益/事件门槛，最少需要几枚就能达到同一结果。
  * 多出来的骰等价于「本可爆骰换资源」。
@@ -1685,7 +1729,7 @@ function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botSt
     const wkNow = slotWorkers(game.board && game.board.resource, face) || {};
     const myPrevNow = Number(wkNow[player.id]) || 0;
     if (myPrevNow >= 1) {
-      if (!canIgnoreRivalScarceStackPenalty(game, player, face, count, env)) {
+      if (!canIgnoreRivalScarceStackPenalty(game, player, face, count, env, boostAdd)) {
         score -= rivalScarceStackPenalty(game, player, count);
       }
       const rem = totalRemainingAmongRivals(game, player);
@@ -1703,8 +1747,10 @@ function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botSt
   if (wouldCancelWithNeutral(game, area, face, count, player.id)) {
     // 囚徒困境：终态仍对冲掉自己时重罚（常见于多放与中立打平）
     if (env && env.envType === 'prisonersDilemma') score -= 80;
-    // 以身入局会移走中立：即使本格对冲掉自己，事件对冲收益通常更值
-    else if (env && env.envType === 'enterFray') score += 28;
+    // 以身入局会移走中立：本格假对冲不罚也不额外加分（价值只看挪中立后的真收益）
+    else if (env && env.envType === 'enterFray') {
+      // no-op
+    }
     // 有实际触发效果的事件：不额外惩罚，让事件收益在底部叠加竞争
     else if (env && (envHasDispatchEffect(env.envType) || env.trigger === 'settle')) {
       // 事件收益会在下方正常加分，对冲风险不扣
@@ -1737,6 +1783,9 @@ function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botSt
       // 以身入局：多骰=多挪中立，超额惩罚大幅减轻
       if (env && env.envType === 'enterFray') {
         penaltyMult = 0.35;
+      } else if (env && env.envType === 'prisonersDilemma') {
+        // 囚徒：同结果多塞几乎纯亏（尤其堆到第一仍可少放时）
+        penaltyMult = unclaimed ? 3.25 : 2.5;
       } else if (unclaimed) {
         // 无归属空板：单骰即可独占，多枚几乎纯浪费（除非上面 needed 已计入先到/南蛮/晴天等）
         penaltyMult = 2.75;
@@ -1759,6 +1808,40 @@ function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botSt
   // 非先到先得/抵抗南蛮：单次多枚时，场上「只放1枚就有效」的板块越多惩罚越重
   if (count >= 2 && !isMultiDiceThresholdEnv(env)) {
     score -= effectivePlaceOpportunityPenalty(game, player, count - 1);
+  }
+
+  // 手中另有无主资源点可占时，别往囚徒堆人：场上坑多时更亏
+  if (
+    area === 'resource' &&
+    env &&
+    env.envType === 'prisonersDilemma' &&
+    (diff === 'hard' || diff === 'normal') &&
+    hasOtherUnownedResourceClaimFace(game, player, face)
+  ) {
+    const factor = selfGainFactor(game);
+    const eff = countEffectiveSinglePlaceSlots(game, player);
+    // 多枚抢囚徒第一：几乎总应让位于另点无主；单枚也略抑（空板独占更稳）
+    if (count >= 2) {
+      score -= Math.round((22 + Math.min(eff, 8) * 4) * count * factor);
+    } else {
+      // 单枚也抑：另有无主点时，空板独占通常稳过囚徒第二
+      score -= Math.round((18 + Math.min(eff, 6) * 3) * factor);
+    }
+  }
+
+  // 无其它点数可占时：场上仍有有效单骰坑，也不要用 ≥3 枚硬抢囚徒第一（少放+重掷更好）
+  if (
+    area === 'resource' &&
+    env &&
+    env.envType === 'prisonersDilemma' &&
+    (diff === 'hard' || diff === 'normal') &&
+    count >= 3 &&
+    !hasOtherUnownedResourceClaimFace(game, player, face)
+  ) {
+    const eff = countEffectiveSinglePlaceSlots(game, player);
+    if (eff >= 2) {
+      score -= Math.round(36 * selfGainFactor(game) * (count - 1));
+    }
   }
 
   if (area === 'special') {
@@ -1795,7 +1878,8 @@ function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botSt
   }
 
   if (diff === 'hard') {
-    score += est.rivalsLoss * 5;
+    // 纯损手按「资源×8×人数折扣」计，多人局对冲价值明显低于自爆换 1 资源
+    score += Math.round(est.rivalsLoss * 8 * rivalsLossFactor(game));
     if (player.skipSettleResourceDiscard) score += 15;
 
     if (area === 'resource') {
@@ -1827,16 +1911,23 @@ function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botSt
       const maxRival = maxRemainingAmongRivals(game, player);
       // 按「本次放置后」剩余空闲计，避免单骰占坑拿不到安全独占加成
       const myRemAfter = Math.max(0, remainingDiceCount(player) - count);
+      const settleEvt =
+        env && env.trigger === 'settle'
+          ? estimateEventSettleGain(game, player, face, est.myRank, count)
+          : 0;
+      // 手牌已满且事件也吃不到：第一名占坑加成无意义
+      const hollowFirst = scoredSelf <= 0 && settleEvt <= 0;
       if (myRemAfter <= 0 && maxRival >= 2) {
         score -= 15;
       } else if (myRemAfter <= 0 && maxRival === 1) {
-        score += 5;
+        if (!hollowFirst) score += 5;
       } else if (myRemAfter <= 0 && maxRival === 0) {
-        // 超额堆骰 / 已是第一再加码：安全独占不是本步新收益
-        score += surplus > 0 || alreadyFirstBefore ? 0 : 25;
-      } else if (risk < 0.3) {
+        // 超额堆骰 / 已是第一再加码 / 空壳第一：安全独占不是本步新收益
+        score +=
+          surplus > 0 || alreadyFirstBefore || hollowFirst ? 0 : 25;
+      } else if (!hollowFirst && risk < 0.3) {
         score += alreadyFirstBefore ? 3 : 12;
-      } else if (risk < 0.5) {
+      } else if (!hollowFirst && risk < 0.5) {
         score += alreadyFirstBefore ? 1 : 5;
       }
     }
@@ -1879,8 +1970,8 @@ function scoreProduceMove(game, player, face, area, count, boostAdd, diff, botSt
 }
 
 /**
- * ??????????? face + area ?? placeDice
- * ?? { type:'placeDice', payload:{ face, area, count? } } ??null
+ * 生产放骰：选 face + area（及可选 count）发 placeDice
+ * 返回 { type:'placeDice', payload:{ face, area, count? } } 或 null
  */
 function decidePlaceDice(game, player, diff, botState) {
   const dice = game.dice && game.dice[player.id] ? game.dice[player.id] : [];
@@ -1889,7 +1980,7 @@ function decidePlaceDice(game, player, diff, botState) {
   // 当前已超/顶格也算爆牌风险
   noteResourceOverflowRisk(player, botState, 0);
 
-  // ??face ??
+  // 按点数聚合
   const byFace = {};
   for (const d of dice) {
     byFace[d] = (byFace[d] || 0) + 1;
@@ -1900,21 +1991,21 @@ function decidePlaceDice(game, player, diff, botState) {
 
   for (const faceStr of Object.keys(byFace)) {
     const face = Number(faceStr);
-    const count = byFace[faceStr];
-    // boostAdd ??
+    const maxCount = byFace[faceStr];
+    // 该点数上强化骰数（按枚数从前往后截取）
     const boostFlags = (game.diceBoosted && game.diceBoosted[player.id]) || [];
-    let boostAdd = 0;
+    const boostIdx = [];
     for (let i = 0; i < dice.length; i++) {
-      if (dice[i] === face && boostFlags[i]) boostAdd++;
+      if (dice[i] === face && boostFlags[i]) boostIdx.push(i);
     }
+    const totalBoost = boostIdx.length;
 
     for (const area of BOARD_AREAS) {
       const board = game.board && game.board[area];
       const tiles = board ? tilesOnNumber(board, face) : [];
       if (!tiles.length) continue;
-      // ????????????????????
       if (diff === 'easy') {
-        if (wouldCancelWithNeutral(game, area, face, count, player.id)) continue;
+        if (wouldCancelWithNeutral(game, area, face, maxCount, player.id)) continue;
         // random accept first valid
         if (Math.random() < 0.5 || !best) {
           best = { type: 'placeDice', payload: { face, area } };
@@ -1922,10 +2013,25 @@ function decidePlaceDice(game, player, diff, botState) {
         }
         continue;
       }
-      const sc = scoreProduceMove(game, player, face, area, count, boostAdd, diff, botState);
-      if (sc > bestScore) {
-        bestScore = sc;
-        best = { type: 'placeDice', payload: { face, area } };
+      // normal/hard：评估 1..N 枚，避免同点硬塞满
+      for (let c = 1; c <= maxCount; c++) {
+        const boostAdd = Math.min(totalBoost, c);
+        const sc = scoreProduceMove(
+          game,
+          player,
+          face,
+          area,
+          c,
+          boostAdd,
+          diff,
+          botState
+        );
+        if (sc > bestScore) {
+          bestScore = sc;
+          const payload = { face, area };
+          if (c < maxCount) payload.count = c;
+          best = { type: 'placeDice', payload };
+        }
       }
     }
   }
@@ -1944,20 +2050,15 @@ function decidePlaceDice(game, player, diff, botState) {
 
     // 机会型跳过：当前低+未来高，且综合跳过优于落子
     // 灾难型：落子极差/无子可放，允许用即时爆骰/弃牌脱困（不要求未来高）
+    // 最后一枚：直接比即时分——3 人局纯对冲 2 资源独占应让位于爆骰拿 1 任意资源
     const placeCatastrophic = !best || placeSc < -20;
     const onlyOneDie = dice.length === 1;
-    const placeBeatsVoidGuard =
-      best &&
-      placeSc > 0 &&
-      onlyOneDie &&
-      voidBest.mode === 'burn' &&
-      voidSc <= placeSc + 25;
 
     const preferVoid =
-      !placeBeatsVoidGuard &&
       Number.isFinite(voidSc) &&
       ((oppSkip && voidSc > placeSc) ||
         (placeCatastrophic && voidBest.score > placeSc) ||
+        (onlyOneDie && voidSc > placeSc) ||
         !best);
 
     if (preferVoid) {
@@ -2030,10 +2131,22 @@ function decideVoidSkip(game, player, diff, botState, opts) {
 function estimateResourceNeeds(player) {
   const needs = { wood: 0, stone: 0, food: 0, iron: 0 };
   for (const k of RESOURCES) needs[k] += BUILD_HOUSE_COST[k] || 0;
+  // 繁殖粮
+  if (
+    player &&
+    !player.roundBred &&
+    (Number(player.villagers) || 0) < 15 &&
+    freeHousesFor(player) > 0
+  ) {
+    needs.food += breedFoodCost(player.villagers);
+  }
+  // 扩容 1 木 1 石
+  needs.wood += 1;
+  needs.stone += 1;
   // 未建成建筑造价
   for (const b of player.buildings || []) {
     if (!b.built && b.cost) {
-      for (const k of RESOURCES) needs[k] += (b.cost[k] || 0);
+      for (const k of RESOURCES) needs[k] += b.cost[k] || 0;
     }
   }
   return needs;
@@ -2101,17 +2214,8 @@ function decideResourceOverflow(game, player, diff, botState) {
     }
   }
 
-  // ????????
-  const amounts = {};
-  let stillOver = over;
-  for (const r of shuffle(RESOURCES)) {
-    const n = Math.min(stillOver, player.resources[r] || 0);
-    if (n > 0) {
-      amounts[r] = n;
-      stillOver -= n;
-      if (stillOver <= 0) break;
-    }
-  }
+  // 无法兑换消化时：按流水线保留权重弃置多余资源
+  const amounts = _pickDiscardResourceAmounts(game, player, over, botState);
   if (Object.keys(amounts).length) {
     return { type: 'discardResources', payload: { amounts } };
   }
@@ -2119,53 +2223,250 @@ function decideResourceOverflow(game, player, diff, botState) {
 }
 
 /**
- * ??????/????
+ * 根据建造流水线推算「本回合应优先保障」的能力权重（越高越该留牌/留资源）。
+ * 对齐 decideBuildActionHard：购卡 → 满房建房 → 称号建筑 → 高分建房 → 繁殖 → 扩容…
+ */
+function _buildPipelineKeepNeeds(game, player, botState) {
+  const needs = {
+    breed: 0,
+    expandRes: 0,
+    expandBld: 0,
+    house: 0,
+    construct: 0,
+    harvest: 0,
+  };
+  if (!player) return needs;
+
+  const score = playerScore(player, game);
+  const canBreed =
+    !player.roundBred &&
+    (Number(player.villagers) || 0) < 15 &&
+    freeHousesFor(player) > 0;
+  if (canBreed) needs.breed = 100;
+
+  if (shouldExpandResourceHand(player, game, botState)) needs.expandRes = 92;
+  if (buildingSlotsTight(player)) needs.expandBld = 88;
+
+  if (!player.roundBuiltHouse) {
+    if (freeHousesFor(player) <= 0) needs.house = 96;
+    else if (score >= 8) needs.house = 82;
+    else if (score >= 6) needs.house = 72;
+    else needs.house = 60;
+  }
+
+  const unbuilt = (player.buildings || []).filter((b) => !b.built);
+  const valuable = unbuilt.filter((b) =>
+    _buildingHelpsTitleOrScore(player, b, game)
+  );
+  if (valuable.length) {
+    needs.construct = score >= 7 ? 90 : 65;
+  } else if (unbuilt.length) {
+    needs.construct = 40;
+  }
+
+  if (
+    needs.breed ||
+    needs.house ||
+    needs.expandRes ||
+    needs.expandBld ||
+    needs.construct
+  ) {
+    needs.harvest = 55;
+  }
+  return needs;
+}
+
+/** 弃功能卡时的保留分：越高越不该弃 */
+function _keepScoreFuncForDiscard(game, player, card, botState) {
+  if (!card) return 0;
+  const needs = _buildPipelineKeepNeeds(game, player, botState);
+  const t = card.funcType;
+  let score = 8;
+
+  // 与建造流水线直接相关的功能卡优先保留
+  if (t === 'breed') score = 50 + needs.breed;
+  else if (t === 'expand') {
+    score = 48 + Math.max(needs.expandRes, needs.expandBld);
+  } else if (t === 'buildHouse') score = 46 + needs.house;
+  else if (t === 'harvest') score = 36 + needs.harvest;
+  else if (t === 'redraw') score = 34;
+  else if (t === 'enhance') score = 32;
+  else if (t === 'recruit') {
+    score = 30 + (freeHousesFor(player) > 0 && (player.villagers || 0) < 12 ? 15 : 0);
+  } else if (t === 'caravan') score = 28;
+  else if (t === 'shelter') score = 26;
+  else if (t === 'robbery') score = 18;
+  else if (t === 'illegalBuild') score = 16;
+  else if (t === 'exile') score = 14;
+  else if (t === 'remoteDice') score = 12;
+  else if (t === 'banditRaid') score = 10;
+  else if (t === 'welfareHouse') score = 9;
+
+  return score;
+}
+
+/** 弃未建建筑时的保留分：越高越不该弃（称号/分数优先，不因资源缺口抬高工坊牌） */
+function _keepScoreBuildingForDiscard(game, player, b) {
+  if (!b) return 0;
+  if (b.built) return 1000;
+  let score = (Number(b.score) || 0) * 20;
+  if (b.buildType === 'exchange') {
+    const n = countBuiltExchanges(player);
+    if (n < 2) score += 80;
+    else if (n < 3) score += 90;
+    else score += 20;
+  } else if (b.buildType === 'wishWell') {
+    score += 55 + (_workshopWishCount(player) < 3 ? 30 : 0);
+  } else if (b.buildType === 'produce') {
+    score += 18 + (_workshopWishCount(player) < 3 ? 22 : 0);
+  } else if (b.buildType === 'score2') {
+    score += 75;
+  } else if (b.buildType === 'score1') {
+    score += 58;
+  } else if (_buildingHelpsTitleOrScore(player, b, game)) {
+    score += 45;
+  }
+  // 造价越高略减（更难立刻建成）
+  score -= Math.min(24, sumRes(b.cost || {}) * 2);
+  return score;
+}
+
+/**
+ * 弃资源时各色「保留权重」：流水线急需的原料权重大，优先丢掉多余色。
+ */
+function _resourceKeepWeights(game, player, botState) {
+  const w = { wood: 1, stone: 1, food: 1, iron: 1 };
+  const needs = _buildPipelineKeepNeeds(game, player, botState);
+  if (needs.breed > 0) {
+    w.food += 8 + Math.min(6, breedFoodCost(player.villagers));
+  }
+  if (needs.expandRes > 0 || needs.expandBld > 0) {
+    w.wood += 6;
+    w.stone += 6;
+  }
+  if (needs.house > 0) {
+    for (const k of RESOURCES) w[k] += (BUILD_HOUSE_COST[k] || 0) * 3;
+  }
+  if (needs.construct > 0) {
+    const ranked = (player.buildings || [])
+      .filter((b) => !b.built && b.cost)
+      .slice()
+      .sort(
+        (a, b) =>
+          _keepScoreBuildingForDiscard(game, player, b) -
+          _keepScoreBuildingForDiscard(game, player, a)
+      );
+    const top = ranked[0];
+    if (top && top.cost) {
+      for (const k of RESOURCES) w[k] += (top.cost[k] || 0) * 2;
+    }
+  }
+  // 购发展卡（手牌≥12 时流水线第一步）
+  if (sumRes(player.resources || {}) >= 12 && _canBuyFuncThisTurn(player)) {
+    w.wood += 4;
+    w.stone += 4;
+    w.food += 4;
+    w.iron += 4;
+  }
+  return w;
+}
+
+/**
+ * 超限弃资源：优先丢「保留权重低且存量多」的，尽量保住流水线原料。
+ */
+function _pickDiscardResourceAmounts(game, player, over, botState) {
+  const amounts = {};
+  let still = Math.max(0, Number(over) || 0);
+  if (still <= 0) return amounts;
+  const weights = _resourceKeepWeights(game, player, botState);
+  const have = copyRes(player.resources || {});
+  while (still > 0) {
+    let best = null;
+    let bestKey = Infinity;
+    for (const r of RESOURCES) {
+      const n = Number(have[r]) || 0;
+      if (n <= 0) continue;
+      // 权重低、存量高 → 先丢
+      const key = weights[r] * 10 - n;
+      if (key < bestKey) {
+        bestKey = key;
+        best = r;
+      }
+    }
+    if (!best) break;
+    amounts[best] = (amounts[best] || 0) + 1;
+    have[best] -= 1;
+    still -= 1;
+  }
+  return amounts;
+}
+
+/**
+ * 待弃功能卡 / 未建建筑：按建造流水线保留高优先级，弃掉其余。
  */
 function decidePendingDiscard(game, player, diff, botState) {
-  // ???? pendingDiscardBuild
+  botState = botState || {};
+
   if (player.pendingDiscardBuild) {
-    // ??????????????
     const unbuilt = (player.buildings || []).filter((b) => !b.built);
-    if (unbuilt.length) {
-      const target = unbuilt[0];
-      return { type: 'discardUnbuilt', payload: { buildingId: target.id } };
+    const neu =
+      player.pendingDiscardBuild.newCard ||
+      (player.pendingDiscardBuild.newCards &&
+        player.pendingDiscardBuild.newCards[0]) ||
+      null;
+
+    if (!unbuilt.length) {
+      // 没有可弃的未建旧卡，只能弃新卡
+      return { type: 'discardPendingBuild' };
     }
-  }
-  // ??????
-  if (player.pendingDiscardFunc || (player.funcCards || []).length > maxFuncHandFor(player)) {
-    const cards = player.funcCards || [];
-    if (cards.length) {
-      if (diff === 'hard') {
-        // ???????????????robbery/illegalBuild/harvest/redraw ????
-        const priority = {
-          robbery: 10,
-          illegalBuild: 10,
-          harvest: 9,
-          redraw: 8,
-          expand: 7,
-          enhance: 6,
-          recruit: 6,
-          exile: 5,
-          remoteDice: 4,
-          banditRaid: 4,
-          caravan: 3,
-          shelter: 2,
-          welfareHouse: 1,
-        };
-        let worst = cards[0];
-        let worstScore = Infinity;
-        for (const c of cards) {
-          const sc = priority[c.funcType] || 0;
-          if (sc < worstScore) {
-            worstScore = sc;
-            worst = c;
-          }
-        }
-        return { type: 'discardFunc', payload: { cardId: worst.id } };
+
+    let worst = unbuilt[0];
+    let worstScore = _keepScoreBuildingForDiscard(game, player, worst);
+    for (const b of unbuilt) {
+      const sc = _keepScoreBuildingForDiscard(game, player, b);
+      if (sc < worstScore) {
+        worstScore = sc;
+        worst = b;
       }
-      return { type: 'discardFunc', payload: { cardId: cards[cards.length - 1].id } };
     }
+
+    if (diff !== 'easy' && neu) {
+      const neuScore = _keepScoreBuildingForDiscard(game, player, neu);
+      // 新卡明显更差：弃新卡，保住现有高优先级未建
+      if (neuScore + 8 < worstScore) {
+        return { type: 'discardPendingBuild' };
+      }
+    }
+
+    return { type: 'discardUnbuilt', payload: { buildingId: worst.id } };
   }
+
+  if (
+    player.pendingDiscardFunc ||
+    (player.funcCards || []).length > maxFuncHandFor(player)
+  ) {
+    const cards = player.funcCards || [];
+    if (!cards.length) return null;
+
+    if (diff === 'easy') {
+      return {
+        type: 'discardFunc',
+        payload: { cardId: cards[cards.length - 1].id },
+      };
+    }
+
+    let worst = cards[0];
+    let worstScore = _keepScoreFuncForDiscard(game, player, worst, botState);
+    for (const c of cards) {
+      const sc = _keepScoreFuncForDiscard(game, player, c, botState);
+      if (sc < worstScore) {
+        worstScore = sc;
+        worst = c;
+      }
+    }
+    return { type: 'discardFunc', payload: { cardId: worst.id } };
+  }
+
   return null;
 }
 
@@ -2225,6 +2526,34 @@ function scoreBuildingForEasy(_player, b) {
 
 /* ?????????? ???????????????? ?????????? */
 
+/** 丰收三选：优先补扩建缺的木/石，再补繁殖粮 */
+function _harvestResourcePicks(player) {
+  const picks = [];
+  const have = (player && player.resources) || {};
+  const push = (r, n) => {
+    const k = Math.max(0, Number(n) || 0);
+    for (let i = 0; i < k && picks.length < 3; i++) picks.push(r);
+  };
+  if ((Number(have.wood) || 0) < 1) push('wood', 1);
+  if ((Number(have.stone) || 0) < 1) push('stone', 1);
+  if (
+    player &&
+    !player.roundBred &&
+    (Number(player.villagers) || 0) < 15 &&
+    freeHousesFor(player) > 0
+  ) {
+    const gap = breedFoodCost(player.villagers) - (Number(have.food) || 0);
+    if (gap > 0) push('food', gap);
+  }
+  const fill = ['wood', 'stone', 'iron', 'food'];
+  let i = 0;
+  while (picks.length < 3) {
+    picks.push(fill[i % fill.length]);
+    i += 1;
+  }
+  return picks;
+}
+
 function decideUseFuncCardHard(game, player, botState) {
   const cards = player.funcCards || [];
   if (!cards.length) return null;
@@ -2269,27 +2598,18 @@ function decideUseFuncCardHard(game, player, botState) {
         payload: { cardId: freeExpand.id, direction: 'function' },
       };
     }
-    // 爆牌且确需扩资源位时用扩建卡（看容量/空位，不看兑换比）
-    if (
-      wantsExpandResource(botState) &&
-      shouldExpandResourceHand(player, game, botState)
-    ) {
-      markExpandedResource(botState);
-      return {
-        type: 'useFunc',
-        payload: { cardId: freeExpand.id, direction: 'resource' },
-      };
-    }
+    // 资源扩容交给建造流水线（空位≤9 顺序）
   }
 
-  // ?? 3. ???harvest??????????1~2???? ??
+  // 丰收：缺口 1～2 张时发动，必须带上 3 个资源（否则引擎拒绝，超时会直接跳过建造）
   const harvest = cards.find((c) => c.funcType === 'harvest');
   if (harvest && needTotal > 0) {
-    // ??????????????????
     const shortfall = _shortfallForNeeds(player, needs);
-    // ???? 1~2??????
     if (shortfall > 0 && shortfall <= 2) {
-      return { type: 'useFunc', payload: { cardId: harvest.id } };
+      return {
+        type: 'useFunc',
+        payload: { cardId: harvest.id, resources: _harvestResourcePicks(player) },
+      };
     }
   }
 
@@ -2313,7 +2633,7 @@ function decideUseFuncCardHard(game, player, botState) {
 
   // ?? 6. ?????caravan?????????????????
   const caravan = cards.find((c) => c.funcType === 'caravan');
-  if (caravan && !player.caravanPending && !player.buildTurnUsedBuyFunc) {
+  if (caravan && !player.caravanPending && _canBuyFuncThisTurn(player)) {
     const needExch = _needsExchangeBreed(player);
     if (resSum >= 8 || needExch) {
       return { type: 'useFunc', payload: { cardId: caravan.id } };
@@ -2373,12 +2693,9 @@ function _planPermanentActions(game, player, botState) {
     }
   }
 
-  // 生产阶段曾识别爆牌风险：确需时才扩资源手牌
-  if (
-    shouldExpandResourceHand(player, game, botState) &&
-    (canPay(player.resources, EXPAND_COST) ||
-      _canAffordCostViaExchange(game, player, EXPAND_COST))
-  ) {
+  // 进场空位≤5 才规划资源扩建（≤3 才会兑换；材料不够时丰收可补）
+  ensureBuildTurnEntryFree(player);
+  if (player.buildTurnEntryFreeRes <= 5) {
     needs.expand = true;
     needs.expandDir = 'resource';
   }
@@ -2428,12 +2745,15 @@ function _canBreedNowOrViaExchange(game, player) {
   );
 }
 
-/** 可用换出池（为凑 cost 保留原料） */
-function _exchangePoolAvailable(have, cost, excludeRes) {
+/** 可用换出池（为凑 cost 保留原料；reserveExtra 额外锁定；useSoft 时再避开后续动作） */
+function _exchangePoolAvailable(have, cost, excludeRes, reserveExtra, softReserve, useSoft) {
   let pool = 0;
   for (const r of RESOURCES) {
     if (r === excludeRes) continue;
-    const reserve = Number(cost && cost[r]) || 0;
+    const reserve =
+      (Number(cost && cost[r]) || 0) +
+      (Number(reserveExtra && reserveExtra[r]) || 0) +
+      (useSoft ? Number(softReserve && softReserve[r]) || 0 : 0);
     pool += Math.max(0, (Number(have[r]) || 0) - reserve);
   }
   return pool;
@@ -2451,23 +2771,44 @@ function _canExchangeTo(player, exchCost, targetRes, need) {
   return Math.floor(pool / rate) >= n;
 }
 
-/** 模拟兑换后能否付得起 cost（如扩容 1 木 1 石） */
-function _canAffordCostViaExchange(game, player, cost) {
+/** 模拟兑换后能否付得起 cost（如扩容 1 木 1 石）；reserveExtra 不可动用 */
+function _canAffordCostViaExchange(game, player, cost, reserveExtra) {
   if (!player || !cost) return false;
-  if (canPay(player.resources, cost)) return true;
+  if (canPay(player.resources, cost)) {
+    if (!reserveExtra) return true;
+    const after = copyRes(player.resources);
+    for (const k of RESOURCES) {
+      after[k] = (after[k] || 0) - (Number(cost[k]) || 0);
+    }
+    for (const k of RESOURCES) {
+      if ((after[k] || 0) < (Number(reserveExtra[k]) || 0)) return false;
+    }
+    return true;
+  }
   const exchCost = effectiveExchangeCost(player, game);
   if (exchCost <= 0) return false;
   const sim = copyRes(player.resources);
   for (let guard = 0; guard < 16; guard++) {
-    if (canPay(sim, cost)) return true;
+    if (canPay(sim, cost)) {
+      if (!reserveExtra) return true;
+      const after = copyRes(sim);
+      for (const k of RESOURCES) {
+        after[k] = (after[k] || 0) - (Number(cost[k]) || 0);
+      }
+      let ok = true;
+      for (const k of RESOURCES) {
+        if ((after[k] || 0) < (Number(reserveExtra[k]) || 0)) ok = false;
+      }
+      if (ok) return true;
+    }
     let progressed = false;
     for (const needRes of RESOURCES) {
       const need = Number(cost[needRes]) || 0;
       if (need <= 0 || (sim[needRes] || 0) >= need) continue;
-      // 单资源换
       for (const from of RESOURCES) {
         if (from === needRes) continue;
-        const reserve = Number(cost[from]) || 0;
+        const reserve =
+          (Number(cost[from]) || 0) + (Number(reserveExtra && reserveExtra[from]) || 0);
         const available = (sim[from] || 0) - reserve;
         if (available >= exchCost) {
           sim[from] -= exchCost;
@@ -2477,12 +2818,13 @@ function _canAffordCostViaExchange(game, player, cost) {
         }
       }
       if (progressed) break;
-      // 混合换出
-      if (_exchangePoolAvailable(sim, cost, needRes) >= exchCost) {
+      if (_exchangePoolAvailable(sim, cost, needRes, reserveExtra) >= exchCost) {
         let left = exchCost;
         for (const from of RESOURCES) {
           if (from === needRes || left <= 0) continue;
-          const reserve = Number(cost[from]) || 0;
+          const reserve =
+            (Number(cost[from]) || 0) +
+            (Number(reserveExtra && reserveExtra[from]) || 0);
           let available = (sim[from] || 0) - reserve;
           if (available <= 0) continue;
           const take = Math.min(available, left);
@@ -2498,28 +2840,196 @@ function _canAffordCostViaExchange(game, player, cost) {
     }
     if (!progressed) break;
   }
-  return canPay(sim, cost);
+  if (!canPay(sim, cost)) return false;
+  if (!reserveExtra) return true;
+  for (const k of RESOURCES) {
+    sim[k] = (sim[k] || 0) - (Number(cost[k]) || 0);
+  }
+  for (const k of RESOURCES) {
+    if ((sim[k] || 0) < (Number(reserveExtra[k]) || 0)) return false;
+  }
+  return true;
+}
+
+/** 单个动作还缺的资源张数（各资源缺口之和）。 */
+function actionResourceGap(resources, cost) {
+  let gap = 0;
+  const have = resources || {};
+  for (const k of RESOURCES) {
+    const need = Number(cost && cost[k]) || 0;
+    const n = Number(have[k]) || 0;
+    if (n < need) gap += need - n;
+  }
+  return gap;
 }
 
 /**
- * 为凑齐 cost 兑换一次（优先补缺口；保留 cost 里仍需要的原料；支持混合）
+ * 为凑齐一个动作，兑换最多补 2 张缺口；再多就不值得。
+ * opts.ignoreExchangeGap 仅给第 3、4 步冲分：做完就能赢，不看缺口。
+ */
+function _exchangeGapWorthIt(player, cost, opts) {
+  if (opts && opts.ignoreExchangeGap) return true;
+  return actionResourceGap(player && player.resources, cost) <= 2;
+}
+
+function _blankNeed() {
+  return { wood: 0, stone: 0, food: 0, iron: 0 };
+}
+
+function _addNeed(into, cost) {
+  for (const k of RESOURCES) into[k] += Number(cost && cost[k]) || 0;
+}
+
+/** 后续建造步骤会优先做成的那座建筑的造价（不含当前正在凑的那座） */
+function _peekConstructCost(game, player, opts) {
+  opts = opts || {};
+  const cands = (player.buildings || []).filter((b) => {
+    if (!b || b.built) return false;
+    if (opts.skipId && b.id === opts.skipId) return false;
+    if (opts.excludePalace && b.buildType === 'score2') return false;
+    if (opts.requireTitleOrScore && !_buildingHelpsTitleOrScore(player, b, game)) {
+      return false;
+    }
+    return true;
+  });
+  if (!cands.length) return null;
+  cands.sort(
+    (a, b) =>
+      scoreBuildingForHard(player, b, game) - scoreBuildingForHard(player, a, game)
+  );
+  const payable = cands.find((b) => canPay(player.resources, b.cost || {}));
+  if (payable) return payable.cost || {};
+  if (opts.payableOnly) return null;
+  for (const b of cands) {
+    if (_exchangeGapWorthIt(player, b.cost || {}, opts)) return b.cost || {};
+  }
+  return null;
+}
+
+/**
+ * 兑换前看后续动作还要的资源。返回的是「尽量留着」的数量，不够换时仍可动用。
+ * step：2/3/4/7/9/10/11/12/13，以及 14 购卡、15 建造、16 建房、17 扩资源、18 扩建筑、19 任意扩容。
+ */
+function _laterSoftReserve(game, player, step, extra) {
+  const reserve = _blankNeed();
+  if (!player || !step) return reserve;
+  extra = extra || {};
+  const score = playerScore(player, game);
+  const entry = ensureBuildTurnEntryFree(player);
+  const hand = sumRes(player.resources || {});
+  const houseSteps = [2, 4, 10, 13, 16];
+  const houseDone = Boolean(player.roundBuiltHouse) || houseSteps.includes(step);
+  const bred = Boolean(player.roundBred) || step === 5 || step === 9;
+
+  if (!houseDone) {
+    const gapOk =
+      canPay(player.resources, BUILD_HOUSE_COST) ||
+      actionResourceGap(player.resources, BUILD_HOUSE_COST) <= 2;
+    const want =
+      (step < 4 && score >= 8) ||
+      (step < 10 && score >= 6 && gapOk) ||
+      (step < 13 && gapOk) ||
+      (step < 16 && hand >= 6 && gapOk);
+    if (want) _addNeed(reserve, BUILD_HOUSE_COST);
+  }
+
+  if (
+    !bred &&
+    freeHousesFor(player) > 0 &&
+    (Number(player.villagers) || 0) < 15
+  ) {
+    const foodNeed = breedFoodCost(player.villagers);
+    const foodCost = { food: foodNeed };
+    const canNow = (Number(player.resources.food) || 0) >= foodNeed;
+    const gapOk = canNow || actionResourceGap(player.resources, foodCost) <= 2;
+    if ((step < 5 && canNow) || (step < 9 && gapOk)) _addNeed(reserve, foodCost);
+  }
+
+  const expandGapOk =
+    canPay(player.resources, EXPAND_COST) ||
+    actionResourceGap(player.resources, EXPAND_COST) <= 2;
+  if (step !== 12 && step !== 17) {
+    const wantRes =
+      (step < 6 && entry != null && entry <= 5 && canPay(player.resources, EXPAND_COST)) ||
+      (step < 12 && entry != null && entry <= 3 && expandGapOk) ||
+      (step < 17 && hand >= 6 && entry != null && entry <= 3 && expandGapOk);
+    if (wantRes) _addNeed(reserve, EXPAND_COST);
+  }
+  if (step !== 7 && step !== 18 && buildingSlotsTight(player)) {
+    const wantBld = step < 7 || (step < 18 && hand >= 6 && expandGapOk);
+    if (wantBld) _addNeed(reserve, EXPAND_COST);
+  }
+
+  if (step < 14 && hand >= 6 && _canBuyFuncThisTurn(player)) {
+    const buyOk =
+      canPay(player.resources, BUY_FUNC_COST) ||
+      actionResourceGap(player.resources, BUY_FUNC_COST) <= 2;
+    if (buyOk) _addNeed(reserve, BUY_FUNC_COST);
+  }
+
+  const constructSpecs = [];
+  if (step < 3 && score >= 7) {
+    constructSpecs.push({
+      minScore: 7,
+      requireTitleOrScore: true,
+      ignoreExchangeGap: true,
+      skipId: extra.skipBuildingId,
+    });
+  }
+  if (step < 8) {
+    constructSpecs.push({
+      excludePalace: true,
+      payableOnly: true,
+      skipId: extra.skipBuildingId,
+    });
+  }
+  if (step < 11) {
+    constructSpecs.push({
+      excludePalace: true,
+      skipId: extra.skipBuildingId,
+    });
+  }
+  if (step < 15 && hand >= 6) {
+    constructSpecs.push({
+      excludePalace: false,
+      skipId: extra.skipBuildingId,
+    });
+  }
+  for (const spec of constructSpecs) {
+    const cost = _peekConstructCost(game, player, spec);
+    if (cost) {
+      _addNeed(reserve, cost);
+      break;
+    }
+  }
+  return reserve;
+}
+
+/**
+ * 为凑齐 cost 兑换一次（优先补缺口；保留 cost 与 reserveExtra 原料；支持混合）
+ * softReserve：后续动作尽量留着的资源，有别的原料就不动。
  * @returns {{type:string,payload:object}|null}
  */
-function _exchangeTowardCost(game, player, cost) {
+function _exchangeTowardCost(game, player, cost, reserveExtra, softReserve) {
   if (!player || !cost) return null;
   if (canPay(player.resources, cost)) return null;
   const exchCost = effectiveExchangeCost(player, game);
   if (exchCost <= 0) return null;
   const have = player.resources || {};
-  for (const needRes of RESOURCES) {
+  const keepSoft = Boolean(
+    softReserve && RESOURCES.some((k) => (Number(softReserve[k]) || 0) > 0)
+  );
+
+  function fillNeed(needRes, useSoft) {
     const need = Number(cost[needRes]) || 0;
-    if (need <= 0) continue;
     const haveN = Number(have[needRes]) || 0;
-    if (haveN >= need) continue;
-    // 单资源
+    if (need <= 0 || haveN >= need) return null;
     for (const from of RESOURCES) {
       if (from === needRes) continue;
-      const reserve = Number(cost[from]) || 0;
+      const reserve =
+        (Number(cost[from]) || 0) +
+        (Number(reserveExtra && reserveExtra[from]) || 0) +
+        (useSoft ? Number(softReserve && softReserve[from]) || 0 : 0);
       const available = (Number(have[from]) || 0) - reserve;
       if (available < exchCost) continue;
       const maxGet = Math.floor(available / exchCost);
@@ -2531,13 +3041,18 @@ function _exchangeTowardCost(game, player, cost) {
         };
       }
     }
-    // 混合：一次换入 1 张缺口资源
-    if (_exchangePoolAvailable(have, cost, needRes) >= exchCost) {
+    if (
+      _exchangePoolAvailable(have, cost, needRes, reserveExtra, softReserve, useSoft) >=
+      exchCost
+    ) {
       const fromObj = {};
       let left = exchCost;
       for (const from of RESOURCES) {
         if (from === needRes || left <= 0) continue;
-        const reserve = Number(cost[from]) || 0;
+        const reserve =
+          (Number(cost[from]) || 0) +
+          (Number(reserveExtra && reserveExtra[from]) || 0) +
+          (useSoft ? Number(softReserve && softReserve[from]) || 0 : 0);
         let available = (Number(have[from]) || 0) - reserve;
         if (available <= 0) continue;
         const take = Math.min(available, left);
@@ -2551,6 +3066,14 @@ function _exchangeTowardCost(game, player, cost) {
         };
       }
     }
+    return null;
+  }
+
+  for (const needRes of RESOURCES) {
+    const softHit = keepSoft ? fillNeed(needRes, true) : null;
+    if (softHit) return softHit;
+    const hit = fillNeed(needRes, false);
+    if (hit) return hit;
   }
   return null;
 }
@@ -2560,9 +3083,12 @@ function freeResourceSlots(player) {
   return Math.max(0, maxResourceHandFor(player) - sumRes(player.resources || {}));
 }
 
-/** 空位很宽裕时不必再强行扩资源手牌上限 */
+/**
+ * 空位是否宽裕：上限 − 当前手牌 > 9 才不必强行扩。
+ * （空位 ≤ 9 时生产很容易再次顶格，建造结束前应尽力扩容）
+ */
 function hasPlentyResourceSlots(player) {
-  return freeResourceSlots(player) > 15;
+  return freeResourceSlots(player) > 9;
 }
 
 /**
@@ -2583,41 +3109,33 @@ function hasLosslessExchange(player, game) {
   return currentExchangeRate(player, game) <= 1;
 }
 
+/** 本回合第一次决策时补记进场空位（冒烟直接切阶段时引擎未必已记） */
+function ensureBuildTurnEntryFree(player) {
+  if (!player) return null;
+  if (player.buildTurnEntryFreeRes == null) {
+    player.buildTurnEntryFreeRes = freeResourceSlots(player);
+  }
+  return player.buildTurnEntryFreeRes;
+}
+
 /**
  * 是否还应扩资源手牌上限。
- * 扩手牌 = 提高生产阶段能带进建造的资源总量，与兑换比例无关。
- * - 空位>15：不扩
- * - 手牌上限越高：扩容意愿越低（边际收益下降）
- * - 爆牌/空位紧张：仍应扩
+ * normal/easy 仍看当前空位 ≤ 9。hard 第 6/12 步改看进场空位，不走这里。
  */
 function shouldExpandResourceHand(player, game, botState) {
-  if (hasPlentyResourceSlots(player)) return false;
+  if (!player) return false;
   const free = freeResourceSlots(player);
-  const cap = maxResourceHandFor(player);
-  const overflow = wantsExpandResource(botState);
-  const urgency = resourceDumpUrgency(player);
-
-  // 快爆牌 / 空位极少：扩
-  if (free <= 0) return true;
-  if (free <= 1 && (overflow || urgency >= 60)) return true;
-
-  // 上限越高，扩容意愿越低
-  if (cap >= 18) return free <= 2 && (overflow || urgency >= 80);
-  if (cap >= 15) return free <= 3 && (overflow || urgency >= 60);
-  if (cap >= 12) {
-    return (
-      overflow ||
-      free <= 3 ||
-      ((Number(player.expandResSlots) || 0) === 0 && free <= 5)
-    );
+  if (free <= 9) {
+    player.__botWantExpandRes = true;
+    return true;
   }
-
-  // 开局上限附近：爆牌标记、尚未扩过、或手牌紧
-  return (
-    overflow ||
-    (Number(player.expandResSlots) || 0) === 0 ||
-    free <= 3
-  );
+  if (player.__botWantExpandRes && canPay(player.resources, EXPAND_COST)) {
+    return true;
+  }
+  if (!canPay(player.resources, EXPAND_COST)) {
+    player.__botWantExpandRes = false;
+  }
+  return false;
 }
 
 /**
@@ -2672,12 +3190,15 @@ function decideSpendBeforePass(game, player, diff, botState) {
   const buySink = prefersBuyFuncSink(player, game);
   const wantExpandRes = shouldExpandResourceHand(player, game, botState);
 
-  // 1) 村民已满房 或 分数>=6：优先建房冲分/腾空位
+  // 1) 村民已满房 或 分数>=6：优先建房冲分/腾空位（付得起才建；空位紧时先扩容）
   if (preferHouse && !player.roundBuiltHouse) {
     if (canPay(player.resources, BUILD_HOUSE_COST)) {
       return { type: 'buildHousePermanent' };
     }
-    if (_canAffordCostViaExchange(game, player, BUILD_HOUSE_COST)) {
+    if (
+      !wantExpandRes &&
+      _canAffordCostViaExchange(game, player, BUILD_HOUSE_COST)
+    ) {
       const exch = _exchangeTowardCost(game, player, BUILD_HOUSE_COST);
       if (exch) return exch;
     }
@@ -2717,7 +3238,27 @@ function decideSpendBeforePass(game, player, diff, botState) {
     }
   }
 
-  // 2.5) 兑换高效时：优先兑成原料建成手上海分/集市/所需建筑
+  // 2.5) 空位≤9：先扩资源上限，避免后面买卡/建造把木石花光后顶格进生产
+  if (wantExpandRes) {
+    if (canPay(player.resources, EXPAND_COST)) {
+      markExpandedResource(botState, player);
+      return { type: 'expandPermanent', payload: { direction: 'resource' } };
+    }
+    const exchEarly = _exchangeTowardCost(game, player, EXPAND_COST);
+    if (exchEarly) return exchEarly;
+    const freeExpandEarly = (player.funcCards || []).find(
+      (c) => c.funcType === 'expand'
+    );
+    if (freeExpandEarly) {
+      markExpandedResource(botState, player);
+      return {
+        type: 'useFunc',
+        payload: { cardId: freeExpandEarly.id, direction: 'resource' },
+      };
+    }
+  }
+
+  // 2.6) 兑换高效时：优先兑成原料建成手上海分/集市/所需建筑
   if (diff !== 'easy' && hasEfficientExchange(player, game)) {
     const unbuilt = (player.buildings || []).filter((b) => !b.built);
     if (unbuilt.length) {
@@ -2743,11 +3284,10 @@ function decideSpendBeforePass(game, player, diff, botState) {
     }
   }
 
-  // 3) 买功能卡花牌（兑换好时优先兑成买卡原料；可先兑换凑齐）
+  // 3) 买功能卡花牌
   if (
     diff !== 'easy' &&
-    !player.buildTurnUsedBuyFunc &&
-    (player.funcCards || []).length < maxFuncHandFor(player) &&
+    _canBuyFuncThisTurn(player) &&
     !buildingSlotsTight(player) &&
     (buySink ||
       urgency >= 40 ||
@@ -2766,19 +3306,17 @@ function decideSpendBeforePass(game, player, diff, botState) {
     }
   }
 
-  // 4) 仅在确需提高生产带入量时扩资源位（与兑换比无关；空位宽裕/上限已高则少扩）
+  // 4) 扩容兜底（上面已尝试；此处保留扩建卡/再兑一次）
   if (wantExpandRes) {
     if (canPay(player.resources, EXPAND_COST)) {
-      markExpandedResource(botState);
+      markExpandedResource(botState, player);
       return { type: 'expandPermanent', payload: { direction: 'resource' } };
     }
-    if (_canAffordCostViaExchange(game, player, EXPAND_COST)) {
-      const exch = _exchangeTowardCost(game, player, EXPAND_COST);
-      if (exch) return exch;
-    }
+    const exchLate = _exchangeTowardCost(game, player, EXPAND_COST);
+    if (exchLate) return exchLate;
     const freeExpand = (player.funcCards || []).find((c) => c.funcType === 'expand');
     if (freeExpand) {
-      markExpandedResource(botState);
+      markExpandedResource(botState, player);
       return {
         type: 'useFunc',
         payload: { cardId: freeExpand.id, direction: 'resource' },
@@ -2796,7 +3334,7 @@ function decideSpendBeforePass(game, player, diff, botState) {
           : 'function';
     }
     if (dir === 'resource' && !wantExpandRes) return null;
-    markExpandedResource(botState);
+    markExpandedResource(botState, player);
     return { type: 'expandPermanent', payload: { direction: dir } };
   }
 
@@ -2832,7 +3370,7 @@ function _pickRobberyTarget(game, player) {
         else if (card.funcType === 'recruit') val = 50;
         else if (card.buildType === 'wishWell') val = 60;
         else val = 30;
-        if (val > bestScore) { bestScore = val; best = { target: t, mode: 'card' }; }
+        if (val > bestScore) { bestScore = val; best = { target: t, mode: 'cards' }; }
       }
     }
 
@@ -2846,7 +3384,7 @@ function _pickRobberyTarget(game, player) {
     for (const b of unbuilt) {
       if (builtGroups[b.buildType] && builtGroups[b.buildType] >= 2) {
         const val = 70;
-        if (val > bestScore) { bestScore = val; best = { target: t, mode: 'card' }; }
+        if (val > bestScore) { bestScore = val; best = { target: t, mode: 'cards' }; }
       }
     }
 
@@ -3080,9 +3618,13 @@ function decideUseFuncCard(game, player, diff, botState) {
     if (diff === 'normal' && ['robbery', 'illegalBuild'].includes(c.funcType)) {
       // normal ??????????????
       if (c.funcType === 'robbery') {
-        const alive = alivePlayers(game).filter((p) => p.id !== player.id && !p.left);
-        const target = pickRandom(alive);
-        if (target) return { type: 'useFunc', payload: { cardId: c.id, targetId: target.id } };
+        const target = _pickRobberyTarget(game, player);
+        if (target) {
+          return {
+            type: 'useFunc',
+            payload: { cardId: c.id, targetId: target.id, mode: target.mode },
+          };
+        }
       }
       if (c.funcType === 'illegalBuild') {
         const alive = alivePlayers(game).filter((p) => p.id !== player.id && !p.left);
@@ -3100,12 +3642,20 @@ function decideUseFuncCard(game, player, diff, botState) {
       if (canEnh > 0) return { type: 'useFunc', payload: { cardId: c.id } };
     }
     if (c.funcType === 'harvest' && sumRes(player.resources) < 8) {
-      return { type: 'useFunc', payload: { cardId: c.id } };
+      return {
+        type: 'useFunc',
+        payload: { cardId: c.id, resources: _harvestResourcePicks(player) },
+      };
     }
     if (c.funcType === 'expand') {
       const bldCap = maxBuildingsFor(player);
       if ((player.buildings || []).length >= bldCap) {
-        return { type: 'useFunc', payload: { cardId: c.id } };
+        let direction = 'building';
+        if (shouldExpandResourceHand(player, game, botState)) direction = 'resource';
+        else if ((player.funcCards || []).length >= maxFuncHandFor(player)) {
+          direction = 'function';
+        }
+        return { type: 'useFunc', payload: { cardId: c.id, direction } };
       }
     }
     if (c.funcType === 'redraw' && !player.buildTurnUsedRedraw) {
@@ -3120,140 +3670,468 @@ function decideUseFuncCard(game, player, diff, botState) {
 }
 
 /**
- * ????????? + ?????+ ?? + ??
+ * hard 建造资源检查流水线（严格按优先级，一步只返回一个行动）。
+ *
+ * 1 购发展卡：手牌≥12、无需兑换、每回合最多 2 次
+ * 2 建房：人口已满，且付得起后仍能繁殖（含兑换，兑换不得掏空繁殖粮）
+ * 3 建造筑：分数≥7，且有助于称号/分数（含兑换）
+ * 4 建房：分数≥8（含兑换）
+ * 5 繁殖：无需兑换
+ * 6 扩资源格：进建造回合时空位≤5，无需兑换
+ * 7 扩建筑格：建筑格已满（含兑换）
+ * 8 建造筑：非宫殿，无需兑换
+ * 9 繁殖：含兑换
+ * 10 建房：分数≥6（含兑换）
+ * 11 建造筑：非宫殿，含兑换
+ * 12 扩资源格：进建造回合时空位≤3，含兑换
+ * 13 建房：含兑换（不看分数）
+ * 14 手牌≥6：依次 购卡→建造筑→建房→扩容（全都含兑换）
+ *
+ * 含兑换的步骤：该动作资源缺口 > 2 就不兑换（不值得做）。
+ * 第 3、4 步是冲分，不看缺口。
+ * 兑换时尽量留着后续动作还要用的资源，没有别的原料才动用。
+ */
+function decideBuildActionHard(game, player, botState) {
+  botState = botState || {};
+
+  let act =
+    _buildTryBuyFunc(game, player, { allowExchange: false, minHand: 12 }) ||
+    _buildTryHouseFullPopPreserveBreed(game, player) ||
+    _buildTryConstruct(game, player, {
+      allowExchange: true,
+      ignoreExchangeGap: true,
+      minScore: 7,
+      requireTitleOrScore: true,
+      excludePalace: false,
+      step: 3,
+    }) ||
+    _buildTryHouse(game, player, {
+      minScore: 8,
+      allowExchange: true,
+      ignoreExchangeGap: true,
+      step: 4,
+    }) ||
+    _buildTryBreed(game, player, { allowExchange: false }) ||
+    _buildTryExpandResource(game, player, botState, {
+      allowExchange: false,
+      entryFreeMax: 5,
+    }) ||
+    _buildTryExpandBuilding(game, player, botState, { allowExchange: true, step: 7 }) ||
+    _buildTryConstruct(game, player, {
+      allowExchange: false,
+      excludePalace: true,
+    }) ||
+    _buildTryBreed(game, player, { allowExchange: true, step: 9 }) ||
+    _buildTryHouse(game, player, { minScore: 6, allowExchange: true, step: 10 }) ||
+    _buildTryConstruct(game, player, {
+      allowExchange: true,
+      excludePalace: true,
+      step: 11,
+    }) ||
+    _buildTryExpandResource(game, player, botState, {
+      allowExchange: true,
+      entryFreeMax: 3,
+      step: 12,
+    }) ||
+    _buildTryHouse(game, player, { minScore: 0, allowExchange: true, step: 13 });
+
+  if (act) return act;
+
+  if (sumRes(player.resources || {}) >= 6) {
+    act =
+      _buildTryBuyFunc(game, player, { allowExchange: true, minHand: 0, step: 14 }) ||
+      _buildTryConstruct(game, player, {
+        allowExchange: true,
+        excludePalace: false,
+        step: 15,
+      }) ||
+      _buildTryHouse(game, player, { minScore: 0, allowExchange: true, step: 16 }) ||
+      _buildTryExpandResource(game, player, botState, {
+        allowExchange: true,
+        entryFreeMax: 3,
+        step: 17,
+      }) ||
+      _buildTryExpandBuilding(game, player, botState, { allowExchange: true, step: 18 }) ||
+      _buildTryExpandAny(game, player, botState, { allowExchange: true, step: 19 });
+    if (act) return act;
+  }
+
+  return { type: 'pass' };
+}
+
+const BUY_FUNC_PER_TURN_MAX = 2;
+
+function _buyFuncCountThisTurn(player) {
+  return Math.max(
+    0,
+    Number(player.buildTurnBuyFuncCount) || 0,
+    player.buildTurnUsedBuyFunc ? 1 : 0
+  );
+}
+
+function _canBuyFuncThisTurn(player) {
+  if (!player) return false;
+  if (_buyFuncCountThisTurn(player) >= BUY_FUNC_PER_TURN_MAX) return false;
+  if ((player.funcCards || []).length >= maxFuncHandFor(player)) return false;
+  return true;
+}
+
+function _buildTryBuyFunc(game, player, opts) {
+  const allowExchange = Boolean(opts && opts.allowExchange);
+  const minHand = opts && opts.minHand != null ? Number(opts.minHand) : 0;
+  if (sumRes(player.resources || {}) < minHand) return null;
+  if (!_canBuyFuncThisTurn(player)) return null;
+  if (canPay(player.resources, BUY_FUNC_COST)) {
+    return { type: 'buyFuncCardPermanent' };
+  }
+  if (allowExchange && _exchangeGapWorthIt(player, BUY_FUNC_COST, opts)) {
+    return _exchangeTowardCost(
+      game,
+      player,
+      BUY_FUNC_COST,
+      null,
+      _laterSoftReserve(game, player, opts && opts.step)
+    );
+  }
+  return null;
+}
+
+function _breedFoodReserve(player) {
+  if (!player || player.roundBred) return {};
+  if ((Number(player.villagers) || 0) >= 15) return {};
+  return { food: breedFoodCost(player.villagers) };
+}
+
+/** 人口已满时建房；兑换不得掏空繁殖所需粮食 */
+function _buildTryHouseFullPopPreserveBreed(game, player) {
+  if (!player || player.roundBuiltHouse) return null;
+  if (freeHousesFor(player) > 0) return null;
+  const reserve = _breedFoodReserve(player);
+  if (canPay(player.resources, BUILD_HOUSE_COST)) {
+    const after = copyRes(player.resources);
+    for (const k of RESOURCES) {
+      after[k] = (after[k] || 0) - (Number(BUILD_HOUSE_COST[k]) || 0);
+    }
+    const need = Number(reserve.food) || 0;
+    if (need > 0 && (after.food || 0) < need) {
+      // 付完房费后粮不够，但若剩余资源仍能兑出粮则允许
+      const fake = { resources: after };
+      const gap = need - (after.food || 0);
+      if (
+        !_canExchangeTo(
+          fake,
+          effectiveExchangeCost(player, game),
+          'food',
+          gap
+        )
+      ) {
+        return null;
+      }
+    }
+    return { type: 'buildHousePermanent' };
+  }
+  if (actionResourceGap(player.resources, BUILD_HOUSE_COST) > 2) return null;
+  if (!_canAffordCostViaExchange(game, player, BUILD_HOUSE_COST, reserve)) {
+    return null;
+  }
+  return _exchangeTowardCost(
+    game,
+    player,
+    BUILD_HOUSE_COST,
+    reserve,
+    _laterSoftReserve(game, player, 2)
+  );
+}
+
+function _buildTryHouse(game, player, opts) {
+  if (!player || player.roundBuiltHouse) return null;
+  const minScore = opts && opts.minScore != null ? Number(opts.minScore) : 0;
+  const allowExchange = Boolean(opts && opts.allowExchange);
+  if (minScore > 0 && playerScore(player, game) < minScore) return null;
+  if (canPay(player.resources, BUILD_HOUSE_COST)) {
+    return { type: 'buildHousePermanent' };
+  }
+  if (allowExchange && _exchangeGapWorthIt(player, BUILD_HOUSE_COST, opts)) {
+    return _exchangeTowardCost(
+      game,
+      player,
+      BUILD_HOUSE_COST,
+      null,
+      _laterSoftReserve(game, player, opts && opts.step)
+    );
+  }
+  return null;
+}
+
+function _buildTryBreed(game, player, opts) {
+  if (!player || player.roundBred) return null;
+  if ((Number(player.villagers) || 0) >= 15) return null;
+  if (freeHousesFor(player) <= 0) return null;
+  const allowExchange = Boolean(opts && opts.allowExchange);
+  const foodNeed = breedFoodCost(player.villagers);
+  if ((Number(player.resources.food) || 0) >= foodNeed) {
+    return { type: 'breedPermanent' };
+  }
+  if (allowExchange && _exchangeGapWorthIt(player, { food: foodNeed }, opts)) {
+    return _exchangeTowardCost(
+      game,
+      player,
+      { food: foodNeed },
+      null,
+      _laterSoftReserve(game, player, opts && opts.step)
+    );
+  }
+  return null;
+}
+
+function _workshopWishCount(player) {
+  let n = 0;
+  for (const b of player.buildings || []) {
+    if (
+      b.built &&
+      (b.buildType === 'produce' || b.buildType === 'wishWell')
+    ) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+/** 建成后有助于称号或直接加分 */
+function _buildingHelpsTitleOrScore(player, b, game) {
+  if (!b || b.built) return false;
+  if ((Number(b.score) || 0) > 0) return true;
+  if (b.buildType === 'exchange') {
+    return countBuiltExchanges(player) < 3;
+  }
+  if (b.buildType === 'wishWell' || b.buildType === 'produce') {
+    return _workshopWishCount(player) < 3;
+  }
+  // 其它可叠放类型：朝 3 座成就推进
+  const key = b.buildType || b.id;
+  const n = (player.buildings || []).filter(
+    (x) => x.built && (x.buildType || x.id) === key
+  ).length;
+  if (n >= 1 && n < 3) return true;
+  return scoreBuildingForHard(player, b, game) >= 25;
+}
+
+function _buildTryConstruct(game, player, opts) {
+  const allowExchange = Boolean(opts && opts.allowExchange);
+  const excludePalace = Boolean(opts && opts.excludePalace);
+  const requireTitleOrScore = Boolean(opts && opts.requireTitleOrScore);
+  const minScore = opts && opts.minScore != null ? Number(opts.minScore) : 0;
+  if (minScore > 0 && playerScore(player, game) < minScore) return null;
+
+  const cands = (player.buildings || []).filter((b) => {
+    if (b.built) return false;
+    if (excludePalace && b.buildType === 'score2') return false;
+    if (requireTitleOrScore && !_buildingHelpsTitleOrScore(player, b, game)) {
+      return false;
+    }
+    return true;
+  });
+  if (!cands.length) return null;
+
+  cands.sort(
+    (a, b) =>
+      scoreBuildingForHard(player, b, game) -
+      scoreBuildingForHard(player, a, game)
+  );
+
+  for (const b of cands) {
+    const cost = b.cost || {};
+    if (canPay(player.resources, cost)) {
+      return { type: 'construct', payload: { buildingId: b.id } };
+    }
+  }
+  if (!allowExchange) return null;
+  for (const b of cands) {
+    const cost = b.cost || {};
+    if (!_exchangeGapWorthIt(player, cost, opts)) continue;
+    const exch = _exchangeTowardCost(
+      game,
+      player,
+      cost,
+      null,
+      _laterSoftReserve(game, player, opts && opts.step, { skipBuildingId: b.id })
+    );
+    if (exch) return exch;
+  }
+  return null;
+}
+
+function _buildTryExpandResource(game, player, botState, opts) {
+  const allowExchange = Boolean(opts && opts.allowExchange);
+  if (opts && opts.entryFreeMax != null) {
+    const entry = ensureBuildTurnEntryFree(player);
+    if (entry == null || entry > Number(opts.entryFreeMax)) return null;
+  } else if (!shouldExpandResourceHand(player, game, botState)) {
+    return null;
+  }
+  if (canPay(player.resources, EXPAND_COST)) {
+    markExpandedResource(botState, player);
+    return { type: 'expandPermanent', payload: { direction: 'resource' } };
+  }
+  const freeExpand = (player.funcCards || []).find((c) => c.funcType === 'expand');
+  if (freeExpand) {
+    markExpandedResource(botState, player);
+    return {
+      type: 'useFunc',
+      payload: { cardId: freeExpand.id, direction: 'resource' },
+    };
+  }
+  if (allowExchange && _exchangeGapWorthIt(player, EXPAND_COST, opts)) {
+    const exch = _exchangeTowardCost(
+      game,
+      player,
+      EXPAND_COST,
+      null,
+      _laterSoftReserve(game, player, opts && opts.step)
+    );
+    if (exch) return exch;
+  }
+  return null;
+}
+
+function _buildTryExpandBuilding(game, player, botState, opts) {
+  if (!buildingSlotsTight(player)) return null;
+  const allowExchange = Boolean(opts && opts.allowExchange);
+  if (canPay(player.resources, EXPAND_COST)) {
+    return { type: 'expandPermanent', payload: { direction: 'building' } };
+  }
+  const freeExpand = (player.funcCards || []).find((c) => c.funcType === 'expand');
+  if (freeExpand) {
+    return {
+      type: 'useFunc',
+      payload: { cardId: freeExpand.id, direction: 'building' },
+    };
+  }
+  if (allowExchange && _exchangeGapWorthIt(player, EXPAND_COST, opts)) {
+    const exch = _exchangeTowardCost(
+      game,
+      player,
+      EXPAND_COST,
+      null,
+      _laterSoftReserve(game, player, opts && opts.step)
+    );
+    if (exch) return exch;
+  }
+  return null;
+}
+
+/** 手牌高压兜底：任意方向扩容。资源方向仍受进场空位≤3 约束，避免绕过第 12 步。 */
+function _buildTryExpandAny(game, player, botState, opts) {
+  const allowExchange = Boolean(opts && opts.allowExchange);
+  const entry = ensureBuildTurnEntryFree(player);
+  const wantResource = entry != null && entry <= 3;
+  const wantBuilding = buildingSlotsTight(player);
+  const wantFunc = (player.funcCards || []).length >= maxFuncHandFor(player);
+  if (canPay(player.resources, EXPAND_COST)) {
+    let dir = 'building';
+    if (wantBuilding) dir = 'building';
+    else if (wantFunc) dir = 'function';
+    else if (wantResource) dir = 'resource';
+    else return null;
+    if (dir === 'resource') markExpandedResource(botState, player);
+    return { type: 'expandPermanent', payload: { direction: dir } };
+  }
+  if (
+    allowExchange &&
+    (wantResource || wantBuilding || wantFunc) &&
+    _exchangeGapWorthIt(player, EXPAND_COST, opts)
+  ) {
+    return _exchangeTowardCost(
+      game,
+      player,
+      EXPAND_COST,
+      null,
+      _laterSoftReserve(game, player, opts && opts.step)
+    );
+  }
+  return null;
+}
+
+/**
+ * 建造行动：溢出处理 →（hard 严格流水线）/（normal·easy 简化）→ pass
  */
 function decideBuildAction(game, player, diff, botState) {
   if (game.buildPassed && game.buildPassed[player.id]) return null;
   botState = botState || {};
+  ensureBuildTurnEntryFree(player);
 
-  // 0. ??????
   const overflow = decideResourceOverflow(game, player, diff, botState);
   if (overflow) return overflow;
 
-  // 1. ??????
   if (diff === 'hard') {
     const useFunc = decideUseFuncCardHard(game, player, botState);
     if (useFunc) return useFunc;
-  } else {
-    const useFunc = decideUseFuncCard(game, player, diff, botState);
-    if (useFunc) return useFunc;
+    return decideBuildActionHard(game, player, botState);
   }
 
-  // 2. 常驻：繁殖 / 建房 / 扩容（代价与 engine 一致；不够则先兑换）
-  if (diff === 'hard') {
-    // 满房或 ≥6 分：优先建房
+  const useFunc = decideUseFuncCard(game, player, diff, botState);
+  if (useFunc) return useFunc;
+
+  // normal/easy：空位≤9 也扩资源位
+  if (
+    shouldExpandResourceHand(player, game, botState) &&
+    canPay(player.resources, EXPAND_COST)
+  ) {
+    markExpandedResource(botState, player);
+    return { type: 'expandPermanent', payload: { direction: 'resource' } };
+  }
+  if (shouldExpandResourceHand(player, game, botState)) {
+    const exch = _exchangeTowardCost(game, player, EXPAND_COST);
+    if (exch) return exch;
+  }
+
+  const canHouse =
+    canPay(player.resources, BUILD_HOUSE_COST) && !player.roundBuiltHouse;
+  const canBreed =
+    !player.roundBred &&
+    player.villagers < 15 &&
+    freeHousesFor(player) > 0 &&
+    (player.resources.food || 0) >= breedFoodCost(player.villagers);
+
+  if (diff === 'easy') {
+    if (canBreed) return { type: 'breedPermanent' };
+    if (canHouse) return { type: 'buildHousePermanent' };
+  } else {
     if (shouldPrioritizeHouse(player, game) && !player.roundBuiltHouse) {
-      if (canPay(player.resources, BUILD_HOUSE_COST)) {
-        return { type: 'buildHousePermanent' };
-      }
+      if (canHouse) return { type: 'buildHousePermanent' };
       if (_canAffordCostViaExchange(game, player, BUILD_HOUSE_COST)) {
         const exch = _exchangeTowardCost(game, player, BUILD_HOUSE_COST);
         if (exch) return exch;
       }
     }
-
-    // 有空位则尽量繁殖（含兑换凑粮）
-    if (
-      !player.roundBred &&
-      player.villagers < 15 &&
-      freeHousesFor(player) > 0
-    ) {
+    if (canHouse) return { type: 'buildHousePermanent' };
+    if (canBreed) return { type: 'breedPermanent' };
+    if (_canBreedNowOrViaExchange(game, player)) {
       const foodNeed = breedFoodCost(player.villagers);
-      if ((player.resources.food || 0) >= foodNeed) {
-        return { type: 'breedPermanent' };
-      }
-      if (_canBreedNowOrViaExchange(game, player)) {
-        const exch = _exchangeTowardCost(game, player, { food: foodNeed });
-        if (exch) return exch;
-      }
-    }
-
-    // 生产爆牌或确需提高带入量时才扩（上限越高意愿越低；与兑换比无关）
-    if (shouldExpandResourceHand(player, game, botState)) {
-      if (canPay(player.resources, EXPAND_COST)) {
-        markExpandedResource(botState);
-        return { type: 'expandPermanent', payload: { direction: 'resource' } };
-      }
-      if (_canAffordCostViaExchange(game, player, EXPAND_COST)) {
-        const exch = _exchangeTowardCost(game, player, EXPAND_COST);
-        if (exch) return exch;
-      }
-    }
-
-    // 一般建房（未触发优先条件时）
-    if (!player.roundBuiltHouse && canPay(player.resources, BUILD_HOUSE_COST)) {
-      if (
-        playerScore(player, game) >= 6 ||
-        player.villagers >= 8 ||
-        freeHousesFor(player) <= 1
-      ) {
-        return { type: 'buildHousePermanent' };
-      }
-    }
-  } else {
-    // normal/easy：仅确需时扩资源位
-    if (
-      shouldExpandResourceHand(player, game, botState) &&
-      canPay(player.resources, EXPAND_COST) &&
-      wantsExpandResource(botState)
-    ) {
-      markExpandedResource(botState);
-      return { type: 'expandPermanent', payload: { direction: 'resource' } };
-    }
-
-    const canHouse =
-      canPay(player.resources, BUILD_HOUSE_COST) && !player.roundBuiltHouse;
-    const canBreed =
-      !player.roundBred &&
-      player.villagers < 15 &&
-      freeHousesFor(player) > 0 &&
-      (player.resources.food || 0) >= breedFoodCost(player.villagers);
-
-    if (diff === 'easy') {
-      if (canBreed) return { type: 'breedPermanent' };
-      if (canHouse) return { type: 'buildHousePermanent' };
-    } else {
-      // normal：满房优先建房；否则可兑换后再繁殖/建房
-      if (shouldPrioritizeHouse(player, game) && !player.roundBuiltHouse) {
-        if (canHouse) return { type: 'buildHousePermanent' };
-        if (_canAffordCostViaExchange(game, player, BUILD_HOUSE_COST)) {
-          const exch = _exchangeTowardCost(game, player, BUILD_HOUSE_COST);
-          if (exch) return exch;
-        }
-      }
-      if (canHouse) return { type: 'buildHousePermanent' };
-      if (canBreed) return { type: 'breedPermanent' };
-      if (_canBreedNowOrViaExchange(game, player)) {
-        const foodNeed = breedFoodCost(player.villagers);
-        const exch = _exchangeTowardCost(game, player, { food: foodNeed });
-        if (exch) return exch;
-      }
+      const exch = _exchangeTowardCost(game, player, { food: foodNeed });
+      if (exch) return exch;
     }
   }
 
-  // 3. 栏位溢出时扩建（normal/easy）
-  if (diff !== 'hard') {
-    const needExpand =
-      (player.buildings || []).length >= maxBuildingsFor(player) ||
+  const needExpand =
+    (player.buildings || []).length >= maxBuildingsFor(player) ||
+    (player.funcCards || []).length >= maxFuncHandFor(player);
+  if (needExpand && canPay(player.resources, EXPAND_COST)) {
+    const bldOverflow =
+      (player.buildings || []).length >= maxBuildingsFor(player);
+    const funcOverflow =
       (player.funcCards || []).length >= maxFuncHandFor(player);
-    if (needExpand && canPay(player.resources, EXPAND_COST)) {
-      const bldOverflow =
-        (player.buildings || []).length >= maxBuildingsFor(player);
-      const funcOverflow =
-        (player.funcCards || []).length >= maxFuncHandFor(player);
-      let dir = 'building';
-      if (funcOverflow && !bldOverflow) dir = 'function';
-      else if (!funcOverflow && bldOverflow) dir = 'building';
-      else
-        dir =
-          (player.buildings || []).filter((b) => !b.built).length > 0
-            ? 'building'
-            : 'function';
-      return { type: 'expandPermanent', payload: { direction: dir } };
-    }
+    let dir = 'building';
+    if (funcOverflow && !bldOverflow) dir = 'function';
+    else if (!funcOverflow && bldOverflow) dir = 'building';
+    else
+      dir =
+        (player.buildings || []).filter((b) => !b.built).length > 0
+          ? 'building'
+          : 'function';
+    return { type: 'expandPermanent', payload: { direction: dir } };
   }
 
-  // 4. 建造已入手建筑（兑换高效时允许先兑换再造）
   const buildable = (player.buildings || []).filter(
     (b) => !b.built && canPay(player.resources, b.cost || {})
   );
@@ -3262,27 +4140,19 @@ function decideBuildAction(game, player, diff, botState) {
       buildable.sort((a, b) => (b.score || 0) - (a.score || 0));
       return { type: 'construct', payload: { buildingId: buildable[0].id } };
     }
-    if (diff === 'normal') {
-      buildable.sort(
-        (a, b) =>
-          scoreBuildingForNormal(player, b) - scoreBuildingForNormal(player, a)
-      );
-      return { type: 'construct', payload: { buildingId: buildable[0].id } };
-    }
     buildable.sort(
       (a, b) =>
-        scoreBuildingForHard(player, b, game) -
-        scoreBuildingForHard(player, a, game)
+        scoreBuildingForNormal(player, b) - scoreBuildingForNormal(player, a)
     );
     return { type: 'construct', payload: { buildingId: buildable[0].id } };
   }
-  if (diff !== 'easy' && hasEfficientExchange(player, game)) {
+  if (diff === 'normal' && hasEfficientExchange(player, game)) {
     const almost = (player.buildings || [])
       .filter((b) => !b.built && !canPay(player.resources, b.cost || {}))
       .filter((b) => _canAffordCostViaExchange(game, player, b.cost || {}))
-      .sort((a, b) =>
-        scoreBuildingForHard(player, b, game) -
-        scoreBuildingForHard(player, a, game)
+      .sort(
+        (a, b) =>
+          scoreBuildingForNormal(player, b) - scoreBuildingForNormal(player, a)
       );
     if (almost.length) {
       const exch = _exchangeTowardCost(game, player, almost[0].cost || {});
@@ -3290,36 +4160,23 @@ function decideBuildAction(game, player, diff, botState) {
     }
   }
 
-  // 5. 购买功能卡（集市好/上限高时积极兑资源买卡冲分）
   if (
-    diff !== 'easy' &&
-    !player.buildTurnUsedBuyFunc &&
-    (player.funcCards || []).length < maxFuncHandFor(player) &&
-    !buildingSlotsTight(player)
+    diff === 'normal' &&
+    _canBuyFuncThisTurn(player) &&
+    (prefersBuyFuncSink(player, game) || hasLosslessExchange(player, game))
   ) {
-    const okBuy =
-      prefersBuyFuncSink(player, game) ||
-      (Number(player.expandResSlots) || 0) >= 2 ||
-      hasLosslessExchange(player, game) ||
-      diff === 'hard';
-    if (okBuy && canPay(player.resources, BUY_FUNC_COST)) {
+    if (canPay(player.resources, BUY_FUNC_COST)) {
       return { type: 'buyFuncCardPermanent' };
     }
-    if (
-      okBuy &&
-      (resourceDumpUrgency(player) >= 20 || hasEfficientExchange(player, game)) &&
-      _canAffordCostViaExchange(game, player, BUY_FUNC_COST)
-    ) {
+    if (_canAffordCostViaExchange(game, player, BUY_FUNC_COST)) {
       const exch = _exchangeTowardCost(game, player, BUY_FUNC_COST);
       if (exch) return exch;
     }
   }
 
-  // 6. 结束前花牌：空位紧则花掉；兑换好则优先兑成建/买，扩容仍按容量需求
   const spend = decideSpendBeforePass(game, player, diff, botState);
   if (spend) return spend;
 
-  // 7. 跳过
   return { type: 'pass' };
 }
 
@@ -3425,6 +4282,31 @@ function decidePendingAction(game, player, diff, botState) {
     }
     if (left > 0) alloc.wood = (alloc.wood || 0) + left;
     return { type: 'allocateWishWell', payload: { alloc } };
+  }
+
+  // 结算弃牌 / 建造前爆牌：功能卡、未建建筑、超限资源
+  if (
+    player.pendingDiscardFunc ||
+    player.pendingDiscardBuild ||
+    (player.funcCards || []).length > maxFuncHandFor(player)
+  ) {
+    const d = decidePendingDiscard(game, player, diff, botState);
+    if (d) return d;
+  }
+  if (player.pendingDiscardRes && game.phase === 'settle_act') {
+    const over =
+      sumRes(player.resources || {}) - maxResourceHandFor(player);
+    if (over > 0) {
+      const amounts = _pickDiscardResourceAmounts(
+        game,
+        player,
+        over,
+        botState
+      );
+      if (Object.keys(amounts).length) {
+        return { type: 'discardResources', payload: { amounts } };
+      }
+    }
   }
 
   return null;
