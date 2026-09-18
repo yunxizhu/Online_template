@@ -1,3 +1,9 @@
+
+# 下载代码
+
+git clone --depth 1 https://github.com/yunxizhu/Online_template.git
+
+
 # 联机大厅框架
 
 Node.js + Socket.IO 回合制联机骨架，支持：
