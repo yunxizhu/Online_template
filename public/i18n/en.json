@@ -31,6 +31,16 @@
     "nick": "Nickname",
     "nickPlaceholder": "Enter nickname",
     "enter": "Enter lobby",
+    "enterRoom": "Enter room",
+    "enterPassiveControl": "Enter & control host",
+    "tunnelWait": "Waiting for the host to create a room… then join below",
+    "tunnelConnecting": "Connecting…",
+    "passiveControlHint": "You are controlling this passive host: create rooms, spectate, or chat",
+    "tunnelJoining": "Entering room…",
+    "tunnelWaitShort": "Waiting for a room…",
+    "tunnelGateHint": "Enter a nickname to join the room directly (remembered even if the tunnel URL changes)",
+    "passiveLockTitle": "Passive mode",
+    "passiveShareLabel": "Tunnel URL (shareable)",
     "createRoom": "Create room",
     "joinByCode": "Join by code",
     "peersSearching": "Broadcast: searching…",
@@ -258,7 +268,10 @@
   "game": {
     "thinkTime": "Think time",
     "matchTime": "Match",
-    "loadFail": "Failed to load game assets. Please refresh."
+    "loadFail": "Failed to load game assets. Please refresh.",
+    "hosting": "Auto-play",
+    "hostingCancel": "Cancel auto-play",
+    "hostingActive": "Auto-playing"
   },
   "common": {
     "dash": "—",
@@ -901,6 +914,9 @@
     "hostOccupied": "This host is already in use",
     "hostOccupiedBy": "This host is in use by {who}",
     "hostFreed": "Host is free — you can enter now",
+    "tunnelGuestBye": "You left the room",
+    "passiveControlGranted": "Host control granted: create rooms, spectate, or chat",
+    "passiveUrlCopied": "Tunnel URL copied",
     "unavailable": "Unavailable",
     "roomInvalid": "Room invalid; back to lobby",
     "roomClosed": "Room closed; back to lobby",

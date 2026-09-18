@@ -83,11 +83,16 @@ function buildStartOneBat(nodeExeName = 'node.exe', port = DEFAULT_PORT) {
   );
 }
 
-function buildMultiInstanceBat(port = DEFAULT_PORT) {
+function buildMultiInstanceBat(port = DEFAULT_PORT, nodeExeName = 'node.exe') {
   return (
     '@echo off\r\n' +
     'cd /d "%~dp0"\r\n' +
     '\r\n' +
+    `if not exist "%~dp0${nodeExeName}" (\r\n` +
+    `  echo [ERROR] missing ${nodeExeName}\r\n` +
+    '  pause\r\n' +
+    '  exit /b 1\r\n' +
+    ')\r\n' +
     'if not exist "%~dp0_start-one.bat" (\r\n' +
     '  echo [ERROR] missing _start-one.bat\r\n' +
     '  pause\r\n' +
@@ -114,6 +119,12 @@ function buildMultiInstanceBat(port = DEFAULT_PORT) {
     '  echo Invalid number. Please enter 2 to 8.\r\n' +
     '  pause\r\n' +
     '  exit /b 1\r\n' +
+    ')\r\n' +
+    '\r\n' +
+    'echo.\r\n' +
+    'echo [update] 多开前检查并自动升级（仅一次）...\r\n' +
+    `if exist "%~dp0scripts\\check-host-update.js" (\r\n` +
+    `  "%~dp0${nodeExeName}" "%~dp0scripts\\check-host-update.js"\r\n` +
     ')\r\n' +
     '\r\n' +
     `set /a BASE_PORT=${port}\r\n` +
@@ -169,7 +180,7 @@ function buildWindowsReadme({
     '3. 建房后把公网地址发给朋友，或让对方用安卓 App / 浏览器加入\n\n' +
     '本机多开（测联机）\n' +
     '--------------\n' +
-    '双击「本机多开测试.bat」，按提示输入 2～8，会从端口 ' +
+    '双击「本机多开测试.bat」，按提示输入 2～8；会先检查并自动升级（仅一次），再从端口 ' +
     `${port} 起依次开多个实例（各开一个黑窗口）。\n` +
     '关闭对应黑窗口即停止该实例。\n\n' +
     '目录\n' +
@@ -210,7 +221,7 @@ function writeWindowsPackLaunchers(destDir, opts = {}) {
   );
   writeUtf8(
     path.join(destDir, '本机多开测试.bat'),
-    buildMultiInstanceBat(port)
+    buildMultiInstanceBat(port, nodeExeName)
   );
   writeUtf8(
     path.join(destDir, 'README.txt'),

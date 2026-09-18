@@ -31,6 +31,16 @@
     "nick": "昵称",
     "nickPlaceholder": "输入昵称",
     "enter": "进入大厅",
+    "enterRoom": "进入房间",
+    "enterPassiveControl": "进入并操控主机",
+    "tunnelWait": "等待房主创建房间…创建后可在下方加入",
+    "tunnelConnecting": "正在连接中…",
+    "passiveControlHint": "你正在操控此被动主机：可开房、观战、聊天",
+    "tunnelJoining": "正在进入房间…",
+    "tunnelWaitShort": "等待房主开房…",
+    "tunnelGateHint": "输入昵称后将直接进入房间（换隧道也会记住）",
+    "passiveLockTitle": "处于被动模式中",
+    "passiveShareLabel": "隧道地址（可分享）",
     "createRoom": "创建房间",
     "joinByCode": "房间码加入",
     "peersSearching": "广播：搜索中…",
@@ -258,7 +268,10 @@
   "game": {
     "thinkTime": "思考时间",
     "matchTime": "对局",
-    "loadFail": "游戏资源加载失败，请刷新重试"
+    "loadFail": "游戏资源加载失败，请刷新重试",
+    "hosting": "托管",
+    "hostingCancel": "取消托管",
+    "hostingActive": "托管中"
   },
   "common": {
     "dash": "—",
@@ -899,6 +912,9 @@
     "hostOccupied": "本机已被占用",
     "hostOccupiedBy": "本机已被占用（占用者：{who}）",
     "hostFreed": "本机已空闲，可再次进入",
+    "tunnelGuestBye": "已离开房间",
+    "passiveControlGranted": "已获得主机操控权：可开房、观战、聊天",
+    "passiveUrlCopied": "隧道地址已复制",
     "unavailable": "当前不可用",
     "roomInvalid": "房间已失效，已返回大厅",
     "roomClosed": "房间已解散，已返回大厅",

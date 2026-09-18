@@ -45,6 +45,12 @@ if errorlevel 1 (
   exit /b 1
 )
 
+echo.
+echo [update] 多开前检查并自动升级（仅一次）...
+if exist "%~dp0scripts\check-host-update.js" (
+  call node "%~dp0scripts\check-host-update.js"
+)
+
 set /a BASE_PORT=39200
 set /a LAST=%BASE_PORT%+%COUNT%-1
 

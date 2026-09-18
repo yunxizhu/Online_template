@@ -239,6 +239,7 @@ function fullRoomView(room) {
       isBot: Boolean(p.isBot),
       botDifficulty: p.botDifficulty || null,
       botDifficultyLabel: p.botDifficultyLabel || null,
+      isHosted: Boolean(p.isHosted),
     })),
     observers: (room.observers || []).map((p) => ({
       id: p.id,
@@ -1086,6 +1087,7 @@ class RoomManager {
       for (const p of room.players) {
         p.ready = true;
         p.offline = false;
+        p.isHosted = false;
       }
     }
 
@@ -1745,6 +1747,9 @@ class RoomManager {
     const game = getGame(room.gameType);
     if (!game) return { ok: false, error: '不支持的游戏类型' };
 
+    for (const p of room.players) {
+      p.isHosted = false;
+    }
     room.status = 'playing';
     room.playingStartedAt = Date.now();
     try {
@@ -1755,6 +1760,44 @@ class RoomManager {
       return { ok: false, error: err.message || '开局失败' };
     }
     return { ok: true, room, gameModule: game };
+  }
+
+  /**
+   * 卡拉斯坦对局中：玩家开关托管（由困难电脑代决策）
+   * @param {string} playerId
+   * @param {boolean} hosted
+   */
+  setPlayerHosted(playerId, hosted) {
+    const player = this.players.get(playerId);
+    if (!player || !player.roomId) {
+      return { ok: false, error: '你不在房间中' };
+    }
+    const room = this.rooms.get(player.roomId);
+    if (!room) return { ok: false, error: '房间不存在' };
+    if (room.status !== 'playing' || !room.game) {
+      return { ok: false, error: '对局未开始' };
+    }
+    if (room.gameType !== 'lasidao') {
+      return { ok: false, error: '当前游戏不支持托管' };
+    }
+    if ((room.observers || []).some((o) => o.id === playerId)) {
+      return { ok: false, error: '观战中无法托管' };
+    }
+    const seat = (room.players || []).find((p) => p && p.id === playerId);
+    if (!seat || seat.left) {
+      return { ok: false, error: '你不是对局玩家' };
+    }
+    if (seat.isBot) {
+      return { ok: false, error: '电脑无需托管' };
+    }
+
+    const want = Boolean(hosted);
+    seat.isHosted = want;
+    if (room.game && Array.isArray(room.game.players)) {
+      const gp = room.game.players.find((p) => p && p.id === playerId);
+      if (gp) gp.isHosted = want;
+    }
+    return { ok: true, room, isHosted: want };
   }
 
   removePlayer(playerId) {

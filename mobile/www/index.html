@@ -76,10 +76,12 @@
             </label>
             <button id="btn-enter-lobby" type="button">进入大厅</button>
             <p id="host-occupied-hint" class="muted host-occupied-hint" hidden>本机已被占用</p>
+            <p id="tunnel-gate-hint" class="muted tunnel-gate-hint" hidden data-i18n="lobby.tunnelGateHint">输入昵称后将直接进入房间（换隧道也会记住）</p>
             <p class="muted gate-hint">可加入已有房间，或在可用的被动主机上创建房间。</p>
           </div>
 
           <div id="lobby-main" hidden>
+            <p id="tunnel-wait-hint" class="muted tunnel-wait-hint" hidden>等待房主创建房间…创建后可在下方加入</p>
             <div class="panel lobby-toolbar">
               <div class="row lobby-toolbar-actions">
                 <button id="btn-create-room" type="button" aria-disabled="true">创建房间</button>

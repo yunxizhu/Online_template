@@ -273,6 +273,7 @@ window.GameNet = (function () {
       'lobby:error',
       'lobby:passive',
       'lobby:passiveProgress',
+      'lobby:passiveControl',
       'lobby:mqtt-reconnect-result',
       'lobby:invite',
       'player:me',
@@ -304,6 +305,8 @@ window.GameNet = (function () {
       'chat:message',
       'chat:error',
       'tunnel:status',
+      'nick:suggest',
+      'nick:recall:result',
     ];
     for (const event of events) {
       s.on(event, (data) => emitLocal(event, data));
@@ -350,41 +353,70 @@ window.GameNet = (function () {
         reject(new Error('Socket.IO 客户端未加载'));
         return;
       }
+      // 隧道首连：先 polling 更快通，再升级 websocket；本机仍优先 websocket
+      const viaTunnel = (() => {
+        try {
+          const h = String(new URL(target).hostname || '').toLowerCase();
+          return (
+            h === 'trycloudflare.com' ||
+            h.endsWith('.trycloudflare.com') ||
+            h.endsWith('.cfargotunnel.com')
+          );
+        } catch (_) {
+          return false;
+        }
+      })();
       const s = io(target, {
         autoConnect: true,
         forceNew: true,
-        // 隧道上 HTTP 长轮询会把一次操作拖成数秒；先 WebSocket，失败再轮询
-        transports: ['websocket', 'polling'],
+        transports: viaTunnel ? ['polling', 'websocket'] : ['websocket', 'polling'],
         upgrade: true,
         rememberUpgrade: true,
         reconnection: true,
         reconnectionAttempts: Infinity,
         reconnectionDelay: 400,
         reconnectionDelayMax: 4000,
-        timeout: 12000,
+        timeout: viaTunnel ? 8000 : 12000,
       });
       socket = s;
       bindServerEvents(s);
 
+      let settled = false;
+      const failTimer = setTimeout(() => {
+        if (settled) return;
+        if (s.connected) {
+          onOk();
+          return;
+        }
+        onErr(new Error('连接超时: ' + target));
+      }, viaTunnel ? 9000 : 13000);
+
       const onErr = (err) => {
-        cleanup();
-        reject(err || new Error('连接失败: ' + target));
+        // 隧道上 websocket/polling 切换会先打出 connect_error，等最终结果或超时
+        if (settled || s.connected) return;
+        if (!viaTunnel) {
+          cleanup();
+          reject(err || new Error('连接失败: ' + target));
+        }
       };
       const onOk = () => {
+        if (settled) return;
+        settled = true;
         cleanup();
         resolve(s);
       };
       const cleanup = () => {
+        clearTimeout(failTimer);
         s.off('connect', onOk);
         s.off('connect_error', onErr);
       };
 
       if (s.connected) {
-        resolve(s);
+        onOk();
         return;
       }
       s.once('connect', onOk);
-      s.once('connect_error', onErr);
+      s.on('connect_error', onErr);
     });
   }
 
@@ -501,6 +533,8 @@ window.GameNet = (function () {
   function joinLobby(playerName, opts = {}) {
     ensureSocket().emit('lobby:join', {
       playerName,
+      name: playerName,
+      nick: playerName,
       playerTag: opts.playerTag || window.PlayerNick.ensureTag(),
       sessionId: opts.sessionId || null,
       roomId: opts.roomId || null,
@@ -558,6 +592,8 @@ window.GameNet = (function () {
       s.once('host:occupied', onOccupied);
       s.emit('lobby:join', {
         playerName,
+        name: playerName,
+        nick: playerName,
         playerTag: opts.playerTag || window.PlayerNick.ensureTag(),
         sessionId: opts.sessionId || null,
         roomId: opts.roomId || null,
@@ -638,10 +674,38 @@ window.GameNet = (function () {
   function renamePlayer(playerName, opts = {}) {
     ensureSocket().emit('player:rename', {
       playerName,
+      name: playerName,
+      nick: playerName,
       playerTag: opts.playerTag || window.PlayerNick.ensureTag(),
       sessionId: opts.sessionId || null,
       client: clientOf(opts),
       role: roleOf(opts),
+    });
+  }
+
+  /** 改名并等到 player:me（短超时，不阻塞太久） */
+  function renamePlayerAndWait(playerName, opts = {}) {
+    const timeoutMs = Math.max(400, Number(opts.timeoutMs) || 2000);
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try {
+          s.off('player:me', onMe);
+        } catch (_) {}
+        resolve();
+      };
+      const s = ensureSocket();
+      const timer = setTimeout(finish, timeoutMs);
+      function onMe(data) {
+        const got = String((data && data.name) || '').trim();
+        const want = String(playerName || '').trim();
+        if (!want || got === want || got.indexOf(want) === 0) finish();
+      }
+      s.on('player:me', onMe);
+      renamePlayer(playerName, opts);
     });
   }
 
@@ -700,6 +764,8 @@ window.GameNet = (function () {
     ensureSocket().emit('room:join', {
       roomId,
       playerName,
+      name: playerName,
+      nick: playerName,
       playerTag: opts.playerTag || window.PlayerNick.ensureTag(),
       sessionId: opts.sessionId || null,
       password: opts.password != null ? String(opts.password) : '',
@@ -792,6 +858,8 @@ window.GameNet = (function () {
     ensureSocket().emit('room:spectate', {
       roomId,
       playerName,
+      name: playerName,
+      nick: playerName,
       playerTag: opts.playerTag || window.PlayerNick.ensureTag(),
       sessionId: opts.sessionId || null,
       password: opts.password != null ? String(opts.password) : '',
@@ -1081,6 +1149,10 @@ window.GameNet = (function () {
     ensureSocket().emit('game:action', { type, payload });
   }
 
+  function setHosted(hosted) {
+    ensureSocket().emit('game:setHosted', { hosted: Boolean(hosted) });
+  }
+
   function getLocalOrigin() {
     return localOrigin;
   }
@@ -1101,6 +1173,73 @@ window.GameNet = (function () {
     return joinClientConfig.homeUrl ? String(joinClientConfig.homeUrl) : '';
   }
 
+  function recallTunnelNick(opts = {}) {
+    const timeoutMs = Math.max(300, Number(opts.timeoutMs) || 1200);
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (name) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try {
+          s.off('nick:suggest', onSuggest);
+          s.off('nick:recall:result', onSuggest);
+        } catch (_) {}
+        resolve(String(name || '').trim());
+      };
+      const onSuggest = (res) => {
+        finish((res && res.name) || '');
+      };
+      let s;
+      try {
+        s = ensureSocket();
+      } catch (_) {
+        finish('');
+        return;
+      }
+      const timer = setTimeout(() => finish(''), timeoutMs);
+      s.on('nick:suggest', onSuggest);
+      s.on('nick:recall:result', onSuggest);
+      try {
+        s.emit('nick:recall', (res) => {
+          finish((res && res.name) || '');
+        });
+      } catch (_) {
+        finish('');
+      }
+    });
+  }
+
+  /** HTTP 快速召回（与 Socket 并行，隧道首屏更快） */
+  function fetchTunnelNickHttp(opts = {}) {
+    const timeoutMs = Math.max(300, Number(opts.timeoutMs) || 1500);
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = setTimeout(() => {
+      try {
+        if (ctrl) ctrl.abort();
+      } catch (_) {}
+    }, timeoutMs);
+    const url = (typeof localOrigin === 'string' ? localOrigin : '') + '/api/tunnel-nick';
+    return fetch(url, {
+      cache: 'no-store',
+      signal: ctrl ? ctrl.signal : undefined,
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => String((data && data.name) || '').trim())
+      .catch(() => '')
+      .finally(() => clearTimeout(timer));
+  }
+
+  function rememberTunnelNick(playerName) {
+    try {
+      const s = ensureSocket();
+      if (!s || !s.connected) return;
+      s.emit('nick:remember', { playerName: String(playerName || '') });
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
   if (detectJoinOnlyOrigin()) {
     joinClientConfig.joinOnly = true;
   }
@@ -1119,6 +1258,7 @@ window.GameNet = (function () {
     reconnectMqtt,
     switchMqttBroker,
     renamePlayer,
+    renamePlayerAndWait,
     createRoom,
     reopenTunnelRoom,
     createRoomOnHost,
@@ -1144,9 +1284,13 @@ window.GameNet = (function () {
     quitGame,
     sendChat,
     sendAction,
+    setHosted,
     getLocalOrigin,
     getCurrentUrl,
     isOnRemoteHost,
     isConnected,
+    recallTunnelNick,
+    fetchTunnelNickHttp,
+    rememberTunnelNick,
   };
 })();

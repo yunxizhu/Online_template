@@ -7,13 +7,34 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/css/style.css" />
   <script>
-    /* 访客深链：首屏即显示「正在加入」，避免先闪出昵称门 */
+    /* 访客深链 / 隧道页：首屏转圈，避免先闪出昵称门 */
     (function () {
       try {
         var q = new URLSearchParams(location.search || '');
         if (q.get('guest') === '1' || q.get('join')) {
           document.documentElement.classList.add('boot-joining');
+          return;
         }
+        var h = String(location.hostname || '').toLowerCase();
+        var loopback =
+          h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '::1';
+        if (loopback) return;
+        var m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+        if (m) {
+          var a = Number(m[1]);
+          var b = Number(m[2]);
+          if (
+            a === 10 ||
+            a === 127 ||
+            (a === 192 && b === 168) ||
+            (a === 172 && b >= 16 && b <= 31) ||
+            (a === 169 && b === 254)
+          ) {
+            return;
+          }
+        }
+        document.documentElement.classList.add('boot-joining');
+        document.documentElement.dataset.tunnelConnecting = '1';
       } catch (e) {}
     })();
   </script>
@@ -147,6 +168,15 @@
               </p>
             </div>
           </div>
+          <button
+            type="button"
+            id="btn-hosting"
+            class="hosting-btn"
+            hidden
+            data-i18n="game.hosting"
+          >
+            托管
+          </button>
           <div class="header-nick" id="header-nick" hidden>
             <span id="nick-display" class="nick-display" data-i18n="app.playerDefault">玩家</span>
             <input
@@ -185,6 +215,15 @@
       </div>
     </header>
 
+    <div
+      id="hosting-overlay"
+      class="hosting-overlay"
+      hidden
+      aria-hidden="true"
+    >
+      <span class="hosting-overlay-text" data-i18n="game.hostingActive">托管中</span>
+    </div>
+
     <div class="app-body">
       <div class="app-content">
         <div class="toast-slot" aria-live="polite">
@@ -202,9 +241,11 @@
             </label>
             <button id="btn-enter-lobby" type="button" data-i18n="lobby.enter">进入大厅</button>
             <p id="host-occupied-hint" class="muted host-occupied-hint" hidden data-i18n="toast.hostOccupied">本机已被占用</p>
+            <p id="tunnel-gate-hint" class="muted tunnel-gate-hint" hidden data-i18n="lobby.tunnelGateHint">输入昵称后将直接进入房间（换隧道也会记住）</p>
           </div>
 
           <div id="lobby-main" hidden>
+            <p id="tunnel-wait-hint" class="muted tunnel-wait-hint" hidden data-i18n="lobby.tunnelWait">等待房主创建房间…创建后可在下方加入</p>
             <div class="panel lobby-toolbar">
               <div class="row lobby-toolbar-actions">
                 <button id="btn-toggle-create" type="button" data-i18n="lobby.createRoom">创建房间</button>
@@ -212,7 +253,7 @@
               </div>
               <label class="passive-toggle" id="passive-toggle-wrap">
                 <input id="chk-passive-mode" type="checkbox" />
-                <span>被动模式（他人可在你机器上开房，本机无人值守）</span>
+                <span>被动模式（分享隧道地址，他人可操控本机开房/观战/聊天）</span>
               </label>
               <div class="lobby-mqtt-row">
                 <p id="peers-label" class="muted" data-i18n="lobby.peersSearching">广播：搜索中…</p>
@@ -560,8 +601,21 @@
     <div class="passive-lock-panel panel">
       <p id="passive-lock-title" class="passive-lock-title">处于被动模式中</p>
       <p class="passive-lock-desc muted" id="passive-lock-desc">
-        无人值守：他人可在你的主机上开房与对局；本机保持锁定，不观战、不操作。结束后仍留在被动模式。
+        无人值守：分享隧道地址后，他人可操控本机开房、观战与聊天；本机保持锁定。结束后仍留在被动模式。
       </p>
+      <div id="passive-share-url" class="passive-share-url" hidden>
+        <label class="passive-share-label" for="passive-share-url-input">隧道地址（可分享）</label>
+        <div class="passive-share-row">
+          <input
+            id="passive-share-url-input"
+            type="text"
+            readonly
+            spellcheck="false"
+            autocomplete="off"
+          />
+          <button id="btn-copy-passive-url" type="button" class="secondary">复制</button>
+        </div>
+      </div>
       <button id="btn-exit-passive" type="button">退出被动模式</button>
     </div>
   </div>
@@ -578,10 +632,18 @@
           : '进入房间中…'
         : q.get('createPassive') === '1'
           ? '正在进入被动主机…'
-          : '正在加入…';
+          : document.documentElement.dataset.tunnelConnecting === '1'
+            ? '正在连接中…'
+            : '正在加入…';
       if (overlay) {
         overlay.hidden = false;
-        overlay.dataset.busyMode = join ? 'join' : q.get('createPassive') === '1' ? 'create' : 'join';
+        overlay.dataset.busyMode = join
+          ? 'join'
+          : q.get('createPassive') === '1'
+            ? 'create'
+            : document.documentElement.dataset.tunnelConnecting === '1'
+              ? 'connect'
+              : 'join';
       }
       if (msg) {
         msg.setAttribute('data-i18n-manual', '');

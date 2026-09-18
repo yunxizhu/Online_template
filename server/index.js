@@ -13,21 +13,103 @@ const { MqttBulletin, ROOM_OFFLINE_MS } = require('./mqttBulletin');
 const { QuickTunnel } = require('./tunnel');
 const { HostUpdateChecker } = require('./updateChecker');
 const { HostOccupancy } = require('./hostOccupancy');
+const { TunnelNickMemory } = require('./tunnelNickMemory');
 const crypto = require('crypto');
 const pathRoot = path.join(__dirname, '..');
 const hostUpdate = new HostUpdateChecker({ rootDir: pathRoot });
 const hostOccupancy = new HostOccupancy();
+const tunnelNickMemory = new TunnelNickMemory({
+  filePath: path.join(pathRoot, '.lianji-tunnel-nicks.json'),
+});
+
+function hostnameFromHostHeader(host) {
+  let s = String(host || '')
+    .trim()
+    .toLowerCase();
+  if (!s) return '';
+  if (s.startsWith('[')) {
+    const end = s.indexOf(']');
+    return end >= 0 ? s.slice(0, end + 1) : s;
+  }
+  // host:port → host（IPv4 / 域名）
+  const colon = s.lastIndexOf(':');
+  if (colon > 0 && /^\d+$/.test(s.slice(colon + 1))) {
+    return s.slice(0, colon);
+  }
+  return s;
+}
+
+function hostnameFromUrl(raw) {
+  try {
+    return String(new URL(String(raw || '')).hostname || '').toLowerCase();
+  } catch (_) {
+    return '';
+  }
+}
+
+function isLoopbackHost(hostname) {
+  const h = String(hostname || '')
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '');
+  return (
+    h === 'localhost' ||
+    h === '127.0.0.1' ||
+    h === '::1' ||
+    h === '0:0:0:0:0:0:0:1'
+  );
+}
+
+function isPrivateIPv4(hostname) {
+  const m = String(hostname || '').match(
+    /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/
+  );
+  if (!m) return false;
+  const a = Number(m[1]);
+  const b = Number(m[2]);
+  const c = Number(m[3]);
+  const d = Number(m[4]);
+  if ([a, b, c, d].some((n) => n > 255)) return false;
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 169 && b === 254) return true;
+  return false;
+}
+
+function isTunnelHost(hostname) {
+  const h = String(hostname || '').toLowerCase();
+  return (
+    h === 'trycloudflare.com' ||
+    h.endsWith('.trycloudflare.com') ||
+    h.endsWith('.cfargotunnel.com')
+  );
+}
+
+/**
+ * 访问来源：console=本机控制台，lan=局域网，tunnel=公网隧道（仅进房）。
+ */
+function classifyAccess(hostHeader, origin, referer) {
+  const hosts = [
+    hostnameFromHostHeader(hostHeader),
+    hostnameFromUrl(origin),
+    hostnameFromUrl(referer),
+  ].filter(Boolean);
+  for (const h of hosts) {
+    if (isLoopbackHost(h)) return 'console';
+  }
+  for (const h of hosts) {
+    if (isTunnelHost(h)) return 'tunnel';
+  }
+  for (const h of hosts) {
+    if (isPrivateIPv4(h)) return 'lan';
+  }
+  // 其它公网域名/公网 IP：按隧道访客（仅进房）
+  return 'tunnel';
+}
 
 function isLocalPageHeaders(host, origin, referer) {
-  const h = String(host || '').toLowerCase();
-  const hostLocal =
-    /^localhost(?::\d+)?$/i.test(h) ||
-    /^127\.0\.0\.1(?::\d+)?$/.test(h) ||
-    /^\[::1\](?::\d+)?$/.test(h);
-  const pageLocal = (s) =>
-    /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?\/?/i.test(String(s || ''));
-  // 隧道访客 Host/Origin 为 trycloudflare 域名；本机控制台为 localhost
-  return hostLocal || pageLocal(origin) || pageLocal(referer);
+  return classifyAccess(host, origin, referer) === 'console';
 }
 
 function isHostConsoleRequest(req) {
@@ -38,10 +120,19 @@ function isHostConsoleRequest(req) {
   );
 }
 
-function isHostConsoleSocket(socket) {
+function socketAccess(socket) {
   const hs = (socket && socket.handshake) || {};
   const headers = hs.headers || {};
-  return isLocalPageHeaders(headers.host, headers.origin, headers.referer);
+  return classifyAccess(headers.host, headers.origin, headers.referer);
+}
+
+function isHostConsoleSocket(socket) {
+  return socketAccess(socket) === 'console';
+}
+
+/** 本机控制台或局域网：参与设备占用锁 */
+function canClaimOccupancy(access) {
+  return access === 'console' || access === 'lan';
 }
 
 const HOST_OCCUPIED_MSG = '本机已被占用';
@@ -71,16 +162,36 @@ function emitHostOccupied(socket) {
   });
 }
 
-/** 非占用者禁止开房/被动等主机操作 */
+/** 开房/被动：仅占用者或可认领的本机/局域网 */
 function assertHostOccupant(socket, sessionId) {
+  const me = rooms.getPlayer(socket.id);
   const sid =
     sessionId ||
-    (rooms.getPlayer(socket.id) && rooms.getPlayer(socket.id).sessionId) ||
+    (me && me.sessionId) ||
     null;
-  if (hostOccupancy.isBlockedFor(sid, socket.id)) {
-    return { ok: false, error: hostOccupiedMessage(), occupant: occupantPayload() };
+  const access = socket.data.access || socketAccess(socket);
+  if (hostOccupancy.isOwner(sid, socket.id)) {
+    return { ok: true };
   }
-  return { ok: true };
+  if (canClaimOccupancy(access)) {
+    if (hostOccupancy.isBlockedFor(sid, socket.id)) {
+      return {
+        ok: false,
+        error: hostOccupiedMessage(),
+        occupant: occupantPayload(),
+      };
+    }
+    hostOccupancy.claim(sid, socket.id, {
+      name: me && me.name,
+      tag: me && me.tag,
+    });
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    error: '隧道访客只能加入房间，请在本机或局域网创建房间',
+    occupant: occupantPayload(),
+  };
 }
 
 function listLanIPv4() {
@@ -124,6 +235,17 @@ app.get('/healthz', (_req, res) => {
   res.status(200).json({ ok: true, t: Date.now() });
 });
 
+/** 隧道访客快速召回昵称（无需等 Socket 握手） */
+app.get('/api/tunnel-nick', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    const name = tunnelNickMemory.recallFromHttpReq(req) || '';
+    res.status(200).json({ ok: true, name });
+  } catch (_) {
+    res.status(200).json({ ok: true, name: '' });
+  }
+});
+
 const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
   // 隧道上优先靠 WebSocket；压缩大包 game:state，避免轮询把操作拖成数秒
@@ -144,6 +266,142 @@ hostOccupancy.onRelease = () => {
     io.emit('host:free', { message: '本机已空闲' });
   } catch (_) {}
 };
+
+/**
+ * 被动模式远程操控者（隧道访客通过公网地址操控本机大厅：开房/观战/聊天）。
+ * 同一时间只允许一名操控者。
+ */
+let passiveController = null;
+
+function normalizePassiveWhoName(name) {
+  return (
+    String(name || '')
+      .trim()
+      .replace(/#\d{1,8}\s*$/, '')
+      .trim()
+      .slice(0, 16) || ''
+  );
+}
+
+function normalizePassiveWhoTag(tag) {
+  const digits = String(tag || '')
+    .replace(/\D/g, '')
+    .slice(-5);
+  return digits ? digits.padStart(5, '0') : '';
+}
+
+function formatPassiveControllerWho(ctrl) {
+  if (!ctrl) return '';
+  const name = normalizePassiveWhoName(ctrl.name);
+  const tag = normalizePassiveWhoTag(ctrl.tag);
+  if (name && tag) return `${name}#${tag}`;
+  if (name) return name;
+  if (tag) return `#${tag}`;
+  return '';
+}
+
+function listPassiveHostPlayers() {
+  return [...rooms.players.values()].filter((p) => p && p.passive);
+}
+
+function hasPassiveHost() {
+  return listPassiveHostPlayers().length > 0;
+}
+
+function getPassiveControllerPayload() {
+  if (!passiveController) return null;
+  return {
+    socketId: passiveController.socketId,
+    sessionId: passiveController.sessionId || '',
+    name: passiveController.name || '',
+    tag: passiveController.tag || '',
+    who: formatPassiveControllerWho(passiveController),
+  };
+}
+
+function isPassiveController(socket, sessionId) {
+  if (!passiveController || !socket) return false;
+  if (passiveController.socketId === socket.id) return true;
+  const sid = sessionId ? String(sessionId).slice(0, 64).trim() : '';
+  if (sid && passiveController.sessionId === sid) return true;
+  return false;
+}
+
+function emitPassiveControlUpdate(extraSocket = null) {
+  const payload = {
+    controller: getPassiveControllerPayload(),
+    publicUrl: tunnel ? tunnel.getPublicUrl() : null,
+    passiveMode: hasPassiveHost(),
+  };
+  for (const p of listPassiveHostPlayers()) {
+    io.to(p.id).emit('lobby:passiveControl', payload);
+  }
+  if (extraSocket) {
+    extraSocket.emit('lobby:passiveControl', payload);
+  }
+}
+
+function claimPassiveController(socket, player) {
+  if (!socket || !hasPassiveHost()) return false;
+  const access = socket.data.access || socketAccess(socket);
+  if (access !== 'tunnel') return false;
+  const sid =
+    (player && player.sessionId && String(player.sessionId).slice(0, 64)) ||
+    '';
+  if (
+    passiveController &&
+    !isPassiveController(socket, sid)
+  ) {
+    return false;
+  }
+  const name = normalizePassiveWhoName(
+    (player && player.name) || socket.data.playerName || ''
+  );
+  const tag = normalizePassiveWhoTag(player && player.tag);
+  passiveController = {
+    socketId: socket.id,
+    sessionId: sid || `sock:${socket.id}`,
+    name,
+    tag,
+  };
+  socket.data.controllingPassive = true;
+  emitPassiveControlUpdate(socket);
+  return true;
+}
+
+function releasePassiveController(socket, { silent = false } = {}) {
+  if (!passiveController || !socket) return false;
+  const me = rooms.getPlayer(socket.id);
+  const sid = me && me.sessionId ? String(me.sessionId).slice(0, 64) : '';
+  if (!isPassiveController(socket, sid)) return false;
+  const peerId = sid ? findLiveSessionPeer(sid, socket.id) : null;
+  if (peerId) {
+    const peer = rooms.getPlayer(peerId);
+    passiveController = {
+      socketId: peerId,
+      sessionId: sid,
+      name: normalizePassiveWhoName((peer && peer.name) || passiveController.name),
+      tag: normalizePassiveWhoTag((peer && peer.tag) || passiveController.tag),
+    };
+    const peerSock = io.sockets.sockets.get(peerId);
+    if (peerSock) peerSock.data.controllingPassive = true;
+    socket.data.controllingPassive = false;
+    if (!silent) emitPassiveControlUpdate();
+    return true;
+  }
+  passiveController = null;
+  socket.data.controllingPassive = false;
+  if (!silent) emitPassiveControlUpdate();
+  return true;
+}
+
+function clearPassiveController({ silent = false } = {}) {
+  if (!passiveController) return;
+  const sock = io.sockets.sockets.get(passiveController.socketId);
+  if (sock) sock.data.controllingPassive = false;
+  passiveController = null;
+  if (!silent) emitPassiveControlUpdate();
+}
 
 function findLiveSessionPeer(sessionId, exceptSocketId) {
   const sid = sessionId ? String(sessionId).slice(0, 64) : '';
@@ -228,6 +486,8 @@ app.get('/api/info', (_req, res) => {
     games: listGames(),
     version: hostUpdate.getLocalVersion(),
     updateEnabled: !hostUpdate.disabled,
+    passiveMode: hasPassiveHost(),
+    passiveController: getPassiveControllerPayload(),
   });
 });
 
@@ -370,9 +630,12 @@ function buildLobbyPayload() {
       (mqttBulletin && mqttBulletin.getStatus().allBrokersDownMessage) || '',
     publicUrl,
     games: listGames(),
-    passiveMode: Boolean(
+    // 含已代开进观战席的被动主机：隧道访客仍可操控/观战/聊天
+    passiveMode: hasPassiveHost(),
+    passiveIdle: Boolean(
       [...rooms.players.values()].some((p) => p.passive && !p.roomId)
     ),
+    passiveController: getPassiveControllerPayload(),
   };
 }
 
@@ -854,12 +1117,78 @@ function emitChatAll(msg) {
 }
 
 function emitPlayerMe(socket, player, fallbackName) {
+  const access = socket.data.access || socketAccess(socket);
+  const name = (player && player.name) || fallbackName || '玩家';
+  if (access === 'tunnel') {
+    try {
+      tunnelNickMemory.remember(socket, name);
+    } catch (_) {}
+  }
+  const controllingPassive = Boolean(
+    socket.data.controllingPassive ||
+      isPassiveController(socket, player && player.sessionId)
+  );
   socket.emit('player:me', {
     id: socket.id,
-    name: (player && player.name) || fallbackName || '玩家',
+    name,
     tag: (player && player.tag) || null,
     localHost: localBaseUrl(),
+    access,
+    tunnelGuest: access === 'tunnel',
+    occupancyOwner: hostOccupancy.isOwner(
+      player && player.sessionId,
+      socket.id
+    ),
+    passiveMode: hasPassiveHost(),
+    canControlPassive: controllingPassive,
+    controllingPassive,
+    passiveController: getPassiveControllerPayload(),
+    publicUrl: tunnel ? tunnel.getPublicUrl() : null,
   });
+}
+
+/**
+ * 从 socket 载荷里取出昵称（兼容 playerName / name / nick）。
+ */
+function pickPayloadPlayerName(data = {}) {
+  const raw =
+    (data && (data.playerName || data.name || data.nick)) || '';
+  return (
+    String(raw)
+      .trim()
+      .replace(/#\d{1,8}\s*$/, '')
+      .trim()
+      .slice(0, 16) || ''
+  );
+}
+
+/**
+ * 注册/刷新玩家：payload 缺昵称时保留已有名字，避免进房被盖成「玩家」。
+ */
+function ensureSocketPlayer(socket, data = {}) {
+  const incoming = pickPayloadPlayerName(data);
+  const existing = rooms.getPlayer(socket.id);
+  const name =
+    incoming ||
+    (existing && existing.name) ||
+    String(socket.data.playerName || '').trim() ||
+    '玩家';
+  const player = rooms.registerPlayer(socket.id, name, playerRegisterOpts(data));
+  socket.data.playerName = player.name;
+  return player;
+}
+
+/** 进房后再次钉死昵称到玩家表与座位，防止中途被默认名覆盖 */
+function forceSocketPlayerName(socket, data = {}) {
+  const want = pickPayloadPlayerName(data);
+  if (!want) return rooms.getPlayer(socket.id);
+  const player = rooms.setPlayerName(
+    socket.id,
+    want,
+    playerRegisterOpts(data)
+  ).player;
+  socket.data.playerName = player.name;
+  return player;
 }
 
 function emitSpectatorLeft(room, observer) {
@@ -890,13 +1219,21 @@ function publicStateForRoom(room, viewerId) {
   const leftIds = (room.players || [])
     .filter((p) => p.left)
     .map((p) => p.id);
+  const hostedIds = new Set(
+    (room.players || []).filter((p) => p && p.isHosted).map((p) => p.id)
+  );
   state.leftPlayerIds = leftIds;
   if (Array.isArray(state.players)) {
     for (const p of state.players) {
       p.left = Boolean(p.left) || leftIds.includes(p.id);
+      p.isHosted = Boolean(p.isHosted) || hostedIds.has(p.id);
     }
   }
   if (state.me && leftIds.includes(state.me.id)) state.me.left = true;
+  if (state.me) {
+    state.me.isHosted = Boolean(state.me.isHosted) || hostedIds.has(state.me.id);
+    if (state.me.isHosted) state.me.canAct = false;
+  }
   if (state && room.turnTimer) {
     state.turnTimer = {
       actorIds: room.turnTimer.actorIds.slice(),
@@ -1061,7 +1398,22 @@ function handleAbandonedPlayers(room) {
 }
 
 /**
- * 当游戏状态变化后，安排 bot 自动行动（不限时模式下也适用）。
+ * 座位是否由电脑代操作（真实 bot 或玩家托管）
+ */
+function seatAutoPlays(seat) {
+  return Boolean(seat && (seat.isBot || seat.isHosted));
+}
+
+/**
+ * 自动操作难度：托管固定困难，bot 用其设定难度
+ */
+function seatAutoDifficulty(seat) {
+  if (seat && seat.isHosted) return 'hard';
+  return (seat && seat.botDifficulty) || 'normal';
+}
+
+/**
+ * 当游戏状态变化后，安排 bot / 托管 自动行动（不限时模式下也适用）。
  */
 function scheduleBotTick(room) {
   if (!room || room.status !== 'playing' || !room.game || room.game.over) return;
@@ -1070,7 +1422,7 @@ function scheduleBotTick(room) {
 
   const actors = (mod.getActingPlayerIds(room.game) || []).filter((id) => {
     const seat = (room.players || []).find((p) => p.id === id);
-    return seat && seat.isBot;
+    return seatAutoPlays(seat);
   });
   if (!actors.length) return;
 
@@ -1092,7 +1444,7 @@ function scheduleBotTick(room) {
     if (!room.game || room.game.over) return;
     const freshActors = (mod.getActingPlayerIds(room.game) || []).filter((id) => {
       const seat = (room.players || []).find((p) => p.id === id);
-      return seat && seat.isBot;
+      return seatAutoPlays(seat);
     });
     if (!freshActors.length) return;
 
@@ -1101,12 +1453,12 @@ function scheduleBotTick(room) {
 
     for (const id of freshActors) {
       const seat = (room.players || []).find((p) => p.id === id);
-      if (!seat || !seat.isBot) continue;
+      if (!seatAutoPlays(seat)) continue;
       try {
         const botAction = mod.decideBotAction(
           room.game,
           id,
-          seat.botDifficulty || 'normal'
+          seatAutoDifficulty(seat)
         );
         if (botAction) {
           const result = mod.applyAction(room.game, id, botAction);
@@ -1166,14 +1518,14 @@ function handleTurnTimeout(room) {
     const still = (mod.getActingPlayerIds(room.game) || []).includes(id);
     if (!still) continue;
 
-    // Bot 优先走 AI 决策，失败再兜底 forceTimeout
+    // Bot / 托管 优先走 AI 决策，失败再兜底 forceTimeout
     const seat = (room.players || []).find((p) => p.id === id);
-    if (seat && seat.isBot && typeof mod.decideBotAction === 'function') {
+    if (seatAutoPlays(seat) && typeof mod.decideBotAction === 'function') {
       try {
         const botAction = mod.decideBotAction(
           room.game,
           id,
-          seat.botDifficulty || 'normal'
+          seatAutoDifficulty(seat)
         );
         if (botAction) {
           const result = mod.applyAction(room.game, id, botAction);
@@ -1199,13 +1551,50 @@ function handleTurnTimeout(room) {
 }
 
 io.on('connection', (socket) => {
+  socket.data.access = socketAccess(socket);
+
+  // 隧道连接后立刻推送曾用昵称，免去客户端再发 nick:recall 等一轮
+  if (socket.data.access === 'tunnel') {
+    try {
+      const suggested = tunnelNickMemory.recall(socket) || '';
+      if (suggested) {
+        socket.emit('nick:suggest', { ok: true, name: suggested });
+      }
+    } catch (_) {}
+  }
+
+  socket.on('nick:recall', (ack) => {
+    const access = socket.data.access || socketAccess(socket);
+    const name =
+      access === 'tunnel' ? tunnelNickMemory.recall(socket) : '';
+    const payload = { ok: true, name: name || '' };
+    if (typeof ack === 'function') ack(payload);
+    else socket.emit('nick:recall:result', payload);
+  });
+
+  socket.on('nick:remember', (data = {}, ack) => {
+    const access = socket.data.access || socketAccess(socket);
+    let name = '';
+    if (access === 'tunnel') {
+      name = tunnelNickMemory.remember(
+        socket,
+        (data && data.playerName) || data.name || ''
+      );
+    }
+    const payload = { ok: true, name: name || '' };
+    if (typeof ack === 'function') ack(payload);
+  });
+
   socket.on('lobby:join', (data = {}) => {
     const sessionId = data.sessionId || null;
     const roomIdHint = data.roomId || null;
     const oldPlayerId = data.oldPlayerId || null;
     const playerTag = data.playerTag || null;
+    const joinName = pickPayloadPlayerName(data) || data.playerName;
     // 仅在明确「重新加入」时认领座位；普通进大厅不自动回桌
     const wantRejoin = Boolean(data.rejoin);
+    const access = socket.data.access || socketAccess(socket);
+    socket.data.access = access;
     // 进房通行：带有效本机 roomId 且非「重连认领」路径（joinRoomOnHost 先 lobby 再 room）
     const joinTransit =
       !wantRejoin && hostOccupancy.isJoinTransit(roomIdHint, rooms);
@@ -1213,7 +1602,7 @@ io.on('connection', (socket) => {
     const reclaimed = wantRejoin
       ? rooms.tryReclaimSeat(
           socket.id,
-          data.playerName,
+          joinName,
           sessionId,
           roomIdHint,
           oldPlayerId,
@@ -1226,7 +1615,7 @@ io.on('connection', (socket) => {
         if (stale) stale.disconnect(true);
       }
       // 认领后再写一次 tag，保证尾缀固定同步到座位
-      const player = rooms.registerPlayer(socket.id, data.playerName, {
+      const player = rooms.registerPlayer(socket.id, joinName, {
         sessionId,
         playerTag,
         client: data.client,
@@ -1248,7 +1637,10 @@ io.on('connection', (socket) => {
       }
       mqttOnLogin();
       emitLobbyUpdate();
-      emitPlayerMe(socket, player, data.playerName);
+      if (access === 'tunnel' && hasPassiveHost()) {
+        claimPassiveController(socket, player);
+      }
+      emitPlayerMe(socket, player, joinName);
       socket.emit('session:reclaimed', {
         roomId: reclaimed.room.id,
         status: reclaimed.room.status,
@@ -1264,21 +1656,23 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // 大厅占用锁：本机/隧道统一按 sessionId；进房通行放行
+    // 占用锁：本机控制台 + 局域网互斥认领；隧道访客仅进房，不抢占
     if (!joinTransit) {
-      if (hostOccupancy.isBlockedFor(sessionId, socket.id)) {
-        emitHostOccupied(socket);
-        return;
+      if (canClaimOccupancy(access)) {
+        if (hostOccupancy.isBlockedFor(sessionId, socket.id)) {
+          emitHostOccupied(socket);
+          return;
+        }
+        hostOccupancy.claim(sessionId, socket.id, {
+          name: joinName,
+          tag: playerTag,
+        });
       }
-      hostOccupancy.claim(sessionId, socket.id, {
-        name: data.playerName,
-        tag: playerTag,
-      });
     }
 
     if (wantRejoin) {
       // 明确重连但认领失败：仍进大厅，并告知客户端
-      const player = rooms.registerPlayer(socket.id, data.playerName, {
+      const player = rooms.registerPlayer(socket.id, joinName, {
         sessionId,
         playerTag,
         client: data.client,
@@ -1290,9 +1684,9 @@ io.on('connection', (socket) => {
       });
       socket.data.playerName = player.name;
       joinHallChat(socket);
-      if (data.playerName) mqttOnLogin();
+      if (joinName) mqttOnLogin();
       emitLobbyUpdate();
-      emitPlayerMe(socket, player, data.playerName);
+      emitPlayerMe(socket, player, joinName);
       socket.emit('session:reclaim-failed', {
         roomId: roomIdHint,
         message: '未能认领原座位，房间可能已解散或座位已被占用',
@@ -1307,7 +1701,7 @@ io.on('connection', (socket) => {
       if (stale) stale.disconnect(true);
     }
 
-    const player = rooms.registerPlayer(socket.id, data.playerName, {
+    const player = rooms.registerPlayer(socket.id, joinName, {
       sessionId,
       playerTag,
       client: data.client,
@@ -1320,10 +1714,14 @@ io.on('connection', (socket) => {
         tag: player.tag,
       });
     }
+    // 隧道访客 + 被动主机：认领远程操控权（开房/观战/聊天）
+    if (access === 'tunnel' && hasPassiveHost()) {
+      claimPassiveController(socket, player);
+    }
     joinHallChat(socket);
-    if (data.playerName) mqttOnLogin();
+    if (joinName) mqttOnLogin();
     emitLobbyUpdate();
-    emitPlayerMe(socket, player, data.playerName);
+    emitPlayerMe(socket, player, joinName);
     const room = rooms.getRoom(player.roomId);
     if (room) {
       socket.join(room.id);
@@ -1454,17 +1852,29 @@ io.on('connection', (socket) => {
   });
 
   socket.on('player:rename', (data = {}) => {
+    const want = pickPayloadPlayerName(data);
+    if (!want) {
+      const me = rooms.getPlayer(socket.id);
+      emitPlayerMe(socket, me, me && me.name);
+      return;
+    }
     if (!rooms.getPlayer(socket.id)) {
-      rooms.registerPlayer(socket.id, data.playerName || '玩家', playerRegisterOpts(data));
+      ensureSocketPlayer(socket, { ...data, playerName: want });
     }
     const { player, room } = rooms.setPlayerName(
       socket.id,
-      data.playerName,
+      want,
       playerRegisterOpts(data)
     );
     socket.data.playerName = player.name;
+    if (
+      isPassiveController(socket, player.sessionId) ||
+      socket.data.controllingPassive
+    ) {
+      claimPassiveController(socket, player);
+    }
     mqttOnLogin();
-    emitPlayerMe(socket, player, data.playerName);
+    emitPlayerMe(socket, player, want);
     if (room) {
       emitRoomUpdate(room);
       if (room.status === 'playing' && room.game) emitGameState(room);
@@ -1507,7 +1917,19 @@ io.on('connection', (socket) => {
   });
 
   socket.on('room:create', async (data = {}) => {
-    const wantPassive = Boolean(data.passiveHost);
+    let wantPassive = Boolean(data.passiveHost);
+    // 隧道远程操控被动主机：即使未显式带 passiveHost，也走代开
+    if (
+      !wantPassive &&
+      (socket.data.controllingPassive ||
+        isPassiveController(
+          socket,
+          data.sessionId || (rooms.getPlayer(socket.id) || {}).sessionId
+        )) &&
+      hasPassiveHost()
+    ) {
+      wantPassive = true;
+    }
     // 被动代开：由空闲被动主机接待，不走大厅占用锁
     if (!wantPassive) {
       const gate = assertHostOccupant(socket, data.sessionId);
@@ -1518,9 +1940,9 @@ io.on('connection', (socket) => {
     }
 
     if (!rooms.getPlayer(socket.id)) {
-      rooms.registerPlayer(socket.id, data.playerName || '玩家', playerRegisterOpts(data));
-    } else if (data.sessionId || data.playerTag || data.client) {
-      rooms.registerPlayer(socket.id, data.playerName || '玩家', playerRegisterOpts(data));
+      ensureSocketPlayer(socket, data);
+    } else if (data.sessionId || data.playerTag || data.client || data.playerName) {
+      ensureSocketPlayer(socket, data);
     }
 
     let operatorId = null;
@@ -1901,11 +2323,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('room:spectate', (data = {}) => {
-    if (!rooms.getPlayer(socket.id)) {
-      rooms.registerPlayer(socket.id, data.playerName || '玩家', playerRegisterOpts(data));
-    } else if (data.sessionId || data.playerTag || data.client) {
-      rooms.registerPlayer(socket.id, data.playerName || '玩家', playerRegisterOpts(data));
-    }
+    ensureSocketPlayer(socket, data);
 
     const result = rooms.spectateRoom(socket.id, data.roomId, {
       password: data.password,
@@ -1917,17 +2335,17 @@ io.on('connection', (socket) => {
 
     socket.join(result.room.id);
     joinHallChat(socket);
-    const me = rooms.getPlayer(socket.id);
+    const me = forceSocketPlayerName(socket, data) || rooms.getPlayer(socket.id);
     dropIdleSessionGhosts(me && me.sessionId, socket.id);
     if (!result.already) {
       socket.to(result.room.id).emit('room:spectatorJoined', {
         id: socket.id,
-        name: (me && me.name) || data.playerName || '玩家',
+        name: (me && me.name) || pickPayloadPlayerName(data) || '玩家',
         tag: (me && me.tag) || null,
       });
     }
     emitRoomUpdate(result.room, socket);
-    emitPlayerMe(socket, me, data.playerName);
+    emitPlayerMe(socket, me, (me && me.name) || pickPayloadPlayerName(data));
     if (result.room.status === 'playing' && result.room.game) {
       emitGameState(result.room);
     }
@@ -1948,11 +2366,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('room:join', (data = {}) => {
-    if (!rooms.getPlayer(socket.id)) {
-      rooms.registerPlayer(socket.id, data.playerName || '玩家', playerRegisterOpts(data));
-    } else if (data.sessionId || data.playerTag || data.client) {
-      rooms.registerPlayer(socket.id, data.playerName || '玩家', playerRegisterOpts(data));
-    }
+    ensureSocketPlayer(socket, data);
 
     const result = rooms.joinRoom(socket.id, data.roomId, {
       password: data.password,
@@ -1964,10 +2378,10 @@ io.on('connection', (socket) => {
 
     socket.join(result.room.id);
     joinHallChat(socket);
-    const me = rooms.getPlayer(socket.id);
+    const me = forceSocketPlayerName(socket, data) || rooms.getPlayer(socket.id);
     dropIdleSessionGhosts(me && me.sessionId, socket.id);
     emitRoomUpdate(result.room, socket);
-    emitPlayerMe(socket, me, data.playerName);
+    emitPlayerMe(socket, me, (me && me.name) || pickPayloadPlayerName(data));
     emitLobbyUpdate();
     mqttOnLogin();
     mqttAfterRoomChange();
@@ -1989,6 +2403,8 @@ io.on('connection', (socket) => {
       const p = rooms.getPlayer(socket.id);
       socket.emit('lobby:passive', {
         passive: Boolean(p && p.passive),
+        publicUrl: tunnel ? tunnel.getPublicUrl() : null,
+        controller: getPassiveControllerPayload(),
       });
       return;
     }
@@ -2008,7 +2424,11 @@ io.on('connection', (socket) => {
         socket.emit('lobby:error', {
           message: '对局进行中，请等待本局结束后再退出被动模式',
         });
-        socket.emit('lobby:passive', { passive: true });
+        socket.emit('lobby:passive', {
+          passive: true,
+          publicUrl: tunnel ? tunnel.getPublicUrl() : null,
+          controller: getPassiveControllerPayload(),
+        });
         return;
       }
       if (room) {
@@ -2037,10 +2457,17 @@ io.on('connection', (socket) => {
         socket.emit('lobby:error', { message: result.error });
         socket.emit('lobby:passive', {
           passive: Boolean(p && p.passive),
+          publicUrl: tunnel ? tunnel.getPublicUrl() : null,
+          controller: getPassiveControllerPayload(),
         });
         return;
       }
-      socket.emit('lobby:passive', { passive: false });
+      clearPassiveController({ silent: true });
+      socket.emit('lobby:passive', {
+        passive: false,
+        publicUrl: null,
+        controller: null,
+      });
       emitLobbyUpdate();
       mqttOnLogin();
       mqttAfterRoomChange();
@@ -2050,7 +2477,12 @@ io.on('connection', (socket) => {
     // 开启被动：公网隧道就绪前不设标记、不发被动心跳
     const already = rooms.getPlayer(socket.id);
     if (already && already.passive) {
-      socket.emit('lobby:passive', { passive: true });
+      socket.emit('lobby:passive', {
+        passive: true,
+        publicUrl: tunnel ? tunnel.getPublicUrl() : null,
+        controller: getPassiveControllerPayload(),
+      });
+      emitPassiveControlUpdate(socket);
       return;
     }
     if (socket.data.passivePreparing) {
@@ -2102,10 +2534,32 @@ io.on('connection', (socket) => {
       socket.data.passivePreparing = false;
       if (!result.ok) {
         socket.emit('lobby:error', { message: result.error });
-        socket.emit('lobby:passive', { passive: false });
+        socket.emit('lobby:passive', {
+          passive: false,
+          publicUrl: null,
+          controller: null,
+        });
         return;
       }
-      socket.emit('lobby:passive', { passive: true });
+      socket.emit('lobby:passive', {
+        passive: true,
+        publicUrl: tunnel ? tunnel.getPublicUrl() : null,
+        controller: getPassiveControllerPayload(),
+      });
+      // 已在大厅的隧道访客：立刻授予操控权
+      if (!passiveController) {
+        for (const [id, sock] of io.sockets.sockets) {
+          if (!sock || !sock.connected) continue;
+          if ((sock.data.access || socketAccess(sock)) !== 'tunnel') continue;
+          const guest = rooms.getPlayer(id);
+          if (!guest || guest.passive) continue;
+          if (claimPassiveController(sock, guest)) {
+            emitPlayerMe(sock, guest, guest.name);
+            break;
+          }
+        }
+      }
+      emitPassiveControlUpdate(socket);
       emitLobbyUpdate();
       mqttOnLogin();
     } catch (err) {
@@ -2115,7 +2569,11 @@ io.on('connection', (socket) => {
       socket.emit('lobby:error', {
         message: (err && err.message) || '进入被动模式失败',
       });
-      socket.emit('lobby:passive', { passive: false });
+      socket.emit('lobby:passive', {
+        passive: false,
+        publicUrl: null,
+        controller: null,
+      });
       emitLobbyUpdate();
       mqttOnLogin();
     }
@@ -2281,6 +2739,41 @@ io.on('connection', (socket) => {
     emitRoomUpdate(result.room);
   });
 
+  socket.on('game:setHosted', (data = {}) => {
+    const want =
+      data && Object.prototype.hasOwnProperty.call(data, 'hosted')
+        ? Boolean(data.hosted)
+        : true;
+    const result = rooms.setPlayerHosted(socket.id, want);
+    if (!result.ok) {
+      socket.emit('game:error', { message: result.error });
+      return;
+    }
+    const room = result.room;
+    const mod = getGame(room.gameType);
+
+    // 开启托管时：结算动画直接确认；若轮到自己则立刻由困难电脑接手
+    if (result.isHosted && room.game && mod) {
+      if (room.game.phase === 'settle' && typeof mod.applyAction === 'function') {
+        try {
+          mod.applyAction(room.game, socket.id, {
+            type: 'finishSettleAnim',
+            payload: {},
+          });
+        } catch (_) {
+          /* ignore */
+        }
+      }
+    }
+
+    emitRoomUpdate(room);
+    emitGameState(room);
+    if (result.isHosted) {
+      scheduleBotTick(room);
+    }
+    socket.emit('game:hosted', { ok: true, isHosted: result.isHosted });
+  });
+
   socket.on('room:updateSettings', (data = {}) => {
     const result = rooms.updateSettings(socket.id, {
       name: data.name,
@@ -2319,6 +2812,12 @@ io.on('connection', (socket) => {
     }
     if ((room.observers || []).some((o) => o.id === socket.id)) {
       socket.emit('game:error', { message: '观战中无法操作' });
+      return;
+    }
+
+    const seat = (room.players || []).find((p) => p && p.id === socket.id);
+    if (seat && seat.isHosted && data.type !== 'finishSettleAnim') {
+      socket.emit('game:error', { message: '托管中，由电脑代为操作' });
       return;
     }
 
@@ -2446,6 +2945,7 @@ io.on('connection', (socket) => {
         tag: (peer && peer.tag) || (me && me.tag),
       });
     }
+    releasePassiveController(socket);
     // 对局中断线：标记离线并保留牌局，便于重连；大厅/等待房仍直接离开
     const result = rooms.markOffline(socket.id);
     if (result.leftRoomId && result.room) {

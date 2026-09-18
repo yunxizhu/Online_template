@@ -360,6 +360,65 @@ body.phase-game .match-clock-label {
   display: none !important;
 }
 
+.hosting-btn {
+  margin: 0;
+  padding: 0.28rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.hosting-btn:hover {
+  border-color: rgba(201, 162, 39, 0.55);
+  background: rgba(201, 162, 39, 0.16);
+}
+
+.hosting-btn.is-active {
+  border-color: rgba(201, 162, 39, 0.7);
+  background: rgba(201, 162, 39, 0.22);
+  color: #f0e2a8;
+}
+
+.hosting-btn[hidden] {
+  display: none !important;
+}
+
+.hosting-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: transparent;
+}
+
+.hosting-overlay[hidden] {
+  display: none !important;
+}
+
+.hosting-overlay-text {
+  font-size: clamp(2.8rem, 9vw, 5rem);
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.4);
+  letter-spacing: 0.18em;
+  user-select: none;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.25);
+}
+
+/* 托管中：遮罩穿透，但对局区不接收点击（顶栏托管按钮仍可点） */
+body.is-hosting .app-body {
+  pointer-events: none;
+}
+
 .spectators-btn {
   margin: 0;
   padding: 0.28rem 0.65rem;
@@ -548,6 +607,32 @@ body.phase-game .match-clock-label {
 
 .header-nick.is-editing .icon-btn {
   display: none;
+}
+
+/* 房间/对局：昵称条紧挨「房间等待中」标题右侧 */
+.header-nick.is-room-nick {
+  margin: 0;
+  margin-left: 0.15rem;
+  padding: 0.12rem 0.35rem 0.12rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.28);
+  flex-shrink: 0;
+}
+
+body.phase-room .header-nick.is-room-nick {
+  border-color: rgba(201, 133, 58, 0.4);
+  background: rgba(44, 36, 28, 0.75);
+}
+
+body.phase-game .header-nick.is-room-nick {
+  border-color: rgba(104, 162, 104, 0.35);
+  background: rgba(24, 32, 26, 0.85);
+}
+
+.header-nick.is-room-nick .icon-btn {
+  width: 1.85rem;
+  height: 1.85rem;
 }
 
 .me-label {
@@ -1022,6 +1107,13 @@ button.secondary:hover {
   margin: 0.75rem 0 0;
   color: #b42318;
   font-weight: 600;
+}
+
+.tunnel-wait-hint {
+  margin: 0 0 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
 }
 
 .badge {
@@ -2417,4 +2509,39 @@ body.is-passive-locked .game-menu-panel {
 .passive-lock-panel #btn-exit-passive:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.passive-share-url {
+  margin: -0.35rem 0 1rem;
+  text-align: left;
+  width: 100%;
+}
+
+.passive-share-label {
+  display: block;
+  font-size: 0.82rem;
+  opacity: 0.85;
+  margin-bottom: 0.35rem;
+}
+
+.passive-share-row {
+  display: flex;
+  gap: 0.45rem;
+  align-items: stretch;
+}
+
+.passive-share-row input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.82rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.28);
+  color: inherit;
+}
+
+.passive-share-row button {
+  flex-shrink: 0;
+  white-space: nowrap;
 }

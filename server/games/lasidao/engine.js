@@ -1655,6 +1655,7 @@ function createGameState(room) {
       : null,
     left: false,
     isBot: Boolean(p.isBot),
+    isHosted: Boolean(p.isHosted),
     villagers: START_VILLAGERS,
     houses: START_HOUSES,
     houseScore: 0, // 常驻建造房子获得的胜利点（与房子容量分开）
@@ -2455,7 +2456,7 @@ function startSettle(game) {
   game.currentPlayerId = null;
   game.settleAnimAcks = {};
   for (const p of alivePlayers(game)) {
-    if (p.isBot) game.settleAnimAcks[p.id] = true;
+    if (p.isBot || p.isHosted) game.settleAnimAcks[p.id] = true;
   }
   if (alivePlayers(game).every((p) => game.settleAnimAcks[p.id])) {
     completeSettleAfterAnim(game);
@@ -6902,6 +6903,8 @@ function publicGameState(game, viewerId) {
         left: Boolean(p.left),
         seat: p.seat,
         team,
+        isBot: Boolean(p.isBot),
+        isHosted: Boolean(p.isHosted),
         isTeammate: Boolean(
           viewerId && p.id !== viewerId && areTeammates(game, viewerId, p.id)
         ),
@@ -6975,7 +6978,8 @@ function publicGameState(game, viewerId) {
     me: me
       ? {
           id: me.id,
-          canAct: canPlayerAct(game, me),
+          isHosted: Boolean(me.isHosted),
+          canAct: canPlayerAct(game, me) && !me.isHosted,
           phase: game.phase,
           dice: (game.dice[me.id] || []).slice(),
           awaitingProduceRoll: Boolean(game.awaitingProduceRoll),

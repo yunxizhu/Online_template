@@ -34,6 +34,8 @@
     lobbyGate: document.getElementById('lobby-gate'),
     lobbyMain: document.getElementById('lobby-main'),
     hostOccupiedHint: document.getElementById('host-occupied-hint'),
+    tunnelWaitHint: document.getElementById('tunnel-wait-hint'),
+    tunnelGateHint: document.getElementById('tunnel-gate-hint'),
     btnToggleCreate: document.getElementById('btn-toggle-create'),
     btnToggleJoin: document.getElementById('btn-toggle-join'),
     chkPassiveMode: document.getElementById('chk-passive-mode'),
@@ -64,6 +66,8 @@
     spectatorsList: document.getElementById('spectators-list'),
     spectatorsEmpty: document.getElementById('spectators-empty'),
     btnSpectatorsClose: document.getElementById('btn-spectators-close'),
+    btnHosting: document.getElementById('btn-hosting'),
+    hostingOverlay: document.getElementById('hosting-overlay'),
     lobbyPeopleEmpty: document.getElementById('lobby-people-empty'),
     lobbyPeopleCount: document.getElementById('lobby-people-count'),
     btnRefreshDoc: document.getElementById('btn-refresh-doc'),
@@ -152,7 +156,10 @@
     roomBusyOverlay: document.getElementById('room-busy-overlay'),
     roomBusyMessage: document.getElementById('room-busy-message'),
     passiveLockOverlay: document.getElementById('passive-lock-overlay'),
+    passiveLockTitle: document.getElementById('passive-lock-title'),
     passiveLockDesc: document.getElementById('passive-lock-desc'),
+    passiveShareUrl: document.getElementById('passive-share-url'),
+    btnCopyPassiveUrl: document.getElementById('btn-copy-passive-url'),
     btnExitPassive: document.getElementById('btn-exit-passive'),
     addBotModal: document.getElementById('add-bot-modal'),
     addBotSeatLabel: document.getElementById('add-bot-seat-label'),
@@ -170,6 +177,7 @@
     lobbyRooms: [],
     inLobby: false,
     hostOccupied: false,
+    access: '',
     playerName: '',
     pendingRejoin: null,
     ctxTarget: null,
@@ -184,6 +192,9 @@
     codeModalMode: 'join', // 'join' | 'spectate'
     isSpectator: false,
     passiveMode: false,
+    canControlPassive: false,
+    passiveController: null,
+    passivePublicUrl: '',
     roomSeatMoveFrom: null,
     addBotSeatIndex: null,
     roomCtxTarget: null,
@@ -239,6 +250,519 @@
       return new URLSearchParams(window.location.search || '');
     } catch (_) {
       return new URLSearchParams();
+    }
+  }
+
+  function detectPageAccess() {
+    const h = String(window.location.hostname || '').toLowerCase();
+    if (
+      h === 'localhost' ||
+      h === '127.0.0.1' ||
+      h === '[::1]' ||
+      h === '::1'
+    ) {
+      return 'console';
+    }
+    if (
+      h === 'trycloudflare.com' ||
+      h.endsWith('.trycloudflare.com') ||
+      h.endsWith('.cfargotunnel.com')
+    ) {
+      return 'tunnel';
+    }
+    const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (m) {
+      const a = Number(m[1]);
+      const b = Number(m[2]);
+      if (a === 10 || a === 127) return 'lan';
+      if (a === 192 && b === 168) return 'lan';
+      if (a === 172 && b >= 16 && b <= 31) return 'lan';
+      if (a === 169 && b === 254) return 'lan';
+    }
+    return 'tunnel';
+  }
+
+  function isTunnelGuest() {
+    if (state.access === 'tunnel') return true;
+    if (state.access === 'console' || state.access === 'lan') return false;
+    return detectPageAccess() === 'tunnel';
+  }
+
+  /** 隧道访客离开房间后退出网页（不回大厅） */
+  function exitTunnelGuestPage(message) {
+    leavingToLocal = true;
+    hideRoomBusy();
+    const msg = message || t('toast.tunnelGuestBye');
+    try {
+      net.leaveRoom();
+    } catch (_) {}
+    try {
+      if (net.stopAutoReconnect) net.stopAutoReconnect();
+    } catch (_) {}
+    try {
+      if (net.disconnect) net.disconnect();
+    } catch (_) {}
+    showToast(msg);
+    try {
+      window.open('', '_self');
+      window.close();
+    } catch (_) {}
+    setTimeout(() => {
+      try {
+        document.open();
+        document.write(
+          '<!doctype html><html><head><meta charset="utf-8"><title>已离开</title></head>' +
+            '<body style="font-family:sans-serif;padding:2.5rem;text-align:center;background:#111;color:#eee">' +
+            '<p style="font-size:1.1rem">' +
+            String(msg).replace(/</g, '&lt;') +
+            '</p><p style="opacity:.7;margin-top:1rem">可以关闭此标签页</p></body></html>'
+        );
+        document.close();
+      } catch (_) {}
+    }, 50);
+  }
+
+  function syncTunnelGuestChrome() {
+    const tunnel = isTunnelGuest();
+    document.body.classList.toggle('is-tunnel-guest', tunnel);
+    document.body.classList.toggle(
+      'is-passive-controller',
+      tunnel && state.canControlPassive
+    );
+    const view =
+      currentViewName ||
+      (!el.viewLobby.hidden
+        ? 'lobby'
+        : !el.viewRoom.hidden
+          ? 'room'
+          : !el.viewGame.hidden
+            ? 'game'
+            : 'lobby');
+    const showPeopleAside =
+      state.inLobby && (view === 'lobby' || view === 'room');
+    if (el.tunnelWaitHint) {
+      const rooms = state.lobbyRooms || [];
+      const hasJoinable = rooms.some((r) => r && r.id);
+      if (tunnel && state.canControlPassive) {
+        // 仅大厅提示；房间/对局中不显示
+        el.tunnelWaitHint.hidden = view !== 'lobby';
+        el.tunnelWaitHint.textContent = t('lobby.passiveControlHint');
+      } else {
+        el.tunnelWaitHint.hidden = !tunnel || !state.inLobby || hasJoinable || view !== 'lobby';
+        if (tunnel && state.inLobby && !hasJoinable && view === 'lobby') {
+          el.tunnelWaitHint.textContent = t('lobby.tunnelWait');
+        }
+      }
+    }
+    if (!tunnel) return;
+    if (state.canControlPassive) {
+      if (el.btnToggleCreate) el.btnToggleCreate.hidden = false;
+      // 对局中不要强行打开大厅人员栏（否则会盖住游戏界面右侧）
+      if (el.lobbyPeopleAside) el.lobbyPeopleAside.hidden = !showPeopleAside;
+      if (el.peersLabel) el.peersLabel.hidden = false;
+      if (el.lobbyRefreshHint) el.lobbyRefreshHint.hidden = false;
+      const wrap = document.getElementById('passive-toggle-wrap');
+      if (wrap) wrap.hidden = true;
+      if (el.btnMqttBroker) el.btnMqttBroker.hidden = true;
+      return;
+    }
+    if (el.btnToggleCreate) el.btnToggleCreate.hidden = true;
+    const wrap = document.getElementById('passive-toggle-wrap');
+    if (wrap) wrap.hidden = true;
+    if (el.lobbyPeopleAside) el.lobbyPeopleAside.hidden = true;
+    if (el.btnMqttBroker) el.btnMqttBroker.hidden = true;
+    if (el.peersLabel) el.peersLabel.hidden = true;
+    if (el.lobbyRefreshHint) el.lobbyRefreshHint.hidden = true;
+  }
+
+  function applyTunnelGateLabels() {
+    if (!el.btnEnterLobby) return;
+    const controlling =
+      state.canControlPassive ||
+      (isTunnelGuest() && state._hostPassiveMode);
+    const label = controlling
+      ? t('lobby.enterPassiveControl')
+      : t('lobby.enterRoom');
+    el.btnEnterLobby.textContent =
+      label === 'lobby.enterRoom' || label === 'lobby.enterPassiveControl'
+        ? controlling
+          ? '进入并操控主机'
+          : '进入房间'
+        : label;
+    el.btnEnterLobby.setAttribute(
+      'data-i18n',
+      controlling ? 'lobby.enterPassiveControl' : 'lobby.enterRoom'
+    );
+  }
+
+  function tunnelConnectingMessage() {
+    const msg = t('lobby.tunnelConnecting');
+    return msg === 'lobby.tunnelConnecting' ? '正在连接中…' : msg;
+  }
+
+  function isTunnelNickGatePending() {
+    return (
+      isTunnelGuest() &&
+      !state.inLobby &&
+      !state.room &&
+      !state._tunnelJoining &&
+      !state._guestBootJoining
+    );
+  }
+
+  function showTunnelConnecting() {
+    state.access = 'tunnel';
+    if (el.lobbyGate) el.lobbyGate.hidden = true;
+    if (el.lobbyMain) el.lobbyMain.hidden = true;
+    if (el.lobbyPeopleAside) el.lobbyPeopleAside.hidden = true;
+    document.documentElement.classList.add('boot-joining');
+    showRoomBusy('connect', tunnelConnectingMessage());
+  }
+
+  function showTunnelNickGateOnly() {
+    state.access = 'tunnel';
+    state.inLobby = false;
+    // 未连上：只转圈，不展示昵称门
+    if (!(net.isConnected && net.isConnected())) {
+      showTunnelConnecting();
+      return;
+    }
+    hideRoomBusy();
+    document.documentElement.classList.remove('boot-joining');
+    if (el.lobbyGate) el.lobbyGate.hidden = false;
+    if (el.lobbyMain) el.lobbyMain.hidden = true;
+    if (el.lobbyPeopleAside) el.lobbyPeopleAside.hidden = true;
+    if (el.tunnelGateHint) {
+      el.tunnelGateHint.hidden = false;
+      if (state._hostPassiveMode) {
+        el.tunnelGateHint.textContent =
+          t('lobby.passiveControlHint') !== 'lobby.passiveControlHint'
+            ? t('lobby.passiveControlHint')
+            : '输入昵称后可操控此被动主机：开房、观战、聊天';
+      }
+    }
+    applyTunnelGateLabels();
+    syncTunnelGuestChrome();
+    updateMeLabel();
+    // 探测主机是否处于被动模式，更新入口文案
+    fetch('/api/info', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((info) => {
+        if (!info) return;
+        if (!(net.isConnected && net.isConnected())) return;
+        if (state.inLobby || state.room) return;
+        state._hostPassiveMode = Boolean(info.passiveMode);
+        if (info.publicUrl) state.passivePublicUrl = String(info.publicUrl);
+        if (el.tunnelGateHint && state._hostPassiveMode && !state.inLobby) {
+          el.tunnelGateHint.textContent =
+            t('lobby.passiveControlHint') !== 'lobby.passiveControlHint'
+              ? t('lobby.passiveControlHint')
+              : '输入昵称后可操控此被动主机：开房、观战、聊天';
+        }
+        applyTunnelGateLabels();
+      })
+      .catch(() => {});
+  }
+
+  async function waitUntilTunnelConnected(timeoutMs) {
+    showTunnelConnecting();
+    const deadline = Date.now() + Math.max(5000, Number(timeoutMs) || 120000);
+    while (Date.now() < deadline) {
+      if (leavingToLocal) return false;
+      try {
+        if (net.isConnected && net.isConnected()) return true;
+        await net.connect(net.getLocalOrigin());
+        if (net.isConnected && net.isConnected()) return true;
+      } catch (_) {
+        /* 继续重试 */
+      }
+      await sleepMs(600);
+      if (state.roomBusy === 'connect') {
+        updateRoomBusyMessage(tunnelConnectingMessage());
+      }
+    }
+    return Boolean(net.isConnected && net.isConnected());
+  }
+
+  function pickTunnelJoinRoom(rooms) {
+    const list = (rooms || []).filter((r) => r && r.id && !r.over);
+    const waiting = list.filter(
+      (r) => !r.status || r.status === 'waiting'
+    );
+    const localWait = waiting.filter((r) => r.local === true);
+    const pool = localWait.length ? localWait : [];
+    if (!pool.length) return null;
+    pool.sort(
+      (a, b) => Number(a.createdAt || a._createdAt || 0) - Number(b.createdAt || b._createdAt || 0)
+    );
+    return pool[0];
+  }
+
+  function sleepMs(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function waitForJoinableTunnelRoom(timeoutMs) {
+    const deadline = Date.now() + Math.max(3000, Number(timeoutMs) || 120000);
+    while (Date.now() < deadline) {
+      if (leavingToLocal || state.room) return null;
+      const hit = pickTunnelJoinRoom(state.lobbyRooms);
+      if (hit) return hit;
+      try {
+        if (typeof net.refreshLobby === 'function') net.refreshLobby();
+      } catch (_) {}
+      await sleepMs(400);
+    }
+    return null;
+  }
+
+  async function joinTunnelRoomNow(room, nick) {
+    if (!room || !room.id) throw new Error(t('toast.roomNotFound'));
+    const name =
+      window.PlayerNick.stripBaseName(nick) ||
+      window.PlayerNick.stripBaseName(state.playerName) ||
+      '';
+    if (!name) throw new Error(t('lobby.nickPlaceholder') || '请输入昵称');
+    state.playerName = name;
+    saveNick(name);
+    try {
+      net.renamePlayer(name, lobbyJoinOpts());
+    } catch (_) {}
+    updateRoomBusyMessage(t('create.joining'));
+    await joinRoomWithBusy(async () => {
+      const joined = await net.joinRoomAndWait(room.id, name, {
+        ...lobbyJoinOpts(),
+        local: true,
+        preferLocal: true,
+      });
+      if (joined && joined.room) state.room = joined.room;
+    });
+    ensureOwnSeatName(name);
+    try {
+      net.renamePlayer(name, lobbyJoinOpts());
+    } catch (_) {}
+    hideRoomBusy();
+    document.documentElement.classList.remove('boot-joining');
+    state._tunnelWatchJoin = false;
+    if (!state.room) return;
+    if (state.room.status === 'playing') {
+      showView('game');
+      scheduleRenderGame(true);
+    } else {
+      showView('room');
+      renderRoom();
+    }
+  }
+
+  function isDefaultNick(name) {
+    const n = window.PlayerNick.stripBaseName(name || '');
+    return (
+      !n ||
+      n === '玩家' ||
+      n === 'Player' ||
+      n === t('app.playerDefault')
+    );
+  }
+
+  /** 把自己在房间座位上的显示名钉成指定昵称 */
+  function ensureOwnSeatName(wantName) {
+    const want = window.PlayerNick.stripBaseName(wantName || state.playerName || '');
+    if (!want || !state.room) return false;
+    const meId = state.me && state.me.id;
+    if (!meId) return false;
+    let changed = false;
+    const patch = (list) => {
+      if (!Array.isArray(list)) return;
+      for (const p of list) {
+        if (!p || String(p.id) !== String(meId)) continue;
+        if (p.name !== want) {
+          p.name = want;
+          changed = true;
+        }
+      }
+    };
+    patch(state.room.players);
+    patch(state.room.observers);
+    if (changed) {
+      state.playerName = want;
+      saveNick(want);
+      try {
+        renderRoom();
+      } catch (_) {}
+    }
+    return changed;
+  }
+
+  function maybeAutoJoinTunnelFromLobby() {
+    if (!isTunnelGuest() || !state._tunnelWatchJoin) return;
+    if (state.room || state.roomBusy || state._tunnelJoining) return;
+    const room = pickTunnelJoinRoom(state.lobbyRooms);
+    if (!room) return;
+    state._tunnelWatchJoin = false;
+    state._tunnelJoining = true;
+    const nick =
+      state.playerName || loadSavedNick() || t('app.playerDefault');
+    showRoomBusy('join', t('create.joining'));
+    joinTunnelRoomNow(room, nick)
+      .catch((err) => {
+        showToast((err && err.message) || t('toast.joinFail'));
+        state._tunnelWatchJoin = true;
+        showLobbyHome();
+        syncTunnelGuestChrome();
+      })
+      .finally(() => {
+        state._tunnelJoining = false;
+      });
+  }
+
+  /** 隧道访客：连上后直进房间（有存名可自动跳过点按钮） */
+  async function enterTunnelGuestToRoom(name) {
+    const next =
+      window.PlayerNick.stripBaseName(name) || '';
+    if (!next) {
+      showToast(t('lobby.nickPlaceholder') || '请输入昵称');
+      showTunnelNickGateOnly();
+      throw new Error('需要昵称');
+    }
+    state.access = 'tunnel';
+    state.playerName = next;
+    saveNick(next);
+    if (el.playerName) el.playerName.value = next;
+    window.PlayerNick.ensureTag();
+    state._sessionReclaimed = false;
+    state.pendingRejoin = null;
+    state._tunnelWatchJoin = false;
+    state._tunnelJoining = true;
+
+    if (el.lobbyGate) el.lobbyGate.hidden = true;
+    if (el.lobbyMain) el.lobbyMain.hidden = true;
+    document.documentElement.classList.add('boot-joining');
+    if (!(net.isConnected && net.isConnected())) {
+      showTunnelConnecting();
+      const ok = await waitUntilTunnelConnected(120000);
+      if (!ok) {
+        showTunnelConnecting();
+        throw new Error(t('toast.disconnected') || '连接失败');
+      }
+    }
+    showRoomBusy('join', t('lobby.tunnelJoining'));
+
+    try {
+      await net.connect(net.getLocalOrigin());
+
+      // 刷新后优先认领刚才的隧道房间
+      const active = loadActivePlay();
+      if (active && active.roomId && !hasExplicitlyLeft(active.roomId)) {
+        try {
+          await net.joinLobbyAndWait(next, {
+            ...rejoinLobbyOpts({
+              roomId: active.roomId,
+              status: active.status,
+            }),
+            timeoutMs: 5000,
+            requireMe: true,
+          });
+          const ok = await waitForSessionRestore(4000);
+          if (ok && isInRestoredGameView()) {
+            state.inLobby = true;
+            state.access = 'tunnel';
+            clearHostOccupied();
+            hideRoomBusy();
+            document.documentElement.classList.remove('boot-joining');
+            return;
+          }
+          try {
+            await net.joinRoomAndWait(active.roomId, next, {
+              ...lobbyJoinOpts(),
+              local: true,
+              preferLocal: true,
+              timeoutMs: 5000,
+            });
+            if (state.room) {
+              state.inLobby = true;
+              state.access = 'tunnel';
+              clearHostOccupied();
+              if (state.room.status === 'playing') {
+                showView('game');
+                scheduleRenderGame(true);
+              } else {
+                showView('room');
+                renderRoom();
+              }
+              hideRoomBusy();
+              document.documentElement.classList.remove('boot-joining');
+              return;
+            }
+          } catch (_) {
+            /* 继续走普通隧道进房 */
+          }
+        } catch (_) {
+          /* 继续走普通隧道进房 */
+        }
+      }
+
+      await net.joinLobbyAndWait(next, {
+        ...lobbyJoinOpts(),
+        timeoutMs: 4000,
+        requireMe: true,
+      });
+      state.inLobby = true;
+      state.access = 'tunnel';
+      clearHostOccupied();
+      state.playerName = next;
+      try {
+        net.renamePlayer(next, lobbyJoinOpts());
+      } catch (_) {}
+
+      // 被动主机：直接进入大厅操控（开房/观战/聊天），不必干等房间
+      if (state.canControlPassive || state._hostPassiveMode) {
+        hideRoomBusy();
+        document.documentElement.classList.remove('boot-joining');
+        state._tunnelWatchJoin = false;
+        showView('lobby');
+        showLobbyHome();
+        syncTunnelGuestChrome();
+        applyTunnelGateLabels();
+        if (state.canControlPassive) {
+          showToast(
+            t('toast.passiveControlGranted') !== 'toast.passiveControlGranted'
+              ? t('toast.passiveControlGranted')
+              : '已获得主机操控权：可开房、观战、聊天',
+            2800
+          );
+        }
+        return;
+      }
+
+      updateRoomBusyMessage(t('lobby.tunnelWaitShort'));
+      let room = pickTunnelJoinRoom(state.lobbyRooms);
+      if (!room) {
+        room = await waitForJoinableTunnelRoom(90000);
+      }
+      if (!room) {
+        hideRoomBusy();
+        document.documentElement.classList.remove('boot-joining');
+        state._tunnelWatchJoin = true;
+        showView('lobby');
+        showLobbyHome();
+        syncTunnelGuestChrome();
+        return;
+      }
+      await joinTunnelRoomNow(room, next);
+    } catch (err) {
+      hideRoomBusy();
+      document.documentElement.classList.remove('boot-joining');
+      if (err && err.code === 'HOST_OCCUPIED') {
+        applyHostOccupied(err);
+      } else if (err && err.message === '需要昵称') {
+        /* gate 已显示 */
+      } else {
+        showToast((err && err.message) || t('toast.autoLobbyFail'));
+        showTunnelNickGateOnly();
+      }
+      throw err;
+    } finally {
+      state._tunnelJoining = false;
     }
   }
 
@@ -353,6 +877,7 @@
       setCreatePanelOpen(false);
     }
     if (guest) applyPassiveLockUi(false);
+    syncTunnelGuestChrome();
   }
 
   /** 对局进行中不可退出被动 */
@@ -363,6 +888,27 @@
     return true;
   }
 
+  function formatPassiveControllerWho(ctrl) {
+    if (!ctrl) return '';
+    if (ctrl.who) return String(ctrl.who);
+    const name = window.PlayerNick.stripBaseName(ctrl.name || '') || '';
+    const tag = window.PlayerNick.normalizeTag(ctrl.tag || '');
+    if (name && tag) return `${name}#${tag}`;
+    return name || tag || '';
+  }
+
+  function syncPassiveShareUrl(url) {
+    const next = String(url || state.passivePublicUrl || '').trim();
+    if (next) state.passivePublicUrl = next;
+    if (!el.passiveShareUrl) return;
+    const show = Boolean(state.passiveMode && state.passivePublicUrl);
+    el.passiveShareUrl.hidden = !show;
+    if (show) {
+      const input = el.passiveShareUrl.querySelector('input');
+      if (input) input.value = state.passivePublicUrl;
+    }
+  }
+
   function syncPassiveExitButton() {
     if (!el.btnExitPassive) return;
     const blocked = state.passiveMode && isPassiveExitBlocked();
@@ -370,16 +916,37 @@
     el.btnExitPassive.title = blocked
       ? '对局进行中，请等待本局结束后再退出'
       : '';
-    if (el.passiveLockDesc) {
-      el.passiveLockDesc.textContent = blocked
-        ? '本机正在托管对局，无法退出被动模式，请等待本局结束。'
-        : state.room && state.room.id
-          ? '无人值守中。退出被动模式将解散当前房间。'
-          : '无人值守：他人可在你的主机上开房与对局；本机保持锁定，不观战、不操作。结束后仍留在被动模式。';
+    const hostName =
+      window.PlayerNick.stripBaseName(
+        state.playerName || (state.me && state.me.name) || ''
+      ) || t('app.playerDefault');
+    const who = formatPassiveControllerWho(state.passiveController);
+    if (el.passiveLockTitle) {
+      el.passiveLockTitle.textContent = who
+        ? `${hostName}（正在被${who}操控中）`
+        : t('lobby.passiveLockTitle') !== 'lobby.passiveLockTitle'
+          ? t('lobby.passiveLockTitle')
+          : '处于被动模式中';
     }
+    if (el.passiveLockDesc) {
+      if (blocked) {
+        el.passiveLockDesc.textContent =
+          '本机正在托管对局，无法退出被动模式，请等待本局结束。';
+      } else if (who) {
+        el.passiveLockDesc.textContent =
+          '对方可通过隧道地址操控本机：开房、观战、聊天。本机保持锁定；结束后仍留在被动模式。';
+      } else if (state.room && state.room.id) {
+        el.passiveLockDesc.textContent =
+          '无人值守中。退出被动模式将解散当前房间。可分享下方隧道地址让他人操控。';
+      } else {
+        el.passiveLockDesc.textContent =
+          '无人值守：分享隧道地址后，他人可操控本机开房、观战与聊天；本机保持锁定。结束后仍留在被动模式。';
+      }
+    }
+    syncPassiveShareUrl();
   }
 
-  /** 被动模式锁定：暗屏 + 屏蔽点击，仅保留退出按钮 */
+  /** 被动模式锁定：暗屏 + 屏蔽点击，仅保留退出按钮与复制隧道地址 */
   function applyPassiveLockUi(on) {
     const locked = Boolean(on) && !isGuestClient();
     state.passiveMode = locked;
@@ -445,6 +1012,126 @@
       localStorage.setItem(NICK_STORAGE_KEY, next);
     } catch (_) {
       /* ignore quota / private mode */
+    }
+    if (isTunnelGuest()) {
+      try {
+        if (typeof net.rememberTunnelNick === 'function') {
+          net.rememberTunnelNick(next);
+        }
+      } catch (_) {}
+    }
+    return next;
+  }
+
+  /** 换隧道域名后 localStorage 会丢：HTTP + Socket 并行向房主召回 */
+  async function resolveTunnelGuestNick() {
+    let nick = loadSavedNick();
+    if (nick) return nick;
+
+    const httpP =
+      typeof net.fetchTunnelNickHttp === 'function'
+        ? net.fetchTunnelNickHttp({ timeoutMs: 1200 }).catch(() => '')
+        : Promise.resolve('');
+
+    const connectP = net.connect(net.getLocalOrigin());
+    const socketP = connectP
+      .then(() =>
+        typeof net.recallTunnelNick === 'function'
+          ? net.recallTunnelNick({ timeoutMs: 800 })
+          : ''
+      )
+      .catch(() => '');
+
+    // 谁先给出非空昵称就用谁；都空则最多再等齐
+    nick = await new Promise((resolve) => {
+      let done = false;
+      const finish = (name) => {
+        if (done) return;
+        const n = window.PlayerNick.stripBaseName(name || '');
+        if (!n) return;
+        done = true;
+        resolve(n);
+      };
+      httpP.then(finish);
+      socketP.then(finish);
+      setTimeout(() => {
+        if (!done) {
+          done = true;
+          resolve('');
+        }
+      }, 1400);
+    });
+
+    if (!nick) {
+      const [h, s] = await Promise.all([httpP, socketP]);
+      nick =
+        window.PlayerNick.stripBaseName(s || '') ||
+        window.PlayerNick.stripBaseName(h || '') ||
+        '';
+    }
+
+    try {
+      await connectP;
+    } catch (_) {
+      /* enter 阶段还会再连 */
+    }
+
+    if (nick) {
+      try {
+        localStorage.setItem(NICK_STORAGE_KEY, nick);
+      } catch (_) {}
+    }
+    return nick;
+  }
+
+  async function bootTunnelGuestFlow() {
+    state.access = 'tunnel';
+    state._tunnelBooting = true;
+    applyTunnelGateLabels();
+    document.documentElement.classList.add('boot-joining');
+    showTunnelConnecting();
+    try {
+      const connected = await waitUntilTunnelConnected(120000);
+      if (!connected) {
+        showTunnelConnecting();
+        showToast(t('toast.disconnected') || '未连接');
+        // 后台继续重试；连上后由 connect 事件打开昵称门
+        waitUntilTunnelConnected(600000).then((ok) => {
+          if (!ok || leavingToLocal || state.inLobby || state.room) return;
+          if (state._tunnelJoining || state._tunnelBooting) return;
+          const saved = loadSavedNick();
+          if (saved) {
+            enterTunnelGuestToRoom(saved).catch(() => showTunnelNickGateOnly());
+          } else {
+            showTunnelNickGateOnly();
+          }
+        });
+        return;
+      }
+      let nick = '';
+      try {
+        nick = await resolveTunnelGuestNick();
+      } catch (_) {
+        nick = loadSavedNick();
+      }
+      if (nick) {
+        state.playerName = nick;
+        if (el.playerName) el.playerName.value = nick;
+        refreshNickUi();
+        try {
+          await enterTunnelGuestToRoom(nick);
+        } catch (_) {
+          /* toast / gate 已在 enterTunnelGuestToRoom 处理 */
+        } finally {
+          document.documentElement.classList.remove('boot-joining');
+          clearBootQueryFromUrl();
+        }
+        return;
+      }
+      showTunnelNickGateOnly();
+      clearBootQueryFromUrl();
+    } finally {
+      state._tunnelBooting = false;
     }
   }
 
@@ -1879,11 +2566,18 @@
           ? '正在进入被动模式…'
           : mode === 'assets'
             ? t('lasidao.loadingAssets')
+          : mode === 'connect'
+            ? tunnelConnectingMessage()
           : mode === 'create'
             ? t('create.creating')
             : t('create.joining'));
     }
     clearTimeout(roomBusyTimer);
+    // 隧道连接中：不自动超时关掉，保持转圈直到连上或用户离开
+    if (mode === 'connect') {
+      roomBusyTimer = null;
+      return;
+    }
     roomBusyTimer = setTimeout(() => {
       if (!state.roomBusy) return;
       const was = state.roomBusy;
@@ -2154,7 +2848,7 @@
             ? t('app.titleGame')
             : t('app.title');
     }
-    // 昵称只在「联机大厅」标题旁显示；进房/对局时收起
+    // 昵称：大厅标题旁；房间「房间等待中」标题右侧也可改名
     refreshNickUi(name);
     if (el.lobbyPeopleTitle) {
       el.lobbyPeopleTitle.textContent =
@@ -2171,6 +2865,8 @@
         (name === 'lobby' || name === 'room')
       );
     }
+    // 隧道操控 chrome 可能改过人员栏，按当前视图再对齐一次
+    syncTunnelGuestChrome();
     syncChatVisibility(name);
     if (state.inLobby && (name === 'lobby' || name === 'room')) {
       startLobbyAutoRefresh();
@@ -2226,7 +2922,10 @@
   }
 
   function syncSpectatorsWatchUi() {
-    if (!el.spectatorsWatch) return;
+    if (!el.spectatorsWatch) {
+      syncHostingUi();
+      return;
+    }
     const inGameView =
       currentViewName === 'game' ||
       (state.room && state.room.status === 'playing' && !el.viewGame.hidden);
@@ -2234,6 +2933,7 @@
     el.spectatorsWatch.hidden = !show;
     if (!show) {
       closeSpectatorsPop();
+      syncHostingUi();
       return;
     }
     const n = humanSpectators(state.room).length;
@@ -2242,6 +2942,61 @@
       el.btnSpectators.title = t('room.spectatorsTitle') + '：' + n;
     }
     if (el.spectatorsPop && !el.spectatorsPop.hidden) fillSpectatorsList();
+    syncHostingUi();
+  }
+
+  function isSelfHosted() {
+    const meId = state.me && state.me.id;
+    if (!meId) return false;
+    if (state.game && state.game.me && state.game.me.isHosted) return true;
+    if (state.room && Array.isArray(state.room.players)) {
+      const seat = state.room.players.find((p) => p && p.id === meId);
+      if (seat && seat.isHosted) return true;
+    }
+    return false;
+  }
+
+  function syncHostingUi() {
+    const inGameView =
+      currentViewName === 'game' ||
+      (state.room && state.room.status === 'playing' && !el.viewGame.hidden);
+    const isLasidao =
+      (state.game && state.game.type === 'lasidao') ||
+      (state.room && state.room.gameType === 'lasidao');
+    const seated =
+      Boolean(state.me && state.me.id) &&
+      !state.isSpectator &&
+      Boolean(
+        state.room &&
+          Array.isArray(state.room.players) &&
+          state.room.players.some(
+            (p) => p && p.id === state.me.id && !p.left && !p.isBot
+          )
+      );
+    const gameOver = Boolean(state.game && state.game.over);
+    const show = Boolean(state.room && inGameView && isLasidao && seated && !gameOver);
+    const hosted = isSelfHosted();
+
+    if (el.btnHosting) {
+      el.btnHosting.hidden = !show;
+      el.btnHosting.classList.toggle('is-active', show && hosted);
+      el.btnHosting.textContent = hosted
+        ? t('game.hostingCancel')
+        : t('game.hosting');
+      el.btnHosting.setAttribute(
+        'aria-pressed',
+        show && hosted ? 'true' : 'false'
+      );
+    }
+
+    if (el.hostingOverlay) {
+      el.hostingOverlay.hidden = !(show && hosted);
+      el.hostingOverlay.setAttribute(
+        'aria-hidden',
+        show && hosted ? 'false' : 'true'
+      );
+    }
+    document.body.classList.toggle('is-hosting', Boolean(show && hosted));
   }
 
   function escapeHtml(s) {
@@ -2283,6 +3038,45 @@
     }
   }
 
+  function placeHeaderNick(view) {
+    if (!el.headerNick) return;
+    const titleRow = document.querySelector('.app-top-title-row');
+    const title = document.getElementById('app-phase-title');
+    const inRoomOrGame =
+      Boolean(state.room) && (view === 'room' || view === 'game');
+    if (inRoomOrGame && titleRow && title) {
+      // 房间/对局：昵称放在「房间等待中」标题右侧
+      if (el.headerNick.parentNode !== titleRow || el.headerNick.previousElementSibling !== title) {
+        title.insertAdjacentElement('afterend', el.headerNick);
+      }
+      return;
+    }
+    if (titleRow && el.headerNick.parentNode !== titleRow) {
+      titleRow.appendChild(el.headerNick);
+    }
+  }
+
+  function canEditHeaderNick() {
+    if (!el.headerNick) return false;
+    // 大厅内可改
+    if (state.inLobby && el.viewLobby && !el.viewLobby.hidden) return true;
+    // 房间/对局内所有玩家都可改
+    if (
+      state.room &&
+      ((el.viewRoom && !el.viewRoom.hidden) ||
+        (el.viewGame && !el.viewGame.hidden))
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  function shouldShowHeaderNick(view) {
+    if (state.inLobby && view === 'lobby') return true;
+    if (state.room && (view === 'room' || view === 'game')) return true;
+    return false;
+  }
+
   function refreshNickUi(viewName) {
     const name =
       window.PlayerNick.stripBaseName(
@@ -2298,14 +3092,20 @@
           : !el.viewGame.hidden
             ? 'game'
             : 'lobby');
-    // 仅大厅页、且已进入大厅时，显示在「联机大厅」右侧
-    const showNick = Boolean(state.inLobby && view === 'lobby');
+    // 大厅标题旁；房间「房间等待中」标题右侧也可改名
+    const showNick = shouldShowHeaderNick(view);
+    placeHeaderNick(view);
     if (!showNick && nickEditing) {
       nickEditing = false;
       if (el.headerNick) el.headerNick.classList.remove('is-editing');
     }
     if (el.headerNick) {
       el.headerNick.hidden = !showNick;
+      el.headerNick.classList.toggle(
+        'is-room-nick',
+        Boolean(view === 'room' || view === 'game')
+      );
+      el.headerNick.classList.remove('is-tunnel-room-nick');
     }
     if (!nickEditing) {
       if (el.nickDisplay) {
@@ -2319,7 +3119,10 @@
       }
       if (el.btnEditName) el.btnEditName.hidden = !showNick;
     }
-    if (el.playerName && !state.inLobby) el.playerName.value = name;
+    // 未进大厅的昵称门：不要用默认「玩家」覆盖用户正在输入的内容
+    if (el.playerName && !state.inLobby && state.playerName) {
+      el.playerName.value = window.PlayerNick.stripBaseName(state.playerName);
+    }
   }
 
   function hostHint(room) {
@@ -2669,10 +3472,10 @@
       ok: true,
       roomId: room.id,
       name: room.name || room.id,
-      status: room.status || 'playing',
+      status: room.status || 'waiting',
       host: room.host || null,
-      local: false,
-      via: room.via || 'mqtt',
+      local: room.local === true,
+      via: room.via || null,
     };
   }
 
@@ -2691,22 +3494,49 @@
     );
   }
 
+  function findRejoinProbeFromLobby(rooms) {
+    const list = rooms || [];
+    const active = loadActivePlay();
+    const activeId = active && active.roomId
+      ? String(active.roomId).toUpperCase()
+      : '';
+    pruneLeftRooms(list);
+
+    // 优先：刚刷新记下的房间
+    if (activeId) {
+      const hit = list.find(
+        (r) =>
+          r &&
+          !r.over &&
+          String(r.id || '').toUpperCase() === activeId &&
+          (r.status === 'waiting' || r.status === 'playing') &&
+          !hasExplicitlyLeft(r.id)
+      );
+      if (hit) return roomToRejoinProbe(hit);
+    }
+
+    for (const room of list) {
+      if (!room || room.over) continue;
+      if (room.status !== 'playing' && room.status !== 'waiting') continue;
+      if (hasExplicitlyLeft(room.id)) continue;
+      if (!isSelfInRoomPlayers(room)) continue;
+      return roomToRejoinProbe(room);
+    }
+    return null;
+  }
+
   function maybeOfferRejoinFromLobby(rooms) {
     if (!isOnLobbyScreen()) return;
     if (state._rejoining || remoteRecovering || leavingToLocal) return;
     if (el.rejoinModal && !el.rejoinModal.hidden) return;
-    const list = rooms || [];
-    pruneLeftRooms(list);
-    for (const room of list) {
-      if (!room || room.over || room.status !== 'playing') continue;
-      if (hasExplicitlyLeft(room.id)) continue;
-      if (!isSelfInRoomPlayers(room)) continue;
-      const probe = roomToRejoinProbe(room);
-      if (!probe) continue;
-      rememberActivePlay({ id: room.id, status: room.status || 'waiting' });
-      setRejoinModalOpen(true, probe);
-      return;
-    }
+    const probe = findRejoinProbeFromLobby(rooms);
+    if (!probe) return;
+    rememberActivePlay({
+      id: probe.roomId,
+      status: probe.status || 'waiting',
+    });
+    // 刷新回房：自动重进，无需手动点确认
+    void autoAcceptRejoin(probe);
   }
 
   function renderLobbyRooms(rooms) {
@@ -2733,6 +3563,8 @@
       }
     }
     maybeOfferRejoinFromLobby(list);
+    syncTunnelGuestChrome();
+    maybeAutoJoinTunnelFromLobby();
   }
 
   function hideRoomCtx() {
@@ -3863,6 +4695,7 @@
     const game = state.game;
     if (!game) return;
     updateTurnTimer();
+    syncHostingUi();
     // 仅三国杀使用 SgsAssets BGM；其他游戏停掉，避免串用 sgs/res
     if (game.type === 'sgs') {
       if (game.over && window.SgsAssets && window.SgsAssets.stopBgm) {
@@ -4040,6 +4873,33 @@
   }
 
   async function leaveAndReturnLocal() {
+    // 隧道远程操控被动主机：离开房间后留在大厅继续操控，不关页
+    if (isTunnelGuest() && (state.canControlPassive || state._hostPassiveMode)) {
+      leavingToLocal = true;
+      hideRoomBusy();
+      hideLasidaoUiFully();
+      const rid = (state.room && state.room.id) || state._lastRoomId;
+      markSelfRoomLeave(rid);
+      clearActivePlay();
+      clearGameArchive();
+      state.room = null;
+      state.game = null;
+      state._lastRoomId = null;
+      rememberChatRoom(null);
+      try {
+        net.leaveRoom();
+      } catch (_) {}
+      showView('lobby');
+      showLobbyHome();
+      syncTunnelGuestChrome();
+      updateMeLabel();
+      leavingToLocal = false;
+      return;
+    }
+    if (isTunnelGuest()) {
+      exitTunnelGuestPage(t('toast.tunnelGuestBye'));
+      return;
+    }
     leavingToLocal = true;
     hideRoomBusy();
     hideLasidaoUiFully();
@@ -4086,6 +4946,34 @@
 
   /** 房间失效/解散：退出并回到本机大厅 */
   async function bounceToLocalLobby(message, opts = {}) {
+    if (isTunnelGuest() && (state.canControlPassive || state._hostPassiveMode)) {
+      leavingToLocal = true;
+      hideRoomBusy();
+      hideLasidaoUiFully();
+      markSelfRoomLeave((state.room && state.room.id) || state._lastRoomId);
+      cancelRemoteRecover();
+      remoteRecovering = false;
+      state._rejoining = false;
+      if (opts.clearArchive !== false) {
+        clearActivePlay();
+        clearGameArchive();
+      }
+      state.room = null;
+      state.game = null;
+      state._lastRoomId = null;
+      rememberChatRoom(null);
+      showView('lobby');
+      showLobbyHome();
+      syncTunnelGuestChrome();
+      updateMeLabel();
+      if (message) showToast(message);
+      leavingToLocal = false;
+      return;
+    }
+    if (isTunnelGuest()) {
+      exitTunnelGuestPage(message || t('toast.tunnelGuestBye'));
+      return;
+    }
     leavingToLocal = true;
     hideRoomBusy();
     hideLasidaoUiFully();
@@ -4142,7 +5030,9 @@
     el.lobbyGate.hidden = state.inLobby;
     el.lobbyMain.hidden = !state.inLobby;
     if (el.lobbyPeopleAside) {
-      el.lobbyPeopleAside.hidden = !state.inLobby;
+      el.lobbyPeopleAside.hidden =
+        !state.inLobby ||
+        (isTunnelGuest() && !state.canControlPassive);
     }
     if (el.hostOccupiedHint) {
       el.hostOccupiedHint.hidden = !state.hostOccupied;
@@ -4150,7 +5040,11 @@
         el.hostOccupiedHint.textContent = t('toast.hostOccupied');
       }
     }
+    if (el.tunnelGateHint) {
+      el.tunnelGateHint.hidden = !(isTunnelGuest() && !state.inLobby);
+    }
     syncGuestChrome();
+    syncTunnelGuestChrome();
     syncChatVisibility();
     refreshNickUi();
     updateMeLabel();
@@ -4353,8 +5247,7 @@
 
   function setNickEditing(on) {
     if (!el.headerNick || !el.playerNameEdit || !el.nickDisplay) return;
-    // 未进大厅或不在大厅页时不允许编辑
-    if (on && (!state.inLobby || el.viewLobby.hidden)) return;
+    if (on && !canEditHeaderNick()) return;
     nickEditing = Boolean(on);
     el.headerNick.classList.toggle('is-editing', nickEditing);
     el.nickDisplay.hidden = nickEditing;
@@ -4380,11 +5273,19 @@
     saveNick(next);
     if (el.playerName) el.playerName.value = next;
     refreshNickUi();
-    if (state.inLobby && next !== prev) {
+    if (next !== prev && (state.inLobby || state.room)) {
       if (typeof net.renamePlayer === 'function') {
         net.renamePlayer(next, lobbyJoinOpts());
-      } else {
+      } else if (state.inLobby) {
         net.joinLobby(next, lobbyJoinOpts());
+      }
+      if (state.room) {
+        try {
+          ensureOwnSeatName(next);
+        } catch (_) {}
+        try {
+          if (!el.viewRoom.hidden) renderRoom();
+        } catch (_) {}
       }
       if (!silent) showToast(t('toast.nickUpdated'));
     }
@@ -4403,6 +5304,65 @@
     state.pendingRejoin = null;
 
     await net.connect(net.getLocalOrigin());
+
+    // 刷新后优先认领刚才的房间（等待房/对局均可）
+    if (!skipRejoin) {
+      const active = loadActivePlay();
+      if (active && active.roomId && !hasExplicitlyLeft(active.roomId)) {
+        try {
+          showRoomBusy('join', t('toast.rejoining'));
+          state._rejoining = true;
+          await net.joinLobbyAndWait(next, {
+            ...rejoinLobbyOpts({
+              roomId: active.roomId,
+              status: active.status,
+            }),
+            timeoutMs: 8000,
+            requireMe: true,
+          });
+          const ok = await waitForSessionRestore(4500);
+          if (ok && isInRestoredGameView()) {
+            clearHostOccupied();
+            state.inLobby = true;
+            showToast(t('toast.rejoined'), 2000);
+            return;
+          }
+          // 认领未成功：再尝试直接进房接上 offline 座位
+          try {
+            await net.joinRoomAndWait(active.roomId, next, {
+              ...lobbyJoinOpts(),
+              local: true,
+              preferLocal: true,
+              timeoutMs: 6000,
+            });
+            if (state.room) {
+              clearHostOccupied();
+              state.inLobby = true;
+              if (state.room.status === 'playing') {
+                showView('game');
+                scheduleRenderGame(true);
+              } else {
+                showView('room');
+                renderRoom();
+              }
+              showToast(t('toast.rejoined'), 2000);
+              return;
+            }
+          } catch (_) {
+            /* 回落到普通进大厅 */
+          }
+        } catch (err) {
+          if (err && err.code === 'HOST_OCCUPIED') {
+            applyHostOccupied(err);
+            throw err;
+          }
+        } finally {
+          state._rejoining = false;
+          hideRoomBusy();
+        }
+      }
+    }
+
     // 须等 lobby:join 结果：占用锁拒绝时不能乐观进大厅
     try {
       await net.joinLobbyAndWait(next, {
@@ -4496,8 +5456,71 @@
 
   async function maybeOfferRejoin() {
     // 以大厅心跳里是否含自己为准；等一拍让 MQTT/大厅列表先到
-    await new Promise((r) => setTimeout(r, 800));
+    await new Promise((r) => setTimeout(r, 400));
+    if (isInRestoredGameView() || state._rejoining) return;
     maybeOfferRejoinFromLobby(state.lobbyRooms);
+    // 列表里还没有时：用 activePlay 直接探测并回房
+    if (!isInRestoredGameView() && !state._rejoining) {
+      await tryAutoRejoinFromActivePlay();
+    }
+  }
+
+  async function tryAutoRejoinFromActivePlay() {
+    if (state._rejoining || remoteRecovering || leavingToLocal) return false;
+    if (isInRestoredGameView()) return false;
+    const active = loadActivePlay();
+    if (!active || !active.roomId) return false;
+    if (hasExplicitlyLeft(active.roomId)) {
+      clearActivePlay();
+      return false;
+    }
+    const roomId = String(active.roomId).toUpperCase();
+    let probe = {
+      ok: true,
+      roomId,
+      name: roomId,
+      status: active.status || 'waiting',
+      host: null,
+      local: true,
+    };
+    try {
+      if (typeof net.probeRoom === 'function') {
+        const result = await net.probeRoom(roomId);
+        if (result && result.ok) {
+          probe = {
+            ok: true,
+            roomId: result.roomId || roomId,
+            name: result.name || roomId,
+            status: result.status || active.status || 'waiting',
+            host: result.host || null,
+            local: result.local === true,
+            via: result.via || null,
+          };
+        } else if (result && result.ok === false) {
+          clearActivePlay();
+          return false;
+        }
+      }
+    } catch (_) {
+      /* 探测失败仍尝试本机认领 */
+    }
+    await autoAcceptRejoin(probe);
+    return isInRestoredGameView();
+  }
+
+  async function autoAcceptRejoin(probe) {
+    if (!probe || !probe.roomId) return;
+    if (state._rejoining || remoteRecovering || leavingToLocal) return;
+    if (isInRestoredGameView()) return;
+    state.pendingRejoin = probe;
+    if (el.rejoinModal) el.rejoinModal.hidden = true;
+    stopRejoinCountdown();
+    showRoomBusy('join', t('toast.rejoining'));
+    try {
+      await acceptPendingRejoin();
+    } finally {
+      hideRoomBusy();
+    }
   }
 
   async function acceptPendingRejoin() {
@@ -4520,12 +5543,16 @@
     try {
       if (typeof net.stopAutoReconnect === 'function') net.stopAutoReconnect();
       const host = probe.host || null;
-      const isLocal = probe.local === true;
+      const isLocal = probe.local === true || !host;
       const roomId = probe.roomId;
 
-      if (isLocal || !host) {
+      if (isLocal) {
         await net.connectAny([net.getLocalOrigin()], { retriesPerHost: 3 });
-        await net.joinLobbyAndWait(name, opts);
+        await net.joinLobbyAndWait(name, {
+          ...opts,
+          timeoutMs: 8000,
+          requireMe: true,
+        });
       } else {
         await net.joinRoomOnHost(roomId, name, host, {
           ...opts,
@@ -4534,8 +5561,31 @@
         });
       }
 
-      const ok = await waitForSessionRestore(6000);
-      if (ok && isInRestoredGameView()) {
+      let ok = await waitForSessionRestore(5000);
+      if (!ok || !isInRestoredGameView()) {
+        // 认领未立刻切页：等待房可再走一次进房（会接上 offline 座位）
+        try {
+          await net.joinRoomAndWait(roomId, name, {
+            ...lobbyJoinOpts(),
+            local: isLocal,
+            preferLocal: isLocal,
+            sessionId: opts.sessionId,
+            playerTag: opts.playerTag,
+            timeoutMs: 8000,
+          });
+          ok = isInRestoredGameView() || Boolean(state.room);
+        } catch (_) {
+          /* ignore */
+        }
+      }
+      if (ok && (isInRestoredGameView() || state.room)) {
+        if (state.room && state.room.status === 'playing') {
+          showView('game');
+          scheduleRenderGame(true);
+        } else if (state.room) {
+          showView('room');
+          renderRoom();
+        }
         showToast(t('toast.rejoined'), 2000);
         if (probe.roomId && state._rejoinSnoozeUntil[probe.roomId]) {
           delete state._rejoinSnoozeUntil[probe.roomId];
@@ -4593,11 +5643,23 @@
   }
 
   el.btnEnterLobby.addEventListener('click', async () => {
-    const name = (el.playerName.value || '').trim() || t('app.playerDefault');
+    const name = (el.playerName.value || '').trim();
+    if (!name) {
+      showToast(t('lobby.nickPlaceholder') || '请输入昵称');
+      try {
+        el.playerName.focus();
+      } catch (_) {}
+      return;
+    }
     try {
+      if (isTunnelGuest() || detectPageAccess() === 'tunnel') {
+        await enterTunnelGuestToRoom(name);
+        return;
+      }
       await enterLobbyWithName(name);
     } catch (err) {
       if (err && err.code === 'HOST_OCCUPIED') return;
+      if (err && err.message === '需要昵称') return;
       showToast(err.message || t('toast.localFail'));
     }
   });
@@ -4609,7 +5671,7 @@
   if (el.btnEditName) {
     el.btnEditName.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      if (!state.inLobby) return;
+      if (!canEditHeaderNick()) return;
       setNickEditing(true);
     });
   }
@@ -4635,8 +5697,8 @@
 
   if (el.btnToggleCreate) {
     el.btnToggleCreate.addEventListener('click', () => {
-      if (isGuestClient()) {
-        // 加入端停在被动主机页时：代开本机（已在房主隧道上）
+      if (isGuestClient() || (isTunnelGuest() && state.canControlPassive)) {
+        // 加入端 / 隧道操控被动主机：代开本机
         state.createOnHostTarget = {
           passive: true,
           alreadyOnHost: true,
@@ -4692,7 +5754,7 @@
       const on = el.chkPassiveMode.checked;
       if (on) {
         const ok = window.confirm(
-          '开启被动模式后，本机将锁定无人值守，他人可在你的主机上开房；对局进行中无法退出。确定开启吗？'
+          '开启被动模式后，本机将锁定无人值守；可分享隧道地址，他人可操控本机开房、观战与聊天；对局进行中无法退出。确定开启吗？'
         );
         if (!ok) {
           el.chkPassiveMode.checked = false;
@@ -4711,6 +5773,45 @@
   if (el.btnExitPassive) {
     el.btnExitPassive.addEventListener('click', () => {
       requestExitPassive();
+    });
+  }
+  if (el.btnCopyPassiveUrl) {
+    el.btnCopyPassiveUrl.addEventListener('click', async () => {
+      const url = state.passivePublicUrl || '';
+      if (!url) {
+        showToast(t('toast.unavailable') || '当前不可用');
+        return;
+      }
+      let ok = false;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(url);
+          ok = true;
+        }
+      } catch (_) {
+        ok = false;
+      }
+      if (!ok) {
+        try {
+          const input =
+            el.passiveShareUrl &&
+            el.passiveShareUrl.querySelector('input');
+          if (input) {
+            input.focus();
+            input.select();
+            ok = document.execCommand('copy');
+          }
+        } catch (_) {
+          ok = false;
+        }
+      }
+      showToast(
+        ok
+          ? t('toast.passiveUrlCopied') !== 'toast.passiveUrlCopied'
+            ? t('toast.passiveUrlCopied')
+            : '隧道地址已复制'
+          : url
+      );
     });
   }
   if (el.btnCloseJoin) {
@@ -5291,6 +6392,13 @@
       closeSpectatorsPop();
     });
   }
+  if (el.btnHosting) {
+    el.btnHosting.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (!net.setHosted) return;
+      net.setHosted(!isSelfHosted());
+    });
+  }
   if (el.spectatorsPop) {
     el.spectatorsPop.addEventListener('click', (ev) => ev.stopPropagation());
   }
@@ -5434,9 +6542,31 @@
   net.on('player:me', (data) => {
     const prevId = state.me && state.me.id;
     state.me = data;
+    if (data && data.access) state.access = String(data.access);
+    else if (!state.access) state.access = detectPageAccess();
     if (data && data.name) {
-      state.playerName = window.PlayerNick.stripBaseName(data.name) || t('app.playerDefault');
-      saveNick(state.playerName);
+      const incoming = window.PlayerNick.stripBaseName(data.name) || '';
+      const local = window.PlayerNick.stripBaseName(state.playerName || '');
+      const isDefault =
+        !incoming ||
+        incoming === '玩家' ||
+        incoming === 'Player' ||
+        incoming === t('app.playerDefault');
+      if (incoming && !isDefault) {
+        state.playerName = incoming;
+        saveNick(incoming);
+      } else if (local && local !== '玩家' && local !== 'Player') {
+        // 服务端落到默认名时，保留本地自定义昵称并回写
+        state.playerName = local;
+        try {
+          if (state.inLobby || state.room) {
+            net.renamePlayer(local, lobbyJoinOpts());
+          }
+        } catch (_) {}
+      } else if (incoming) {
+        state.playerName = incoming;
+        saveNick(incoming);
+      }
     }
     if (data && data.tag) {
       try {
@@ -5449,6 +6579,25 @@
       }
     } else {
       window.PlayerNick.ensureTag();
+    }
+    if (data && Object.prototype.hasOwnProperty.call(data, 'canControlPassive')) {
+      state.canControlPassive = Boolean(data.canControlPassive);
+    }
+    if (data && Object.prototype.hasOwnProperty.call(data, 'controllingPassive')) {
+      state.canControlPassive = Boolean(
+        data.controllingPassive || data.canControlPassive
+      );
+    }
+    if (data && Object.prototype.hasOwnProperty.call(data, 'passiveController')) {
+      state.passiveController = data.passiveController || null;
+    }
+    if (data && data.publicUrl) {
+      state.passivePublicUrl = String(data.publicUrl);
+    }
+    if (data && Object.prototype.hasOwnProperty.call(data, 'passiveMode')) {
+      if (isTunnelGuest()) {
+        state._hostPassiveMode = Boolean(data.passiveMode);
+      }
     }
     const archiveRoomId =
       (state.room && state.room.id) ||
@@ -5464,6 +6613,9 @@
     }
     refreshNickUi();
     updateMeLabel();
+    syncTunnelGuestChrome();
+    applyTunnelGateLabels();
+    if (state.passiveMode) syncPassiveExitButton();
     // room:update 可能早于 player:me：身份对齐后立刻刷新房主按钮
     if (state.room && data && data.id && data.id !== prevId) {
       if (state.room.status === 'playing') {
@@ -5481,11 +6633,34 @@
     else showRoomBusy('passive', msg);
   });
 
+  net.on('lobby:passiveControl', (data) => {
+    state.passiveController = (data && data.controller) || null;
+    if (data && data.publicUrl) {
+      state.passivePublicUrl = String(data.publicUrl);
+    }
+    if (data && Object.prototype.hasOwnProperty.call(data, 'passiveMode')) {
+      if (isTunnelGuest()) {
+        state._hostPassiveMode = Boolean(data.passiveMode);
+      }
+    }
+    if (state.passiveMode) syncPassiveExitButton();
+    syncTunnelGuestChrome();
+  });
+
   net.on('lobby:passive', (data) => {
     const on = Boolean(data && data.passive);
     if (state.roomBusy === 'passive') hideRoomBusy();
+    if (data && data.publicUrl) {
+      state.passivePublicUrl = String(data.publicUrl);
+    } else if (!on) {
+      state.passivePublicUrl = '';
+    }
+    if (Object.prototype.hasOwnProperty.call(data || {}, 'controller')) {
+      state.passiveController = data.controller || null;
+    }
     applyPassiveLockUi(on);
     if (el.chkPassiveMode) el.chkPassiveMode.checked = on;
+    syncPassiveShareUrl(data && data.publicUrl);
   });
   net.on('lobby:error', (data) => {
     showToast((data && data.message) || t('toast.opFail'));
@@ -5508,6 +6683,19 @@
     }
     if (data && Array.isArray(data.mqttBrokers)) {
       state.mqttBrokers = data.mqttBrokers;
+    }
+    if (data && Object.prototype.hasOwnProperty.call(data, 'passiveMode')) {
+      if (isTunnelGuest()) {
+        state._hostPassiveMode = Boolean(data.passiveMode);
+      }
+    }
+    if (data && Object.prototype.hasOwnProperty.call(data, 'passiveController')) {
+      state.passiveController = data.passiveController || null;
+      if (state.passiveMode) syncPassiveExitButton();
+    }
+    if (data && data.publicUrl) {
+      state.passivePublicUrl = String(data.publicUrl);
+      if (state.passiveMode) syncPassiveShareUrl(data.publicUrl);
     }
     if (data && Object.prototype.hasOwnProperty.call(data, 'mqttAllBrokersDown')) {
       state.mqttAllBrokersDown = Boolean(data.mqttAllBrokersDown);
@@ -5585,6 +6773,26 @@
     const prev = state.room;
     state.room = data.room;
     if (data.room && data.room.id) clearExplicitLeave(data.room.id);
+    // 隧道进房后若座位名被打成默认「玩家」，用本地已设昵称立刻纠正并回写
+    if (
+      isTunnelGuest() &&
+      state.room &&
+      state.playerName &&
+      !isDefaultNick(state.playerName)
+    ) {
+      const meId = state.me && state.me.id;
+      const seat =
+        meId &&
+        (state.room.players || []).find(
+          (p) => p && String(p.id) === String(meId)
+        );
+      if (seat && isDefaultNick(seat.name)) {
+        ensureOwnSeatName(state.playerName);
+        try {
+          net.renamePlayer(state.playerName, lobbyJoinOpts());
+        } catch (_) {}
+      }
+    }
     syncPassiveExitButton();
     syncSpectatorsWatchUi();
     const keepEdit =
@@ -6283,6 +7491,11 @@
       scheduleGuestReturnOnDisconnect();
       return;
     }
+    // 隧道昵称门未进房：断线后收回输入框，改回转圈连接中
+    if (isTunnelNickGatePending()) {
+      showTunnelConnecting();
+      return;
+    }
     // 对局中短暂断线：只提示重连，不跳回大厅（否则会出现「1号回房、其他人还在打」）
     if (isInLiveSession()) {
       showToast(t('toast.reconnect'));
@@ -6300,8 +7513,21 @@
       state.pendingRejoin ||
       state._rejoining ||
       state._guestBootJoining ||
+      state._tunnelJoining ||
+      state._tunnelBooting ||
       remoteRecovering
     ) {
+      return;
+    }
+    // 隧道昵称门：连上后才展示输入框；等用户点「进入」
+    if (
+      (isTunnelGuest() || detectPageAccess() === 'tunnel') &&
+      !state.inLobby &&
+      !state.room
+    ) {
+      if (state.roomBusy === 'connect' || !el.lobbyGate || el.lobbyGate.hidden) {
+        showTunnelNickGateOnly();
+      }
       return;
     }
     const name = (state.playerName || (el.playerName && el.playerName.value) || '').trim();
@@ -6606,6 +7832,8 @@
         })
         .catch((err) => console.warn('deferred game panels load failed', err));
     }
+  } else if (detectPageAccess() === 'tunnel') {
+    await bootTunnelGuestFlow();
   } else {
     const savedNick = loadSavedNick();
     if (savedNick) {

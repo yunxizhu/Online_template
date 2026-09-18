@@ -1,6 +1,6 @@
 {
   "name": "lianji",
-  "version": "1.0.15",
+  "version": "1.0.17",
   "description": "修正人机对于囚徒困境的判断",
   "main": "server/index.js",
   "bin": "server/index.js",
