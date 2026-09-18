@@ -10,8 +10,10 @@
  *   node scripts/publish-host-update.js --dry-run
  *   node scripts/publish-host-update.js --force
  *
- * 首次请添加 Gitee 远程（与 GitHub 同名仓库即可）：
- *   git remote add gitee https://gitee.com/xiyunzhu/online_template.git
+ * 首次请添加 Gitee 远程（推荐 SSH，免每次登录）：
+ *   git remote add gitee git@gitee.com:xiyunzhu/online_template.git
+ * 若已是 HTTPS，可改成 SSH：
+ *   git remote set-url gitee git@gitee.com:xiyunzhu/online_template.git
  *
  * 发布后他人检测地址（默认）：
  *   https://raw.giteeusercontent.com/xiyunzhu/online_template/raw/ota/host-update.json
@@ -19,7 +21,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const {
   isPathAllowed,
   sha256Buffer,
@@ -236,29 +238,123 @@ function runGit(args, opts = {}) {
   return String(r.stdout || '').trim();
 }
 
+function writeProgress(label, pct, state) {
+  const n = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+  if (process.stdout.isTTY) {
+    process.stdout.write('\r[publish] ' + label + ' ' + n + '%    ');
+    return;
+  }
+  // 非 TTY 避免刷屏：每 5% 打一行
+  if (state && n < 100 && n < (state.last || 0) + 5) return;
+  if (state) state.last = n;
+  process.stdout.write('[publish] ' + label + ' ' + n + '%\n');
+}
+
+function finishProgress(label) {
+  if (process.stdout.isTTY) {
+    process.stdout.write('\r[publish] ' + label + ' 100%\n');
+  } else {
+    process.stdout.write('[publish] ' + label + ' 100%\n');
+  }
+}
+
+/** 从 git --progress 输出里取最近一次百分比 */
+function lastGitPercent(text) {
+  const matches = String(text || '').match(/(\d+)%/g);
+  if (!matches || !matches.length) return null;
+  const n = parseInt(matches[matches.length - 1], 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * 带进度的 git 调用。opts.progressFrom/To 把子步骤百分比映射到总进度区间。
+ */
+function runGitProgress(args, opts = {}) {
+  const label = opts.progressLabel || 'git';
+  const from = opts.progressFrom == null ? 0 : opts.progressFrom;
+  const to = opts.progressTo == null ? 100 : opts.progressTo;
+  const state = opts.progressState || { last: -1 };
+  const cwd = opts.cwd || ROOT;
+
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', args, {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, GIT_PROGRESS_DELAY: '0' },
+    });
+    let stdout = '';
+    let stderr = '';
+    const onChunk = (buf, isErr) => {
+      const s = buf.toString();
+      if (isErr) stderr += s;
+      else stdout += s;
+      const pct = lastGitPercent(s);
+      if (pct == null) return;
+      const mapped = from + ((to - from) * pct) / 100;
+      writeProgress(label, mapped, state);
+    };
+    child.stdout.on('data', (b) => onChunk(b, false));
+    child.stderr.on('data', (b) => onChunk(b, true));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code !== 0) {
+        const err = (stderr || stdout || '').trim() || 'git failed';
+        reject(new Error('git ' + args.join(' ') + '\n' + err));
+        return;
+      }
+      writeProgress(label, to, state);
+      resolve(String(stdout || '').trim());
+    });
+  });
+}
+
 function ensureOtaRemote(remoteName, owner, repo) {
   const remotes = listRemotes();
   if (remotes.includes(remoteName)) return;
-  const url = 'https://gitee.com/' + owner + '/' + repo + '.git';
+  const url = 'git@gitee.com:' + owner + '/' + repo + '.git';
   throw new Error(
     `缺少 git remote「${remoteName}」。请先在 Gitee 创建仓库 ${owner}/${repo}，然后执行：\n` +
       `  git remote add ${remoteName} ${url}\n` +
+      `（推荐 SSH；HTTPS 每次推送都要账号/令牌）\n` +
       `再重新运行本脚本。`
   );
 }
 
-function ensureOtaWorktree(worktreePath, remoteName) {
+async function ensureOtaWorktree(worktreePath, remoteName) {
+  const label = 'preparing worktree';
+  const state = { last: -1 };
+  writeProgress(label, 0, state);
+
   if (fs.existsSync(worktreePath)) {
     try {
-      runGit(['fetch', remoteName, OTA_BRANCH], { cwd: ROOT });
-    } catch (_) {}
+      await runGitProgress(['fetch', '--progress', remoteName, OTA_BRANCH], {
+        cwd: ROOT,
+        progressLabel: label,
+        progressFrom: 0,
+        progressTo: 70,
+        progressState: state,
+      });
+    } catch (_) {
+      writeProgress(label, 70, state);
+    }
     try {
       runGit(['checkout', OTA_BRANCH], { cwd: worktreePath });
+      writeProgress(label, 85, state);
       try {
-        runGit(['pull', '--ff-only', remoteName, OTA_BRANCH], {
-          cwd: worktreePath,
-        });
-      } catch (_) {}
+        await runGitProgress(
+          ['pull', '--ff-only', '--progress', remoteName, OTA_BRANCH],
+          {
+            cwd: worktreePath,
+            progressLabel: label,
+            progressFrom: 85,
+            progressTo: 100,
+            progressState: state,
+          }
+        );
+      } catch (_) {
+        writeProgress(label, 100, state);
+      }
+      finishProgress(label);
       return;
     } catch (_) {
       fs.rmSync(worktreePath, { recursive: true, force: true });
@@ -267,27 +363,39 @@ function ensureOtaWorktree(worktreePath, remoteName) {
 
   let remoteHas = false;
   try {
-    runGit(['fetch', remoteName, OTA_BRANCH]);
+    await runGitProgress(['fetch', '--progress', remoteName, OTA_BRANCH], {
+      progressLabel: label,
+      progressFrom: 0,
+      progressTo: 60,
+      progressState: state,
+    });
     remoteHas = true;
   } catch (_) {
     remoteHas = false;
+    writeProgress(label, 60, state);
   }
 
   if (remoteHas) {
+    writeProgress(label, 65, state);
     runGit(['worktree', 'add', worktreePath, remoteName + '/' + OTA_BRANCH]);
+    writeProgress(label, 90, state);
     try {
       runGit(['checkout', '-B', OTA_BRANCH], { cwd: worktreePath });
     } catch (_) {}
+    finishProgress(label);
     return;
   }
 
   const branches = runGit(['branch', '--list', OTA_BRANCH]);
+  writeProgress(label, 70, state);
   if (branches) {
     runGit(['worktree', 'add', worktreePath, OTA_BRANCH]);
+    finishProgress(label);
     return;
   }
 
   runGit(['worktree', 'add', '--detach', worktreePath, 'HEAD']);
+  writeProgress(label, 80, state);
   runGit(['checkout', '--orphan', OTA_BRANCH], { cwd: worktreePath });
   try {
     runGit(['rm', '-rf', '.'], { cwd: worktreePath });
@@ -298,6 +406,7 @@ function ensureOtaWorktree(worktreePath, remoteName) {
   );
   runGit(['add', 'README.md'], { cwd: worktreePath });
   runGit(['commit', '-m', 'chore: init ota branch'], { cwd: worktreePath });
+  finishProgress(label);
 }
 
 async function fetchRemoteManifest(url) {
@@ -465,8 +574,8 @@ async function main() {
   }
 
   const worktreePath = path.join(ROOT, 'dist', 'ota-worktree');
-  console.log('[publish] preparing worktree', worktreePath);
-  ensureOtaWorktree(worktreePath, remoteName);
+  console.log('[publish] worktree →', worktreePath);
+  await ensureOtaWorktree(worktreePath, remoteName);
 
   // 禁止 Git 改行尾，否则 blob 内容与 sha256 对不上（校验失败根因）
   try {

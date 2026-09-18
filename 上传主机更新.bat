@@ -17,8 +17,10 @@ echo   Scans server/ + public/ + package.json
 echo   Uploads new blobs to Gitee branch "ota"
 echo   Updates host-update.json for other hosts
 echo.
-echo   Need remote "gitee" with push permission:
-echo     git remote add gitee https://gitee.com/xiyunzhu/online_template.git
+echo   Need remote "gitee" with push permission (SSH recommended):
+echo     git remote add gitee git@gitee.com:xiyunzhu/online_template.git
+echo   Or convert existing HTTPS remote:
+echo     git remote set-url gitee git@gitee.com:xiyunzhu/online_template.git
 echo.
 
 set "LIANJI_OTA_NOTES="
