@@ -184,9 +184,17 @@ function resolveOtaRemote() {
 }
 
 function detectRepo(remoteName) {
-  const url = gitRemoteUrl(remoteName) || gitRemoteUrl('origin');
-  const parsed = parseOwnerRepoFromUrl(url);
-  if (parsed) return parsed;
+  const url = gitRemoteUrl(remoteName);
+  if (url) {
+    const parsed = parseOwnerRepoFromUrl(url);
+    if (parsed) return parsed;
+  }
+  // 没有 OTA remote 时不要用 GitHub origin 推断（用户名/仓库名常与 Gitee 不一致）
+  const originUrl = gitRemoteUrl('origin');
+  if (/gitee\.com/i.test(originUrl)) {
+    const parsed = parseOwnerRepoFromUrl(originUrl);
+    if (parsed) return parsed;
+  }
   return { owner: DEFAULT_OWNER, repo: DEFAULT_REPO };
 }
 
