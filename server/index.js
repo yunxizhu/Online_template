@@ -379,6 +379,22 @@ function dropIdleSessionGhosts(sessionId, keepId) {
   }
 }
 
+/**
+ * 创建等待期间客户端可能已换新 socket：优先用仍在线的同 session 连接收尾。
+ */
+function resolveLiveCreatorSocket(preferredSocket, sessionId) {
+  if (preferredSocket && preferredSocket.connected) return preferredSocket;
+  const sid = sessionId ? String(sessionId).slice(0, 64) : '';
+  if (sid) {
+    for (const p of rooms.players.values()) {
+      if (!p || p.sessionId !== sid) continue;
+      const s = io.sockets.sockets.get(p.id);
+      if (s && s.connected) return s;
+    }
+  }
+  return preferredSocket || null;
+}
+
 function playerRegisterOpts(data = {}) {
   return {
     sessionId: data.sessionId || null,
@@ -1500,18 +1516,38 @@ io.on('connection', (socket) => {
         socket.emit('room:error', { message: '房间创建失败' });
         return;
       }
+
+      // 等待隧道期间可能短暂断线/换 id：绑到当前仍在线的同 session 连接
+      const creatorSock =
+        resolveLiveCreatorSocket(socket, data.sessionId) || socket;
+      const bound = rooms.bindCreatorAsHost(creatorSock.id, fresh.id, {
+        playerName: data.playerName,
+        ...playerRegisterOpts(data),
+      });
+      if (!bound.ok) {
+        creatorSock.emit('room:error', {
+          message: bound.error || '房间创建失败',
+        });
+        return;
+      }
+      dropIdleSessionGhosts(bound.player.sessionId, creatorSock.id);
+      creatorSock.join(bound.room.id);
+      joinHallChat(creatorSock);
+      emitPlayerMe(creatorSock, bound.player, data.playerName);
+
       mqttOnLogin();
 
       if (mqttBulletin && mqttBulletin.enabled) {
         progress('正在广播房间到大厅…');
         const beacon = await mqttBulletin.waitForRoomBeacon(
-          fresh.id,
+          bound.room.id,
           () => {
             const list = hostedBeaconRooms();
             return (
               list.find(
                 (r) =>
-                  String(r.id).toUpperCase() === String(fresh.id).toUpperCase()
+                  String(r.id).toUpperCase() ===
+                  String(bound.room.id).toUpperCase()
               ) || null
             );
           },
@@ -1524,11 +1560,29 @@ io.on('connection', (socket) => {
         mqttAfterRoomChange();
       }
 
-      emitRoomUpdate(fresh);
+      emitRoomUpdate(bound.room);
       emitLobbyUpdate();
     } catch (err) {
-      const leave = rooms.leaveRoom(socket.id);
-      if (leave.leftRoomId) socket.leave(leave.leftRoomId);
+      const creatorSock =
+        resolveLiveCreatorSocket(socket, data.sessionId) || socket;
+      const leave = rooms.leaveRoom(creatorSock.id);
+      if (leave.leftRoomId) creatorSock.leave(leave.leftRoomId);
+      // 断线后 players 表可能已无本人：按房间 id 清掉挂起的空房，避免僵尸房
+      if (
+        (!leave.leftRoomId || !leave.dissolved) &&
+        room &&
+        room.id &&
+        rooms.getRoom(room.id)
+      ) {
+        const dissolved = rooms.dissolveRoom(room.id, creatorSock.id);
+        if (dissolved.leftRoomId) {
+          creatorSock.leave(dissolved.leftRoomId);
+          for (const aid of dissolved.affectedPlayerIds || []) {
+            const as = io.sockets.sockets.get(aid);
+            if (as) as.leave(dissolved.leftRoomId);
+          }
+        }
+      }
       if (operatorId) {
         const opLeave = rooms.leaveRoom(operatorId);
         if (opLeave.leftRoomId) {
@@ -1539,7 +1593,7 @@ io.on('connection', (socket) => {
       mqttOnLogin();
       mqttAfterRoomChange();
       emitLobbyUpdate();
-      socket.emit('room:error', {
+      creatorSock.emit('room:error', {
         message: (err && err.message) || '创建房间失败',
       });
     }
@@ -1650,18 +1704,38 @@ io.on('connection', (socket) => {
 
       const fresh = rooms.clearPendingLobby(room.id);
       if (!fresh) throw new Error('房间创建失败');
+
+      const hostPlayer = rooms.getPlayer(socket.id);
+      const creatorSock =
+        resolveLiveCreatorSocket(
+          socket,
+          hostPlayer && hostPlayer.sessionId
+        ) || socket;
+      const bound = rooms.bindCreatorAsHost(creatorSock.id, fresh.id, {
+        playerName: (hostPlayer && hostPlayer.name) || socket.data.playerName,
+        sessionId: hostPlayer && hostPlayer.sessionId,
+        playerTag: hostPlayer && hostPlayer.tag,
+        client: hostPlayer && hostPlayer.client,
+        role: hostPlayer && hostPlayer.role,
+      });
+      if (!bound.ok) throw new Error(bound.error || '房间创建失败');
+      dropIdleSessionGhosts(bound.player.sessionId, creatorSock.id);
+      creatorSock.join(bound.room.id);
+      joinHallChat(creatorSock);
+      emitPlayerMe(creatorSock, bound.player, bound.player.name);
       mqttOnLogin();
 
       if (mqttBulletin && mqttBulletin.enabled) {
         progress('正在广播新房间…');
         const beacon = await mqttBulletin.waitForRoomBeacon(
-          fresh.id,
+          bound.room.id,
           () => {
             const list = hostedBeaconRooms();
             return (
               list.find(
                 (r) =>
-                  String(r.id).toUpperCase() === String(fresh.id).toUpperCase()
+                  String(r.id).toUpperCase() ===
+                  String(bound.room.id).toUpperCase()
               ) || null
             );
           },
@@ -1680,14 +1754,14 @@ io.on('connection', (socket) => {
       const transferMsg = {
         kind: 'roomTransfer',
         oldRoomId: String(oldRoomId).toUpperCase(),
-        roomId: String(fresh.id).toUpperCase(),
+        roomId: String(bound.room.id).toUpperCase(),
         host: hostUrl,
-        name: fresh.name || '',
-        gameType: fresh.gameType || '',
-        gameLabel: fresh.gameLabel || '',
-        gameMode: fresh.gameMode || '',
-        gameModeLabel: fresh.gameModeLabel || '',
-        status: fresh.status || 'waiting',
+        name: bound.room.name || '',
+        gameType: bound.room.gameType || '',
+        gameLabel: bound.room.gameLabel || '',
+        gameMode: bound.room.gameMode || '',
+        gameModeLabel: bound.room.gameModeLabel || '',
+        status: bound.room.status || 'waiting',
         targets,
         at: Date.now(),
       };
@@ -1696,15 +1770,15 @@ io.on('connection', (socket) => {
       }
       io.emit('room:transfer', transferMsg);
 
-      emitRoomUpdate(fresh);
+      emitRoomUpdate(bound.room);
       emitLobbyUpdate();
-      socket.emit('room:reopenDone', {
+      creatorSock.emit('room:reopenDone', {
         oldRoomId: transferMsg.oldRoomId,
         roomId: transferMsg.roomId,
         host: hostUrl,
       });
       console.log(
-        `[tunnel] 房主重开房间 ${oldRoomId} → ${fresh.id} @ ${hostUrl}`
+        `[tunnel] 房主重开房间 ${oldRoomId} → ${bound.room.id} @ ${hostUrl}`
       );
     } catch (err) {
       mqttOnLogin();

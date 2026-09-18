@@ -94,6 +94,9 @@
           <button type="button" id="btn-menu-invite-block" role="menuitem" data-i18n="invite.blockAllMenu">
             不接受房间邀请
           </button>
+          <button type="button" id="btn-menu-check-update" role="menuitem" data-i18n="update.checkMenu">
+            检查更新
+          </button>
           <button type="button" id="btn-quit-game" role="menuitem" hidden data-i18n="menu.quitGame">
             退出游戏并返回大厅
           </button>
@@ -477,6 +480,28 @@
       <div class="row">
         <button id="btn-room-transfer-yes" type="button" data-i18n="roomTransfer.yes">是</button>
         <button id="btn-room-transfer-no" type="button" class="secondary" data-i18n="roomTransfer.no">否</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="host-update-modal" hidden>
+    <div class="modal-backdrop" id="host-update-backdrop"></div>
+    <div class="modal-dialog panel" role="dialog" aria-labelledby="host-update-title" aria-modal="true">
+      <div class="row panel-head">
+        <h2 id="host-update-title" data-i18n="update.title">发现主机更新</h2>
+      </div>
+      <p id="host-update-version" class="update-version"></p>
+      <p id="host-update-notes" class="invite-message update-notes"></p>
+      <p id="host-update-meta" class="muted update-meta"></p>
+      <div id="host-update-progress-wrap" class="update-progress-wrap" hidden>
+        <div class="update-progress-bar" aria-hidden="true">
+          <div id="host-update-progress-fill" class="update-progress-fill"></div>
+        </div>
+        <p id="host-update-progress-text" class="muted update-progress-text"></p>
+      </div>
+      <div class="row" id="host-update-actions">
+        <button id="btn-host-update-apply" type="button" data-i18n="update.apply">立即更新</button>
+        <button id="btn-host-update-later" type="button" class="secondary" data-i18n="update.later">稍后</button>
       </div>
     </div>
   </div>

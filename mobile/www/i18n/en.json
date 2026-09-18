@@ -230,6 +230,23 @@
     "no": "No",
     "working": "Reopening room…"
   },
+  "update": {
+    "checkMenu": "Check for updates",
+    "title": "Host update available",
+    "versionLine": "{local} → {remote}",
+    "noNotes": "(No release notes)",
+    "metaLine": "Will download {count} file(s), ~{size}",
+    "apply": "Update now",
+    "later": "Later",
+    "working": "Downloading and applying update…",
+    "restarting": "Update done. Restarting server…",
+    "restartTimeout": "Server restart timed out. Please refresh manually",
+    "checkFail": "Update check failed",
+    "applyFail": "Update failed",
+    "disabled": "Updates disabled (update.off present)",
+    "uptoDate": "Already up to date ({version})",
+    "localOnly": "Open localhost in this machine's browser to update"
+  },
   "roomTransfer": {
     "title": "Room moved",
     "message": "The room has moved. Jump to the new room?",

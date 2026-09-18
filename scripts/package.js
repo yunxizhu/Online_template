@@ -30,6 +30,32 @@ function packApkName() {
   return `${PACK_VERSION}-lianji-${PACK_SUFFIX}.apk`;
 }
 
+/** @returns {string} path to @capacitor/cli entry */
+function ensureMobileCapCli(mobileDir, env) {
+  const capBin = path.join(
+    mobileDir,
+    'node_modules',
+    '@capacitor',
+    'cli',
+    'bin',
+    'capacitor'
+  );
+  if (fs.existsSync(capBin)) return capBin;
+  console.log('  mobile deps missing, running npm install...');
+  const install = spawnSync('npm', ['install'], {
+    cwd: mobileDir,
+    env,
+    stdio: 'inherit',
+    shell: true,
+  });
+  if (install.status !== 0 || !fs.existsSync(capBin)) {
+    throw new Error(
+      '[android] mobile 依赖安装失败（需要 @capacitor/cli）。请在 mobile 目录执行 npm install'
+    );
+  }
+  return capBin;
+}
+
 const DIR_WIN = path.join(DIST, packDirName('windows'));
 const DIR_ANDROID = path.join(DIST, packDirName('android'));
 const DIR_CLIENT_WIN = path.join(DIST, packDirName('client-windows'));
@@ -329,6 +355,9 @@ function buildAndroidApk() {
   env.TEMP = buildTmp;
   env.TMP = buildTmp;
 
+  // 缺 node_modules 时 npx cap 会误解析到 npm 上无关的 cap@0.x
+  const capBin = ensureMobileCapCli(mobileDir, env);
+
   // 打包前：public/* → mobile/www，再 cap sync 进 android 工程
   console.log('  sync shared js → mobile/www...');
   const syncJs = spawnSync('npm', ['run', 'sync:js'], {
@@ -342,11 +371,10 @@ function buildAndroidApk() {
   }
 
   console.log('  cap sync android...');
-  const sync = spawnSync('npx', ['cap', 'sync', 'android'], {
+  const sync = spawnSync(process.execPath, [capBin, 'sync', 'android'], {
     cwd: mobileDir,
     env,
     stdio: 'inherit',
-    shell: true,
   });
   if (sync.status !== 0) {
     throw new Error('[android] cap sync 失败，无法继续编译 APK');
@@ -532,7 +560,7 @@ function androidReadme(hasApk) {
     (hasApk
       ? `安装本目录的 ${apkName}（正式签名，包名 com.lianji.join）。\n\n`
       : '本目录暂无 APK。请在开发机执行：\n' +
-        '  cd mobile && npx cap sync android\n' +
+        '  cd mobile && npm install && npm run sync\n' +
         '  cd android && gradlew.bat assembleRelease\n' +
         '然后重新运行打包。\n\n') +
     '用法\n' +

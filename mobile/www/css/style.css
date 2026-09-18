@@ -834,6 +834,45 @@ body.phase-room .lobby-people {
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
 }
 
+.update-version {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.update-notes {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.update-meta {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+}
+
+.update-progress-wrap {
+  margin: 0.75rem 0 0.25rem;
+}
+
+.update-progress-bar {
+  height: 0.5rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.update-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent, #3d9a6a);
+  transition: width 0.2s ease;
+}
+
+.update-progress-text {
+  margin: 0.4rem 0 0;
+  font-size: 0.85rem;
+}
+
 label {
   display: block;
   margin-bottom: 0.75rem;

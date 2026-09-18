@@ -3238,8 +3238,13 @@
     const players = room.players || [];
     const isSpectator =
       state.me &&
-      (room.observers || []).some((o) => o.id === state.me.id);
-    const isHost = state.me && room.hostId === state.me.id && !isSpectator;
+      (room.observers || []).some(
+        (o) => o && String(o.id) === String(state.me.id)
+      );
+    const isHost =
+      state.me &&
+      String(room.hostId) === String(state.me.id) &&
+      !isSpectator;
     const teamRoom =
       room.gameType === 'lasidao' && room.gameMode === 'h2h';
 
@@ -5054,7 +5059,11 @@
     };
 
     if (state.createModalMode === 'edit') {
-      if (!state.room || !state.me || state.room.hostId !== state.me.id) {
+      if (
+        !state.room ||
+        !state.me ||
+        String(state.room.hostId) !== String(state.me.id)
+      ) {
         showToast(t('toast.updateRoomFail'));
         return;
       }
@@ -5188,7 +5197,13 @@
   }
   if (el.btnEditRoom) {
     el.btnEditRoom.addEventListener('click', () => {
-      if (!state.room || !state.me || state.room.hostId !== state.me.id) return;
+      if (
+        !state.room ||
+        !state.me ||
+        String(state.room.hostId) !== String(state.me.id)
+      ) {
+        return;
+      }
       if (state.room.status === 'playing') return;
       setCreatePanelOpen(true, 'edit');
     });
@@ -5364,6 +5379,7 @@
   }
 
   net.on('player:me', (data) => {
+    const prevId = state.me && state.me.id;
     state.me = data;
     if (data && data.name) {
       state.playerName = window.PlayerNick.stripBaseName(data.name) || t('app.playerDefault');
@@ -5395,6 +5411,14 @@
     }
     refreshNickUi();
     updateMeLabel();
+    // room:update 可能早于 player:me：身份对齐后立刻刷新房主按钮
+    if (state.room && data && data.id && data.id !== prevId) {
+      if (state.room.status === 'playing') {
+        if (state.game) renderGame();
+      } else {
+        renderRoom();
+      }
+    }
   });
 
   net.on('lobby:passiveProgress', (data) => {
@@ -6215,13 +6239,21 @@
       state.pendingRejoin ||
       state._rejoining ||
       state._guestBootJoining ||
-      state.roomBusy ||
       remoteRecovering
     ) {
       return;
     }
     const name = (state.playerName || (el.playerName && el.playerName.value) || '').trim();
     if (!name) return;
+    // 创建房间等待隧道时也可能断线重连：仍要重新进大厅注册，否则 players 表空、丢房主
+    if (state.roomBusy === 'create') {
+      net.joinLobby(name, lobbyJoinOpts());
+      state.inLobby = true;
+      return;
+    }
+    if (state.roomBusy) {
+      return;
+    }
     if (isInLiveSession()) {
       net.joinLobby(
         name,

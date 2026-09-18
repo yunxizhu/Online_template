@@ -730,6 +730,86 @@ class RoomManager {
     return room;
   }
 
+  /**
+   * 创建/隧道等待期间 socket 可能短暂断线被 markOffline：
+   * 收尾时把当前连接重新绑回房主座位，并清掉同 session 的幽灵座位。
+   */
+  bindCreatorAsHost(playerId, roomId, opts = {}) {
+    const room = this.getRoom(roomId);
+    if (!room) return { ok: false, error: '房间不存在' };
+
+    let player = this.players.get(playerId);
+    if (!player) {
+      player = this.registerPlayer(
+        playerId,
+        opts.playerName || opts.name || '玩家',
+        {
+          sessionId: opts.sessionId || null,
+          playerTag: opts.playerTag || opts.tag || null,
+          client: opts.client || null,
+          role: opts.role || null,
+        }
+      );
+    } else if (opts.sessionId || opts.playerTag || opts.client || opts.role) {
+      player = this.registerPlayer(playerId, opts.playerName || player.name, {
+        sessionId: opts.sessionId || player.sessionId || null,
+        playerTag: opts.playerTag || player.tag || null,
+        client: opts.client || player.client || null,
+        role: opts.role || player.role || null,
+      });
+    }
+
+    const sid = player.sessionId ? String(player.sessionId).slice(0, 64) : '';
+    const tag = player.tag || null;
+    const seats = Array.isArray(room.players) ? room.players : [];
+
+    let seat =
+      seats.find((p) => p && p.id === room.hostId) ||
+      (sid ? seats.find((p) => p && !p.left && p.sessionId === sid) : null) ||
+      seats.find(
+        (p) =>
+          p &&
+          !p.left &&
+          p.name === player.name &&
+          (p.tag || null) === tag
+      ) ||
+      null;
+
+    if (seat) {
+      if (seat.id !== playerId) this.rebindSeatId(room, seat.id, playerId);
+      seat.offline = false;
+      delete seat.offlineAt;
+      seat.left = false;
+      delete seat.leftAt;
+      seat.sessionId = sid || seat.sessionId || null;
+      seat.name = player.name;
+      seat.tag = tag;
+      seat.ready = true;
+    } else {
+      seats.push({
+        id: playerId,
+        name: player.name,
+        tag,
+        ready: true,
+        sessionId: sid || null,
+      });
+      room.players = seats;
+      ensureTeamSeats(room);
+    }
+
+    // 同 session 残留座位（断线后又被误当成新成员加入）只留当前房主
+    if (sid) {
+      room.players = (room.players || []).filter(
+        (p) => !p || p.id === playerId || !(p.sessionId === sid)
+      );
+    }
+
+    room.hostId = playerId;
+    player.roomId = room.id;
+    player.passive = false;
+    return { ok: true, room, player };
+  }
+
   /** 密码仅存本机；对外校验。无密码房直接通过。 */
   checkRoomPassword(roomId, password) {
     const room = this.getRoom(roomId);

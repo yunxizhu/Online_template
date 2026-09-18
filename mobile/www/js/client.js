@@ -1014,7 +1014,15 @@ window.GameNet = (function () {
 
   async function returnToLocalLobby(playerName, opts = {}) {
     await connect(localOrigin);
-    if (playerName) joinLobby(playerName, opts);
+    // 必须等 player:me：否则紧接着 createRoom 时 state.me 仍是旧 socket.id，
+    // 会把房主看成普通成员（隧道已热、创建很快时更容易踩中）
+    if (playerName) {
+      await joinLobbyAndWait(playerName, {
+        ...opts,
+        requireMe: true,
+        timeoutMs: Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 5000,
+      });
+    }
   }
 
   function leaveRoom() {
