@@ -3382,7 +3382,6 @@ function decidePendingAction(game, player, diff, botState) {
   if (game.pendingRobberyPick && game.pendingRobberyPick.targetId === player.id) {
     // 目标只能交牌；无牌时返回 null，由 forceTimeout 清 pending（cancel 仅发动者可用）
     const cards = player.funcCards || [];
-    const unbuilt = (player.buildings || []).filter((b) => !b.built);
     const options = game.pendingRobberyPick.options || [];
     if (options.length) {
       const ids = new Set(options.map((o) => o.id));
@@ -3392,7 +3391,6 @@ function decidePendingAction(game, player, diff, botState) {
       }
       return { type: 'robberyPick', payload: { cardId: options[0].id } };
     }
-    void unbuilt;
     return null;
   }
 
@@ -4266,7 +4264,10 @@ function decideBotAction(game, playerId, difficulty, botState = {}) {
   const player = playerById(game, playerId);
   if (!player || player.left) return null;
 
-  const diff = String(difficulty || 'normal').toLowerCase();
+  const raw = String(difficulty || 'normal').toLowerCase();
+  // 五子棋专属更高难度：卡拉斯坦按 hard 处理
+  const diff =
+    raw === 'hardplus' || raw === 'hell' ? 'hard' : raw;
 
   // ????????????
   const pending = decidePendingAction(game, player, diff, botState);

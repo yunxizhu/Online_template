@@ -140,12 +140,16 @@
     "easy": "Easy",
     "normal": "Normal",
     "hard": "Hard",
+    "hardplus": "Hard+",
+    "hell": "Hell",
     "confirmAdd": "Add",
     "removeConfirm": "Remove computer",
     "botPlayer": "Computer player",
     "diffLabelEasy": "Easy",
     "diffLabelNormal": "Normal",
-    "diffLabelHard": "Hard"
+    "diffLabelHard": "Hard",
+    "diffLabelHardplus": "Hard+",
+    "diffLabelHell": "Hell"
   },
   "chat": {
     "roomAria": "Chat",

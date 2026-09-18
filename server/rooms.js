@@ -1607,7 +1607,7 @@ class RoomManager {
    * 为房间添加人机玩家（房主专用）。
    * @param {string} playerId - 房主ID
    * @param {number} seatIndex - 目标座位索引（0-based）
-   * @param {string} difficulty - 难度：'easy'|'normal'|'hard'
+   * @param {string} difficulty - 难度：'easy'|'normal'|'hard'|'hardplus'|'hell'
    */
   addBotPlayer(playerId, seatIndex, difficulty) {
     const player = this.players.get(playerId);
@@ -1644,8 +1644,17 @@ class RoomManager {
     }
 
     const diff = String(difficulty || 'normal').toLowerCase();
-    const diffLabel = diff === 'easy' ? '简易' : diff === 'hard' ? '困难' : '普通';
-    const botNameDiff = diff === 'easy' ? '简单' : diff === 'hard' ? '困难' : '普通';
+    const DIFF_META = {
+      easy: { label: '简易', name: '简单' },
+      normal: { label: '普通', name: '普通' },
+      hard: { label: '困难', name: '困难' },
+      hardplus: { label: '困难Plus', name: '困难Plus' },
+      hell: { label: '地狱', name: '地狱' },
+    };
+    const meta = DIFF_META[diff] || DIFF_META.normal;
+    const resolvedDiff = DIFF_META[diff] ? diff : 'normal';
+    const diffLabel = meta.label;
+    const botNameDiff = meta.name;
     const seatNames = ['一一', '二二', '三三', '四四', '五五', '六六', '七七', '八八'];
     const botId = `bot_${room.id}_${idx}_${Date.now()}`;
     const botPlayer = {
@@ -1654,7 +1663,7 @@ class RoomManager {
       tag: null,
       ready: true,
       isBot: true,
-      botDifficulty: diff,
+      botDifficulty: resolvedDiff,
       botDifficultyLabel: diffLabel,
       botSeatIndex: idx,
       sessionId: null,

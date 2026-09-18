@@ -5241,7 +5241,19 @@
       if (el.addBotSeatLabel) {
         el.addBotSeatLabel.textContent = t('room.botSeatLabel').replace('{seat}', String(Number(seatIndex) + 1));
       }
-      if (el.botDifficulty) el.botDifficulty.value = 'hard';
+      if (el.botDifficulty) {
+        const gameType = state.room && state.room.gameType;
+        el.botDifficulty.querySelectorAll('option[data-diff-extra]').forEach((opt) => {
+          const allow = String(opt.getAttribute('data-diff-extra') || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+          const show = allow.length === 0 || allow.includes(gameType);
+          opt.hidden = !show;
+          opt.disabled = !show;
+        });
+        el.botDifficulty.value = 'hard';
+      }
       if (el.createRoomModal) el.createRoomModal.hidden = true;
       if (el.joinCodeModal) el.joinCodeModal.hidden = true;
     } else {

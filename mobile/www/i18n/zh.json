@@ -140,12 +140,16 @@
     "easy": "简易",
     "normal": "普通",
     "hard": "困难",
+    "hardplus": "困难Plus",
+    "hell": "地狱",
     "confirmAdd": "确认添加",
     "removeConfirm": "移除电脑",
     "botPlayer": "电脑玩家",
     "diffLabelEasy": "简易",
     "diffLabelNormal": "普通",
-    "diffLabelHard": "困难"
+    "diffLabelHard": "困难",
+    "diffLabelHardplus": "困难Plus",
+    "diffLabelHell": "地狱"
   },
   "chat": {
     "roomAria": "聊天室",
