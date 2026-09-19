@@ -185,11 +185,33 @@ function ensureTeamSeats(room) {
   }
 }
 
+/** 人机占座会在 players 中间留下 null 空位，访问座位属性前必须判空 */
+function isSeatedPlayer(p) {
+  return Boolean(p && !p.left);
+}
+
+/** 清空座位并去掉尾部多余 null，保留中间空位下标 */
+function clearPlayerSeat(room, playerId) {
+  if (!room || !Array.isArray(room.players)) return false;
+  const idx = room.players.findIndex((p) => p && p.id === playerId);
+  if (idx < 0) return false;
+  room.players[idx] = null;
+  while (
+    room.players.length > 0 &&
+    room.players[room.players.length - 1] === null
+  ) {
+    room.players.pop();
+  }
+  return true;
+}
+
 function publicRoomView(room) {
   const waiting = !room.status || room.status === 'waiting';
   const playing = room.status === 'playing';
   const over = Boolean(room.game && room.game.over);
-  const playerCount = (room.players || []).filter((p) => !p.left && !p.offline).length;
+  const playerCount = (room.players || []).filter(
+    (p) => isSeatedPlayer(p) && !p.offline
+  ).length;
   const observerCount = (room.observers || []).length;
   return {
     id: room.id,
@@ -214,10 +236,10 @@ function publicRoomView(room) {
     canJoin: waiting && playerCount < room.maxPlayers,
     canSpectate: (waiting || playing) && !over,
     playerNames: (room.players || [])
-      .filter((p) => !p.left)
+      .filter(isSeatedPlayer)
       .map((p) => p.name || '玩家'),
     playerTags: (room.players || [])
-      .filter((p) => !p.left)
+      .filter(isSeatedPlayer)
       .map((p) => p.tag || null),
   };
 }
@@ -227,20 +249,25 @@ function fullRoomView(room) {
     id: room.id,
     name: room.name,
     hostId: room.hostId,
-    players: room.players.map((p) => ({
-      id: p.id,
-      name: p.name,
-      tag: p.tag || null,
-      ready: p.ready,
-      offline: Boolean(p.offline),
-      left: Boolean(p.left),
-      team: p.team === 'B' ? 'B' : p.team === 'A' ? 'A' : null,
-      teamSlot: p.teamSlot === 0 || p.teamSlot === 1 ? p.teamSlot : null,
-      isBot: Boolean(p.isBot),
-      botDifficulty: p.botDifficulty || null,
-      botDifficultyLabel: p.botDifficultyLabel || null,
-      isHosted: Boolean(p.isHosted),
-    })),
+    // 保留 null 空位，保证座位下标与前端 / botSeatIndex 一致
+    players: (room.players || []).map((p) =>
+      p
+        ? {
+            id: p.id,
+            name: p.name,
+            tag: p.tag || null,
+            ready: p.ready,
+            offline: Boolean(p.offline),
+            left: Boolean(p.left),
+            team: p.team === 'B' ? 'B' : p.team === 'A' ? 'A' : null,
+            teamSlot: p.teamSlot === 0 || p.teamSlot === 1 ? p.teamSlot : null,
+            isBot: Boolean(p.isBot),
+            botDifficulty: p.botDifficulty || null,
+            botDifficultyLabel: p.botDifficultyLabel || null,
+            isHosted: Boolean(p.isHosted),
+          }
+        : null
+    ),
     observers: (room.observers || []).map((p) => ({
       id: p.id,
       name: p.name,
@@ -370,20 +397,20 @@ class RoomManager {
     if (!player || !player.roomId) return null;
     const room = this.getRoom(player.roomId);
     if (!room) return null;
-    const seat = room.players.find((p) => p.id === player.id);
+    const seat = room.players.find((p) => p && p.id === player.id);
     if (seat) {
       seat.name = player.name;
       seat.tag = player.tag || null;
     }
     if (Array.isArray(room.observers)) {
-      const obs = room.observers.find((o) => o.id === player.id);
+      const obs = room.observers.find((o) => o && o.id === player.id);
       if (obs) {
         obs.name = player.name;
         obs.tag = player.tag || null;
       }
     }
     if (room.game && Array.isArray(room.game.players)) {
-      const gp = room.game.players.find((p) => p.id === player.id);
+      const gp = room.game.players.find((p) => p && p.id === player.id);
       if (gp) {
         gp.name = player.name;
         gp.tag = player.tag || null;
@@ -397,7 +424,7 @@ class RoomManager {
     if (!player || !player.roomId || !player.sessionId) return null;
     const room = this.getRoom(player.roomId);
     if (!room) return null;
-    const seat = room.players.find((p) => p.id === player.id);
+    const seat = room.players.find((p) => p && p.id === player.id);
     if (seat) seat.sessionId = player.sessionId;
     return room;
   }
@@ -674,7 +701,7 @@ class RoomManager {
       gameMode: gameMode != null ? gameMode : room.gameMode,
       maxPlayers: maxPlayers != null ? maxPlayers : room.maxPlayers,
       turnTimeSec: turnTimeSec != null ? turnTimeSec : room.turnTimeSec,
-      occupied: (room.players || []).filter((p) => !p.left).length,
+      occupied: (room.players || []).filter(isSeatedPlayer).length,
     });
     if (!cfg.ok) return cfg;
 
@@ -879,16 +906,25 @@ class RoomManager {
       );
     }
 
-    const seated = (room.players || []).filter((p) => !p.left && !p.offline).length;
+    const seated = (room.players || []).filter(
+      (p) => isSeatedPlayer(p) && !p.offline
+    ).length;
     if (seated >= room.maxPlayers) return { ok: false, error: '房间已满' };
 
-    room.players.push({
+    const newSeat = {
       id: playerId,
       name: player.name,
       tag: player.tag || null,
       ready: true,
       sessionId: player.sessionId || null,
-    });
+    };
+    // 优先填入人机留下的 null 空位，避免座位下标错位
+    const emptyIdx = (room.players || []).findIndex((p) => !p || p.left);
+    if (emptyIdx >= 0) {
+      room.players[emptyIdx] = newSeat;
+    } else {
+      room.players.push(newSeat);
+    }
     ensureTeamSeats(room);
     player.roomId = room.id;
     player.passive = false;
@@ -947,8 +983,8 @@ class RoomManager {
     }
     const leftRoomId = room.id;
     const affectedPlayerIds = [
-      ...room.players.map((p) => p.id),
-      ...(room.observers || []).map((o) => o.id),
+      ...room.players.map((p) => (p ? p.id : null)),
+      ...(room.observers || []).map((o) => o && o.id),
     ].filter((id) => id && id !== initiatorId);
     for (const memberId of [
       ...affectedPlayerIds,
@@ -1002,7 +1038,7 @@ class RoomManager {
     if (wasObserver) {
       room.observers = room.observers.filter((o) => o.id !== playerId);
       if (
-        room.players.filter((p) => !p.left).length === 0 &&
+        room.players.filter(isSeatedPlayer).length === 0 &&
         room.observers.length === 0
       ) {
         clearTurnTimer(room);
@@ -1042,7 +1078,7 @@ class RoomManager {
     // 对局已结束也解散——胜利弹窗由各端本地维持，避免僵尸房挡住新房 MQTT 广播/占用隧道
     if (room.hostId === playerId) {
       const affectedPlayerIds = [
-        ...room.players.filter((p) => p.id !== playerId).map((p) => p.id),
+        ...room.players.filter((p) => p && p.id !== playerId).map((p) => p.id),
         ...room.observers.map((o) => o.id),
       ];
       for (const memberId of affectedPlayerIds) {
@@ -1060,10 +1096,10 @@ class RoomManager {
       };
     }
 
-    room.players = room.players.filter((p) => p.id !== playerId);
+    clearPlayerSeat(room, playerId);
 
     if (
-      room.players.filter((p) => !p.left).length === 0 &&
+      room.players.filter(isSeatedPlayer).length === 0 &&
       room.observers.length === 0
     ) {
       clearTurnTimer(room);
@@ -1085,6 +1121,7 @@ class RoomManager {
       room.game = null;
       room.playingStartedAt = null;
       for (const p of room.players) {
+        if (!p) continue;
         p.ready = true;
         p.offline = false;
         p.isHosted = false;
@@ -1130,7 +1167,7 @@ class RoomManager {
       return this.leaveRoom(playerId, { abortPlaying: false });
     }
 
-    const seat = room.players.find((p) => p.id === playerId);
+    const seat = room.players.find((p) => p && p.id === playerId);
     const playerName = (seat && seat.name) || player.name || '玩家';
     const playerTag = (seat && seat.tag) || player.tag || null;
     if (seat) {
@@ -1140,7 +1177,7 @@ class RoomManager {
       delete seat.offlineAt;
     }
     if (room.game && Array.isArray(room.game.players)) {
-      const gp = room.game.players.find((p) => p.id === playerId);
+      const gp = room.game.players.find((p) => p && p.id === playerId);
       if (gp) gp.left = true;
     }
     if (room.game && Array.isArray(room.game.log)) {
@@ -1150,7 +1187,7 @@ class RoomManager {
     const leftRoomId = player.roomId;
     player.roomId = null;
 
-    const stillHere = room.players.filter((p) => !p.left);
+    const stillHere = room.players.filter(isSeatedPlayer);
     if (!stillHere.length) {
       clearTurnTimer(room);
       this.rooms.delete(room.id);
@@ -1209,7 +1246,7 @@ class RoomManager {
       const live = this.players.get(observer.id);
       if (live) live.roomId = null;
       if (
-        room.players.filter((p) => !p.left).length === 0 &&
+        room.players.filter(isSeatedPlayer).length === 0 &&
         room.observers.length === 0
       ) {
         const leftRoomId = room.id;
@@ -1260,13 +1297,13 @@ class RoomManager {
       seat.offline = false;
       delete seat.offlineAt;
       if (Array.isArray(room.game.players)) {
-        const gp = room.game.players.find((p) => p.id === seat.id);
+        const gp = room.game.players.find((p) => p && p.id === seat.id);
         if (gp) gp.left = true;
       }
       if (Array.isArray(room.game.log)) {
         room.game.log.push({ at: Date.now(), text: `${playerName} 离开了游戏` });
       }
-      const stillHere = room.players.filter((p) => !p.left);
+      const stillHere = room.players.filter(isSeatedPlayer);
       if (!stillHere.length) {
         const leftRoomId = room.id;
         clearTurnTimer(room);
@@ -1295,7 +1332,7 @@ class RoomManager {
     // 等待房：断线后 this.players 可能已无此人，直接改座位
     if (room.hostId === seat.id) {
       const affectedPlayerIds = [
-        ...room.players.filter((p) => p.id !== seat.id).map((p) => p.id),
+        ...room.players.filter((p) => p && p.id !== seat.id).map((p) => p.id),
         ...(room.observers || []).map((o) => o.id),
       ];
       for (const memberId of affectedPlayerIds) {
@@ -1313,11 +1350,11 @@ class RoomManager {
         affectedPlayerIds,
       };
     }
-    room.players = room.players.filter((p) => p.id !== seat.id);
+    clearPlayerSeat(room, seat.id);
     const live = this.players.get(seat.id);
     if (live) live.roomId = null;
     if (
-      room.players.filter((p) => !p.left).length === 0 &&
+      room.players.filter(isSeatedPlayer).length === 0 &&
       (room.observers || []).length === 0
     ) {
       const leftRoomId = room.id;
@@ -1374,7 +1411,7 @@ class RoomManager {
       return { ...leave, offline: false };
     }
 
-    const seat = room.players.find((p) => p.id === playerId);
+    const seat = room.players.find((p) => p && p.id === playerId);
     if (seat && seat.left) {
       this.players.delete(playerId);
       return {
@@ -1490,7 +1527,7 @@ class RoomManager {
     // 1) 用户 id 强匹配（本地存档的旧 seatId / socket.id）
     if (savedSeatId) {
       for (const room of reclaimableRooms) {
-        const seat = (room.players || []).find((p) => p.id === savedSeatId);
+        const seat = (room.players || []).find((p) => p && p.id === savedSeatId);
         if (seat && !seat.left) return bindSeat(room, seat);
       }
     }
@@ -1499,12 +1536,12 @@ class RoomManager {
       let seat = null;
       if (sid) {
         seat = room.players.find(
-          (p) => p.sessionId && p.sessionId === sid
+          (p) => p && p.sessionId && p.sessionId === sid
         );
       }
       if (!seat && hint && room.id === hint && name) {
         const matches = room.players.filter(
-          (p) => p.offline && sameNick(p)
+          (p) => p && p.offline && sameNick(p)
         );
         if (matches.length === 1) seat = matches[0];
         if (!seat) {
@@ -1514,12 +1551,12 @@ class RoomManager {
       }
       if (!seat && name) {
         const matches = room.players.filter(
-          (p) => p.offline && sameNick(p)
+          (p) => p && p.offline && sameNick(p)
         );
         if (matches.length === 1) seat = matches[0];
       }
       if (!seat && hint && room.id === hint) {
-        const offlines = room.players.filter((p) => p.offline);
+        const offlines = room.players.filter((p) => p && p.offline);
         if (offlines.length === 1) seat = offlines[0];
       }
       if (!seat || seat.left) continue;
@@ -1531,10 +1568,10 @@ class RoomManager {
 
   rebindSeatId(room, oldId, newId) {
     if (!room || !oldId || !newId || oldId === newId) return;
-    const seat = room.players.find((p) => p.id === oldId);
+    const seat = room.players.find((p) => p && p.id === oldId);
     if (seat) seat.id = newId;
     if (Array.isArray(room.observers)) {
-      const obs = room.observers.find((o) => o.id === oldId);
+      const obs = room.observers.find((o) => o && o.id === oldId);
       if (obs) obs.id = newId;
     }
     if (room.hostId === oldId) room.hostId = newId;
@@ -1556,7 +1593,7 @@ class RoomManager {
     if (!room) return { ok: false, error: '房间不存在' };
     if (room.status !== 'waiting') return { ok: false, error: '对局进行中无法改准备状态' };
 
-    const member = room.players.find((p) => p.id === playerId);
+    const member = room.players.find((p) => p && p.id === playerId);
     if (!member) return { ok: false, error: '你不在房间中' };
 
     member.ready = Boolean(ready);
@@ -1722,7 +1759,7 @@ class RoomManager {
     const game = getGame(room.gameType);
     const min = game ? game.minPlayers : 2;
     const need = Number(room.maxPlayers) || min;
-    const seated = (room.players || []).filter((p) => !p.left).length;
+    const seated = (room.players || []).filter(isSeatedPlayer).length;
     if (seated < need) return false;
     if (game && seated < game.minPlayers) return false;
     if (game && seated > game.maxPlayers) return false;
@@ -1746,7 +1783,7 @@ class RoomManager {
       const game = getGame(room.gameType);
       const min = game ? game.minPlayers : 2;
       const need = Number(room.maxPlayers) || min;
-      const seated = (room.players || []).filter((p) => !p.left).length;
+      const seated = (room.players || []).filter(isSeatedPlayer).length;
       if (isTeamSeatRoom(room) && seated >= need) {
         return { ok: false, error: '组队模式需要队伍 A、B 各 2 人才能开始' };
       }
@@ -1760,6 +1797,7 @@ class RoomManager {
     if (!game) return { ok: false, error: '不支持的游戏类型' };
 
     for (const p of room.players) {
+      if (!p) continue;
       p.isHosted = false;
     }
     room.status = 'playing';

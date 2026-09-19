@@ -3279,6 +3279,21 @@
   box-shadow: 0 2px 0 #1a1a1a, 0 4px 10px rgba(0, 0, 0, 0.4);
 }
 
+/* 玩家色写在后面，黄骰默认是深色字。面板和场上骰必须再压一次：普通白字、强化黑字，否则会把两种骰看反 */
+.las-pcell-dice .las-die:is(.color-red, .color-yellow, .color-blue, .color-green, .color-pink, .color-neutral):not(.is-boosted),
+.las-pcell-dice .las-die-group .las-die-face:is(.color-red, .color-yellow, .color-blue, .color-green, .color-pink, .color-neutral):not(.is-boosted),
+.las-slot-overlay .las-die.is-mini:is(.color-red, .color-yellow, .color-blue, .color-green, .color-pink, .color-neutral):not(.is-boosted),
+.las-personal-build-num .las-die.is-mini:is(.color-red, .color-yellow, .color-blue, .color-green, .color-pink, .color-neutral):not(.is-boosted) {
+  color: #f2f5f7;
+}
+
+.las-pcell-dice .las-die:is(.color-red, .color-yellow, .color-blue, .color-green, .color-pink, .color-neutral).is-boosted,
+.las-pcell-dice .las-die-group .las-die-face:is(.color-red, .color-yellow, .color-blue, .color-green, .color-pink, .color-neutral).is-boosted,
+.las-slot-overlay .las-die.is-mini:is(.color-red, .color-yellow, .color-blue, .color-green, .color-pink, .color-neutral).is-boosted,
+.las-personal-build-num .las-die.is-mini:is(.color-red, .color-yellow, .color-blue, .color-green, .color-pink, .color-neutral).is-boosted {
+  color: #111;
+}
+
 .las-die-swatch.color-neutral {
   background: #5a5a5a;
 }
@@ -6649,8 +6664,8 @@ button.las-exile-player.color-neutral {
 }
 
 .las-victory-dialog {
-  width: min(92vw, calc(34 * var(--las-rem)));
-  max-height: min(88vh, calc(42 * var(--las-rem)));
+  width: min(92vw, calc(40 * var(--las-rem)));
+  max-height: min(88vh, calc(46 * var(--las-rem)));
   display: flex;
   flex-direction: column;
   gap: calc(0.85 * var(--las-rem));
@@ -6759,6 +6774,13 @@ button.las-exile-player.color-neutral {
   margin-top: calc(0.15 * var(--las-rem));
   font-size: calc(0.82 * var(--las-rem));
   line-height: 1.35;
+}
+
+.las-victory-detail {
+  margin-top: calc(0.12 * var(--las-rem));
+  font-size: calc(0.78 * var(--las-rem));
+  line-height: 1.4;
+  word-break: break-word;
 }
 
 .las-victory-score {

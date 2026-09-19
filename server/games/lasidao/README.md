@@ -85,7 +85,7 @@
 | type | 说明 |
 |------|------|
 | `produceRoll` | 生产回合手动投掷（空闲村民数=骰子数） |
-| `placeDice` | `{ face, area }`；遥控模式另可带 `{ count }` |
+| `placeDice` | `{ face, area }` 选定点数后一次派完该点数全部骰（含强化）；遥控模式另可带 `{ count }` |
 | `voidSkip` | `mode: burn` 爆 1 骰得 1 任意资源；`mode: pay` 弃 2 张资源不爆骰；均结束本回合 |
 | `useFunc` | 功能卡；`banditRaid` 放置 2 中立骰；`expand` 三选一扩建（需 `direction`） |
 | `allocateWishWell` | 许愿井阶段：`{ alloc: { wood, stone, food, iron } }` |

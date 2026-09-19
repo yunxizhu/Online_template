@@ -1494,7 +1494,7 @@ function scheduleBotTick(room) {
   if (!actors.length) return;
 
   // 判断 bot 是否刚摇完骰子准备派遣，是则停留更久让玩家看清骰子
-  let delay = 500 + Math.floor(Math.random() * 300); // 500-800ms
+  let delay = 1200 + Math.floor(Math.random() * 300); // 1200-1500ms
     for (const id of actors) {
     if (
       room.game.phase === 'produce' &&
@@ -1523,11 +1523,22 @@ function scheduleBotTick(room) {
       if (!seatAutoPlays(seat)) continue;
       const beforeKey = botActingFingerprint(room.game, id);
       try {
-        const botAction = mod.decideBotAction(
+        let botAction = mod.decideBotAction(
           room.game,
           id,
           seatAutoDifficulty(seat)
         );
+        // 兑换连打熔断：同玩家连续兑换过多 → 强制 pass，避免 1:1 集市卡死整桌
+        if (botAction && botAction.type === 'exchange') {
+          if (!room._botExchangeStreak) room._botExchangeStreak = {};
+          room._botExchangeStreak[id] = (room._botExchangeStreak[id] || 0) + 1;
+          if (room._botExchangeStreak[id] >= 4) {
+            botAction = { type: 'pass' };
+            room._botExchangeStreak[id] = 0;
+          }
+        } else if (room._botExchangeStreak) {
+          room._botExchangeStreak[id] = 0;
+        }
         if (botAction) {
           const result = mod.applyAction(room.game, id, botAction);
           if (!result || !result.ok) {

@@ -465,8 +465,11 @@ function applyEnvironmentOnDispatch(game, ctx) {
   const player = ctx.player;
   if (!player) return null;
 
-  // 派遣时触发的效果：仅在自己回合生效；在别人回合被传送/驱逐过来时不触发（firstCome除外）
+  // 派遣触发：须在自己回合，且本次落下的是自己的骰
+  // （传送别人/中立到事件格不触发；先到先得仍允许在非自己回合由「自己的骰」触发）
+  const workerId = ctx.workerId != null ? ctx.workerId : player.id;
   if (env.envType !== 'firstCome' && game.currentPlayerId !== player.id) return null;
+  if (workerId !== player.id) return null;
 
   switch (env.envType) {
     case 'fishermanProfit': {

@@ -4284,7 +4284,7 @@
     const min = room.minPlayers || 2;
     const need = Number(room.maxPlayers) || min;
     // 仅统计座位玩家，观战席不计入开局人数
-    const seated = (room.players || []).filter((p) => !p.left).length;
+    const seated = (room.players || []).filter((p) => p && !p.left).length;
     el.roomStartHint.textContent = t('room.startHintCount', {
       min,
       cur: seated,
