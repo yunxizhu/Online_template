@@ -969,6 +969,71 @@ body.phase-room .lobby-people {
   font-size: 0.85rem;
 }
 
+/* 强制升级弹窗须盖过被动锁屏，且可点击 */
+#host-update-modal {
+  z-index: 2700;
+}
+}
+
+.changelog-dialog {
+  max-width: min(28rem, 92vw);
+  max-height: min(80vh, 36rem);
+  display: flex;
+  flex-direction: column;
+}
+
+.changelog-list {
+  flex: 1 1 auto;
+  overflow: auto;
+  margin: 0.25rem 0 0.75rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: min(52vh, 24rem);
+}
+
+.changelog-item {
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.changelog-item-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.changelog-item-ver {
+  margin: 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.changelog-item-date {
+  margin: 0;
+  font-size: 0.8rem;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.changelog-item-notes {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.45;
+  font-size: 0.92rem;
+}
+
+.changelog-empty {
+  margin: 0.5rem 0 1rem;
+}
+
 label {
   display: block;
   margin-bottom: 0.75rem;
@@ -2462,10 +2527,15 @@ body.is-guest-client #passive-toggle-wrap {
 body.is-passive-locked .app,
 body.is-passive-locked .chat-dock,
 body.is-passive-locked .ctx-menu,
-body.is-passive-locked .modal {
+body.is-passive-locked .modal:not(#host-update-modal) {
   pointer-events: none !important;
   filter: grayscale(0.55) brightness(0.55);
   transition: filter 0.2s ease;
+}
+
+body.is-passive-locked #host-update-modal {
+  pointer-events: auto !important;
+  filter: none !important;
 }
 
 body.is-passive-locked .game-menu,

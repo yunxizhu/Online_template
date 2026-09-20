@@ -28,7 +28,10 @@ const {
   sha256Buffer,
   cmpSemver,
   fetchManifestObject,
+  fetchBuffer,
   readOtaBytes,
+  isOtaTextPath,
+  normalizeTextBuffer,
 } = require('../server/updateChecker');
 const {
   DEFAULT_PORT,
@@ -49,6 +52,10 @@ const SCAN_DIRS = ['server', 'public', 'docs'];
 const ROOT_FILES = ['package.json'];
 const PACK_EXTRA_FILES = ['scripts/check-host-update.js'];
 const OTA_PACK_STAGE = path.join(ROOT, 'dist', 'ota-pack-files');
+const CHANGELOG_PATH = path.join(ROOT, 'public', 'changelog.json');
+const CHANGELOG_MOBILE_PATH = path.join(ROOT, 'mobile', 'www', 'changelog.json');
+/** 公告保留条数；过短会导致旧说明在多次发版后被挤掉 */
+const CHANGELOG_MAX = 50;
 const SKIP_DIR_NAMES = new Set([
   'node_modules',
   '.git',
@@ -77,6 +84,8 @@ function parseArgs(argv) {
     dryRun: false,
     force: false,
     noPush: false,
+    skipVerify: false,
+    verifyOnly: false,
     minVersion: '',
   };
   for (let i = 0; i < argv.length; i++) {
@@ -84,6 +93,8 @@ function parseArgs(argv) {
     if (a === '--dry-run') out.dryRun = true;
     else if (a === '--force') out.force = true;
     else if (a === '--no-push') out.noPush = true;
+    else if (a === '--skip-verify') out.skipVerify = true;
+    else if (a === '--verify-only') out.verifyOnly = true;
     else if (a === '--notes') out.notes = String(argv[++i] || '');
     else if (a === '--notes-en') out.notesEn = String(argv[++i] || '');
     else if (a === '--bump') out.bump = String(argv[++i] || '');
@@ -91,6 +102,137 @@ function parseArgs(argv) {
     else if (a === '--help' || a === '-h') out.help = true;
   }
   return out;
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * 逐个从 Gitee raw CDN 拉取并校验 sha256，确认用户侧可正常下载。
+ * 用于发现 HTTP 451 内容审核拦截等「清单能读、blob 下不了」的问题。
+ */
+async function verifyRemoteFileDownloads(files, opts = {}) {
+  const concurrency = Math.max(1, Number(opts.concurrency) || 8);
+  const retries = Math.max(1, Number(opts.retries) || 2);
+  const retryDelayMs = Math.max(0, Number(opts.retryDelayMs) || 2500);
+  const label = opts.label || 'verify';
+  const list = Array.isArray(files) ? files : [];
+  const failed = [];
+  let next = 0;
+  let ok = 0;
+  let done = 0;
+
+  async function checkOne(file) {
+    const buf = await fetchBuffer(file.url, { timeoutMs: 120000 });
+    const body = isOtaTextPath(file.path) ? normalizeTextBuffer(buf) : buf;
+    const got = sha256Buffer(body);
+    if (got !== String(file.sha256 || '').toLowerCase()) {
+      throw new Error(
+        '校验失败（期望 ' +
+          String(file.sha256).slice(0, 8) +
+          '… 实际 ' +
+          got.slice(0, 8) +
+          '…）'
+      );
+    }
+  }
+
+  async function worker() {
+    while (true) {
+      const idx = next++;
+      if (idx >= list.length) return;
+      const f = list[idx];
+      let lastErr = null;
+      for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+          await checkOne(f);
+          lastErr = null;
+          ok += 1;
+          break;
+        } catch (err) {
+          lastErr = err;
+          if (attempt < retries) await sleep(retryDelayMs);
+        }
+      }
+      if (lastErr) {
+        failed.push({
+          path: f.path,
+          url: f.url,
+          error: lastErr && lastErr.message ? lastErr.message : String(lastErr),
+        });
+      }
+      done += 1;
+      if (done === list.length || done % 25 === 0) {
+        console.log(
+          '[' +
+            label +
+            '] 进度 ' +
+            done +
+            '/' +
+            list.length +
+            '（通过 ' +
+            ok +
+            ' / 失败 ' +
+            failed.length +
+            '）'
+        );
+      }
+    }
+  }
+
+  const n = Math.min(concurrency, Math.max(1, list.length));
+  await Promise.all(Array.from({ length: n }, () => worker()));
+  return { ok, failed, total: list.length };
+}
+
+async function runDownloadVerify(files, opts = {}) {
+  const waitMs = opts.waitMs == null ? 8000 : opts.waitMs;
+  if (waitMs > 0) {
+    console.log('');
+    console.log(
+      '[publish] 等待 CDN 同步（' + Math.round(waitMs / 1000) + ' 秒）后开始下载检测…'
+    );
+    await sleep(waitMs);
+  }
+  console.log(
+    '[publish] 下载检测：共 ' + files.length + ' 个文件（模拟客户端拉取 + sha256 校验）…'
+  );
+  const result = await verifyRemoteFileDownloads(files, {
+    concurrency: 8,
+    retries: 2,
+    retryDelayMs: 2500,
+    label: 'verify',
+  });
+  if (result.failed.length) {
+    console.error('');
+    console.error(
+      '[publish] 下载检测失败：' +
+        result.failed.length +
+        '/' +
+        result.total +
+        ' 个文件无法正常下载'
+    );
+    const show = result.failed.slice(0, 40);
+    for (const f of show) {
+      console.error('  ✗ ' + f.path);
+      console.error('    ' + f.error);
+    }
+    if (result.failed.length > show.length) {
+      console.error('  … 另有 ' + (result.failed.length - show.length) + ' 个失败');
+    }
+    console.error(
+      '[publish] 常见原因：Gitee raw CDN 返回 HTTP 451（内容可能含违规信息）'
+    );
+    console.error('[publish] 请处理拦截文件后再让用户升级。');
+    throw new Error(
+      'OTA 下载检测未通过（' + result.failed.length + ' 个文件失败）'
+    );
+  }
+  console.log(
+    '[publish] 下载检测通过：' + result.ok + '/' + result.total + ' 个文件均可下载且校验一致'
+  );
+  return result;
 }
 
 function readPkg() {
@@ -121,6 +263,142 @@ function bumpVersion(ver, kind) {
     parts[2] += 1;
   }
   return parts.join('.');
+}
+
+/**
+ * 按版本合并多份公告列表。同版本优先保留非空 notes，publishedAt 取较新者。
+ */
+function mergeChangelogEntries(...lists) {
+  const byVer = new Map();
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const raw of list) {
+      if (!raw || raw.version == null || raw.version === '') continue;
+      const version = String(raw.version);
+      const notes = String(raw.notes || '').trim();
+      const notesEn = String(raw.notesEn || raw.notes_en || '').trim();
+      const publishedAt = String(raw.publishedAt || '').trim();
+      const prev = byVer.get(version);
+      if (!prev) {
+        byVer.set(version, { version, notes, notesEn, publishedAt });
+        continue;
+      }
+      const prevAt = Date.parse(prev.publishedAt) || 0;
+      const nextAt = Date.parse(publishedAt) || 0;
+      byVer.set(version, {
+        version,
+        notes: notes || prev.notes || '',
+        notesEn: notesEn || prev.notesEn || '',
+        publishedAt:
+          nextAt >= prevAt
+            ? publishedAt || prev.publishedAt
+            : prev.publishedAt || publishedAt,
+      });
+    }
+  }
+  return Array.from(byVer.values()).sort((a, b) =>
+    cmpSemver(b.version, a.version)
+  );
+}
+
+function readLocalChangelogEntries() {
+  try {
+    if (!fs.existsSync(CHANGELOG_PATH)) return [];
+    const data = JSON.parse(fs.readFileSync(CHANGELOG_PATH, 'utf8'));
+    return Array.isArray(data && data.entries) ? data.entries : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+/**
+ * 拉取线上已发布的公告（manifest.changelog + public/changelog.json blob），
+ * 避免本机文件缺失/过旧时把历史公告冲掉。
+ */
+async function loadRemoteChangelogEntries(remote) {
+  const parts = [];
+  if (remote && Array.isArray(remote.changelog)) {
+    parts.push(remote.changelog);
+  }
+  const fileEntry =
+    remote &&
+    Array.isArray(remote.files) &&
+    remote.files.find((f) => f && f.path === 'public/changelog.json');
+  if (fileEntry && fileEntry.url) {
+    try {
+      const buf = await fetchBuffer(fileEntry.url, { timeoutMs: 30000 });
+      const text = normalizeTextBuffer(buf).toString('utf8');
+      const data = JSON.parse(text);
+      if (Array.isArray(data && data.entries)) {
+        parts.push(data.entries);
+        console.log(
+          '[publish] 已合并线上 public/changelog.json（' +
+            data.entries.length +
+            ' 条）'
+        );
+      }
+    } catch (err) {
+      console.warn(
+        '[publish] 拉取线上 changelog.json 失败:',
+        err && err.message ? err.message : err
+      );
+    }
+  }
+  return mergeChangelogEntries(...parts);
+}
+
+/**
+ * 把本次发布备注写入 public/changelog.json（并同步 mobile/www），随 OTA 下发。
+ * 会与线上/本地历史按版本合并，保证各主机拉到的公告一致。
+ */
+function updateLocalChangelog(version, notes, notesEn, remoteEntries) {
+  const merged = mergeChangelogEntries(
+    remoteEntries || [],
+    readLocalChangelogEntries()
+  );
+  const publishedAt = new Date().toISOString();
+  const noteText = String(notes || '').trim() || `主机更新 ${version}`;
+  const noteEn = String(notesEn || '').trim();
+  const ver = String(version);
+  const idx = merged.findIndex((e) => String(e.version) === ver);
+  const entry = {
+    version: ver,
+    notes: noteText,
+    notesEn: noteEn,
+    publishedAt,
+  };
+  if (idx >= 0) {
+    const prev = merged[idx];
+    merged[idx] = {
+      version: ver,
+      notes: noteText || prev.notes || '',
+      notesEn: noteEn || prev.notesEn || '',
+      publishedAt,
+    };
+  } else {
+    merged.unshift(entry);
+  }
+  merged.sort((a, b) => cmpSemver(b.version, a.version));
+  const next = {
+    schema: 1,
+    entries: merged.slice(0, CHANGELOG_MAX),
+  };
+  const body = JSON.stringify(next, null, 2) + '\n';
+  fs.mkdirSync(path.dirname(CHANGELOG_PATH), { recursive: true });
+  fs.writeFileSync(CHANGELOG_PATH, body);
+  try {
+    fs.mkdirSync(path.dirname(CHANGELOG_MOBILE_PATH), { recursive: true });
+    fs.writeFileSync(CHANGELOG_MOBILE_PATH, body);
+  } catch (err) {
+    console.warn(
+      '[publish] 同步 mobile changelog 失败:',
+      err && err.message ? err.message : err
+    );
+  }
+  console.log(
+    `[publish] changelog → ${CHANGELOG_PATH}（${next.entries.length} 条，已与线上合并）`
+  );
+  return next;
 }
 
 function walkFiles(dir, relBase, out) {
@@ -488,15 +766,18 @@ function printHelp() {
   启动.bat  本机多开测试.bat  _start-one.bat  README.txt
 
 选项:
-  --notes "说明"       更新说明（中文）
+  --notes "说明"       更新说明（中文，写入更新公告，最多保留近 10 版）
   --notes-en "..."     英文说明
   --bump patch|minor|major  先 bump package.json 再发布
   --min-version x.y.z  低于此版本强制升级
   --force              manifest.force = true
   --dry-run            只生成 dist/ota-stage，不推送
   --no-push            写入 ota worktree 并 commit，但不 push
+  --skip-verify        推送后跳过「新上传文件下载检测」
+  --verify-only        不发布，只检测线上 host-update.json 全部文件能否下载
 
 默认推送到 remote「${OTA_REMOTE}」的 ${OTA_BRANCH} 分支。
+推送成功后会自动检测本次新上传的 blob 能否从 Gitee raw 下载（可用 --skip-verify 跳过）。
 可用环境变量 LIANJI_OTA_REMOTE 改 remote 名。
 `);
 }
@@ -505,6 +786,25 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
     printHelp();
+    return;
+  }
+
+  if (args.verifyOnly) {
+    const remoteName = resolveOtaRemote();
+    const { owner, repo } = detectRepo(remoteName);
+    const manifestUrl = rawManifestUrl(owner, repo);
+    console.log('[publish] --verify-only: 检测线上清单', manifestUrl);
+    const remote = await fetchRemoteManifest(manifestUrl);
+    if (!remote || !Array.isArray(remote.files) || !remote.files.length) {
+      throw new Error('线上 manifest 无 files 列表');
+    }
+    console.log(
+      '[publish] 线上版本',
+      remote.version || '?',
+      '，文件数',
+      remote.files.length
+    );
+    await runDownloadVerify(remote.files, { waitMs: 0 });
     return;
   }
 
@@ -564,6 +864,23 @@ async function main() {
     );
   }
 
+  const notes =
+    args.notes ||
+    (remote && remote.version === version
+      ? String(remote.notes || '')
+      : '') ||
+    String(pkg.description || '').trim() ||
+    `主机更新 ${version}`;
+  const notesEn = args.notesEn || '';
+  // 先与线上公告合并并写回本地文件，再扫包，确保 OTA 带上完整 changelog.json
+  const remoteChangelog = await loadRemoteChangelogEntries(remote);
+  const changelog = updateLocalChangelog(
+    version,
+    notes,
+    notesEn,
+    remoteChangelog
+  );
+
   const relFiles = collectHostFiles(version);
   console.log('[publish] scanning', relFiles.length, 'files (windows pack set)…');
 
@@ -595,20 +912,15 @@ async function main() {
     }
   }
 
-  const notes =
-    args.notes ||
-    (remote && remote.version === version
-      ? String(remote.notes || '')
-      : `主机更新 ${version}`);
-
   const manifest = {
     schema: 1,
     version,
     minVersion: args.minVersion || (remote && remote.minVersion) || '',
     force: Boolean(args.force),
     notes,
-    notes_en: args.notesEn || '',
+    notes_en: notesEn,
     publishedAt: new Date().toISOString(),
+    changelog: changelog.entries || [],
     fileCount: files.length,
     totalBytes,
     files,
@@ -624,12 +936,24 @@ async function main() {
 
   fs.writeFileSync(
     path.join(stageDir, 'CHANGED_BLOBS.txt'),
-    newBlobs.map((b) => b.sha + '  ' + b.size + '\n').join('') || '(none)\n'
+    newBlobs
+      .map((b) => b.sha + '  ' + b.size + '  ' + b.rel + '\n')
+      .join('') || '(none)\n'
   );
 
   console.log(
     `[publish] files=${files.length} total=${(totalBytes / 1e6).toFixed(1)}MB newBlobs=${newBlobs.length}`
   );
+  if (newBlobs.length) {
+    console.log('[publish] 本次将上传的变更文件：');
+    const sorted = newBlobs.slice().sort((a, b) => a.rel.localeCompare(b.rel));
+    for (const b of sorted) {
+      const kb = (b.size / 1024).toFixed(b.size >= 10240 ? 0 : 1);
+      console.log(`  + ${b.rel}  (${kb} KB)`);
+    }
+  } else {
+    console.log('[publish] 本次无内容变更 blob（仅可能更新 manifest）');
+  }
 
   if (args.dryRun) {
     console.log('[publish] dry-run: staged at', stageDir);
@@ -659,13 +983,16 @@ async function main() {
     if (needWrite) {
       fs.writeFileSync(dest, b.body);
       copied += 1;
+      console.log(`[publish] 写入 blob: ${b.rel}`);
+    } else {
+      console.log(`[publish] 已存在跳过: ${b.rel}`);
     }
   }
   fs.copyFileSync(
     path.join(stageDir, 'host-update.json'),
     path.join(worktreePath, 'host-update.json')
   );
-  console.log('[publish] wrote new blobs:', copied);
+  console.log('[publish] wrote new blobs:', copied, '/', newBlobs.length);
 
   runGit(['add', '-A'], { cwd: worktreePath });
   const status = runGit(['status', '--porcelain'], { cwd: worktreePath });
@@ -698,6 +1025,27 @@ async function main() {
   console.log('  其他人启动主机后会自动检测；也可在菜单点「检查更新」。');
   console.log('  旧包若仍指向 GitHub，可在主机目录放 update.url：');
   console.log('  ' + manifestUrl);
+
+  if (args.skipVerify) {
+    console.log('[publish] 已跳过下载检测（--skip-verify）');
+    return;
+  }
+
+  if (!newBlobs.length) {
+    console.log('[publish] 本次无新上传 blob，跳过下载检测');
+    return;
+  }
+
+  const newSha = new Set(newBlobs.map((b) => b.sha));
+  const toVerify = files.filter((f) => newSha.has(f.sha256));
+  console.log(
+    '[publish] 仅检测本次新上传的 ' + toVerify.length + ' 个文件（非全量）：'
+  );
+  const verifySorted = toVerify.slice().sort((a, b) => a.path.localeCompare(b.path));
+  for (const f of verifySorted) {
+    console.log('  · ' + f.path);
+  }
+  await runDownloadVerify(toVerify);
 }
 
 main().catch((err) => {

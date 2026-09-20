@@ -2,6 +2,18 @@
   "schema": 1,
   "entries": [
     {
+      "version": "1.2.1",
+      "notes": "修复部分由于修改房间导致的bug",
+      "notesEn": "",
+      "publishedAt": "2026-09-20T03:04:05.594Z"
+    },
+    {
+      "version": "1.2.0",
+      "notes": "发布正式版本",
+      "notesEn": "",
+      "publishedAt": "2026-09-20T02:42:49.101Z"
+    },
+    {
       "version": "1.1.13",
       "notes": "修正人机对于囚徒困境的判断",
       "notesEn": "",

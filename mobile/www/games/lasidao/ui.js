@@ -7109,12 +7109,12 @@ window.LasidaoUi = (function () {
     groupsEl.innerHTML = '';
     diceEl.hidden = false;
     diceEl.innerHTML = '';
-    const flags = boostFlags || diceAnim.finalBoosted || [];
+    const src = boostFlags || diceAnim.finalBoosted || [];
     dice.forEach((v, i) => {
       diceEl.appendChild(
         makeDieEl(
           v === 0 ? t('lasidao.wildDie') : v,
-          flags[i] ? 'is-boosted' : '',
+          src[i] ? 'is-boosted' : '',
           color
         )
       );

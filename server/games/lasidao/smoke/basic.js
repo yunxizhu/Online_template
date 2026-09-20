@@ -10514,7 +10514,7 @@ console.log('— bot expands resource cap when free slots <= 9 —');
     );
     assert.strictEqual(act.payload.direction, 'resource');
   }
-  // 上限 12（<18）、手牌 2（空位 10）：无视进场空位差，有木石应扩
+  // 上限 12（<15）、手牌 2（空位 10）：无视进场空位差，有木石应扩
   {
     const g = createGameState(room(2));
     finishInit(g);
@@ -10539,11 +10539,11 @@ console.log('— bot expands resource cap when free slots <= 9 —');
     assert.strictEqual(
       act && act.type,
       'expandPermanent',
-      `上限<18 应无脑扩资源: ${JSON.stringify(act)}`
+      `上限<15 应积极扩资源: ${JSON.stringify(act)}`
     );
     assert.strictEqual(act.payload.direction, 'resource');
   }
-  // 上限≥18 后才看进场空位：进场空位 6 不扩
+  // 上限≥15 后才看进场空位：进场空位 6 不扩
   {
     const g = createGameState(room(2));
     finishInit(g);
@@ -10553,7 +10553,7 @@ console.log('— bot expands resource cap when free slots <= 9 —');
     g.buildPassed = {};
     bot.houses = 3;
     bot.villagers = 4;
-    bot.expandResSlots = 3; // 上限 18
+    bot.expandResSlots = 2; // 上限 15
     bot.resources = { wood: 1, stone: 1, food: 4, iron: 0 };
     bot.buildings = [];
     bot.funcCards = [];
@@ -10572,10 +10572,10 @@ console.log('— bot expands resource cap when free slots <= 9 —');
           act.payload &&
           act.payload.direction === 'resource'
         ),
-      `上限≥18 且进场空位 6 不应扩资源: ${JSON.stringify(act)}`
+      `上限≥15 且进场空位 6 不应扩资源: ${JSON.stringify(act)}`
     );
   }
-  // 上限≥18：进场空位≤5 有木石直接扩；空位 4 不兑换；空位≤3 才兑换
+  // 上限≥15：进场空位≤2 有木石直接扩；空位 4 不兑换；空位≤2 才兑换
   {
     const g = createGameState(room(2));
     finishInit(g);
@@ -10596,13 +10596,13 @@ console.log('— bot expands resource cap when free slots <= 9 —');
     bot.roundExpandedBuilding = true;
 
     bot.resources = { wood: 1, stone: 1, food: 5, iron: 0 };
-    bot.buildTurnEntryFreeRes = 5;
+    bot.buildTurnEntryFreeRes = 2;
     bot.roundExpandedResource = false;
     const payAct = decideBotAction(g, bot.id, 'hard');
     assert.strictEqual(
       payAct && payAct.type,
       'expandPermanent',
-      `进场空位≤5 且付得起应直接扩: ${JSON.stringify(payAct)}`
+      `进场空位≤2 且付得起应直接扩: ${JSON.stringify(payAct)}`
     );
 
     g.phase = 'build';
@@ -10624,7 +10624,7 @@ console.log('— bot expands resource cap when free slots <= 9 —');
     g.buildPassed = {};
     g.currentPlayerId = bot.id;
     bot.expandResSlots = 3;
-    bot.buildTurnEntryFreeRes = 3;
+    bot.buildTurnEntryFreeRes = 2;
     bot.buildTurnBuyFuncCount = 2;
     bot.buildTurnUsedBuyFunc = true;
     bot.roundBuiltHouse = true;
@@ -10635,7 +10635,7 @@ console.log('— bot expands resource cap when free slots <= 9 —');
     assert.strictEqual(
       tight && tight.type,
       'exchange',
-      `进场空位≤3 应兑换凑扩建: ${JSON.stringify(tight)}`
+      `进场空位≤2 应兑换凑扩建: ${JSON.stringify(tight)}`
     );
     assert.ok(
       tight.payload &&
@@ -10645,6 +10645,85 @@ console.log('— bot expands resource cap when free slots <= 9 —');
             (tight.payload.to.wood > 0 || tight.payload.to.stone > 0))),
       `应兑出木或石: ${JSON.stringify(tight.payload)}`
     );
+  }
+  // 上限 15、进场空位宽裕、无爆牌标：应建建筑而非扩手牌
+  {
+    const g = createGameState(room(2));
+    finishInit(g);
+    const bot = g.players[0];
+    g.phase = 'build';
+    g.currentPlayerId = bot.id;
+    g.buildPassed = {};
+    bot.expandResSlots = 2; // 上限 15
+    bot.houses = 3;
+    bot.villagers = 4;
+    bot.resources = { wood: 2, stone: 2, food: 3, iron: 2 }; // 9/15
+    bot.buildings = [
+      {
+        id: 'ex_cap15',
+        kind: 'building',
+        buildType: 'exchange',
+        label: '集市',
+        cost: { wood: 1, stone: 1, food: 1 },
+        produce: 0,
+        score: 0,
+        built: false,
+        workers: 0,
+        slot: 1,
+        faceDown: false,
+      },
+    ];
+    bot.funcCards = [];
+    bot.roundBuiltHouse = true;
+    bot.roundBred = true;
+    bot.roundExpandedResource = false;
+    bot.buildTurnUsedBuyFunc = true;
+    bot.buildTurnBuyFuncCount = 2;
+    bot.buildTurnEntryFreeRes = 6;
+
+    const act = decideBotAction(g, bot.id, 'hard');
+    assert.ok(act, `应有动作: ${JSON.stringify(act)}`);
+    assert.notStrictEqual(
+      act.type,
+      'expandPermanent',
+      `未触及上限不应扩手牌: ${JSON.stringify(act)}`
+    );
+    assert.strictEqual(
+      act.type,
+      'construct',
+      `应优先建造集市: ${JSON.stringify(act)}`
+    );
+  }
+  // 生产曾爆牌：上限 15 仍应扩资源位
+  {
+    const g = createGameState(room(2));
+    finishInit(g);
+    const bot = g.players[0];
+    g.phase = 'build';
+    g.currentPlayerId = bot.id;
+    g.buildPassed = {};
+    bot.expandResSlots = 2;
+    bot.houses = 3;
+    bot.villagers = 4;
+    bot.resources = { wood: 1, stone: 1, food: 2, iron: 1 };
+    bot.buildings = [];
+    bot.funcCards = [];
+    bot.roundBuiltHouse = true;
+    bot.roundBred = true;
+    bot.roundExpandedResource = false;
+    bot.buildTurnUsedBuyFunc = true;
+    bot.buildTurnBuyFuncCount = 2;
+    bot.buildTurnEntryFreeRes = 8;
+    g._botMemory = {
+      [bot.id]: { needExpandRes: true, wasOverCap: true },
+    };
+
+    const act = decideBotAction(g, bot.id, 'hard');
+    assert.ok(
+      act && act.type === 'expandPermanent',
+      `触及上限后应扩容: ${JSON.stringify(act)}`
+    );
+    assert.strictEqual(act.payload && act.payload.direction, 'resource');
   }
   console.log('✓ bot expands resource cap when free slots <= 9');
 }

@@ -234,6 +234,33 @@ function maxBuildingsFor(player) {
   return 3 + (Number(player.expandSlots) || 0);
 }
 
+/** 跨多次 decideBotAction 持久化（生产爆牌标 → 建造扩容） */
+function _botMemory(game, playerId) {
+  if (!game || !playerId) return null;
+  if (!game._botMemory) game._botMemory = Object.create(null);
+  if (!game._botMemory[playerId]) game._botMemory[playerId] = Object.create(null);
+  return game._botMemory[playerId];
+}
+
+function _hydrateBotState(game, player, botState) {
+  if (!botState || !player) return botState || {};
+  const mem = _botMemory(game, player.id);
+  if (!mem) return botState;
+  if (mem.needExpandRes) botState.needExpandRes = true;
+  if (mem.wasOverCap) botState.wasOverCap = true;
+  if (mem.expandedResOnce) botState.expandedResOnce = true;
+  return botState;
+}
+
+function _persistBotState(game, player, botState) {
+  if (!botState || !player) return;
+  const mem = _botMemory(game, player.id);
+  if (!mem) return;
+  mem.needExpandRes = Boolean(botState.needExpandRes);
+  mem.wasOverCap = Boolean(botState.wasOverCap);
+  mem.expandedResOnce = Boolean(botState.expandedResOnce);
+}
+
 /** 生产阶段识别到资源手牌将超上限（爆牌风险）时打标，建造阶段资源够则扩容一次 */
 function noteResourceOverflowRisk(player, botState, projectedGain) {
   if (!botState || !player) return;
@@ -248,6 +275,16 @@ function noteResourceOverflowRisk(player, botState, projectedGain) {
 
 function wantsExpandResource(botState) {
   return Boolean(botState && (botState.needExpandRes || botState.wasOverCap));
+}
+
+/**
+ * 进建造时资源空位是否已紧（生产触及/逼近上限）。
+ * 上限≥15 后用此判断，避免生产带不饱仍浪费木石扩手牌。
+ */
+function resourceHandEntryNearCap(player, maxFree = 2) {
+  const entry = ensureBuildTurnEntryFree(player);
+  if (entry == null) return false;
+  return Number(entry) <= Math.max(0, Number(maxFree) || 0);
 }
 
 function markExpandedResource(botState, player) {
@@ -2598,10 +2635,10 @@ function _costFitsReserve(keep, cost, cap, holdings) {
 function _wantExpandResourceReserve(shadow) {
   if (!shadow || shadow.roundExpandedResource) return false;
   if (resourceHandExpandCapped(shadow)) return false;
-  if (resourceHandCapBelow18(shadow)) return true;
+  if (resourceHandCapEagerExpand(shadow)) return true;
   const entry = shadow.buildTurnEntryFreeRes;
   const n = entry == null ? 0 : Number(entry);
-  return n <= 5;
+  return n <= 2;
 }
 
 /** 斩杀若整段花费装得进手牌上限，就整段预留；装不下则交给后面的正常优先级 */
@@ -3234,11 +3271,13 @@ function _planPermanentActions(game, player, botState) {
     }
   }
 
-  // 进场空位≤5 才规划资源扩建；上限<18 时不看进场空位差；到 24 后不再扩资源手牌
+  // 进场空位≤2 才规划资源扩建；上限<15 时不看进场空位差；到 24 后不再扩资源手牌
   ensureBuildTurnEntryFree(player);
   if (
     !resourceHandExpandCapped(player) &&
-    (resourceHandCapBelow18(player) || player.buildTurnEntryFreeRes <= 5)
+    (resourceHandCapEagerExpand(player) ||
+      wantsExpandResource(botState) ||
+      player.buildTurnEntryFreeRes <= 2)
   ) {
     needs.expand = true;
     needs.expandDir = 'resource';
@@ -3500,7 +3539,11 @@ function _laterSoftReserve(game, player, step, extra) {
   // 空位≥12 时末尾改购卡，不再为「额外扩建」预留木石
   const finaleBuysInstead = freeResourceSlots(player) >= 12;
   const capLow =
-    resourceHandCapBelow18(player) && !resourceHandExpandCapped(player);
+    resourceHandCapEagerExpand(player) && !resourceHandExpandCapped(player);
+  const entryNear =
+    !resourceHandCapEagerExpand(player) &&
+    entry != null &&
+    Number(entry) <= 2;
   if (
     !finaleBuysInstead &&
     step !== 12 &&
@@ -3509,15 +3552,10 @@ function _laterSoftReserve(game, player, step, extra) {
   ) {
     const wantRes =
       (step < 6 &&
-        (capLow || (entry != null && entry <= 5)) &&
+        (capLow || entryNear) &&
         canPay(player.resources, EXPAND_COST)) ||
-      (step < 12 &&
-        (capLow || (entry != null && entry <= 3)) &&
-        expandGapOk) ||
-      (step < 17 &&
-        hand >= 6 &&
-        (capLow || (entry != null && entry <= 3)) &&
-        expandGapOk);
+      (step < 12 && (capLow || entryNear) && expandGapOk) ||
+      (step < 17 && hand >= 6 && (capLow || entryNear) && expandGapOk);
     if (wantRes) _addNeed(reserve, EXPAND_COST);
   }
   if (
@@ -3887,13 +3925,23 @@ function ensureBuildTurnEntryFree(player) {
     _clearExchangeMemory(player);
     player.__botBuyRedrawPrefer = null;
     player.__botBuildTurnScorePush = false;
+    // 勿沿用上回合的「想扩手牌」粘性意图
+    player.__botWantExpandRes = false;
   }
   return player.buildTurnEntryFreeRes;
 }
 
-/** 资源手牌上限是否仍低于 18（未扩满前无脑扩，不看进场空位差） */
+/**
+ * 上限 < 15：可积极扩手牌。
+ * ≥15 后需生产触及上限（爆牌标 / 进建造空位紧）才扩，避免带不饱仍砸木石扩容。
+ */
+function resourceHandCapEagerExpand(player) {
+  return maxResourceHandFor(player) < 15;
+}
+
+/** @deprecated 兼容旧名；积极扩门槛已改为 15 */
 function resourceHandCapBelow18(player) {
-  return maxResourceHandFor(player) < 18;
+  return resourceHandCapEagerExpand(player);
 }
 
 /**
@@ -3913,7 +3961,8 @@ function resourceHandOverCap(player) {
 
 /**
  * 是否还应扩资源手牌上限。
- * normal/easy 仍看当前空位 ≤ 9。hard 第 6/12 步改看进场空位（上限≥18 后），不走这里。
+ * - 上限 < 15：积极扩（流水线具体步骤另判）
+ * - 上限 ≥ 15：仅生产触及上限（爆牌标 / 进建造空位≤2）或当前已顶格才扩
  */
 function shouldExpandResourceHand(player, game, botState) {
   if (!player) return false;
@@ -3925,22 +3974,35 @@ function shouldExpandResourceHand(player, game, botState) {
     player.__botWantExpandRes = false;
     return false;
   }
-  // 上限未到 18：有木石就愿意扩（具体是否在流水线该步出手另说）
-  if (resourceHandCapBelow18(player)) {
-    player.__botWantExpandRes = true;
-    return true;
-  }
   const free = freeResourceSlots(player);
-  if (free <= 9) {
+  if (free <= 0) {
     player.__botWantExpandRes = true;
     return true;
   }
-  if (player.__botWantExpandRes && canPay(player.resources, EXPAND_COST)) {
+  // 上限 < 15：有资源就愿意扩
+  if (resourceHandCapEagerExpand(player)) {
+    player.__botWantExpandRes = true;
     return true;
   }
-  if (!canPay(player.resources, EXPAND_COST)) {
-    player.__botWantExpandRes = false;
+  // 上限 ≥ 15：生产没摸到上限就不扩，木石留给建造
+  if (
+    wantsExpandResource(botState) ||
+    resourceHandEntryNearCap(player, 2)
+  ) {
+    player.__botWantExpandRes = true;
+    return true;
   }
+  // 粘性意图：仅在仍满足「该扩」条件时延续（兑换凑费中）
+  if (
+    player.__botWantExpandRes &&
+    canPay(player.resources, EXPAND_COST) &&
+    (resourceHandCapEagerExpand(player) ||
+      wantsExpandResource(botState) ||
+      resourceHandEntryNearCap(player, 2))
+  ) {
+    return true;
+  }
+  player.__botWantExpandRes = false;
   return false;
 }
 
@@ -4495,13 +4557,13 @@ function decideUseFuncCard(game, player, diff, botState) {
  * 4 建房：达高优冲分门槛（含兑换；门槛随当前分下调）
  * 5 繁殖：无需兑换
  * 5b 若本回合已繁殖且人口已满：decideBuildActionHard 入口额外优先建房（含兑换）
- * 6 扩资源格：手牌上限<18 则无视进场空位差（有木石就扩）；上限≥18 后进场空位≤5，无需兑换
+ * 6 扩资源格：手牌上限<15 则无视进场空位差（有木石就扩）；上限≥15 后需进场空位≤2 或爆牌标，无需兑换
  * 7 扩建筑格：建筑格已满（含兑换）
  * 8 建造筑：非宫殿，无需兑换
  * 9 繁殖：含兑换
  * 10 建房：达软冲分门槛（含兑换；分越高门槛越低）
  * 11 建造筑：非宫殿，含兑换
- * 12 扩资源格：上限<18 无视进场空位；上限≥18 后进场空位≤3（含兑换）
+ * 12 扩资源格：上限<15 无视进场空位；上限≥15 后进场空位≤2 或爆牌标（含兑换）
  * 13 建房：含兑换（不看分数）
  * 14 手牌≥6：依次 购卡→建造筑→建房→（空位≥12 则末尾继续购卡，否则可额外扩容）（全都含兑换）；
  *   购卡前若建筑格已满先扩建（不占次数）
@@ -5403,11 +5465,15 @@ function _buildTryExpandResource(game, player, botState, opts) {
     return null;
   }
   const allowExchange = Boolean(opts && opts.allowExchange);
-  // 手牌上限 < 18：无视进建造回合空位差，有资源就扩；≥18 后才看 entryFreeMax
+  // 上限 < 15：无视进建造空位差，有资源就扩；
+  // ≥15 后需爆牌标或进场空位紧（生产触及上限），才允许扩
   if (opts && opts.entryFreeMax != null) {
-    if (!resourceHandCapBelow18(player)) {
-      const entry = ensureBuildTurnEntryFree(player);
-      if (entry == null || entry > Number(opts.entryFreeMax)) return null;
+    if (!resourceHandCapEagerExpand(player)) {
+      if (!wantsExpandResource(botState)) {
+        const entry = ensureBuildTurnEntryFree(player);
+        const maxAllowed = Math.min(Number(opts.entryFreeMax), 2);
+        if (entry == null || entry > maxAllowed) return null;
+      }
     }
   } else if (!shouldExpandResourceHand(player, game, botState)) {
     return null;
@@ -5473,7 +5539,7 @@ function _buildTryExpandBuilding(game, player, botState, opts) {
   return null;
 }
 
-/** 手牌高压兜底：任意方向扩容。上限≥18 时资源方向仍受进场空位≤3 约束。 */
+/** 手牌高压兜底：任意方向扩容。上限≥15 时资源方向仍受进场空位≤2 / 爆牌标约束。 */
 function _buildTryExpandAny(game, player, botState, opts) {
   const allowExchange = Boolean(opts && opts.allowExchange);
   const finaleBonus = Boolean(opts && opts.finaleBonus);
@@ -5482,7 +5548,9 @@ function _buildTryExpandAny(game, player, botState, opts) {
   const wantResource =
     !resourceHandExpandCapped(player) &&
     (finaleBonus || !player.roundExpandedResource) &&
-    (resourceHandCapBelow18(player) || (entry != null && entry <= 3));
+    (resourceHandCapEagerExpand(player) ||
+      wantsExpandResource(botState) ||
+      (entry != null && entry <= 2));
   const wantBuilding =
     buildingSlotsTight(player) && (finaleBonus || !player.roundExpandedBuilding);
   const wantFunc =
@@ -6915,32 +6983,24 @@ function decideBotAction(game, playerId, difficulty, botState = {}) {
   const diff =
     raw === 'hardplus' || raw === 'hell' ? 'hard' : raw;
 
-  // ????????????
+  botState = _hydrateBotState(game, player, botState || {});
+  let action = null;
+
   const pending = decidePendingAction(game, player, diff, botState);
-  if (pending) return pending;
-
-  // 雇佣军：投掷 / 逐枚放置（勿回退到 forceTimeout 的 SkipAll）
-  if (game.phase === 'event_mercenary') {
-    const merc = decideMercenaryPhase(game, player, diff, botState);
-    if (merc) return merc;
-  }
-
-  // ????
-  if (game.phase === 'produce' && game.currentPlayerId === playerId) {
-    return decideProducePhase(game, player, diff, botState);
-  }
-
-  // ?????
-  if (game.phase === 'build' && game.currentPlayerId === playerId) {
-    // ??????
+  if (pending) {
+    action = pending;
+  } else if (game.phase === 'event_mercenary') {
+    // 雇佣军：投掷 / 逐枚放置（勿回退到 forceTimeout 的 SkipAll）
+    action = decideMercenaryPhase(game, player, diff, botState);
+  } else if (game.phase === 'produce' && game.currentPlayerId === playerId) {
+    action = decideProducePhase(game, player, diff, botState);
+  } else if (game.phase === 'build' && game.currentPlayerId === playerId) {
     const discard = decidePendingDiscard(game, player, diff, botState);
-    if (discard) return discard;
-    return decideBuildAction(game, player, diff, botState);
+    action = discard || decideBuildAction(game, player, diff, botState);
   }
 
-  // ????/?????????????????????
-
-  return null;
+  _persistBotState(game, player, botState);
+  return action;
 }
 
 /* ─── 雇佣军阶段 ─────────────────────────────────────── */

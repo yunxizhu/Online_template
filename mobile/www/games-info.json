@@ -47,7 +47,9 @@
           "/games/sgs/ui.js"
         ],
         "panel": "/games/sgs/panel.html"
-      }
+      },
+      "supportsBot": false,
+      "supportsHosting": false
     },
     {
       "id": "gomoku",
@@ -68,7 +70,9 @@
           "/games/gomoku/board.js"
         ],
         "panel": "/games/gomoku/panel.html"
-      }
+      },
+      "supportsBot": true,
+      "supportsHosting": false
     },
     {
       "id": "incan",
@@ -89,7 +93,9 @@
           "/games/incan/ui.js"
         ],
         "panel": "/games/incan/panel.html"
-      }
+      },
+      "supportsBot": false,
+      "supportsHosting": false
     },
     {
       "id": "lasidao",
@@ -127,7 +133,9 @@
           "/games/lasidao/ui.js"
         ],
         "panel": "/games/lasidao/panel.html"
-      }
+      },
+      "supportsBot": true,
+      "supportsHosting": true
     }
   ]
 }

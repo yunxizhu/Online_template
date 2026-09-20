@@ -117,7 +117,13 @@
     btnLeave: document.getElementById('btn-leave'),
     inviteToastSlot: document.getElementById('invite-toast-slot'),
     btnMenuInviteBlock: document.getElementById('btn-menu-invite-block'),
+    btnMenuChangelog: document.getElementById('btn-menu-changelog'),
     btnMenuCheckUpdate: document.getElementById('btn-menu-check-update'),
+    changelogModal: document.getElementById('changelog-modal'),
+    changelogList: document.getElementById('changelog-list'),
+    changelogEmpty: document.getElementById('changelog-empty'),
+    btnChangelogClose: document.getElementById('btn-changelog-close'),
+    changelogBackdrop: document.getElementById('changelog-backdrop'),
     hostUpdateModal: document.getElementById('host-update-modal'),
     hostUpdateVersion: document.getElementById('host-update-version'),
     hostUpdateNotes: document.getElementById('host-update-notes'),
@@ -128,6 +134,7 @@
     hostUpdateActions: document.getElementById('host-update-actions'),
     btnHostUpdateApply: document.getElementById('btn-host-update-apply'),
     btnHostUpdateLater: document.getElementById('btn-host-update-later'),
+    hostUpdateForceHint: document.getElementById('host-update-force-hint'),
     roomStartHint: document.getElementById('room-start-hint'),
     roomBanner: document.getElementById('room-banner'),
     roomBannerHint: document.querySelector('.room-banner-hint'),
@@ -220,6 +227,9 @@
   const inviteToasts = [];
   const BLOCK_INVITES_MS = 15 * 60 * 1000;
   const BLOCK_INVITES_KEY = 'lianji.blockInvitesUntil';
+  /** 本机曾开启被动模式：关客户端后再开仍自动进入，除非主动退出 */
+  const PASSIVE_FLAG_KEY = 'lianji.passiveMode';
+  let passiveRestoreTimer = null;
   let blockInvitesUntil = (function loadBlockInvites() {
     try {
       const v = Number(localStorage.getItem(BLOCK_INVITES_KEY));
@@ -227,6 +237,43 @@
     } catch (_) {}
     return 0;
   })();
+
+  function readPassiveFlag() {
+    try {
+      return localStorage.getItem(PASSIVE_FLAG_KEY) === '1';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function writePassiveFlag(on) {
+    try {
+      if (on) localStorage.setItem(PASSIVE_FLAG_KEY, '1');
+      else localStorage.removeItem(PASSIVE_FLAG_KEY);
+    } catch (_) {}
+  }
+
+  /** 根据本地标志恢复被动模式（不弹确认框） */
+  function maybeRestorePassiveMode() {
+    if (!readPassiveFlag()) return;
+    if (typeof isGuestClient === 'function' && isGuestClient()) return;
+    if (typeof isTunnelGuest === 'function' && isTunnelGuest()) return;
+    if (!state.inLobby || state.passiveMode) return;
+    if (state.roomBusy === 'passive') return;
+    if (typeof isInLiveSession === 'function' && isInLiveSession()) return;
+    showRoomBusy('passive', '正在恢复被动模式…');
+    if (el.chkPassiveMode) el.chkPassiveMode.checked = true;
+    net.setPassive(true);
+  }
+
+  function scheduleRestorePassiveMode(delayMs) {
+    const ms = delayMs == null ? 500 : delayMs;
+    if (passiveRestoreTimer) clearTimeout(passiveRestoreTimer);
+    passiveRestoreTimer = setTimeout(() => {
+      passiveRestoreTimer = null;
+      maybeRestorePassiveMode();
+    }, ms);
+  }
   let ignoreRoomLeftId = null;
   let ignoreRoomLeftUntil = 0;
   let lobbyRefreshTimer = null;
@@ -960,6 +1007,7 @@
       // 进入被动完成时务必清掉准备中遮罩（含 state.roomBusy）
       if (state.roomBusy === 'passive') hideRoomBusy();
       else if (el.roomBusyOverlay) el.roomBusyOverlay.hidden = true;
+      scheduleHostUpdateBackgroundCheck(800);
     }
     syncPassiveExitButton();
   }
@@ -2850,6 +2898,11 @@
     }
     // 昵称：大厅标题旁；房间「房间等待中」标题右侧也可改名
     refreshNickUi(name);
+    if (name === 'game') {
+      deferHostUpdateForGameplay();
+    } else {
+      scheduleHostUpdateBackgroundCheck(name === 'lobby' ? 800 : 1200);
+    }
     if (el.lobbyPeopleTitle) {
       el.lobbyPeopleTitle.textContent =
         name === 'room' ? t('lobby.peopleOutside') : t('lobby.people');
@@ -3176,6 +3229,9 @@
     const g = selectedGameMeta();
     if (!g) {
       el.gameHint.textContent = t('create.hintDefault');
+      if (typeof syncEditRoomCoreLocks === 'function') {
+        syncEditRoomCoreLocks();
+      }
       return;
     }
 
@@ -3294,6 +3350,9 @@
       el.maxPlayersWrap.hidden = false;
       restoreMaxOptions();
       el.gameHint.textContent = t('create.hintRange', { label: gameLabelOf(g.id, g.label), min: g.minPlayers, max: g.maxPlayers });
+    }
+    if (typeof syncEditRoomCoreLocks === 'function') {
+      syncEditRoomCoreLocks();
     }
   }
 
@@ -5061,6 +5120,10 @@
     updateMeLabel();
     if (state.inLobby) startLobbyAutoRefresh();
     else stopLobbyAutoRefresh();
+    if (state.inLobby) {
+      scheduleChangelogAutoPopup();
+      scheduleHostUpdateBackgroundCheck(1200);
+    }
   }
 
   function formatHostOccupiedText(data) {
@@ -5168,6 +5231,27 @@
     if (el.roomConflictDlc) {
       el.roomConflictDlc.checked = room.peacefulDev === false;
     }
+    syncEditRoomCoreLocks();
+  }
+
+  /** 已有非房主真人进房时，锁定游戏类型 / 模式 / 人数 */
+  function roomHasNonHostHumans(room) {
+    if (!room) return false;
+    const hostId = room.hostId;
+    return (room.players || []).some(
+      (p) => p && !p.left && !p.isBot && p.id !== hostId
+    );
+  }
+
+  function syncEditRoomCoreLocks() {
+    const lock =
+      state.createModalMode === 'edit' && roomHasNonHostHumans(state.room);
+    if (el.gameType) el.gameType.disabled = lock;
+    if (el.gameMode) el.gameMode.disabled = lock;
+    if (el.roomMax) el.roomMax.disabled = lock;
+    if (lock && el.gameHint) {
+      el.gameHint.textContent = t('create.coreLockedHint');
+    }
   }
 
   function setCreatePanelOpen(open, mode = 'create') {
@@ -5193,11 +5277,13 @@
             t('create.passwordPlaceholder') || '可为空';
         }
         syncCreatePasswordUi();
+        syncEditRoomCoreLocks();
       }
     } else {
       state.createModalMode = 'create';
       state._guestBootCreatePassive = false;
       syncCreateModalChrome();
+      syncEditRoomCoreLocks();
       if (isGuestClient() && !state.room && !state.game && !leavingToLocal) {
         tryNavigateGuestReturn();
       }
@@ -5231,6 +5317,7 @@
     state.addBotSeatIndex = null;
     state.createModalMode = 'create';
     syncCreateModalChrome();
+    syncEditRoomCoreLocks();
   }
 
   function setAddBotOpen(open, seatIndex) {
@@ -5412,6 +5499,7 @@
       showLobbyHome();
       if (!skipRejoin) await maybeOfferRejoin();
     }
+    scheduleRestorePassiveMode(600);
   }
 
   const REJOIN_COUNTDOWN_SEC = 3;
@@ -5763,6 +5851,7 @@
       if (!ok) return;
     }
     applyPassiveLockUi(false);
+    writePassiveFlag(false);
     net.setPassive(false);
   }
 
@@ -5787,6 +5876,8 @@
           el.chkPassiveMode.checked = false;
           return;
         }
+        // 一确认就写入本地标志：关客户端后再开仍会自动进入被动
+        writePassiveFlag(true);
         // 隧道就绪前只显示准备中，不提前锁定/不视为已被动
         showRoomBusy('passive', '正在进入被动模式…');
         net.setPassive(true);
@@ -6253,6 +6344,12 @@
           showToast(t('toast.updateRoomFail'));
           return;
         }
+        // 已有其他玩家进房：强制沿用当前游戏类型/模式/人数，避免改控件绕过
+        if (roomHasNonHostHumans(state.room)) {
+          payload.gameType = state.room.gameType;
+          payload.gameMode = state.room.gameMode;
+          payload.maxPlayers = state.room.maxPlayers;
+        }
         // 编辑勾选密码但输入为空：若原本有密码则保持原密码（服务端 password==null 不改）
         if (
           payload.hasPassword &&
@@ -6478,6 +6575,24 @@
       }
     });
   }
+  if (el.btnMenuChangelog) {
+    el.btnMenuChangelog.addEventListener('click', () => {
+      closeGameMenu();
+      openChangelogModal({ force: true }).catch((err) => {
+        showToast((err && err.message) || t('update.changelogEmpty'));
+      });
+    });
+  }
+  if (el.btnChangelogClose) {
+    el.btnChangelogClose.addEventListener('click', () => {
+      dismissChangelogModal();
+    });
+  }
+  if (el.changelogBackdrop) {
+    el.changelogBackdrop.addEventListener('click', () => {
+      dismissChangelogModal();
+    });
+  }
   if (el.btnMenuCheckUpdate) {
     el.btnMenuCheckUpdate.addEventListener('click', () => {
       closeGameMenu();
@@ -6488,6 +6603,7 @@
   }
   if (el.btnHostUpdateApply) {
     el.btnHostUpdateApply.addEventListener('click', () => {
+      clearHostUpdateAutoApply();
       applyHostUpdate().catch((err) => {
         showToast((err && err.message) || t('update.applyFail'));
       });
@@ -6495,6 +6611,7 @@
   }
   if (el.btnHostUpdateLater) {
     el.btnHostUpdateLater.addEventListener('click', () => {
+      if (el.hostUpdateModal && el.hostUpdateModal.dataset.force) return;
       dismissHostUpdateModal();
     });
   }
@@ -6696,6 +6813,8 @@
     }
     applyPassiveLockUi(on);
     if (el.chkPassiveMode) el.chkPassiveMode.checked = on;
+    // 成功进入时巩固本地标志；退出只由用户点「退出被动模式」清标志，断线勿清
+    if (on) writePassiveFlag(true);
     syncPassiveShareUrl(data && data.publicUrl);
   });
   net.on('lobby:error', (data) => {
@@ -6704,6 +6823,8 @@
       hideRoomBusy();
       if (el.chkPassiveMode) el.chkPassiveMode.checked = false;
       applyPassiveLockUi(false);
+      // 本地仍想保持被动时，稍后自动再试
+      if (readPassiveFlag()) scheduleRestorePassiveMode(2500);
     }
   });
 
@@ -6768,8 +6889,10 @@
         if (mePerson.passive) {
           if (state.roomBusy === 'passive') hideRoomBusy();
           applyPassiveLockUi(true);
+          writePassiveFlag(true);
         } else if (state.roomBusy !== 'passive') {
           applyPassiveLockUi(false);
+          if (readPassiveFlag()) scheduleRestorePassiveMode(800);
         }
       }
     }
@@ -6898,6 +7021,11 @@
       });
     }
     if (data.room.status !== 'playing') renderRoom();
+    if (data.room.status === 'playing') {
+      deferHostUpdateForGameplay();
+    } else {
+      scheduleHostUpdateBackgroundCheck(1000);
+    }
   });
 
   net.on('session:reclaimed', async (data) => {
@@ -7588,6 +7716,7 @@
     }
     net.joinLobby(name, lobbyJoinOpts());
     state.inLobby = true;
+    scheduleRestorePassiveMode(800);
   });
 
   fillGameOptions(state.games);
@@ -7895,16 +8024,205 @@
     if (el.viewGame && !el.viewGame.hidden) updateTurnTimer();
   }, 250);
 
+  /* —— 更新公告（上传主机更新时的备注，最多 10 条） —— */
+  const CHANGELOG_SEEN_KEY = 'lianji.changelog.seenVersion';
+  let changelogCache = null;
+  let changelogAutoPending = false;
+
+  function getChangelogSeenVersion() {
+    try {
+      return String(localStorage.getItem(CHANGELOG_SEEN_KEY) || '');
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function setChangelogSeenVersion(version) {
+    try {
+      localStorage.setItem(CHANGELOG_SEEN_KEY, String(version || ''));
+    } catch (_) {}
+  }
+
+  function changelogLatestVersion(data) {
+    if (!data) return '';
+    const top = Array.isArray(data.entries) && data.entries[0];
+    return String((top && top.version) || data.version || '');
+  }
+
+  function formatChangelogDate(iso) {
+    const raw = String(iso || '').trim();
+    if (!raw) return '';
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return raw.slice(0, 10);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  function pickChangelogNotes(entry) {
+    const lang =
+      (window.I18n && typeof window.I18n.getLang === 'function' && window.I18n.getLang()) ||
+      'zh';
+    if (lang === 'en') {
+      return (
+        String((entry && (entry.notesEn || entry.notes_en)) || '').trim() ||
+        String((entry && entry.notes) || '').trim() ||
+        t('update.noNotes')
+      );
+    }
+    return String((entry && entry.notes) || '').trim() || t('update.noNotes');
+  }
+
+  async function fetchChangelog(force) {
+    if (!force && changelogCache) return changelogCache;
+    const base =
+      (net && typeof net.getLocalOrigin === 'function' && net.getLocalOrigin()) ||
+      location.origin;
+    const res = await fetch(base.replace(/\/$/, '') + '/api/changelog', {
+      cache: 'no-store',
+    });
+    if (!res.ok) throw new Error(t('update.changelogEmpty'));
+    const data = await res.json();
+    changelogCache = {
+      version: String((data && data.version) || ''),
+      entries: Array.isArray(data && data.entries) ? data.entries.slice(0, 10) : [],
+    };
+    return changelogCache;
+  }
+
+  function renderChangelogList(entries) {
+    if (!el.changelogList) return;
+    el.changelogList.textContent = '';
+    const list = Array.isArray(entries) ? entries : [];
+    if (el.changelogEmpty) el.changelogEmpty.hidden = list.length > 0;
+    for (const entry of list) {
+      const item = document.createElement('article');
+      item.className = 'changelog-item';
+      item.setAttribute('role', 'listitem');
+      const head = document.createElement('div');
+      head.className = 'changelog-item-head';
+      const ver = document.createElement('h3');
+      ver.className = 'changelog-item-ver';
+      ver.textContent = 'v' + String((entry && entry.version) || '');
+      head.appendChild(ver);
+      const dateStr = formatChangelogDate(entry && entry.publishedAt);
+      if (dateStr) {
+        const dateEl = document.createElement('p');
+        dateEl.className = 'changelog-item-date muted';
+        const labeled = t('update.changelogDate', { date: dateStr });
+        dateEl.textContent =
+          labeled === 'update.changelogDate' ? dateStr : labeled;
+        head.appendChild(dateEl);
+      }
+      item.appendChild(head);
+      const notes = document.createElement('p');
+      notes.className = 'changelog-item-notes';
+      notes.textContent = pickChangelogNotes(entry);
+      item.appendChild(notes);
+      el.changelogList.appendChild(item);
+    }
+  }
+
+  function dismissChangelogModal() {
+    if (!el.changelogModal) return;
+    const ver = el.changelogModal.dataset && el.changelogModal.dataset.seenVersion;
+    if (ver) setChangelogSeenVersion(ver);
+    el.changelogModal.hidden = true;
+  }
+
+  async function openChangelogModal({ force = false } = {}) {
+    const data = await fetchChangelog(force);
+    const latest = changelogLatestVersion(data);
+    renderChangelogList(data.entries);
+    if (el.changelogModal) {
+      el.changelogModal.dataset.seenVersion = latest;
+      el.changelogModal.hidden = false;
+    }
+    if (window.I18n && typeof window.I18n.applyDom === 'function') {
+      try {
+        window.I18n.applyDom(el.changelogModal || document);
+      } catch (_) {}
+    }
+    return data;
+  }
+
+  function scheduleChangelogAutoPopup() {
+    if (changelogAutoPending) return;
+    if (!state.inLobby) return;
+    if (el.lobbyMain && el.lobbyMain.hidden) return;
+    // 有更高优先级的弹窗时稍后再试
+    if (
+      (el.hostUpdateModal && !el.hostUpdateModal.hidden) ||
+      (el.rejoinModal && !el.rejoinModal.hidden) ||
+      (el.changelogModal && !el.changelogModal.hidden)
+    ) {
+      setTimeout(scheduleChangelogAutoPopup, 800);
+      return;
+    }
+    changelogAutoPending = true;
+    fetchChangelog(false)
+      .then((data) => {
+        const latest = changelogLatestVersion(data);
+        if (!latest || getChangelogSeenVersion() === latest) return null;
+        return openChangelogModal({ force: true }).then(() => {
+          setChangelogSeenVersion(latest);
+        });
+      })
+      .catch(() => {})
+      .finally(() => {
+        changelogAutoPending = false;
+      });
+  }
+
   /* —— Windows 主机差分 OTA —— */
   const HOST_UPDATE_DISMISS_KEY = 'lianji.hostUpdate.dismissed';
+  const HOST_UPDATE_CHECK_INTERVAL_MS = 60 * 1000;
+  const HOST_UPDATE_AUTO_APPLY_SEC = 3;
   let hostUpdateApplying = false;
   let hostUpdatePollTimer = null;
+  let hostUpdateBgTimer = null;
+  let hostUpdateAutoTimer = null;
+  let hostUpdateAutoSecLeft = 0;
+  let hostUpdateCheckInFlight = false;
+  let hostUpdateScheduleTimer = null;
 
   function formatBytes(n) {
     const v = Number(n) || 0;
     if (v < 1024) return v + ' B';
     if (v < 1024 * 1024) return (v / 1024).toFixed(1) + ' KB';
     return (v / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  function isHostConsolePage() {
+    try {
+      if (typeof isGuestClient === 'function' && isGuestClient()) return false;
+      if (typeof isTunnelGuest === 'function' && isTunnelGuest()) return false;
+      return detectPageAccess() === 'console';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /** 对局进行中（含结算仍停在对局界面）：不检查/不弹强制升级 */
+  function isPlayingGameNow() {
+    const room = state.room;
+    if (!room || room.status !== 'playing') return false;
+    return true;
+  }
+
+  /** 大厅 / 未开局房间 / 被动模式，且本机控制台 */
+  function canBackgroundHostUpdateCheck() {
+    if (!isHostConsolePage()) return false;
+    if (hostUpdateApplying) return false;
+    if (el.hostUpdateModal && !el.hostUpdateModal.hidden) return false;
+    if (isPlayingGameNow()) return false;
+    if (state.passiveMode) return true;
+    if (state.room && (state.room.status === 'waiting' || !state.room.status)) {
+      return true;
+    }
+    if (state.inLobby && !state.room) return true;
+    return false;
   }
 
   function isHostUpdateDismissed(remoteVersion) {
@@ -7915,12 +8233,54 @@
     }
   }
 
+  function clearHostUpdateAutoApply() {
+    if (hostUpdateAutoTimer) {
+      clearInterval(hostUpdateAutoTimer);
+      hostUpdateAutoTimer = null;
+    }
+    hostUpdateAutoSecLeft = 0;
+    if (el.btnHostUpdateApply && !hostUpdateApplying) {
+      el.btnHostUpdateApply.textContent = t('update.apply');
+    }
+  }
+
+  function startHostUpdateAutoApplyCountdown() {
+    clearHostUpdateAutoApply();
+    if (!el.btnHostUpdateApply || hostUpdateApplying) return;
+    if (!el.hostUpdateModal || el.hostUpdateModal.hidden) return;
+    hostUpdateAutoSecLeft = HOST_UPDATE_AUTO_APPLY_SEC;
+    const tick = () => {
+      if (hostUpdateApplying) {
+        clearHostUpdateAutoApply();
+        return;
+      }
+      if (hostUpdateAutoSecLeft <= 0) {
+        clearHostUpdateAutoApply();
+        applyHostUpdate().catch((err) => {
+          showToast((err && err.message) || t('update.applyFail'));
+        });
+        return;
+      }
+      if (el.btnHostUpdateApply) {
+        el.btnHostUpdateApply.textContent = t('update.applyCountdown', {
+          n: hostUpdateAutoSecLeft,
+        });
+        el.btnHostUpdateApply.disabled = false;
+      }
+      hostUpdateAutoSecLeft -= 1;
+    };
+    tick();
+    hostUpdateAutoTimer = setInterval(tick, 1000);
+  }
+
   function dismissHostUpdateModal() {
     if (!el.hostUpdateModal) return;
+    if (el.hostUpdateModal.dataset.force) return;
+    clearHostUpdateAutoApply();
     const ver =
       (el.hostUpdateModal.dataset && el.hostUpdateModal.dataset.remoteVersion) ||
       '';
-    if (ver && !el.hostUpdateModal.dataset.force) {
+    if (ver) {
       try {
         localStorage.setItem(HOST_UPDATE_DISMISS_KEY, ver);
       } catch (_) {}
@@ -7928,10 +8288,20 @@
     el.hostUpdateModal.hidden = true;
   }
 
+  /** 对局开始时：取消未开始的强制升级倒计时（已在下载中则不可中断） */
+  function deferHostUpdateForGameplay() {
+    if (hostUpdateApplying) return;
+    clearHostUpdateAutoApply();
+    if (el.hostUpdateModal && !el.hostUpdateModal.hidden) {
+      el.hostUpdateModal.hidden = true;
+    }
+  }
+
   function showHostUpdateModal(info) {
     if (!el.hostUpdateModal || !info) return;
     el.hostUpdateModal.dataset.remoteVersion = info.remoteVersion || '';
-    if (info.force) el.hostUpdateModal.dataset.force = '1';
+    const force = Boolean(info.force);
+    if (force) el.hostUpdateModal.dataset.force = '1';
     else delete el.hostUpdateModal.dataset.force;
 
     const lang = (I18n && I18n.getLang && I18n.getLang()) || 'zh';
@@ -7953,14 +8323,19 @@
         size: formatBytes(info.totalBytes),
       });
     }
+    if (el.hostUpdateForceHint) el.hostUpdateForceHint.hidden = !force;
     if (el.hostUpdateProgressWrap) el.hostUpdateProgressWrap.hidden = true;
     if (el.hostUpdateActions) el.hostUpdateActions.hidden = false;
-    if (el.btnHostUpdateApply) el.btnHostUpdateApply.disabled = !info.canApply;
+    if (el.btnHostUpdateApply) {
+      el.btnHostUpdateApply.disabled = !info.canApply;
+      el.btnHostUpdateApply.textContent = t('update.apply');
+    }
     if (el.btnHostUpdateLater) {
-      el.btnHostUpdateLater.hidden = Boolean(info.force);
+      el.btnHostUpdateLater.hidden = force;
       el.btnHostUpdateLater.disabled = false;
     }
     el.hostUpdateModal.hidden = false;
+    if (force && info.canApply) startHostUpdateAutoApplyCountdown();
   }
 
   async function fetchUpdateStatus(refresh) {
@@ -7976,6 +8351,7 @@
   async function checkHostUpdate(opts) {
     opts = opts || {};
     const manual = Boolean(opts.manual);
+    const background = Boolean(opts.background);
     let info;
     try {
       if (manual) {
@@ -8011,6 +8387,12 @@
     }
     if (!info.canApply) {
       if (manual) showToast(t('update.localOnly'));
+      return info;
+    }
+    // 后台检查：一律强制升级（不可拒绝）
+    if (background) {
+      if (isPlayingGameNow()) return info;
+      showHostUpdateModal({ ...info, force: true });
       return info;
     }
     if (!manual && !info.force && isHostUpdateDismissed(info.remoteVersion)) {
@@ -8061,6 +8443,7 @@
   async function applyHostUpdate() {
     if (hostUpdateApplying) return;
     hostUpdateApplying = true;
+    clearHostUpdateAutoApply();
     if (el.btnHostUpdateApply) el.btnHostUpdateApply.disabled = true;
     if (el.btnHostUpdateLater) el.btnHostUpdateLater.disabled = true;
     setHostUpdateProgress({ current: 0, total: 1, message: t('update.working') });
@@ -8107,7 +8490,10 @@
       });
       if (el.hostUpdateActions) el.hostUpdateActions.hidden = false;
       if (el.btnHostUpdateApply) el.btnHostUpdateApply.disabled = false;
-      if (el.btnHostUpdateLater) {
+      if (el.hostUpdateModal && el.hostUpdateModal.dataset.force) {
+        if (el.btnHostUpdateLater) el.btnHostUpdateLater.hidden = true;
+        startHostUpdateAutoApplyCountdown();
+      } else if (el.btnHostUpdateLater) {
         el.btnHostUpdateLater.disabled = false;
         el.btnHostUpdateLater.hidden = false;
       }
@@ -8121,5 +8507,58 @@
     }
   }
 
-  // 自动升级已改到启动.bat 命令行完成；大厅不再自动弹窗（菜单「检查更新」仍可用）
+  async function runBackgroundHostUpdateCheck() {
+    if (!canBackgroundHostUpdateCheck()) return;
+    if (hostUpdateCheckInFlight) return;
+    hostUpdateCheckInFlight = true;
+    try {
+      await checkHostUpdate({ background: true });
+    } catch (_) {
+      /* 后台静默 */
+    } finally {
+      hostUpdateCheckInFlight = false;
+    }
+  }
+
+  function ensureHostUpdateBackgroundLoop() {
+    if (!isHostConsolePage()) {
+      if (hostUpdateBgTimer) {
+        clearInterval(hostUpdateBgTimer);
+        hostUpdateBgTimer = null;
+      }
+      return;
+    }
+    if (hostUpdateBgTimer) return;
+    hostUpdateBgTimer = setInterval(() => {
+      runBackgroundHostUpdateCheck();
+    }, HOST_UPDATE_CHECK_INTERVAL_MS);
+  }
+
+  /** 进入可升级场景后尽快检查；对局中跳过，回大厅后再查 */
+  function scheduleHostUpdateBackgroundCheck(delayMs) {
+    ensureHostUpdateBackgroundLoop();
+    if (hostUpdateScheduleTimer) {
+      clearTimeout(hostUpdateScheduleTimer);
+      hostUpdateScheduleTimer = null;
+    }
+    if (isPlayingGameNow()) {
+      deferHostUpdateForGameplay();
+      return;
+    }
+    if (!canBackgroundHostUpdateCheck() && !(el.hostUpdateModal && !el.hostUpdateModal.hidden)) {
+      // 仍启动周期循环，待状态变为可检查时再跑
+      return;
+    }
+    const wait = typeof delayMs === 'number' ? delayMs : 1500;
+    hostUpdateScheduleTimer = setTimeout(() => {
+      hostUpdateScheduleTimer = null;
+      runBackgroundHostUpdateCheck();
+    }, wait);
+  }
+
+  // 本机控制台：大厅 / 未开局房间 / 被动模式后台检查；对局中延后
+  ensureHostUpdateBackgroundLoop();
 })();
+
+
+

@@ -190,6 +190,35 @@ function isSeatedPlayer(p) {
   return Boolean(p && !p.left);
 }
 
+/** 是否已有非房主真人玩家（不含人机、不含已离开） */
+function hasNonHostHumanPlayers(room) {
+  if (!room) return false;
+  const hostId = room.hostId;
+  return (room.players || []).some(
+    (p) => isSeatedPlayer(p) && !p.isBot && p.id !== hostId
+  );
+}
+
+/** 清空房间内全部人机座位，并去掉尾部多余 null */
+function clearAllBotSeats(room) {
+  if (!room || !Array.isArray(room.players)) return 0;
+  let removed = 0;
+  for (let i = 0; i < room.players.length; i++) {
+    const p = room.players[i];
+    if (p && p.isBot) {
+      room.players[i] = null;
+      removed += 1;
+    }
+  }
+  while (
+    room.players.length > 0 &&
+    room.players[room.players.length - 1] === null
+  ) {
+    room.players.pop();
+  }
+  return removed;
+}
+
 /** 清空座位并去掉尾部多余 null，保留中间空位下标 */
 function clearPlayerSeat(room, playerId) {
   if (!room || !Array.isArray(room.players)) return false;
@@ -696,12 +725,68 @@ class RoomManager {
       return { ok: false, error: '对局已开始，无法修改房间信息' };
     }
 
+    // 已有非房主真人进房后：锁定游戏类型与人数（含模式，模式会决定座位数）
+    const lockGameAndSeats = hasNonHostHumanPlayers(room);
+    if (lockGameAndSeats) {
+      if (gameType != null && resolveGameType(gameType) !== room.gameType) {
+        return {
+          ok: false,
+          error: '已有其他玩家进入房间，无法更改游戏类型或人数',
+        };
+      }
+      if (maxPlayers != null && Number(maxPlayers) !== Number(room.maxPlayers)) {
+        return {
+          ok: false,
+          error: '已有其他玩家进入房间，无法更改游戏类型或人数',
+        };
+      }
+      if (gameMode != null) {
+        let requested = String(gameMode);
+        let current = String(room.gameMode || '');
+        if (room.gameType === 'lasidao') {
+          if (requested === 'standard' || requested === 'solo') requested = 'melee';
+          if (current === 'standard' || current === 'solo') current = 'melee';
+        }
+        if (requested && current && requested !== current) {
+          return {
+            ok: false,
+            error: '已有其他玩家进入房间，无法更改游戏类型或人数',
+          };
+        }
+      }
+    }
+
+    const nextGameType = resolveGameType(
+      lockGameAndSeats
+        ? room.gameType
+        : gameType != null
+          ? gameType
+          : room.gameType
+    );
+    const gameTypeChanged = nextGameType !== room.gameType;
+    const nextGame = getGame(nextGameType);
+    // 切换游戏类型、或不支持 AI 的游戏：会清掉人机，占座按清后真人计算
+    const willClearBots = gameTypeChanged || !gameSupportsBot(nextGame);
+    const occupied = (room.players || []).filter((p) => {
+      if (!isSeatedPlayer(p)) return false;
+      if (willClearBots && p.isBot) return false;
+      return true;
+    }).length;
+
     const cfg = resolveRoomConfig({
-      gameType: gameType != null ? gameType : room.gameType,
-      gameMode: gameMode != null ? gameMode : room.gameMode,
-      maxPlayers: maxPlayers != null ? maxPlayers : room.maxPlayers,
+      gameType: nextGameType,
+      gameMode: lockGameAndSeats
+        ? room.gameMode
+        : gameMode != null
+          ? gameMode
+          : room.gameMode,
+      maxPlayers: lockGameAndSeats
+        ? room.maxPlayers
+        : maxPlayers != null
+          ? maxPlayers
+          : room.maxPlayers,
       turnTimeSec: turnTimeSec != null ? turnTimeSec : room.turnTimeSec,
-      occupied: (room.players || []).filter(isSeatedPlayer).length,
+      occupied,
     });
     if (!cfg.ok) return cfg;
 
@@ -744,6 +829,9 @@ class RoomManager {
       else if (room.peacefulDev == null) room.peacefulDev = true;
     } else {
       room.peacefulDev = true;
+    }
+    if (willClearBots) {
+      clearAllBotSeats(room);
     }
     ensureTeamSeats(room);
 

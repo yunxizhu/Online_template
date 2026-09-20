@@ -48,6 +48,12 @@ copyFile(
   path.join(ROOT, 'public', 'css', 'style.css'),
   path.join(MOBILE_WWW, 'css', 'style.css')
 );
+if (fs.existsSync(path.join(ROOT, 'public', 'changelog.json'))) {
+  copyFile(
+    path.join(ROOT, 'public', 'changelog.json'),
+    path.join(MOBILE_WWW, 'changelog.json')
+  );
+}
 
 const socketCandidates = [
   path.join(ROOT, 'node_modules', 'socket.io-client', 'dist', 'socket.io.min.js'),

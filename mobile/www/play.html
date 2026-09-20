@@ -7,7 +7,7 @@
   <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="./css/style.css" />
   <script>
-    /* 访客深链：首屏即显示「正在加入」，避免先闪出昵称门 */
+    /* 访客深链 / 隧道页：首屏转圈，避免先闪出昵称门 */
     (function () {
       try {
         document.documentElement.classList.add('boot-joining');
@@ -93,6 +93,9 @@
           </button>
           <button type="button" id="btn-menu-invite-block" role="menuitem" data-i18n="invite.blockAllMenu">
             不接受房间邀请
+          </button>
+          <button type="button" id="btn-menu-changelog" role="menuitem" data-i18n="update.changelogMenu">
+            更新公告
           </button>
           <button type="button" id="btn-menu-check-update" role="menuitem" data-i18n="update.checkMenu">
             检查更新
@@ -505,6 +508,20 @@
     </div>
   </div>
 
+  <div class="modal" id="changelog-modal" hidden>
+    <div class="modal-backdrop" id="changelog-backdrop"></div>
+    <div class="modal-dialog panel changelog-dialog" role="dialog" aria-labelledby="changelog-title" aria-modal="true">
+      <div class="modal-header">
+        <h2 id="changelog-title" data-i18n="update.changelogTitle">更新公告</h2>
+      </div>
+      <div id="changelog-list" class="changelog-list" role="list"></div>
+      <p id="changelog-empty" class="muted changelog-empty" hidden data-i18n="update.changelogEmpty">暂无更新说明</p>
+      <div class="row">
+        <button id="btn-changelog-close" type="button" data-i18n="update.changelogClose">知道了</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal" id="host-update-modal" hidden>
     <div class="modal-backdrop" id="host-update-backdrop"></div>
     <div class="modal-dialog panel" role="dialog" aria-labelledby="host-update-title" aria-modal="true">
@@ -514,6 +531,7 @@
       <p id="host-update-version" class="update-version"></p>
       <p id="host-update-notes" class="invite-message update-notes"></p>
       <p id="host-update-meta" class="muted update-meta"></p>
+      <p id="host-update-force-hint" class="muted update-meta" hidden data-i18n="update.forceHint">此更新不可取消，将自动开始升级并重启</p>
       <div id="host-update-progress-wrap" class="update-progress-wrap" hidden>
         <div class="update-progress-bar" aria-hidden="true">
           <div id="host-update-progress-fill" class="update-progress-fill"></div>
@@ -521,7 +539,7 @@
         <p id="host-update-progress-text" class="muted update-progress-text"></p>
       </div>
       <div class="row" id="host-update-actions">
-        <button id="btn-host-update-apply" type="button" data-i18n="update.apply">立即更新</button>
+        <button id="btn-host-update-apply" type="button" data-i18n="update.apply">立即升级</button>
         <button id="btn-host-update-later" type="button" class="secondary" data-i18n="update.later">稍后</button>
       </div>
     </div>
@@ -611,14 +629,18 @@
           : '进入房间中…'
         : q.get('createPassive') === '1'
           ? '正在进入被动主机…'
-          : '正在连接中…';
+          : document.documentElement.dataset.tunnelConnecting === '1'
+            ? '正在连接中…'
+            : '正在加入…';
       if (overlay) {
         overlay.hidden = false;
         overlay.dataset.busyMode = join
           ? 'join'
           : q.get('createPassive') === '1'
             ? 'create'
-            : 'connect';
+            : document.documentElement.dataset.tunnelConnecting === '1'
+              ? 'connect'
+              : 'join';
       }
       if (msg) {
         msg.setAttribute('data-i18n-manual', '');

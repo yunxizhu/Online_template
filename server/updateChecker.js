@@ -582,51 +582,250 @@ class HostUpdateChecker {
       rmDirSafe(this.stagingDir);
       ensureDir(this.stagingDir);
 
+      const MAX_UPGRADE_ATTEMPTS = 3;
       let bytesDone = 0;
-      for (let i = 0; i < list.length; i++) {
-        const f = list[i];
+      let downloadIndex = 0;
+      let upgradeAttempt = 1;
+
+      while (downloadIndex < list.length) {
+        const f = list[downloadIndex];
         setProgress({
           phase: 'download',
           message: '下载 ' + f.path,
-          current: i,
+          current: downloadIndex,
           total: list.length,
           bytes: bytesDone,
           totalBytes,
           file: f.path,
+          attempt: upgradeAttempt,
+          maxAttempts: MAX_UPGRADE_ATTEMPTS,
         });
-        const buf = await fetchBuffer(f.url, {
-          timeoutMs: 120000,
-          onData: (n) => {
-            if (this.progress) this.progress.bytes = bytesDone + n;
-          },
-        });
-        // 文本再规范化一次，兼容旧版误传的 CRLF blob / CDN 改写
-        const body = isOtaTextPath(f.path) ? normalizeTextBuffer(buf) : buf;
-        const got = sha256Buffer(body);
-        if (got !== f.sha256) {
-          throw new Error(
-            '校验失败: ' +
+        try {
+          const buf = await fetchBuffer(f.url, {
+            timeoutMs: 120000,
+            onData: (n) => {
+              if (this.progress) this.progress.bytes = bytesDone + n;
+            },
+          });
+          // 文本再规范化一次，兼容旧版误传的 CRLF blob / CDN 改写
+          const body = isOtaTextPath(f.path) ? normalizeTextBuffer(buf) : buf;
+          const got = sha256Buffer(body);
+          if (got !== f.sha256) {
+            throw new Error(
+              '校验失败: ' +
+                f.path +
+                '（下载 ' +
+                buf.length +
+                ' 字节，期望 sha ' +
+                f.sha256.slice(0, 8) +
+                '…）'
+            );
+          }
+          const dest = path.join(this.stagingDir, ...f.path.split('/'));
+          ensureDir(path.dirname(dest));
+          fs.writeFileSync(dest, body);
+          bytesDone += buf.length;
+          setProgress({
+            phase: 'download',
+            message: '已下载 ' + f.path,
+            current: downloadIndex + 1,
+            total: list.length,
+            bytes: bytesDone,
+            totalBytes,
+            file: f.path,
+            attempt: upgradeAttempt,
+            maxAttempts: MAX_UPGRADE_ATTEMPTS,
+          });
+          downloadIndex += 1;
+        } catch (err) {
+          const errMsg = err && err.message ? err.message : String(err);
+          if (upgradeAttempt >= MAX_UPGRADE_ATTEMPTS) {
+            throw new Error(
+              '升级失败（已尝试 ' +
+                MAX_UPGRADE_ATTEMPTS +
+                ' 次，停在 ' +
+                f.path +
+                '）: ' +
+                errMsg
+            );
+          }
+          upgradeAttempt += 1;
+          setProgress({
+            phase: 'download',
+            message:
+              '升级异常，从 ' +
               f.path +
-              '（下载 ' +
-              buf.length +
-              ' 字节，期望 sha ' +
-              f.sha256.slice(0, 8) +
-              '…）'
+              ' 开始重新下载（第 ' +
+              upgradeAttempt +
+              '/' +
+              MAX_UPGRADE_ATTEMPTS +
+              ' 次）…',
+            current: downloadIndex,
+            total: list.length,
+            bytes: bytesDone,
+            totalBytes,
+            file: f.path,
+            attempt: upgradeAttempt,
+            maxAttempts: MAX_UPGRADE_ATTEMPTS,
+            error: errMsg,
+            retrying: true,
+          });
+          // CDN / 网络抖动时稍等再从失败文件续下
+          await new Promise((r) => setTimeout(r, 1000 * upgradeAttempt));
+        }
+      }
+
+      // 断点续传后，对 staging 做一次全量校验，避免先前已下载文件损坏/被改写
+      const verifyStaged = () => {
+        const bad = [];
+        for (let i = 0; i < list.length; i++) {
+          const f = list[i];
+          setProgress({
+            phase: 'verify',
+            message: '校验 ' + f.path,
+            current: i,
+            total: list.length,
+            bytes: bytesDone,
+            totalBytes,
+            file: f.path,
+          });
+          const staged = path.join(this.stagingDir, ...f.path.split('/'));
+          if (!fs.existsSync(staged) || !fs.statSync(staged).isFile()) {
+            bad.push({ file: f, reason: '文件缺失' });
+            continue;
+          }
+          try {
+            const body = readOtaBytes(staged, f.path);
+            const got = sha256Buffer(body);
+            if (got !== f.sha256) {
+              bad.push({
+                file: f,
+                reason:
+                  '校验失败（' +
+                  body.length +
+                  ' 字节，期望 sha ' +
+                  f.sha256.slice(0, 8) +
+                  '…）',
+              });
+            }
+          } catch (err) {
+            bad.push({
+              file: f,
+              reason: err && err.message ? err.message : String(err),
+            });
+          }
+          setProgress({
+            phase: 'verify',
+            message: '已校验 ' + f.path,
+            current: i + 1,
+            total: list.length,
+            bytes: bytesDone,
+            totalBytes,
+            file: f.path,
+          });
+        }
+        return bad;
+      };
+
+      setProgress({
+        phase: 'verify',
+        message: '全量校验已下载文件…',
+        current: 0,
+        total: list.length,
+        bytes: bytesDone,
+        totalBytes,
+      });
+      let badStaged = verifyStaged();
+      if (badStaged.length) {
+        setProgress({
+          phase: 'verify',
+          message:
+            '发现 ' +
+            badStaged.length +
+            ' 个文件校验失败，重新下载…',
+          current: 0,
+          total: list.length,
+          bytes: bytesDone,
+          totalBytes,
+          retrying: true,
+          error:
+            badStaged
+              .slice(0, 5)
+              .map((b) => b.file.path + ': ' + b.reason)
+              .join('; ') + (badStaged.length > 5 ? ' …' : ''),
+        });
+
+        for (const item of badStaged) {
+          const f = item.file;
+          let repaired = false;
+          let lastErr = item.reason;
+          for (
+            let attempt = 1;
+            attempt <= MAX_UPGRADE_ATTEMPTS && !repaired;
+            attempt++
+          ) {
+            setProgress({
+              phase: 'download',
+              message: '重新下载 ' + f.path,
+              current: list.indexOf(f),
+              total: list.length,
+              bytes: bytesDone,
+              totalBytes,
+              file: f.path,
+              attempt,
+              maxAttempts: MAX_UPGRADE_ATTEMPTS,
+            });
+            try {
+              const buf = await fetchBuffer(f.url, {
+                timeoutMs: 120000,
+                onData: (n) => {
+                  if (this.progress) this.progress.bytes = bytesDone + n;
+                },
+              });
+              const body = isOtaTextPath(f.path) ? normalizeTextBuffer(buf) : buf;
+              const got = sha256Buffer(body);
+              if (got !== f.sha256) {
+                throw new Error(
+                  '校验失败: ' +
+                    f.path +
+                    '（下载 ' +
+                    buf.length +
+                    ' 字节，期望 sha ' +
+                    f.sha256.slice(0, 8) +
+                    '…）'
+                );
+              }
+              const dest = path.join(this.stagingDir, ...f.path.split('/'));
+              ensureDir(path.dirname(dest));
+              fs.writeFileSync(dest, body);
+              repaired = true;
+            } catch (err) {
+              lastErr = err && err.message ? err.message : String(err);
+              if (attempt < MAX_UPGRADE_ATTEMPTS) {
+                await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+              }
+            }
+          }
+          if (!repaired) {
+            throw new Error(
+              '全量校验后重新下载失败: ' + f.path + '（' + lastErr + '）'
+            );
+          }
+        }
+
+        badStaged = verifyStaged();
+        if (badStaged.length) {
+          throw new Error(
+            '全量校验仍失败（' +
+              badStaged.length +
+              ' 个）: ' +
+              badStaged
+                .slice(0, 5)
+                .map((b) => b.file.path)
+                .join(', ') +
+              (badStaged.length > 5 ? ' …' : '')
           );
         }
-        const dest = path.join(this.stagingDir, ...f.path.split('/'));
-        ensureDir(path.dirname(dest));
-        fs.writeFileSync(dest, body);
-        bytesDone += buf.length;
-        setProgress({
-          phase: 'download',
-          message: '已下载 ' + f.path,
-          current: i + 1,
-          total: list.length,
-          bytes: bytesDone,
-          totalBytes,
-          file: f.path,
-        });
       }
 
       setProgress({

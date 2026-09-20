@@ -52,10 +52,46 @@ async function main() {
   console.log('[update] 无需确认，开始自动升级…');
 
   let lastPhase = '';
+  let lastRetryMsg = '';
   const applied = await checker.apply({
     restart: false,
     onProgress: (p) => {
       if (!p) return;
+      if (p.retrying && p.message && p.message !== lastRetryMsg) {
+        lastRetryMsg = p.message;
+        console.warn('[update] ' + p.message);
+        if (p.error) console.warn('[update] 原因: ' + p.error);
+        return;
+      }
+      if (p.phase === 'verify') {
+        if (p.message === '全量校验已下载文件…') {
+          console.log('[update] 下载完成，开始全量校验…');
+        } else if (p.message && p.message.startsWith('发现 ')) {
+          console.warn('[update] ' + p.message);
+          if (p.error) console.warn('[update] 原因: ' + p.error);
+        } else if (
+          p.message &&
+          p.message.startsWith('校验 ') &&
+          ((p.current || 0) === 0 ||
+            (p.current || 0) + 1 === (p.total || 0) ||
+            ((p.current || 0) + 1) % 10 === 0)
+        ) {
+          console.log(
+            '[update] 校验中 ' +
+              Math.min((p.current || 0) + 1, p.total || 0) +
+              '/' +
+              (p.total || '?') +
+              '：' +
+              (p.file || '')
+          );
+        }
+        lastPhase = p.phase || lastPhase;
+        return;
+      }
+      if (p.phase === 'download' && p.message && p.message.startsWith('重新下载 ')) {
+        console.log('[update] ' + p.message);
+        return;
+      }
       if (p.phase === 'download' && p.message && p.message.startsWith('下载 ')) {
         const idx = Math.min((p.current || 0) + 1, p.total || 0);
         console.log(
@@ -102,7 +138,7 @@ async function main() {
 
 main().catch((err) => {
   console.warn(
-    '[update] 启动前升级异常（将继续启动）:',
+    '[update] 启动前升级异常（已重试仍失败，将继续启动）:',
     err && err.message ? err.message : err
   );
 });

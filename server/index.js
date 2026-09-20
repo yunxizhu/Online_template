@@ -491,6 +491,30 @@ app.get('/api/info', (_req, res) => {
   });
 });
 
+/** 更新公告（public/changelog.json，随主机 OTA 下发） */
+app.get('/api/changelog', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const file = path.join(__dirname, '..', 'public', 'changelog.json');
+  let entries = [];
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (Array.isArray(raw && raw.entries)) entries = raw.entries;
+  } catch (_) {
+    entries = [];
+  }
+  const version = hostUpdate.getLocalVersion();
+  res.json({
+    ok: true,
+    version,
+    entries: entries.slice(0, 50).map((e) => ({
+      version: String((e && e.version) || ''),
+      notes: String((e && e.notes) || ''),
+      notesEn: String((e && (e.notesEn || e.notes_en)) || ''),
+      publishedAt: String((e && e.publishedAt) || ''),
+    })),
+  });
+});
+
 /** 主机 OTA 状态；apply 仅本机可调用（防隧道访客乱升级） */
 app.get('/api/update/status', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');

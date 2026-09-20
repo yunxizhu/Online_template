@@ -20,11 +20,11 @@ const BLACK = 1;
 const WHITE = 2;
 
 const DIFFICULTY = {
-  easy: { depth: 2, timeMs: 0 },
-  normal: { depth: 0, timeMs: 280 },
-  hard: { depth: 0, timeMs: 700 },
-  hardplus: { depth: 0, timeMs: 1200 },
-  hell: { depth: 0, timeMs: 1800 },
+  easy: { depth: 2, timeMs: 2500 },
+  normal: { depth: 0, timeMs: 2500 },
+  hard: { depth: 0, timeMs: 3000 },
+  hardplus: { depth: 0, timeMs: 3500 },
+  hell: { depth: 0, timeMs: 4000 },
 };
 
 /**
