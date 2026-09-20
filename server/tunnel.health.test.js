@@ -156,13 +156,60 @@ async function main() {
   assert.strictEqual(lost, 1, 'ENOTFOUND 达 DNS 阈值应换址');
   assert.ok(DNS_HEALTH_FAILS < HEALTH_FAILS, 'DNS 阈值应严于普通探活');
 
+  // 控制隧道锁定：探活失败也不换址
+  lost = 0;
+  const tControl = stubTunnel({
+    allowHealthRotate: false,
+    probe: async () => ({ ok: false, reason: 'timeout', fatal: false }),
+  });
+  tControl.onLost = () => {
+    lost += 1;
+  };
+  await ticks(tControl, HEALTH_FAILS + 4);
+  assert.strictEqual(lost, 0, '控制隧道锁定时不应换址');
+  assert.ok(
+    tControl.publicUrl.indexOf('dead-tunnel-test') >= 0,
+    '控制隧道应保留原 URL'
+  );
+
+  // 命名隧道：换址后公网地址保持不变
+  lost = 0;
+  const tNamed = stubTunnel({
+    token: 'test-token',
+    fixedUrl: 'https://passive.example.com',
+    allowHealthRotate: true,
+    publicUrl: 'https://passive.example.com',
+    probe: async () => ({ ok: false, reason: 'timeout', fatal: true }),
+  });
+  tNamed.onLost = () => {
+    lost += 1;
+  };
+  let namedEnsure = 0;
+  tNamed.ensure = async () => {
+    namedEnsure += 1;
+    tNamed.proc = { kill() {}, killed: false };
+    tNamed.publicUrl = 'https://passive.example.com';
+    return tNamed.publicUrl;
+  };
+  await tNamed._runHealthTick();
+  assert.strictEqual(lost, 1, '命名隧道 fatal 应重启进程');
+  await sleep(80);
+  assert.ok(namedEnsure >= 1, '命名隧道应自动重连');
+  assert.strictEqual(
+    tNamed.getPublicUrl(),
+    'https://passive.example.com',
+    '命名隧道地址应保持不变'
+  );
+
   t.stop();
   tProtect.stop();
   tLocal.stop();
   tReset.stop();
   t3.stop();
   tDns.stop();
-  console.log('✓ tunnel health P0 protect / local / consecutive fails / dns');
+  tControl.stop();
+  tNamed.stop();
+  console.log('✓ tunnel health P0 protect / local / consecutive fails / dns / control-lock / named');
 }
 
 main().catch((err) => {

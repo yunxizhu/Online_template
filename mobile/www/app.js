@@ -648,7 +648,7 @@
     joinRemoteRoom(room, mode || 'join', password);
   }
 
-  /** 被动主机代开：仍跳转对方网页（无 Socket 会话） */
+  /** 被动主机：跳转对方网页（控制 / 代开） */
   function openHost(host, roomId, opts = {}) {
     if (joining) return;
     const base = normalizeHost(host);
@@ -663,8 +663,13 @@
       showToast('地址格式不正确');
       return;
     }
-    const mode = opts.mode === 'createPassive' ? 'createPassive' : 'join';
-    if (mode !== 'createPassive') {
+    const mode =
+      opts.mode === 'createPassive'
+        ? 'createPassive'
+        : opts.mode === 'controlPassive'
+          ? 'controlPassive'
+          : 'join';
+    if (mode === 'join') {
       showToast('请从房间列表加入');
       return;
     }
@@ -684,7 +689,11 @@
     if (mode === 'createPassive') {
       u.searchParams.set('createPassive', '1');
     }
-    showJoining('正在前往被动主机开房…');
+    showJoining(
+      mode === 'controlPassive'
+        ? '正在前往被动主机…'
+        : '正在前往被动主机开房…'
+    );
     clearLoginBeacon();
     const href = u.toString();
     requestAnimationFrame(() => {
@@ -1041,7 +1050,9 @@
     if (!el.peopleCtx || !person) return;
     hideRoomCtx();
     peopleCtxTarget = person;
+    const btnControl = el.peopleCtx.querySelector('[data-action="control-host"]');
     const btnCreate = el.peopleCtx.querySelector('[data-action="create-on-host"]');
+    const btnCopy = el.peopleCtx.querySelector('[data-action="copy-control-url"]');
     const hint = document.getElementById('people-ctx-hint');
     const busy =
       person.occupied ||
@@ -1049,27 +1060,92 @@
       (person.passive &&
         person.status !== 'idle' &&
         person.status !== 'passive');
+    const canControl =
+      !person.self && person.passive && Boolean(person.host);
     const canCreate =
       !person.self &&
       person.passive &&
       !busy &&
       person.status === 'idle' &&
       Boolean(person.host);
+    const canCopy = Boolean(person.passive && person.host);
+    let controlReason = '';
+    if (person.self) controlReason = '不能控制自己';
+    else if (!person.passive) controlReason = '对方未开被动模式';
+    else if (!person.host) controlReason = '缺少对方控制隧道地址';
     let reason = '';
     if (person.self) reason = '不能在自己这里代开';
     else if (!person.passive) reason = '对方未开被动模式';
     else if (busy) reason = '对方主机已被占用，请等待房间结束';
     else if (person.status !== 'idle') reason = '对方未开被动模式或已在房间';
     else if (!person.host) reason = '缺少对方公网地址';
+    let copyReason = '';
+    if (!person.passive) copyReason = '对方未开被动模式';
+    else if (!person.host) copyReason = '缺少对方控制隧道地址';
+    if (btnControl) {
+      btnControl.disabled = !canControl;
+      btnControl.title = canControl ? '' : controlReason;
+    }
     if (btnCreate) {
       btnCreate.disabled = !canCreate;
       btnCreate.title = canCreate ? '' : reason;
     }
+    if (btnCopy) {
+      btnCopy.disabled = !canCopy;
+      btnCopy.title = canCopy ? '' : copyReason;
+    }
     if (hint) {
-      hint.hidden = canCreate;
-      hint.textContent = canCreate ? '' : reason || '暂无可用操作';
+      const any = canControl || canCreate || canCopy;
+      hint.hidden = any;
+      hint.textContent = any
+        ? ''
+        : controlReason || copyReason || reason || '暂无可用操作';
     }
     placeCtxMenu(el.peopleCtx, x, y);
+  }
+
+  async function copyControlTunnelUrl(rawUrl) {
+    const url = String(rawUrl || '')
+      .trim()
+      .replace(/\/$/, '');
+    if (!url) {
+      showToast('当前不可用');
+      return false;
+    }
+    let ok = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(url);
+        ok = true;
+      }
+    } catch (_) {
+      ok = false;
+    }
+    if (!ok) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = url;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch (_) {
+        ok = false;
+      }
+    }
+    if (ok) {
+      showToast('控制隧道地址已复制');
+      return true;
+    }
+    try {
+      window.prompt('无法自动复制，请手动复制下方地址', url);
+    } catch (_) {
+      showToast(url);
+    }
+    return false;
   }
 
   function appendRoomListItem(ul, room, { preferSpectate = false } = {}) {
@@ -1398,8 +1474,12 @@
       li.addEventListener('contextmenu', (ev) => {
         ev.preventDefault();
         showPeopleCtx(p, ev.clientX, ev.clientY);
+        if (p.passive && p.host) copyControlTunnelUrl(p.host);
       });
-      bindLongPress(li, (x, y) => showPeopleCtx(p, x, y));
+      bindLongPress(li, (x, y) => {
+        showPeopleCtx(p, x, y);
+        if (p.passive && p.host) copyControlTunnelUrl(p.host);
+      });
       el.peopleList.appendChild(li);
     }
     el.peopleEmpty.hidden = out.length > 0;
@@ -2173,12 +2253,20 @@
         const action = btn.getAttribute('data-action');
         const person = peopleCtxTarget;
         hidePeopleCtx();
-        if (action === 'create-on-host') {
+        if (action === 'control-host') {
+          if (!person.host) {
+            showToast('缺少对方控制隧道地址');
+            return;
+          }
+          openHost(person.host, null, { mode: 'controlPassive' });
+        } else if (action === 'create-on-host') {
           if (!person.host) {
             showToast('缺少对方公网地址');
             return;
           }
           openHost(person.host, null, { mode: 'createPassive' });
+        } else if (action === 'copy-control-url') {
+          copyControlTunnelUrl(person.host);
         }
       });
     }

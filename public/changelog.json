@@ -2,6 +2,12 @@
   "schema": 1,
   "entries": [
     {
+      "version": "1.2.7",
+      "notes": "新增卡坦岛",
+      "notesEn": "",
+      "publishedAt": "2026-09-20T09:45:39.759Z"
+    },
+    {
       "version": "1.2.6",
       "notes": "房间内新增房间链接可供复制，别人点击链接直接进房间进行游玩，无需下载客户端",
       "notesEn": "",

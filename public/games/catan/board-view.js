@@ -107,6 +107,7 @@ window.CatanBoardView = (function () {
       roads: new Set(legal.roads || []),
       cities: new Set(legal.cities || []),
       robber: new Set(legal.robberHexes || []),
+      steal: new Set((opts && opts.stealTargets) || []),
     };
 
     const tiles = game.board.tiles || [];
@@ -118,6 +119,7 @@ window.CatanBoardView = (function () {
     const colorMap = (opts && opts.playerColors) || {};
     const labelMap = (opts && opts.playerLabels) || {};
     const flashVertices = new Set((opts && opts.flashVertices) || []);
+    const flashHexIds = new Set((opts && opts.flashHexIds) || []);
 
     let minX = Infinity;
     let minY = Infinity;
@@ -178,6 +180,7 @@ window.CatanBoardView = (function () {
       defs.appendChild(clip);
 
       const imgSrc = TERRAIN_IMG[t.terrain];
+      const hexFlash = flashHexIds.has(t.id);
       if (imgSrc) {
         const imgSize = hexSize * 2;
         const img = document.createElementNS(ns, 'image');
@@ -189,13 +192,27 @@ window.CatanBoardView = (function () {
         img.setAttribute('height', String(imgSize));
         img.setAttribute('preserveAspectRatio', 'xMidYMid slice');
         img.setAttribute('clip-path', `url(#${clipId})`);
-        img.setAttribute('class', 'catan-hex-img');
+        img.setAttribute(
+          'class',
+          'catan-hex-img' + (hexFlash ? ' catan-hex-flash' : '')
+        );
         svg.appendChild(img);
       } else {
         const fill = document.createElementNS(ns, 'polygon');
         fill.setAttribute('points', points);
-        fill.setAttribute('class', `catan-hex terrain-${t.terrain}`);
+        fill.setAttribute(
+          'class',
+          `catan-hex terrain-${t.terrain}` + (hexFlash ? ' catan-hex-flash' : '')
+        );
         svg.appendChild(fill);
+      }
+
+      if (hexFlash) {
+        const glow = document.createElementNS(ns, 'polygon');
+        glow.setAttribute('points', points);
+        glow.setAttribute('class', 'catan-hex-flash-overlay');
+        glow.setAttribute('pointer-events', 'none');
+        svg.appendChild(glow);
       }
 
       const border = document.createElementNS(ns, 'polygon');
@@ -203,6 +220,7 @@ window.CatanBoardView = (function () {
       border.setAttribute(
         'class',
         'catan-hex-border' +
+          (hexFlash ? ' catan-hex-flash-border' : '') +
           (buildMode === 'robber' && legalSet.robber.has(t.id)
             ? ' legal-robber'
             : '')
@@ -377,6 +395,15 @@ window.CatanBoardView = (function () {
         g.setAttribute('data-vertex', vid);
         g.setAttribute('data-player', b.playerId);
         if (flashVertices.has(vid)) g.classList.add('catan-building-flash');
+        if (buildMode === 'steal' && legalSet.steal.has(vid)) {
+          g.classList.add('catan-building-steal');
+          g.style.cursor = 'pointer';
+          g.style.pointerEvents = 'auto';
+          g.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            onPick({ kind: 'steal', vertexId: vid, playerId: b.playerId });
+          });
+        }
         if (b.kind === 'city') {
           appendCity(g, ns, cx, cy, col, mark);
         } else {

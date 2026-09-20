@@ -383,6 +383,11 @@ function produce(game, roll) {
   game.lastProduction = {
     rollId: game.lastRoll && game.lastRoll.id,
     total: roll,
+    hexIds: [
+      ...new Set(
+        players.reduce((acc, e) => acc.concat(e.hexIds || []), [])
+      ),
+    ],
     players,
   };
   return players;
@@ -646,18 +651,40 @@ function applyAction(game, playerId, action) {
         return { ok: false, error: '无效地形' };
       }
       if (hexId === game.board.robberHexId) return { ok: false, error: '须移动强盗' };
-      game.board.robberHexId = hexId;
+
       const victims = playersAdjacentToHex(game, hexId).filter((id) => id !== playerId);
-      let stealFrom = payload.stealFromId != null ? String(payload.stealFromId) : null;
+      let stealFrom =
+        payload.stealFromId != null && payload.stealFromId !== ''
+          ? String(payload.stealFromId)
+          : null;
+      const stealVertexId =
+        payload.vertexId != null && payload.vertexId !== ''
+          ? String(payload.vertexId)
+          : null;
+
+      // 点选村/城时，以建筑归属为准
+      if (stealVertexId) {
+        const b = buildingAt(game, stealVertexId);
+        if (!b || b.playerId === playerId) {
+          return { ok: false, error: '请点击他人的定居点或城市' };
+        }
+        const v = game.board.vertices[stealVertexId];
+        if (!v || !v.hexIds.includes(hexId)) {
+          return { ok: false, error: '该建筑不在所选地形旁' };
+        }
+        stealFrom = b.playerId;
+      }
+
       if (victims.length === 0) {
         stealFrom = null;
-      } else if (stealFrom) {
-        if (!victims.includes(stealFrom)) return { ok: false, error: '无法掠夺该玩家' };
-      } else if (victims.length === 1) {
-        stealFrom = victims[0];
-      } else {
-        return { ok: false, error: '请选择掠夺对象', needSteal: victims };
+      } else if (!stealFrom) {
+        // 哪怕只有一人，也必须手动确认
+        return { ok: false, error: '请点击对方定居点或城市确认掠夺', needSteal: victims };
+      } else if (!victims.includes(stealFrom)) {
+        return { ok: false, error: '无法掠夺该玩家' };
       }
+
+      game.board.robberHexId = hexId;
       if (stealFrom) {
         const got = stealRandom(game, stealFrom, playerId);
         const victim = playerById(game, stealFrom);

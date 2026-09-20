@@ -4039,6 +4039,133 @@
     state.ctxTarget = null;
   }
 
+  /** 前往对方被动主机控制入口（隧道访客） */
+  function openPassiveControlHost(person) {
+    const host = String((person && person.host) || '')
+      .trim()
+      .replace(/\/$/, '');
+    if (!host) {
+      showToast(
+        t('toast.unavailable') !== 'toast.unavailable'
+          ? t('toast.unavailable')
+          : '缺少对方控制隧道地址'
+      );
+      return;
+    }
+    let dest;
+    try {
+      dest = new URL(host + '/');
+    } catch (_) {
+      showToast('地址格式不正确');
+      return;
+    }
+    try {
+      if (dest.origin === window.location.origin) {
+        // 已在该主机：直接进大厅
+        const name =
+          state.playerName ||
+          (el.playerName && el.playerName.value) ||
+          t('app.playerDefault');
+        enterLobbyWithName(name).catch((err) => {
+          showToast((err && err.message) || '进入失败');
+        });
+        return;
+      }
+    } catch (_) {
+      /* ignore */
+    }
+    dest.searchParams.set('guest', '1');
+    const ua = String(
+      (typeof navigator !== 'undefined' && navigator.userAgent) || ''
+    );
+    const client = /android/i.test(ua)
+      ? 'android'
+      : /iphone|ipad|ipod/i.test(ua)
+        ? 'ios'
+        : 'windows';
+    dest.searchParams.set('client', client);
+    dest.searchParams.set('role', 'client');
+    try {
+      dest.searchParams.set('return', window.location.href);
+    } catch (_) {
+      /* ignore */
+    }
+    const name =
+      state.playerName ||
+      (el.playerName && el.playerName.value) ||
+      '';
+    if (name) dest.searchParams.set('name', name);
+    const tag = myTag();
+    if (tag) dest.searchParams.set('tag', tag);
+    const sid = getTabSessionId();
+    if (sid) dest.searchParams.set('sid', sid);
+    showRoomBusy('connect', '正在前往被动主机…');
+    const href = dest.toString();
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        window.location.href = href;
+      }, 40);
+    });
+  }
+
+  /** 复制被动主机控制隧道地址；失败时弹出可手动复制的提示 */
+  async function copyControlTunnelUrl(rawUrl) {
+    const url = String(rawUrl || '')
+      .trim()
+      .replace(/\/$/, '');
+    if (!url) {
+      showToast(
+        t('toast.unavailable') !== 'toast.unavailable'
+          ? t('toast.unavailable')
+          : '当前不可用'
+      );
+      return false;
+    }
+    let ok = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(url);
+        ok = true;
+      }
+    } catch (_) {
+      ok = false;
+    }
+    if (!ok) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = url;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch (_) {
+        ok = false;
+      }
+    }
+    if (ok) {
+      showToast(
+        t('toast.controlUrlCopied') !== 'toast.controlUrlCopied'
+          ? t('toast.controlUrlCopied')
+          : '控制隧道地址已复制'
+      );
+      return true;
+    }
+    try {
+      window.prompt(
+        t('toast.controlUrlShown') !== 'toast.controlUrlShown'
+          ? t('toast.controlUrlShown')
+          : '无法自动复制，请手动复制下方地址',
+        url
+      );
+    } catch (_) {
+      showToast(url);
+    }
+    return false;
+  }
+
   function getPeopleCtxActions(person) {
     const isMe =
       state.me &&
@@ -4048,6 +4175,8 @@
     let joinReason = '';
     let createOnHostEnabled = false;
     let createOnHostReason = '';
+    let copyControlUrlEnabled = false;
+    let copyControlUrlReason = '';
 
     if (person.status === 'offline') joinReason = t('lobby.reasonOffline');
     else if (isMe) joinReason = t('lobby.reasonSelf');
@@ -4074,12 +4203,31 @@
       createOnHostEnabled = true;
     }
 
+    if (!person.passive) {
+      copyControlUrlReason = '对方未开被动模式';
+    } else if (!person.host) {
+      copyControlUrlReason = '缺少对方控制隧道地址';
+    } else {
+      copyControlUrlEnabled = true;
+    }
+
+    let controlHostEnabled = false;
+    let controlHostReason = '';
+    if (isMe) controlHostReason = '不能控制自己';
+    else if (!person.passive) controlHostReason = '对方未开被动模式';
+    else if (!person.host) controlHostReason = '缺少对方控制隧道地址';
+    else controlHostEnabled = true;
+
     return {
       isMe,
       joinEnabled,
       joinReason,
       createOnHostEnabled,
       createOnHostReason,
+      copyControlUrlEnabled,
+      copyControlUrlReason,
+      controlHostEnabled,
+      controlHostReason,
     };
   }
 
@@ -4088,13 +4236,22 @@
     hideRoomCtx();
     const actions = getPeopleCtxActions(person);
     const btnJoin = el.peopleCtx.querySelector('[data-action="join-their-room"]');
+    const btnControl = el.peopleCtx.querySelector('[data-action="control-host"]');
     const btnCreate = el.peopleCtx.querySelector('[data-action="create-on-host"]');
+    const btnCopy = el.peopleCtx.querySelector('[data-action="copy-control-url"]');
     const hint = document.getElementById('people-ctx-hint');
 
     if (btnJoin) {
       btnJoin.hidden = false;
       btnJoin.disabled = !actions.joinEnabled;
       btnJoin.title = actions.joinEnabled ? '' : actions.joinReason;
+    }
+    if (btnControl) {
+      btnControl.hidden = false;
+      btnControl.disabled = !actions.controlHostEnabled;
+      btnControl.title = actions.controlHostEnabled
+        ? ''
+        : actions.controlHostReason;
     }
     if (btnCreate) {
       btnCreate.hidden = false;
@@ -4103,11 +4260,27 @@
         ? ''
         : actions.createOnHostReason;
     }
+    if (btnCopy) {
+      btnCopy.hidden = false;
+      btnCopy.disabled = !actions.copyControlUrlEnabled;
+      btnCopy.title = actions.copyControlUrlEnabled
+        ? ''
+        : actions.copyControlUrlReason;
+    }
     if (hint) {
-      if (!actions.joinEnabled && !actions.createOnHostEnabled) {
+      if (
+        !actions.joinEnabled &&
+        !actions.createOnHostEnabled &&
+        !actions.copyControlUrlEnabled &&
+        !actions.controlHostEnabled
+      ) {
         hint.hidden = false;
         hint.textContent =
-          actions.createOnHostReason || actions.joinReason || t('lobby.noActions');
+          actions.controlHostReason ||
+          actions.copyControlUrlReason ||
+          actions.createOnHostReason ||
+          actions.joinReason ||
+          t('lobby.noActions');
       } else {
         hint.hidden = true;
         hint.textContent = '';
@@ -4189,8 +4362,16 @@
       li.addEventListener('contextmenu', (ev) => {
         ev.preventDefault();
         showPeopleCtx(person, ev.clientX, ev.clientY);
+        if (person.passive && person.host) {
+          copyControlTunnelUrl(person.host);
+        }
       });
-      bindLongPress(li, (x, y) => showPeopleCtx(person, x, y));
+      bindLongPress(li, (x, y) => {
+        showPeopleCtx(person, x, y);
+        if (person.passive && person.host) {
+          copyControlTunnelUrl(person.host);
+        }
+      });
       el.lobbyPeopleList.appendChild(li);
     }
   }
@@ -6370,6 +6551,9 @@
       const person = (state.people || []).find((p) => p.id === li.dataset.playerId);
       if (!person) return;
       showPeopleCtx(person, ev.clientX, ev.clientY);
+      if (person.passive && person.host) {
+        copyControlTunnelUrl(person.host);
+      }
     });
   }
 
@@ -6412,10 +6596,15 @@
         } catch (err) {
           showToast(err.message || t('toast.joinFail'));
         }
+      } else if (action === 'control-host') {
+        if (!target.passive) return;
+        openPassiveControlHost(target);
       } else if (action === 'create-on-host') {
         if (!target.passive) return;
         state.createOnHostTarget = target;
         setCreatePanelOpen(true, 'create-on-host');
+      } else if (action === 'copy-control-url') {
+        await copyControlTunnelUrl(target && target.host);
       }
     });
   }

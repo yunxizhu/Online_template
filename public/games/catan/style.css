@@ -192,6 +192,44 @@
   pointer-events: none;
 }
 
+.catan-hex-img.catan-hex-flash,
+.catan-hex.catan-hex-flash {
+  animation: catan-hex-pulse 0.7s ease-in-out infinite;
+}
+
+.catan-hex-flash-overlay {
+  fill: rgba(255, 236, 100, 0.42);
+  stroke: none;
+  animation: catan-hex-glow 0.7s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.catan-hex-border.catan-hex-flash-border {
+  stroke: #ffe566;
+  stroke-width: 5;
+  filter: drop-shadow(0 0 8px #ffeb3b);
+}
+
+@keyframes catan-hex-pulse {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.45);
+  }
+}
+
+@keyframes catan-hex-glow {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
 .catan-hex-border {
   fill: transparent;
   stroke: rgba(12, 18, 22, 0.9);
@@ -387,6 +425,22 @@
   transform-box: fill-box;
 }
 
+.catan-building-steal {
+  pointer-events: auto !important;
+  animation: catan-steal-pulse 0.9s ease-in-out infinite;
+  filter: drop-shadow(0 0 12px #ff5252) drop-shadow(0 0 4px #fff);
+}
+
+@keyframes catan-steal-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.2);
+  }
+}
+
 .catan-building-flash {
   animation: catan-building-pulse 0.55s ease-in-out infinite;
   filter: drop-shadow(0 0 10px #fff59d) drop-shadow(0 0 4px #ffeb3b);
@@ -414,6 +468,56 @@
   background: rgba(0, 0, 0, 0.55);
   pointer-events: none;
 }
+
+.catan-fx-toast {
+  position: fixed;
+  left: 50%;
+  top: 12%;
+  transform: translateX(-50%);
+  z-index: 45;
+  max-width: min(90vw, 420px);
+  padding: 0.65rem 1.1rem;
+  border-radius: 10px;
+  background: rgba(20, 28, 36, 0.92);
+  border: 1px solid rgba(255, 229, 100, 0.55);
+  color: #ffe9a8;
+  font-size: 1.05rem;
+  font-weight: 750;
+  text-align: center;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
+.catan-cost-tip {
+  position: fixed;
+  z-index: 60;
+  max-width: min(90vw, 280px);
+  padding: 0.55rem 0.75rem;
+  border-radius: 8px;
+  background: rgba(18, 24, 32, 0.96);
+  border: 1px solid rgba(240, 200, 100, 0.45);
+  color: #f0e6d0;
+  font-size: 0.88rem;
+  font-weight: 650;
+  line-height: 1.45;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  white-space: pre-line;
+}
+
+.catan-cost-tip[hidden] {
+  display: none !important;
+}
+
+.catan-cost-tip .tip-title {
+  color: #ffe082;
+  margin-bottom: 0.2rem;
+}
+
+.catan-cost-tip .tip-cost {
+  color: #d8e4ee;
+}
+
 
 .catan-fx-overlay[hidden] {
   display: none !important;

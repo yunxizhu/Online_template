@@ -42,6 +42,7 @@ window.CatanUi = (function () {
   let lastPlayedRollId = null;
   let fxBusy = false;
   let flashVertices = [];
+  let flashHexIds = [];
   let renderOptsCache = null;
 
   function $(id) {
@@ -56,16 +57,29 @@ window.CatanUi = (function () {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  function formatGains(gains) {
-    return RESOURCES.filter((k) => gains && gains[k] > 0)
-      .map((k) => `${RES_LABEL[k]}+${gains[k]}`)
-      .join(' ');
-  }
-
   function setDieFace(el, n) {
     if (!el) return;
     const span = el.querySelector('span') || el;
     span.textContent = String(n);
+  }
+
+  function redrawBoardFx() {
+    if (!lastGame || !window.CatanBoardView) return;
+    window.CatanBoardView.render($('catan-board'), lastGame, {
+      ...(renderOptsCache || {}),
+      flashVertices,
+      flashHexIds,
+    });
+  }
+
+  function setFxCaption(text) {
+    const caption = $('catan-fx-caption');
+    if (caption) caption.textContent = text || '';
+    const bar = $('catan-fx-toast');
+    if (bar) {
+      bar.hidden = !text;
+      bar.textContent = text || '';
+    }
   }
 
   async function playDiceAndProduceFx(game) {
@@ -78,15 +92,15 @@ window.CatanUi = (function () {
     const die1 = $('catan-die-1');
     const die2 = $('catan-die-2');
     const totalEl = $('catan-fx-total');
-    const caption = $('catan-fx-caption');
     if (!overlay) {
       fxBusy = false;
       return;
     }
 
     overlay.hidden = false;
+    overlay.classList.remove('produce-phase');
     if (totalEl) totalEl.textContent = '';
-    if (caption) caption.textContent = '掷骰中…';
+    setFxCaption('掷骰中…');
     die1?.classList.add('rolling');
     die2?.classList.add('rolling');
 
@@ -103,40 +117,52 @@ window.CatanUi = (function () {
     if (totalEl) totalEl.textContent = `合计 ${roll.total}`;
 
     if (roll.total === 7) {
-      if (caption) caption.textContent = '掷出 7！强盗出动';
+      setFxCaption('掷出 7！强盗出动');
       await sleep(900);
-    } else {
-      const prod = game.lastProduction;
-      const list = (prod && prod.players) || [];
-      if (!list.length) {
-        if (caption) caption.textContent = '本回合无人获得资源';
-        await sleep(800);
-      } else {
-        for (const entry of list) {
-          flashVertices = entry.vertices || [];
-          if (caption) {
-            caption.textContent = `${entry.name} 获得 ${formatGains(entry.gains) || '资源'}`;
-          }
-          // 重绘棋盘以应用闪烁
-          if (lastGame && window.CatanBoardView) {
-            window.CatanBoardView.render($('catan-board'), lastGame, {
-              ...(renderOptsCache || {}),
-              flashVertices,
-            });
-          }
-          await sleep(1100);
-        }
-        flashVertices = [];
-        if (lastGame && window.CatanBoardView) {
-          window.CatanBoardView.render($('catan-board'), lastGame, {
-            ...(renderOptsCache || {}),
-            flashVertices: [],
-          });
-        }
-      }
+      overlay.hidden = true;
+      setFxCaption('');
+      fxBusy = false;
+      return;
     }
 
+    // 骰子定格后收起遮罩，让地图动画可见
+    await sleep(450);
     overlay.hidden = true;
+    overlay.classList.add('produce-phase');
+
+    const prod = game.lastProduction;
+    const list = (prod && prod.players) || [];
+    const hexIds =
+      (prod && prod.hexIds && prod.hexIds.length
+        ? prod.hexIds
+        : list.reduce((acc, e) => acc.concat(e.hexIds || []), [])) || [];
+
+    if (!list.length && !hexIds.length) {
+      setFxCaption('');
+      fxBusy = false;
+      return;
+    }
+
+    // 1) 先闪对应产出板块
+    flashHexIds = hexIds.slice();
+    flashVertices = [];
+    setFxCaption('');
+    redrawBoardFx();
+    await sleep(1400);
+
+    // 2) 再按玩家逐个闪村/城（不弹获得提示）
+    flashHexIds = [];
+    for (const entry of list) {
+      flashVertices = entry.vertices || [];
+      redrawBoardFx();
+      await sleep(1200);
+    }
+
+    flashVertices = [];
+    flashHexIds = [];
+    redrawBoardFx();
+    setFxCaption('');
+    overlay.classList.remove('produce-phase');
     fxBusy = false;
   }
 
@@ -285,6 +311,7 @@ window.CatanUi = (function () {
 
   function autoBuildMode(game) {
     if (!game || game.over) return null;
+    if (pendingRobberHex != null && game.phase === 'robber') return 'steal';
     if (game.phase === 'setupSettlement') return 'settlement';
     if (game.phase === 'setupRoad') return 'road';
     if (game.phase === 'robber') return 'robber';
@@ -295,6 +322,18 @@ window.CatanUi = (function () {
       return 'road';
     }
     return buildMode;
+  }
+
+  function stealTargetVertices(game, hexId) {
+    const list = [];
+    if (!game || hexId == null) return list;
+    for (const [vid, b] of Object.entries(game.buildings || {})) {
+      const v = game.board.vertices[vid];
+      if (!v || !v.hexIds.includes(hexId)) continue;
+      if (b.playerId === meId) continue;
+      list.push(vid);
+    }
+    return list;
   }
 
   function fillResSelect(sel, selected) {
@@ -358,23 +397,27 @@ window.CatanUi = (function () {
       send('buildCity', { vertexId: pick.vertexId });
     } else if (pick.kind === 'road') {
       send('buildRoad', { edgeId: pick.edgeId });
+    } else if (pick.kind === 'steal') {
+      if (pendingRobberHex == null) return;
+      const b = lastGame.buildings && lastGame.buildings[pick.vertexId];
+      if (!b || b.playerId === meId) return;
+      send('moveRobber', {
+        hexId: pendingRobberHex,
+        stealFromId: b.playerId,
+        vertexId: pick.vertexId,
+      });
+      pendingRobberHex = null;
+      const modal = $('catan-steal-modal');
+      if (modal) modal.hidden = true;
     } else if (pick.kind === 'robber') {
       pendingRobberHex = pick.hexId;
-      const victims = [];
-      for (const [vid, b] of Object.entries(lastGame.buildings || {})) {
-        const v = lastGame.board.vertices[vid];
-        if (!v || !v.hexIds.includes(pick.hexId)) continue;
-        if (b.playerId === meId) continue;
-        if (!victims.includes(b.playerId)) victims.push(b.playerId);
-      }
-      if (victims.length <= 1) {
-        send('moveRobber', {
-          hexId: pick.hexId,
-          stealFromId: victims[0] || null,
-        });
+      const targets = stealTargetVertices(lastGame, pick.hexId);
+      if (targets.length === 0) {
+        send('moveRobber', { hexId: pick.hexId, stealFromId: null });
         pendingRobberHex = null;
       } else {
-        showStealModal(victims);
+        // 哪怕只有一个目标，也要点村/城确认
+        if (lastGame) render(lastGame, netRef, { meId });
       }
     }
   }
@@ -670,10 +713,18 @@ window.CatanUi = (function () {
         };
       }
       if (game.phase === 'robber') {
+        if (pendingRobberHex != null) {
+          return {
+            yours: true,
+            title: '轮到你',
+            text: '请点击该地形旁的对方定居点或城市，确认掠夺目标',
+            flashBtn: 'btn-catan-mode-robber',
+          };
+        }
         return {
           yours: true,
           title: '轮到你',
-          text: '请点击一块地形移动强盗，必要时选择掠夺对象',
+          text: '请点击一块地形移动强盗；有人可抢时再点其村/城确认',
           flashBtn: 'btn-catan-mode-robber',
         };
       }
@@ -754,6 +805,7 @@ window.CatanUi = (function () {
     if (!game || game.type !== 'catan') return;
     lastGame = game;
     meId = opts && opts.meId;
+    if (game.phase !== 'robber') pendingRobberHex = null;
     const playerNameById =
       (opts && opts.playerNameById) ||
       ((id) => {
@@ -795,6 +847,12 @@ window.CatanUi = (function () {
       playerLabels: playerLabels(game),
       onPick: onBoardPick,
       flashVertices,
+      flashHexIds,
+      stealTargets:
+        pendingRobberHex != null
+          ? stealTargetVertices(game, pendingRobberHex)
+          : [],
+      pendingRobberHexId: pendingRobberHex,
     };
     if (window.CatanBoardView) {
       window.CatanBoardView.render($('catan-board'), game, renderOptsCache);
@@ -854,7 +912,14 @@ window.CatanUi = (function () {
       } else if (game.phase === 'setupRoad' && game.currentPlayerId === meId) {
         hint.textContent = tKey('catan.hintRoad', '点击高亮边放置道路');
       } else if (game.phase === 'robber' && game.currentPlayerId === meId) {
-        hint.textContent = tKey('catan.hintRobber', '点击地形移动强盗');
+        if (pendingRobberHex != null) {
+          hint.textContent = tKey(
+            'catan.hintSteal',
+            '点击闪烁的对方定居点或城市，确认掠夺'
+          );
+        } else {
+          hint.textContent = tKey('catan.hintRobber', '点击地形移动强盗');
+        }
       } else if (mode === 'settlement') {
         hint.textContent = tKey('catan.hintSettle', '点击高亮顶点放置定居点');
       } else if (mode === 'city') {
@@ -915,6 +980,148 @@ window.CatanUi = (function () {
     }
   }
 
+  const DEFAULT_COSTS = {
+    road: { brick: 1, lumber: 1 },
+    settlement: { brick: 1, lumber: 1, wool: 1, grain: 1 },
+    city: { grain: 2, ore: 3 },
+    dev: { wool: 1, grain: 1, ore: 1 },
+  };
+
+  function formatCost(cost) {
+    if (!cost) return '';
+    return RESOURCES.filter((k) => cost[k] > 0)
+      .map((k) => `${RES_LABEL[k]}×${cost[k]}`)
+      .join(' ');
+  }
+
+  function getCosts() {
+    return (lastGame && lastGame.costs) || DEFAULT_COSTS;
+  }
+
+  function tipTextForButton(id) {
+    const costs = getCosts();
+    switch (id) {
+      case 'btn-catan-mode-settle':
+        return {
+          title: '建造定居点',
+          cost: `消耗：${formatCost(costs.settlement)}`,
+        };
+      case 'btn-catan-mode-city':
+        return {
+          title: '升级城市',
+          cost: `消耗：${formatCost(costs.city)}（需已有定居点）`,
+        };
+      case 'btn-catan-mode-road':
+        return {
+          title: '修建道路',
+          cost: `消耗：${formatCost(costs.road)}`,
+        };
+      case 'btn-catan-buy-dev':
+        return {
+          title: '购买发展卡',
+          cost: `消耗：${formatCost(costs.dev)}`,
+        };
+      case 'btn-catan-roll':
+        return { title: '掷骰', cost: '无消耗，开始本回合' };
+      case 'btn-catan-end':
+        return { title: '结束回合', cost: '无消耗，轮到下一位玩家' };
+      case 'btn-catan-mode-robber':
+        return {
+          title: '移动强盗',
+          cost: '先点地形，再点对方村/城确认掠夺',
+        };
+      case 'btn-catan-bank': {
+        const give = $('catan-bank-give') && $('catan-bank-give').value;
+        const rate =
+          (lastGame &&
+            lastGame.you &&
+            lastGame.you.bankRates &&
+            give &&
+            lastGame.you.bankRates[give]) ||
+          4;
+        const giveLabel = RES_LABEL[give] || '资源';
+        return {
+          title: '银行贸易',
+          cost: `交出 ${rate} 张${giveLabel}，换取 1 张所选资源`,
+        };
+      }
+      case 'btn-catan-offer':
+        return {
+          title: '发起玩家交易',
+          cost: '按你设置的给出/想要资源报价',
+        };
+      case 'btn-catan-discard':
+        return { title: '确认弃牌', cost: '掷出 7 时资源>7 须弃半' };
+      default:
+        return null;
+    }
+  }
+
+  function showCostTip(el, tip) {
+    const box = $('catan-cost-tip');
+    if (!box || !tip || !el) return;
+    box.innerHTML = `<div class="tip-title">${escapeHtml(tip.title)}</div><div class="tip-cost">${escapeHtml(tip.cost)}</div>`;
+    box.hidden = false;
+    const rect = el.getBoundingClientRect();
+    const pad = 8;
+    let left = rect.left;
+    let top = rect.bottom + pad;
+    box.style.left = '0px';
+    box.style.top = '0px';
+    const tw = box.offsetWidth || 200;
+    const th = box.offsetHeight || 48;
+    if (left + tw > window.innerWidth - 8) left = window.innerWidth - tw - 8;
+    if (left < 8) left = 8;
+    if (top + th > window.innerHeight - 8) top = rect.top - th - pad;
+    if (top < 8) top = 8;
+    box.style.left = `${left}px`;
+    box.style.top = `${top}px`;
+  }
+
+  function hideCostTip() {
+    const box = $('catan-cost-tip');
+    if (box) box.hidden = true;
+  }
+
+  function bindCostTips() {
+    const ids = [
+      'btn-catan-roll',
+      'btn-catan-buy-dev',
+      'btn-catan-end',
+      'btn-catan-mode-settle',
+      'btn-catan-mode-city',
+      'btn-catan-mode-road',
+      'btn-catan-mode-robber',
+      'btn-catan-bank',
+      'btn-catan-offer',
+      'btn-catan-discard',
+    ];
+    for (const id of ids) {
+      const el = $(id);
+      if (!el || el.dataset.costTipBound === '1') continue;
+      el.dataset.costTipBound = '1';
+      el.addEventListener('mouseenter', () => {
+        const tip = tipTextForButton(id);
+        if (tip) showCostTip(el, tip);
+      });
+      el.addEventListener('mousemove', (ev) => {
+        const box = $('catan-cost-tip');
+        if (!box || box.hidden) return;
+        // 轻微跟随，避免挡住按钮
+        const tw = box.offsetWidth || 200;
+        const th = box.offsetHeight || 48;
+        let left = ev.clientX + 14;
+        let top = ev.clientY + 16;
+        if (left + tw > window.innerWidth - 8) left = ev.clientX - tw - 14;
+        if (top + th > window.innerHeight - 8) top = ev.clientY - th - 12;
+        box.style.left = `${Math.max(8, left)}px`;
+        box.style.top = `${Math.max(8, top)}px`;
+      });
+      el.addEventListener('mouseleave', hideCostTip);
+      el.addEventListener('blur', hideCostTip);
+    }
+  }
+
   function bindButtons(net) {
     netRef = net;
     if (bound) return;
@@ -922,6 +1129,7 @@ window.CatanUi = (function () {
 
     fillResSelect($('catan-bank-give'));
     fillResSelect($('catan-bank-want'));
+    bindCostTips();
 
     $('btn-catan-roll')?.addEventListener('click', () => send('roll', {}));
     $('btn-catan-buy-dev')?.addEventListener('click', () => send('buyDev', {}));

@@ -177,6 +177,8 @@ class MqttBulletin {
     getLobbyPeople,
     ensureTunnelUrl,
     peekTunnelUrl,
+    ensureControlTunnelUrl,
+    peekControlTunnelUrl,
     onChange,
     onChat,
     onInvite,
@@ -195,6 +197,10 @@ class MqttBulletin {
     this.getLobbyPeople = getLobbyPeople || (() => []);
     this.ensureTunnelUrl = ensureTunnelUrl || (async () => null);
     this.peekTunnelUrl = peekTunnelUrl || (() => '');
+    this.ensureControlTunnelUrl =
+      ensureControlTunnelUrl || ensureTunnelUrl || (async () => null);
+    this.peekControlTunnelUrl =
+      peekControlTunnelUrl || peekTunnelUrl || (() => '');
     this.onChange = onChange || (() => {});
     this.onChat = onChat || (() => {});
     this.onInvite = onInvite || (() => {});
@@ -405,6 +411,15 @@ class MqttBulletin {
     const raw =
       (knownUrl && String(knownUrl)) ||
       (this.peekTunnelUrl && this.peekTunnelUrl()) ||
+      '';
+    return String(raw).replace(/\/$/, '');
+  }
+
+  #peekControlUrl(knownUrl) {
+    const raw =
+      (knownUrl && String(knownUrl)) ||
+      (this.peekControlTunnelUrl && this.peekControlTunnelUrl()) ||
+      this.#peekUrl() ||
       '';
     return String(raw).replace(/\/$/, '');
   }
@@ -885,10 +900,16 @@ class MqttBulletin {
     timeoutMs = 90000,
     onProgress,
     skipTouchLogin = false,
+    preferControlTunnel = false,
   } = {}) {
     if (!this.enabled || !this._started) {
       return { ok: true, reason: 'disabled' };
     }
+    const peek = () =>
+      preferControlTunnel ? this.#peekControlUrl() : this.#peekUrl();
+    const ensure = preferControlTunnel
+      ? this.ensureControlTunnelUrl
+      : this.ensureTunnelUrl;
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       if (!this.#mqttUp()) {
@@ -896,8 +917,7 @@ class MqttBulletin {
         await this.#sleep(300);
         continue;
       }
-      const tunnelUrl =
-        this.#peekUrl() || (await this.ensureTunnelUrl()) || '';
+      const tunnelUrl = peek() || (await ensure()) || '';
       if (!tunnelUrl) {
         if (onProgress) onProgress('tunnel');
         await this.#sleep(400);
@@ -1216,8 +1236,10 @@ class MqttBulletin {
       return;
     }
     const first = people[0];
-    const tunnelUrl = this.#peekUrl() || '';
     const anyPassive = people.some((p) => p.passive);
+    const tunnelUrl = anyPassive
+      ? this.#peekControlUrl() || this.#peekUrl() || ''
+      : this.#peekUrl() || '';
     this.#pub(this.#loginTopic(), {
       app: APP_SIGNATURE,
       instanceId: this.instanceId,

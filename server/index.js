@@ -10,7 +10,7 @@ const { RoomManager, fullRoomView } = require('./rooms');
 const { listGames, getGame } = require('./games');
 const { syncTurnTimer, clearTurnTimer } = require('./turnTimer');
 const { MqttBulletin, ROOM_OFFLINE_MS } = require('./mqttBulletin');
-const { QuickTunnel } = require('./tunnel');
+const { QuickTunnel, createControlTunnel } = require('./tunnel');
 const { HostUpdateChecker } = require('./updateChecker');
 const { HostOccupancy } = require('./hostOccupancy');
 const { TunnelNickMemory } = require('./tunnelNickMemory');
@@ -330,7 +330,7 @@ function isPassiveController(socket, sessionId) {
 function emitPassiveControlUpdate(extraSocket = null) {
   const payload = {
     controller: getPassiveControllerPayload(),
-    publicUrl: tunnel ? tunnel.getPublicUrl() : null,
+    publicUrl: getPassiveShareUrl() || null,
     passiveMode: hasPassiveHost(),
   };
   for (const p of listPassiveHostPlayers()) {
@@ -418,7 +418,10 @@ function findLiveSessionPeer(sessionId, exceptSocketId) {
 
 const rooms = new RoomManager();
 let mqttBulletin = null;
+/** 房间隧道：MQTT 进房 / 对局；可探活换址、可房主重开换址 */
 let tunnel = null;
+/** 被动控制隧道：分享入口；运行期尽量不换址；可选命名隧道跨重启固定 */
+let controlTunnel = null;
 
 /** 实例对外展示名：取大厅内第一个玩家，无玩家则为空（空实例不出现在他人大厅） */
 function currentDisplayName() {
@@ -496,7 +499,10 @@ app.get('/api/info', (_req, res) => {
     instanceId: INSTANCE_ID,
     mqttBulletin: Boolean(mqttBulletin && mqttBulletin.enabled),
     mqttConnected: mqttBulletin ? mqttBulletin.isConnected() : false,
-    publicUrl: tunnel ? tunnel.getPublicUrl() : null,
+    publicUrl: getControlPublicUrl() || getRoomPublicUrl() || null,
+    controlUrl: getControlPublicUrl() || null,
+    roomUrl: getRoomPublicUrl() || null,
+    controlTunnelNamed: Boolean(controlTunnel && controlTunnel.isNamed()),
     games: listGames(),
     version: hostUpdate.getLocalVersion(),
     updateEnabled: !hostUpdate.disabled,
@@ -635,8 +641,10 @@ function resolveRoomRemote(roomId) {
 
 function buildLobbyPayload() {
   const localHost = localBaseUrl();
-  const publicUrl = tunnel ? tunnel.getPublicUrl() : null;
-  const advertiseHost = publicUrl || localHost;
+  const roomUrl = getRoomPublicUrl() || null;
+  const controlUrl = getControlPublicUrl() || null;
+  const advertiseHost = roomUrl || localHost;
+  const passiveHost = controlUrl || roomUrl || localHost;
   const localRooms = rooms.listLobbyRooms().map((room) => ({
     ...room,
     host: advertiseHost,
@@ -649,7 +657,7 @@ function buildLobbyPayload() {
   const localPeople = rooms.listLobbyPeople().map((p) => ({
     ...p,
     local: true,
-    host: p.passive ? advertiseHost : localHost,
+    host: p.passive ? passiveHost : localHost,
   }));
   const remotePeople = mqttBulletin ? mqttBulletin.getRemotePeople() : [];
   const people = mergeLobbyPeople(localPeople, remotePeople);
@@ -668,7 +676,9 @@ function buildLobbyPayload() {
     ),
     mqttAllBrokersDownMessage:
       (mqttBulletin && mqttBulletin.getStatus().allBrokersDownMessage) || '',
-    publicUrl,
+    publicUrl: controlUrl || roomUrl,
+    controlUrl,
+    roomUrl,
     games: listGames(),
     // 含已代开进观战席的被动主机：隧道访客仍可操控/观战/聊天
     passiveMode: hasPassiveHost(),
@@ -1054,20 +1064,20 @@ function hasActiveHostedRoom() {
 }
 
 /**
- * 无活跃房间时：不关掉隧道，后台确保公网地址就绪，避免下次开房冷启动很慢。
+ * 无活跃房间时：不关掉房间隧道，后台确保公网地址就绪，避免下次开房冷启动很慢。
  */
 function prepareTunnelIfIdle() {
   if (hasActiveHostedRoom()) return;
   setImmediate(() => {
     if (hasActiveHostedRoom()) return;
-    console.log('[tunnel] 房间已空闲，后台准备下次开房隧道…');
+    console.log('[tunnel:room] 房间已空闲，后台准备下次开房隧道…');
     ensurePublicTunnelUrl()
       .then((url) => {
-        if (url) console.log('[tunnel] 下次开房隧道已就绪');
+        if (url) console.log('[tunnel:room] 下次开房隧道已就绪');
       })
       .catch((err) => {
         console.warn(
-          '[tunnel] 空闲预热失败:',
+          '[tunnel:room] 空闲预热失败:',
           err && err.message ? err.message : err
         );
       });
@@ -1077,6 +1087,19 @@ function prepareTunnelIfIdle() {
 /** @deprecated 兼容旧名：现为预热而非停止 */
 function stopTunnelIfIdle() {
   prepareTunnelIfIdle();
+}
+
+function getRoomPublicUrl() {
+  return (tunnel && tunnel.getPublicUrl()) || '';
+}
+
+function getControlPublicUrl() {
+  return (controlTunnel && controlTunnel.getPublicUrl()) || '';
+}
+
+/** 被动分享 / 远程操控入口（优先控制隧道） */
+function getPassiveShareUrl() {
+  return getControlPublicUrl() || getRoomPublicUrl() || '';
 }
 
 function tunnelIsProtected() {
@@ -1094,7 +1117,7 @@ function attachTunnelHooks(t) {
         mqttBulletin.getLastKnownHost()) ||
       '';
     if (mqttBulletin && mqttBulletin.enabled) {
-      // 新隧道到手：立刻把本机对局挂到新地址并重发心跳
+      // 新房间隧道到手：立刻把本机对局挂到新地址并重发心跳
       mqttBulletin.flushIfReady(url, { skipWarmup: true });
     }
     const wasLost = tunnelHadLost;
@@ -1125,24 +1148,64 @@ function attachTunnelHooks(t) {
   return t;
 }
 
+function attachControlTunnelHooks(t) {
+  if (!t) return t;
+  // 控制隧道默认不因探活换址；命名隧道可重启进程但地址不变
+  t.shouldProtect = () => true;
+  t.onUrl = (url) => {
+    console.log('[tunnel:control] 控制入口就绪:', url || '');
+    emitPassiveControlUpdate();
+    if (mqttBulletin && mqttBulletin.enabled) {
+      mqttBulletin.touchLogin().catch(() => {});
+    }
+    emitLobbyUpdate();
+  };
+  t.onLost = () => {
+    // 不影响房间隧道；快速控制隧道换址前短暂不可达
+    console.warn('[tunnel:control] 控制隧道中断，正在重连…');
+    emitPassiveControlUpdate();
+  };
+  return t;
+}
+
 async function ensurePublicTunnelUrl() {
-  if (!tunnel) tunnel = attachTunnelHooks(new QuickTunnel());
+  if (!tunnel) tunnel = attachTunnelHooks(new QuickTunnel({ label: 'room' }));
   await tunnel.ensure(PORT);
   return tunnel.getPublicUrl() || '';
 }
 
-/** 服务启动后在后台预热隧道，不阻塞 HTTP/MQTT 监听 */
+async function ensureControlTunnelUrl() {
+  if (!controlTunnel) {
+    controlTunnel = attachControlTunnelHooks(createControlTunnel());
+  } else if (controlTunnel._stopped) {
+    controlTunnel._stopped = false;
+  }
+  await controlTunnel.ensure(PORT);
+  return controlTunnel.getPublicUrl() || '';
+}
+
+function stopControlTunnel() {
+  if (!controlTunnel) return;
+  try {
+    controlTunnel.stop();
+  } catch (_) {
+    /* ignore */
+  }
+  controlTunnel = null;
+}
+
+/** 服务启动后在后台预热房间隧道，不阻塞 HTTP/MQTT 监听 */
 function warmupTunnelInBackground() {
   if (!mqttBulletin || !mqttBulletin.enabled) return;
   setImmediate(() => {
-    console.log('[tunnel] 后台预热中…');
+    console.log('[tunnel:room] 后台预热中…');
     ensurePublicTunnelUrl()
       .then((url) => {
-        if (url) console.log('[tunnel] 后台预热完成');
+        if (url) console.log('[tunnel:room] 后台预热完成');
       })
       .catch((err) => {
         console.warn(
-          '[tunnel] 后台预热失败:',
+          '[tunnel:room] 后台预热失败:',
           err && err.message ? err.message : err
         );
       });
@@ -1205,7 +1268,7 @@ function emitPlayerMe(socket, player, fallbackName) {
     canControlPassive: controllingPassive,
     controllingPassive,
     passiveController: getPassiveControllerPayload(),
-    publicUrl: tunnel ? tunnel.getPublicUrl() : null,
+    publicUrl: getPassiveShareUrl() || null,
   });
 }
 
@@ -2339,7 +2402,7 @@ io.on('connection', (socket) => {
 
     try {
       progress('正在重建公网隧道…');
-      if (!tunnel) tunnel = attachTunnelHooks(new QuickTunnel());
+      if (!tunnel) tunnel = attachTunnelHooks(new QuickTunnel({ label: 'room' }));
       let publicUrl = '';
       if (typeof tunnel.forceRotateAndWait === 'function') {
         publicUrl = await tunnel.forceRotateAndWait('host-reopen');
@@ -2556,7 +2619,7 @@ io.on('connection', (socket) => {
       const p = rooms.getPlayer(socket.id);
       socket.emit('lobby:passive', {
         passive: Boolean(p && p.passive),
-        publicUrl: tunnel ? tunnel.getPublicUrl() : null,
+        publicUrl: getPassiveShareUrl() || null,
         controller: getPassiveControllerPayload(),
       });
       return;
@@ -2579,7 +2642,7 @@ io.on('connection', (socket) => {
         });
         socket.emit('lobby:passive', {
           passive: true,
-          publicUrl: tunnel ? tunnel.getPublicUrl() : null,
+          publicUrl: getPassiveShareUrl() || null,
           controller: getPassiveControllerPayload(),
         });
         return;
@@ -2610,12 +2673,14 @@ io.on('connection', (socket) => {
         socket.emit('lobby:error', { message: result.error });
         socket.emit('lobby:passive', {
           passive: Boolean(p && p.passive),
-          publicUrl: tunnel ? tunnel.getPublicUrl() : null,
+          publicUrl: getPassiveShareUrl() || null,
           controller: getPassiveControllerPayload(),
         });
         return;
       }
       clearPassiveController({ silent: true });
+      // 退出被动后停掉控制隧道，房间隧道保留给后续开房
+      if (!hasPassiveHost()) stopControlTunnel();
       socket.emit('lobby:passive', {
         passive: false,
         publicUrl: null,
@@ -2627,12 +2692,12 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // 开启被动：公网隧道就绪前不设标记、不发被动心跳
+    // 开启被动：控制隧道就绪前不设标记、不发被动心跳
     const already = rooms.getPlayer(socket.id);
     if (already && already.passive) {
       socket.emit('lobby:passive', {
         passive: true,
-        publicUrl: tunnel ? tunnel.getPublicUrl() : null,
+        publicUrl: getPassiveShareUrl() || null,
         controller: getPassiveControllerPayload(),
       });
       emitPassiveControlUpdate(socket);
@@ -2657,26 +2722,32 @@ io.on('connection', (socket) => {
           let message = '正在进入被动模式…';
           if (phase === 'mqtt') message = '正在进入被动模式…（连接广播）';
           else if (phase === 'tunnel') {
-            message = '正在进入被动模式…（准备公网隧道）';
+            message = '正在进入被动模式…（准备控制隧道）';
           } else if (phase === 'tunnel-warmup') {
-            message = '正在进入被动模式…（隧道就绪中）';
+            message = '正在进入被动模式…（控制隧道就绪中）';
           }
           socket.emit('lobby:passiveProgress', { message });
         };
         progress('tunnel');
-        await ensurePublicTunnelUrl();
+        // 控制隧道：分享入口；房间隧道并行预热，开房时不必再等
+        await Promise.all([
+          ensureControlTunnelUrl(),
+          ensurePublicTunnelUrl().catch(() => ''),
+        ]);
         const ready = await mqttBulletin.waitForInfrastructureReady({
           timeoutMs: 90000,
           onProgress: progress,
           skipTouchLogin: true,
+          preferControlTunnel: true,
         });
         if (!socket.data.passivePreparing) return;
         if (!ready.ok) {
-          throw new Error(ready.message || '公网隧道准备失败');
+          throw new Error(ready.message || '控制隧道准备失败');
         }
       } else {
         try {
-          await ensurePublicTunnelUrl();
+          await ensureControlTunnelUrl();
+          await ensurePublicTunnelUrl().catch(() => '');
         } catch (_) {
           /* 无 MQTT 时隧道可选 */
         }
@@ -2686,6 +2757,7 @@ io.on('connection', (socket) => {
       const result = rooms.setPlayerPassive(socket.id, true);
       socket.data.passivePreparing = false;
       if (!result.ok) {
+        if (!hasPassiveHost()) stopControlTunnel();
         socket.emit('lobby:error', { message: result.error });
         socket.emit('lobby:passive', {
           passive: false,
@@ -2696,7 +2768,7 @@ io.on('connection', (socket) => {
       }
       socket.emit('lobby:passive', {
         passive: true,
-        publicUrl: tunnel ? tunnel.getPublicUrl() : null,
+        publicUrl: getPassiveShareUrl() || null,
         controller: getPassiveControllerPayload(),
       });
       // 已在大厅的隧道访客：立刻授予操控权
@@ -2719,6 +2791,7 @@ io.on('connection', (socket) => {
       socket.data.passivePreparing = false;
       const still = rooms.getPlayer(socket.id);
       if (still) still.passive = false;
+      if (!hasPassiveHost()) stopControlTunnel();
       socket.emit('lobby:error', {
         message: (err && err.message) || '进入被动模式失败',
       });
@@ -2846,7 +2919,8 @@ io.on('connection', (socket) => {
 
     broadcastInviteLocal(msg, socket.id);
     if (mqttBulletin && mqttBulletin.enabled) {
-      const advertiseHost = tunnel ? (tunnel.getPublicUrl() || localBaseUrl()) : localBaseUrl();
+      const advertiseHost =
+        getRoomPublicUrl() || localBaseUrl();
       mqttBulletin.publishInvite({ ...msg, host: advertiseHost });
     }
   });
@@ -3133,7 +3207,9 @@ mqttBulletin = new MqttBulletin({
   getLobbyPeople: () => rooms.listLobbyPeople(),
   getHostedRooms: () => hostedBeaconRooms(),
   ensureTunnelUrl: ensurePublicTunnelUrl,
-  peekTunnelUrl: () => (tunnel && tunnel.getPublicUrl()) || '',
+  peekTunnelUrl: () => getRoomPublicUrl(),
+  ensureControlTunnelUrl,
+  peekControlTunnelUrl: () => getControlPublicUrl(),
   onChange: () => {
     onRosterChange();
     nudgeStaleTunnelPlayers();
@@ -3161,7 +3237,7 @@ mqttBulletin = new MqttBulletin({
 });
 
 if (mqttBulletin && mqttBulletin.enabled) {
-  tunnel = attachTunnelHooks(new QuickTunnel());
+  tunnel = attachTunnelHooks(new QuickTunnel({ label: 'room' }));
 }
 
 server.on('error', (err) => {
@@ -3177,6 +3253,11 @@ server.on('error', (err) => {
 function shutdownCleanup() {
   try {
     if (mqttBulletin) mqttBulletin.stop();
+  } catch (_) {
+    /* ignore */
+  }
+  try {
+    if (controlTunnel) controlTunnel.stop();
   } catch (_) {
     /* ignore */
   }
