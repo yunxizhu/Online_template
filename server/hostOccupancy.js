@@ -1,10 +1,12 @@
 'use strict';
 
 /**
- * 主机占用锁：同一进程同时只允许一个「大厅占用者」会话。
- * 进房通行（有效 roomId / 座位重连）不抢占。
- * 占用者断线且无同 session 存活连接时立即释放。
+ * 主机占用锁（已关闭）：允许多设备共用同一端口进大厅 / 开房。
+ * 保留类接口，避免 index.js 大改；ENABLED=false 时不互斥、不记录占用者。
+ * 若需恢复「同端口仅一人占用」，将 ENABLED 改为 true。
  */
+const ENABLED = false;
+
 class HostOccupancy {
   constructor({ onRelease } = {}) {
     /** @type {{ sessionId: string, socketId: string, name: string, tag: string }|null} */
@@ -13,6 +15,10 @@ class HostOccupancy {
   }
 
   clear({ silent = false } = {}) {
+    if (!ENABLED) {
+      this.owner = null;
+      return;
+    }
     const had = Boolean(this.owner);
     this.owner = null;
     if (had && !silent && this.onRelease) {
@@ -59,7 +65,7 @@ class HostOccupancy {
   }
 
   getSnapshot() {
-    if (!this.owner) return null;
+    if (!ENABLED || !this.owner) return null;
     return {
       sessionId: this.owner.sessionId,
       socketId: this.owner.socketId,
@@ -70,6 +76,7 @@ class HostOccupancy {
   }
 
   isOwner(sessionId, socketId) {
+    if (!ENABLED) return false;
     if (!this.owner) return false;
     const sid = this.#sessionKey(sessionId);
     if (sid && this.owner.sessionId === sid) return true;
@@ -77,8 +84,9 @@ class HostOccupancy {
     return false;
   }
 
-  /** 是否已被他人占用 */
+  /** 是否已被他人占用（关闭占用锁时永不拦截） */
   isBlockedFor(sessionId, socketId) {
+    if (!ENABLED) return false;
     if (!this.owner) return false;
     return !this.isOwner(sessionId, socketId);
   }
@@ -87,6 +95,7 @@ class HostOccupancy {
    * 认领或续占。已有他人占用时返回 false（force 时强制接管）。
    */
   claim(sessionId, socketId, { force = false, name, tag } = {}) {
+    if (!ENABLED) return true;
     const sid = this.#sessionKey(sessionId) || `sock:${socketId}`;
     if (!force && this.owner && !this.isOwner(sessionId, socketId)) {
       return false;
@@ -108,6 +117,7 @@ class HostOccupancy {
    * @returns {'transferred'|'released'|'noop'}
    */
   transferOrRelease(sessionId, nextSocketId, meta = {}) {
+    if (!ENABLED) return 'noop';
     if (!this.owner) return 'noop';
     if (nextSocketId) {
       this.claim(sessionId, nextSocketId, {
@@ -136,4 +146,6 @@ class HostOccupancy {
 
 module.exports = {
   HostOccupancy,
+  /** @deprecated 仅供调试；改 ENABLED 常量以开关 */
+  HOST_OCCUPANCY_ENABLED: ENABLED,
 };

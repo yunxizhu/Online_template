@@ -142,9 +142,11 @@ window.GameBoot = (function () {
           ? 'SgsUi'
           : id === 'incan'
             ? 'IncanUi'
-            : id === 'gomoku'
-              ? 'GomokuBoard'
-              : null;
+            : id === 'catan'
+              ? 'CatanUi'
+              : id === 'gomoku'
+                ? 'GomokuBoard'
+                : null;
     if (needGlobal && !window[needGlobal]) {
       for (const src of scriptUrls) {
         const el = findAssetEl('script', src);

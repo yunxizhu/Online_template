@@ -1068,6 +1068,45 @@ console.log('— special area unlock every 2 rounds —');
   console.log('✓ special area unlock schedule');
 }
 
+console.log('— easy start unlock + starting hand —');
+{
+  const {
+    areaOpenSlotCount,
+    specialSlotUnlockRound,
+    resourceSlotUnlockRound,
+    maxResourceHandFor,
+  } = require('../engine');
+  assert.strictEqual(specialSlotUnlockRound(1, true), 1);
+  assert.strictEqual(specialSlotUnlockRound(3, true), 1);
+  assert.strictEqual(specialSlotUnlockRound(4, true), 3);
+  assert.strictEqual(areaOpenSlotCount('special', 1, true), 3);
+  assert.strictEqual(areaOpenSlotCount('special', 3, true), 4);
+  assert.strictEqual(resourceSlotUnlockRound(1, 1, true), 1);
+  assert.strictEqual(resourceSlotUnlockRound(3, 1, true), 1);
+  assert.strictEqual(resourceSlotUnlockRound(4, 1, true), 2);
+  assert.strictEqual(resourceSlotUnlockRound(5, 1, true), 3);
+  const ge = createGameState({ ...room(2), easyStart: true });
+  assert.strictEqual(ge.easyStart, true);
+  for (const p of ge.players) {
+    assert.strictEqual(p.funcCards.length, 2);
+    assert.ok(p.funcCards.some((c) => c.funcType === 'harvest'));
+    assert.ok(p.funcCards.some((c) => c.funcType === 'redraw'));
+    assert.strictEqual(maxResourceHandFor(p), 12);
+  }
+  finishInit(ge);
+  assert.strictEqual(ge.board.resource.tiles.length, 9);
+  assert.strictEqual(ge.board.special.tiles.length, 3);
+  const secondSlots = ge.board.resource.tiles.filter(
+    (t) => t.cardIndexOnSlot === 2
+  );
+  assert.strictEqual(secondSlots.length, 3);
+  assert.deepStrictEqual(
+    secondSlots.map((t) => t.number).sort(),
+    [1, 2, 3]
+  );
+  console.log('✓ easy start unlock + starting hand');
+}
+
 assert.ok(Array.isArray(getActingPlayerIds(game)));
 
 console.log('— discard pile then reshuffle —');
@@ -1620,15 +1659,15 @@ assert.strictEqual(p11.buildings.find((b) => b.id === 'rep_b').slot, 'none:1');
   assert.strictEqual(p.expandSlots, 2);
   assert.strictEqual(p.expandFuncSlots, 1);
   assert.strictEqual(p.expandResSlots, 1);
-  assert.strictEqual(maxResourceHandFor(p), 8 + 2, '手牌资源上限 +2');
+  assert.strictEqual(maxResourceHandFor(p), 9 + 3, '手牌资源上限 +3');
   const pub = publicGameState(g, p.id);
   const me = pub.players.find((x) => x.id === p.id);
   assert.strictEqual(me.expandSlots, 2);
   assert.strictEqual(me.expandFuncSlots, 1);
   assert.strictEqual(me.expandResSlots, 1);
-  assert.strictEqual(me.maxResourceHand, 10);
-  assert.strictEqual(me.maxBuildings, 4);
-  assert.strictEqual(me.maxFuncHand, 3);
+  assert.strictEqual(me.maxResourceHand, 12);
+  assert.strictEqual(me.maxBuildings, 5);
+  assert.strictEqual(me.maxFuncHand, 4);
   p.buildings.push({
     id: 'ex_b1',
     label: '集市A',
@@ -10453,6 +10492,102 @@ console.log('— bot build spends full hand instead of empty pass —');
   console.log('✓ bot build spends full hand instead of empty pass');
 }
 
+console.log('— bot builds unbuilt market before other exchanges —');
+{
+  const { decideBotAction } = require('../bot');
+
+  // 现货够：直接建集市
+  {
+    const g = createGameState(room(2));
+    finishInit(g);
+    const bot = g.players[0];
+    g.phase = 'build';
+    g.currentPlayerId = bot.id;
+    g.buildPassed = {};
+    bot.houses = 3;
+    bot.villagers = 4;
+    bot.resources = { wood: 1, stone: 1, food: 1, iron: 0 };
+    bot.buildings = [
+      {
+        id: 'ex1',
+        kind: 'building',
+        buildType: 'exchange',
+        label: '集市',
+        cost: { wood: 1, stone: 1, food: 1 },
+        produce: 0,
+        score: 0,
+        built: false,
+        workers: 0,
+        slot: 1,
+        faceDown: false,
+      },
+    ];
+    bot.funcCards = [];
+    bot.roundBuiltHouse = true;
+    bot.roundBred = true;
+    bot.buildTurnUsedBuyFunc = true;
+    bot.buildTurnBuyFuncCount = 2;
+
+    const act = decideBotAction(g, bot.id, 'hard');
+    assert.strictEqual(act && act.type, 'construct', `应建集市: ${JSON.stringify(act)}`);
+    assert.strictEqual(act.payload && act.payload.buildingId, 'ex1');
+  }
+
+  // 缺 1 粮、粮可从木兑换：应先兑换凑集市，而不是为繁殖/扩建等其它事兑换
+  {
+    const g = createGameState(room(2));
+    finishInit(g);
+    const bot = g.players[0];
+    g.phase = 'build';
+    g.currentPlayerId = bot.id;
+    g.buildPassed = {};
+    bot.houses = 3;
+    bot.villagers = 4; // 满房，人口动作可能想兑换建房——但应先凑集市
+    bot.resources = { wood: 4, stone: 1, food: 0, iron: 0 };
+    bot.buildings = [
+      {
+        id: 'ex2',
+        kind: 'building',
+        buildType: 'exchange',
+        label: '集市',
+        cost: { wood: 1, stone: 1, food: 1 },
+        produce: 0,
+        score: 0,
+        built: false,
+        workers: 0,
+        slot: 1,
+        faceDown: false,
+      },
+    ];
+    bot.funcCards = [];
+    bot.roundBuiltHouse = false;
+    bot.roundBred = true;
+    bot.buildTurnUsedBuyFunc = true;
+    bot.buildTurnBuyFuncCount = 2;
+    bot.houseScore = 0;
+
+    const act = decideBotAction(g, bot.id, 'hard');
+    assert.ok(act, '应有动作');
+    if (act.type === 'construct') {
+      assert.strictEqual(act.payload.buildingId, 'ex2');
+    } else {
+      assert.strictEqual(
+        act.type,
+        'exchange',
+        `缺原料时应兑换凑集市: ${JSON.stringify(act)}`
+      );
+      assert.ok(
+        act.payload &&
+          (act.payload.to === 'food' ||
+            (act.payload.to && act.payload.to.food > 0)),
+        `应兑出粮以建集市: ${JSON.stringify(act.payload)}`
+      );
+    }
+  }
+
+  console.log('✓ bot builds unbuilt market before other exchanges');
+}
+
 console.log('— bot expands resource cap when free slots <= 9 —');
 {
   const { decideBotAction } = require('../bot');
@@ -11346,6 +11481,84 @@ console.log('— bot expands building slots before buy when full —');
     `扩建后应购卡: ${JSON.stringify(act2)}`
   );
   console.log('✓ bot expands building slots before buy when full');
+}
+
+console.log('— bot prefers building expand over resource when slots full —');
+{
+  // 建筑格已满且仅 1 木 1 石：旧逻辑会先扩资源手牌，随后 pass，建筑格未扩
+  const { decideBotAction } = require('../bot');
+  const { maxBuildingsFor } = require('../engine');
+  for (const diff of ['hard', 'normal', 'easy']) {
+    const g = createGameState(room(2));
+    finishInit(g);
+    const bot = g.players[0];
+    g.phase = 'build';
+    g.currentPlayerId = bot.id;
+    g.buildPassed = {};
+    bot.houses = 4;
+    bot.villagers = 6;
+    bot.expandResSlots = 1; // 上限 12，旧逻辑会积极扩资源
+    bot.expandSlots = 0;
+    bot.roundBuiltHouse = true;
+    bot.roundBred = true;
+    bot.roundExpandedResource = false;
+    bot.roundExpandedBuilding = false;
+    bot.buildTurnBuyFuncCount = 2;
+    bot.buildTurnUsedBuyFunc = true;
+    bot.houseScore = 2;
+    bot.buildTurnEntryFreeRes = 8;
+    bot.funcCards = [];
+    bot.buildings = [
+      {
+        id: 'b1',
+        kind: 'building',
+        buildType: 'produce',
+        built: true,
+        resource: 'wood',
+        slot: 'none',
+      },
+      {
+        id: 'b2',
+        kind: 'building',
+        buildType: 'produce',
+        built: true,
+        resource: 'stone',
+        slot: 'none:1',
+      },
+      {
+        id: 'b3',
+        kind: 'building',
+        buildType: 'wishWell',
+        built: true,
+        slot: 'none:2',
+      },
+    ];
+    bot.resources = { wood: 1, stone: 1, food: 0, iron: 0 };
+    assert.ok(
+      bot.buildings.length >= maxBuildingsFor(bot),
+      `${diff} 前置：建筑格应已满`
+    );
+
+    const act = decideBotAction(g, bot.id, diff);
+    assert.strictEqual(
+      act && act.type,
+      'expandPermanent',
+      `${diff} 格满应扩容而非 pass: ${JSON.stringify(act)}`
+    );
+    assert.strictEqual(
+      act.payload && act.payload.direction,
+      'building',
+      `${diff} 应优先扩建筑格而非资源手牌: ${JSON.stringify(act)}`
+    );
+    ok(applyAction(g, bot.id, act));
+    assert.strictEqual(bot.expandSlots, 1, `${diff} 建筑格应 +1`);
+    assert.strictEqual(
+      bot.expandResSlots,
+      1,
+      `${diff} 不应先扩资源手牌`
+    );
+  }
+  console.log('✓ bot prefers building expand over resource when slots full');
 }
 
 console.log('— bot 8/12 still exchange-expands after func cards —');

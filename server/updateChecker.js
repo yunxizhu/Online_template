@@ -5,7 +5,7 @@
  * 允许路径与绿版打包内容对齐（server/public/docs + 启动脚本等；不含 node_modules/node.exe/.tools）。
  * 本地配置（可选）：
  *   update.url  — 一行，manifest URL（覆盖默认）
- *   update.off  — 存在则禁用自动检查
+ *   update.off  — 存在则禁用「启动前 / 大厅后台」自动检查；手动「检查更新」仍可检测并升级
  *
  * 默认走 Gitee（国内可达）：
  *   https://raw.giteeusercontent.com/xiyunzhu/online_template/raw/ota/host-update.json

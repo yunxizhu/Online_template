@@ -521,7 +521,8 @@ app.get('/api/update/status', async (req, res) => {
   const canApply = isHostConsoleRequest(req);
   try {
     if (req.query.refresh === '1' || req.query.check === '1') {
-      await hostUpdate.check({ force: true });
+      // update.off：后台 refresh 不强制联网，仅标记跳过；有 update.off 时用手动 /check
+      await hostUpdate.check({ force: !hostUpdate.disabled });
     }
   } catch (_) {
     /* status 里带 error */
@@ -549,8 +550,9 @@ app.post('/api/update/check', async (req, res) => {
     return res.status(403).json({ ok: false, message: '请在本机浏览器（localhost）操作升级' });
   }
   try {
+    // 手动检查：即使存在 update.off 也强制联网检测（允许手动升级）
     const result = await hostUpdate.check({ force: true });
-    res.json({ ok: true, ...result, canApply: true });
+    res.json({ ok: true, ...result, canApply: true, enabled: !hostUpdate.disabled });
   } catch (err) {
     res.status(500).json({
       ok: false,
@@ -1037,8 +1039,30 @@ function hasActiveHostedRoom() {
   return false;
 }
 
+/**
+ * 无活跃房间时：不关掉隧道，后台确保公网地址就绪，避免下次开房冷启动很慢。
+ */
+function prepareTunnelIfIdle() {
+  if (hasActiveHostedRoom()) return;
+  setImmediate(() => {
+    if (hasActiveHostedRoom()) return;
+    console.log('[tunnel] 房间已空闲，后台准备下次开房隧道…');
+    ensurePublicTunnelUrl()
+      .then((url) => {
+        if (url) console.log('[tunnel] 下次开房隧道已就绪');
+      })
+      .catch((err) => {
+        console.warn(
+          '[tunnel] 空闲预热失败:',
+          err && err.message ? err.message : err
+        );
+      });
+  });
+}
+
+/** @deprecated 兼容旧名：现为预热而非停止 */
 function stopTunnelIfIdle() {
-  if (tunnel && !hasActiveHostedRoom()) tunnel.stop();
+  prepareTunnelIfIdle();
 }
 
 function tunnelIsProtected() {
@@ -1095,7 +1119,7 @@ async function ensurePublicTunnelUrl() {
 
 /** 服务启动后在后台预热隧道，不阻塞 HTTP/MQTT 监听 */
 function warmupTunnelInBackground() {
-  if (!mqttBulletin || !mqttBulletin.enabled || !tunnel) return;
+  if (!mqttBulletin || !mqttBulletin.enabled) return;
   setImmediate(() => {
     console.log('[tunnel] 后台预热中…');
     ensurePublicTunnelUrl()
@@ -2096,6 +2120,7 @@ io.on('connection', (socket) => {
       turnTimeSec: data.turnTimeSec,
       allowTrade: data.allowTrade,
       peacefulDev: data.peacefulDev,
+      easyStart: data.easyStart,
       passiveHost: wantPassive && Boolean(operatorId),
       operatorId,
     });
@@ -2275,6 +2300,7 @@ io.on('connection', (socket) => {
       turnTimeSec: oldRoom.turnTimeSec,
       allowTrade: Boolean(oldRoom.allowTrade),
       peacefulDev: oldRoom.peacefulDev !== false,
+      easyStart: oldRoom.easyStart !== false,
     };
     const targets = [];
     for (const p of oldRoom.players || []) {
@@ -2898,6 +2924,7 @@ io.on('connection', (socket) => {
       turnTimeSec: data.turnTimeSec,
       allowTrade: data.allowTrade,
       peacefulDev: data.peacefulDev,
+      easyStart: data.easyStart,
     });
     if (!result.ok) {
       socket.emit('room:error', { message: result.error });

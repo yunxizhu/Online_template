@@ -4,6 +4,7 @@ const gomoku = require('./gomoku');
 const incan = require('./incan');
 const sgs = require('./sgs');
 const lasidao = require('./lasidao');
+const catan = require('./catan');
 
 /** @type {Record<string, object>} 顺序即创建房间下拉默认顺序 */
 const GAMES = {
@@ -11,6 +12,7 @@ const GAMES = {
   [gomoku.id]: gomoku,
   [incan.id]: incan,
   [lasidao.id]: lasidao,
+  [catan.id]: catan,
 };
 
 function gameSupportsBot(game) {

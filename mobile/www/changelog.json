@@ -2,6 +2,36 @@
   "schema": 1,
   "entries": [
     {
+      "version": "1.2.6",
+      "notes": "房间内新增房间链接可供复制，别人点击链接直接进房间进行游玩，无需下载客户端",
+      "notesEn": "",
+      "publishedAt": "2026-09-20T08:39:54.558Z"
+    },
+    {
+      "version": "1.2.5",
+      "notes": "修复对局时间会在游戏结束后残留在左上角的问题",
+      "notesEn": "",
+      "publishedAt": "2026-09-20T08:30:15.960Z"
+    },
+    {
+      "version": "1.2.4",
+      "notes": "卡拉斯坦新增轻松启动扩展",
+      "notesEn": "",
+      "publishedAt": "2026-09-20T06:56:28.455Z"
+    },
+    {
+      "version": "1.2.3",
+      "notes": "测试升级",
+      "notesEn": "",
+      "publishedAt": "2026-09-20T06:21:10.971Z"
+    },
+    {
+      "version": "1.2.2",
+      "notes": "关掉设备占用锁",
+      "notesEn": "",
+      "publishedAt": "2026-09-20T03:11:12.311Z"
+    },
+    {
       "version": "1.2.1",
       "notes": "修复部分由于修改房间导致的bug",
       "notesEn": "",

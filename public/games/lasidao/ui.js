@@ -4656,7 +4656,7 @@ window.LasidaoUi = (function () {
     if (!isRecallPickMode(game, meId)) return false;
     if (
       areaKey === 'special' &&
-      num > areaOpenSlotCount(areaKey, game.round)
+      num > areaOpenSlotCount(areaKey, game.round, game.easyStart)
     ) {
       return false;
     }
@@ -5209,17 +5209,19 @@ window.LasidaoUi = (function () {
     return num >= 4 ? 2 : 3;
   }
 
-  /** 资源区每数字格第 idx 层（0 起）于第几轮解锁；每轮开放一格 */
-  function resourceSlotUnlockRound(num, idx) {
+  /** 资源区每数字格第 idx 层（0 起）于第几轮解锁；每轮开放一格。轻松启动提前 3 格 */
+  function resourceSlotUnlockRound(num, idx, easyStart) {
     if (idx <= 0) return 1;
-    return idx * 6 + num - 5;
+    const base = idx * 6 + num - 5;
+    return easyStart ? Math.max(1, base - 3) : base;
   }
 
-  /** 功能/建筑合区 num 格于第几轮解锁（1–2 号第 1 轮，之后每 2 轮 +1 格） */
-  function slotUnlockRound(areaKey, num) {
+  /** 功能/建筑合区 num 格于第几轮解锁（常规 1–2；轻松启动 1–3；之后每 2 轮 +1 格） */
+  function slotUnlockRound(areaKey, num, easyStart) {
     if (areaKey === 'special') {
-      if (num <= 2) return 1;
-      return 2 * (num - 2) + 1;
+      const free = easyStart ? 3 : 2;
+      if (num <= free) return 1;
+      return 2 * (num - free) + 1;
     }
     return null;
   }
@@ -5231,16 +5233,17 @@ window.LasidaoUi = (function () {
 
   function isBoardSlotLocked(areaKey, num, idx, game) {
     const round = (game && game.round) || 1;
+    const easy = Boolean(game && game.easyStart);
     if (areaKey === 'resource') {
       if (idx >= 1) {
-        const u = resourceSlotUnlockRound(num, idx);
+        const u = resourceSlotUnlockRound(num, idx, easy);
         if (round < u) return { locked: true, unlockN: u };
       }
       return { locked: false, unlockN: null };
     }
     if (idx === 0) {
-      const u = slotUnlockRound(areaKey, num);
-      const openCount = areaOpenSlotCount(areaKey, round);
+      const u = slotUnlockRound(areaKey, num, easy);
+      const openCount = areaOpenSlotCount(areaKey, round, easy);
       if (
         u != null &&
         (game.phase === 'init_roll' ||
@@ -5338,10 +5341,11 @@ window.LasidaoUi = (function () {
   }
 
   /** 合区本轮开放格数 1~6 */
-  function areaOpenSlotCount(areaKey, round) {
+  function areaOpenSlotCount(areaKey, round, easyStart) {
     const r = Math.max(1, Number(round) || 1);
     if (areaKey === 'special') {
-      return Math.min(6, 2 + Math.floor((r - 1) / 2));
+      const base = easyStart ? 3 : 2;
+      return Math.min(6, base + Math.floor((r - 1) / 2));
     }
     return 6;
   }
@@ -5464,7 +5468,7 @@ window.LasidaoUi = (function () {
     const banditPick = isBanditPickMode(game, meId);
     const mercPlace = isMercenaryPlaceMode(game, meId);
     const round = game.round || 1;
-    const openCount = areaOpenSlotCount(areaKey, round);
+    const openCount = areaOpenSlotCount(areaKey, round, game.easyStart);
     const lockedByRound = areaKey === 'special' && num > openCount;
     const hasTiles = (tiles || []).length > 0;
     const canPickBase =
@@ -6020,7 +6024,7 @@ window.LasidaoUi = (function () {
         slot.dataset.lasContentHash = contentHash;
       }
       const round = game.round || 1;
-      const openCount = areaOpenSlotCount(areaKey, round);
+      const openCount = areaOpenSlotCount(areaKey, round, game.easyStart);
       const lockedByRound =
         areaKey === 'special' &&
         num > openCount;
@@ -9505,6 +9509,25 @@ window.LasidaoUi = (function () {
     return ((game && game.winners) || []).join(',') + '@' + ((game && game.round) || 0);
   }
 
+  /** 对局用时 mm:ss / h:mm:ss */
+  function formatVictoryElapsed(ms) {
+    const totalSec = Math.max(0, Math.floor(Number(ms) / 1000) || 0);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    if (h > 0) return `${h}:${pad(m)}:${pad(s)}`;
+    return `${pad(m)}:${pad(s)}`;
+  }
+
+  function victoryElapsedText(game) {
+    const started = Number(game && game.playingStartedAt) || 0;
+    if (!(started > 0)) return '';
+    const ended =
+      Number(game && game.endedAt) > 0 ? Number(game.endedAt) : Date.now();
+    return formatVictoryElapsed(Math.max(0, ended - started));
+  }
+
   function victoryTitleListText(player) {
     const labels = (player && player.titles ? player.titles : [])
       .map((x) => (x && x.label) || '')
@@ -9566,10 +9589,17 @@ window.LasidaoUi = (function () {
       titleEl.textContent = t('lasidao.victoryTitle');
     }
 
-    subEl.textContent = t('lasidao.victoryRound', {
-      round: game.round || 1,
-      target: game.winScore || 10,
-    });
+    const elapsed = victoryElapsedText(game);
+    subEl.textContent = elapsed
+      ? t('lasidao.victoryRound', {
+          round: game.round || 1,
+          target: game.winScore || 10,
+          time: elapsed,
+        })
+      : t('lasidao.victoryRoundNoTime', {
+          round: game.round || 1,
+          target: game.winScore || 10,
+        });
 
     listEl.innerHTML = '';
       const Nick = window.PlayerNick;

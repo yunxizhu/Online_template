@@ -77,20 +77,34 @@ const ENVIRONMENT_DECK_SIZE = environmentDeckSize();
 const ENVIRONMENT_SLOT_NUMBERS = [1, 2, 3, 4, 5, 6];
 const ENVIRONMENT_DRAW_PER_ROUND = ENVIRONMENT_SLOT_NUMBERS.length;
 
-/** 功能/建筑合区：数字格 n 于第几轮解锁（1–2 号第 1 轮，之后每 2 轮 +1 格） */
-function specialSlotUnlockRound(num) {
+/** 功能/建筑合区：数字格 n 于第几轮解锁（常规 1–2；轻松启动 1–3；之后每 2 轮 +1 格） */
+function specialSlotUnlockRound(num, easyStart) {
   const slot = Number(num) || 1;
-  if (slot <= 2) return 1;
-  return 2 * (slot - 2) + 1;
+  const free = easyStart ? 3 : 2;
+  if (slot <= free) return 1;
+  return 2 * (slot - free) + 1;
 }
 
-function areaOpenSlotCount(areaKey, round) {
+function areaOpenSlotCount(areaKey, round, easyStart) {
   const r = Math.max(1, Number(round) || 1);
   if (areaKey === 'special') {
-    return Math.min(6, 2 + Math.floor((r - 1) / 2));
+    const base = easyStart ? 3 : 2;
+    return Math.min(6, base + Math.floor((r - 1) / 2));
   }
   return 6;
 }
+
+/** 资源区每数字格第 idx 层（0 起）于第几轮解锁；每轮开放一格。轻松启动提前 3 格 */
+function resourceSlotUnlockRound(num, idx, easyStart) {
+  if (idx <= 0) return 1;
+  const base = idx * 6 + Number(num) - 5;
+  return easyStart ? Math.max(1, base - 3) : base;
+}
+
+/** 轻松启动：资源区开局额外已解锁的第二卡位数量（1/2/3） */
+const EASY_START_RESOURCE_SLOT_BONUS = 3;
+/** 轻松启动：资源手牌上限 +3（9→12） */
+const EASY_START_RESOURCE_HAND_BONUS = EXPAND_RESOURCE_BONUS;
 
 function isNoneSlot(slot) {
   return slot === 'none' || (typeof slot === 'string' && /^none(:\d+)?$/.test(slot));
@@ -283,7 +297,8 @@ function maxFuncHandFor(player) {
 function maxResourceHandFor(player) {
   return (
     MAX_RESOURCE_HAND +
-    (Number(player && player.expandResSlots) || 0) * EXPAND_RESOURCE_BONUS
+    (Number(player && player.expandResSlots) || 0) * EXPAND_RESOURCE_BONUS +
+    (Number(player && player.easyStartResourceBonus) || 0)
   );
 }
 
@@ -938,6 +953,16 @@ function teamScore(game, team) {
   return s;
 }
 
+/** 标记对局结束并记录结束时刻（供胜利弹窗显示用时） */
+function finishGame(game, winnerIds, logMsg) {
+  if (!game) return;
+  game.over = true;
+  game.phase = 'over';
+  game.winners = (winnerIds || []).slice();
+  if (!game.endedAt) game.endedAt = Date.now();
+  if (logMsg) pushLog(game, logMsg);
+}
+
 function checkWin(game) {
   if (game.over) return true;
   const need = winScoreOf(game);
@@ -956,11 +981,9 @@ function checkWin(game) {
     }
     if (!winTeam) return false;
     const winners = alivePlayers(game).filter((p) => playerTeam(p) === winTeam);
-    game.over = true;
-    game.phase = 'over';
-    game.winners = winners.map((p) => p.id);
-    pushLog(
+    finishGame(
       game,
+      winners.map((p) => p.id),
       `队伍${winTeam} 达到 ${need} 分，游戏结束！胜者：${winners.map((p) => p.name).join('、')}`
     );
     return true;
@@ -979,11 +1002,9 @@ function checkWin(game) {
     }
   }
   if (!winner) return false;
-  game.over = true;
-  game.phase = 'over';
-  game.winners = [winner.id];
-  pushLog(
+  finishGame(
     game,
+    [winner.id],
     `有玩家达到 ${need} 分，游戏结束！胜者：${winner.name}`
   );
   return true;
@@ -1285,8 +1306,12 @@ function drawEnvironmentBoard(game) {
 
 function setupBoard(game) {
   const n = Math.max(0, game.round - 1);
-  const resCount = Math.min(MAX_RESOURCE_BOARD_TILES, 6 + n);
-  const specialCount = areaOpenSlotCount('special', game.round);
+  const easy = Boolean(game.easyStart);
+  const resCount = Math.min(
+    MAX_RESOURCE_BOARD_TILES,
+    6 + n + (easy ? EASY_START_RESOURCE_SLOT_BONUS : 0)
+  );
+  const specialCount = areaOpenSlotCount('special', game.round, easy);
 
   game.board = emptyBoard();
   game.board.resource.tiles = drawToArea(game, 'resource', resCount);
@@ -1638,6 +1663,8 @@ function createGameState(room) {
   const teamMode = mode === 'h2h';
   // 默认和平发育；仅显式 false 时用非和平牌组
   const peacefulDev = !(room && room.peacefulDev === false);
+  // 轻松启动仅显式开启（房间创建默认勾选会传 true；烟雾测试不传则关闭）
+  const easyStart = Boolean(room && room.easyStart);
   const deckProfile = getDeckProfile(peacefulDev);
   const players = room.players.map((p, i) => ({
     id: p.id,
@@ -1689,6 +1716,7 @@ function createGameState(room) {
     expandSlots: 0, // 扩建建筑格后增加的无数字格数量
     expandFuncSlots: 0, // 扩建功能卡格后增加的上限
     expandResSlots: 0, // 扩建资源卡位次数（每次 +3 手牌资源上限）
+    easyStartResourceBonus: 0, // 轻松启动额外资源手牌上限
     buildTurnUsedBuyFunc: false, // 本建造回合已购买过功能卡
     buildTurnBuyFuncCount: 0, // 本建造回合已购买功能卡次数（人机策略节制；引擎不设硬上限）
     buildTurnUsedRedraw: false, // 本建造回合已使用重抽（不可重置）
@@ -1700,11 +1728,13 @@ function createGameState(room) {
     teamMode,
     allowTrade: Boolean(room && room.allowTrade),
     peacefulDev,
+    easyStart,
     deckProfileId: deckProfile.id,
     phase: 'init_announce', // init_announce | produce | settle | build | over
     round: 1,
     over: false,
     winners: [],
+    endedAt: null,
     players,
     resourceDeck: buildResourceDeck(deckProfile),
     specialDeck: buildSpecialDeck(deckProfile),
@@ -1757,6 +1787,7 @@ function createGameState(room) {
   };
 
   //dealStartingBreedCards(game);
+  dealEasyStartCards(game);
   // 开局自动投先手 → 宣布 → 再发牌
   startInitRoll(game);
   return game;
@@ -1777,6 +1808,20 @@ function dealStartingBreedCards(game) {
     p.funcCards.push(card);
   }
   pushLog(game, '开局：每人获得 1 张「繁殖村民」');
+}
+
+/** 轻松启动：每人丰收+重抽，资源手牌上限 12 */
+function dealEasyStartCards(game) {
+  if (!game || !game.easyStart) return;
+  for (const p of game.players || []) {
+    p.funcCards.push(makeFunc('harvest'));
+    p.funcCards.push(makeFunc('redraw'));
+    p.easyStartResourceBonus = EASY_START_RESOURCE_HAND_BONUS;
+  }
+  pushLog(
+    game,
+    '轻松启动：每人获得「丰收」「重抽」，资源手牌上限 12，板块提前解锁'
+  );
 }
 
 const INIT_ANNOUNCE_MS = 3800;
@@ -2735,7 +2780,7 @@ function actEventMoveBarrenMarker(game, player, payload) {
   if (!Number.isInteger(number) || number < 1 || number > 6) {
     return { ok: false, error: '请选择数字格 1–6' };
   }
-  if (area === 'special' && number > areaOpenSlotCount('special', game.round)) {
+  if (area === 'special' && number > areaOpenSlotCount('special', game.round, game.easyStart)) {
     return { ok: false, error: '该功能/建筑区数字格尚未解锁' };
   }
   game.barrenMarkerArea = area;
@@ -2865,7 +2910,7 @@ function placeOneDieOnBoardSlot(game, area, number, targetId, wasEnhanced) {
   if (!Number.isInteger(number) || number < 1 || number > 6) {
     return { ok: false, error: '数字格无效' };
   }
-  if (area === 'special' && number > areaOpenSlotCount('special', game.round)) {
+  if (area === 'special' && number > areaOpenSlotCount('special', game.round, game.easyStart)) {
     return { ok: false, error: '该功能/建筑区数字格尚未解锁' };
   }
   const tiles = tilesOnNumber(game.board[area], number);
@@ -3140,7 +3185,7 @@ function actEventMoveNeutral(game, player, payload) {
   if (!Number.isInteger(toNumber) || toNumber < 1 || toNumber > 6) {
     return { ok: false, error: '请选择数字格 1–6' };
   }
-  if (toArea === 'special' && toNumber > areaOpenSlotCount('special', game.round)) {
+  if (toArea === 'special' && toNumber > areaOpenSlotCount('special', game.round, game.easyStart)) {
     return { ok: false, error: '该功能/建筑区数字格尚未解锁' };
   }
   const fromArea = pending.fromArea || 'resource';
@@ -6678,12 +6723,14 @@ function publicGameState(game, viewerId) {
     teamMode: isTeamMode(game),
     allowTrade: Boolean(game.allowTrade),
     peacefulDev: game.peacefulDev !== false,
+    easyStart: Boolean(game.easyStart),
     deckProfileId: game.deckProfileId || (game.peacefulDev === false ? 'conflict' : 'peaceful'),
     stateSeq: Number(game.stateSeq) || 0,
     phase: game.phase,
     round: game.round,
     over: game.over,
     winners: (game.winners || []).slice(),
+    endedAt: game.endedAt || null,
     currentPlayerId: game.currentPlayerId,
     produceOrderStartId: game.produceOrderStartId,
     lastPlacerId: game.lastPlacerId,
@@ -7435,7 +7482,7 @@ function forceTimeout(game, playerId) {
         for (let num = 1; num <= 6; num++) {
           if (
             area === 'special' &&
-            num > areaOpenSlotCount('special', game.round)
+            num > areaOpenSlotCount('special', game.round, game.easyStart)
           ) {
             continue;
           }
@@ -7453,7 +7500,7 @@ function forceTimeout(game, playerId) {
         for (let num = 1; num <= 6; num++) {
           if (
             area === 'special' &&
-            num > areaOpenSlotCount('special', game.round)
+            num > areaOpenSlotCount('special', game.round, game.easyStart)
           ) {
             continue;
           }
@@ -7509,7 +7556,7 @@ function forceTimeout(game, playerId) {
             if (area === fa && num === fn) continue;
             if (
               area === 'special' &&
-              num > areaOpenSlotCount('special', game.round)
+              num > areaOpenSlotCount('special', game.round, game.easyStart)
             ) {
               continue;
             }
@@ -7693,10 +7740,7 @@ function onPlayerQuit(game, playerId) {
 
   const alive = alivePlayers(game);
   if (alive.length < 2) {
-    game.over = true;
-    game.phase = 'over';
-    game.winners = alive.map((x) => x.id);
-    pushLog(game, '存活玩家不足，游戏结束');
+    finishGame(game, alive.map((x) => x.id), '存活玩家不足，游戏结束');
     return;
   }
 
@@ -7865,6 +7909,9 @@ module.exports = {
   idleVillagers,
   areaOpenSlotCount,
   specialSlotUnlockRound,
+  resourceSlotUnlockRound,
+  EASY_START_RESOURCE_SLOT_BONUS,
+  EASY_START_RESOURCE_HAND_BONUS,
   beginProduce,
   startSettle,
   tryEnterPreSettleMercenaryOrSettle,

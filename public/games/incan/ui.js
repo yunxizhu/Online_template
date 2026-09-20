@@ -27,6 +27,7 @@ window.IncanUi = (function () {
     if (gomoku) gomoku.hidden = true;
     if (window.SgsUi) window.SgsUi.hide();
     if (window.LasidaoUi) window.LasidaoUi.hide();
+    if (window.CatanUi) window.CatanUi.hide();
   }
 
   function render(game, net, opts) {

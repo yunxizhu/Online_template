@@ -269,6 +269,20 @@
                   <strong id="room-code" class="room-code-value">—</strong>
                 </div>
               </div>
+              <div id="room-tunnel-share" class="room-tunnel-share" hidden>
+                <label class="room-tunnel-label" for="room-tunnel-url-input" data-i18n="room.tunnelLink">隧道链接</label>
+                <div class="room-tunnel-row">
+                  <input
+                    id="room-tunnel-url-input"
+                    type="text"
+                    readonly
+                    spellcheck="false"
+                    autocomplete="off"
+                  />
+                  <button id="btn-copy-room-tunnel" type="button" class="secondary" data-i18n="room.copyTunnel">复制</button>
+                </div>
+                <p class="muted room-tunnel-hint" data-i18n="room.tunnelHint">发给他人后，对方打开即可加入本房间</p>
+              </div>
               <h3 class="room-members-title" data-i18n="room.members">房间成员</h3>
               <div id="member-list" class="room-player-grid"></div>
               <div class="row room-actions">
@@ -395,6 +409,10 @@
       <label id="room-allow-trade-wrap" class="checkbox" hidden>
         <input id="room-allow-trade" type="checkbox" />
         <span data-i18n="create.allowTrade">允许玩家交易</span>
+      </label>
+      <label id="room-easy-start-wrap" class="checkbox" hidden>
+        <input id="room-easy-start" type="checkbox" checked />
+        <span data-i18n="create.easyStart">轻松启动</span>
       </label>
       <label id="room-conflict-dlc-wrap" class="checkbox" hidden>
         <input id="room-conflict-dlc" type="checkbox" />
@@ -528,10 +546,16 @@
       <div class="row panel-head">
         <h2 id="host-update-title" data-i18n="update.title">发现主机更新</h2>
       </div>
-      <p id="host-update-version" class="update-version"></p>
-      <p id="host-update-notes" class="invite-message update-notes"></p>
-      <p id="host-update-meta" class="muted update-meta"></p>
-      <p id="host-update-force-hint" class="muted update-meta" hidden data-i18n="update.forceHint">此更新不可取消，将自动开始升级并重启</p>
+      <div id="host-update-checking" class="update-checking" hidden>
+        <div class="update-check-spinner" aria-hidden="true"></div>
+        <p id="host-update-checking-text" class="update-checking-text" data-i18n="update.checking">正在检查更新…</p>
+      </div>
+      <div id="host-update-result" class="update-result">
+        <p id="host-update-version" class="update-version"></p>
+        <p id="host-update-notes" class="invite-message update-notes"></p>
+        <p id="host-update-meta" class="muted update-meta"></p>
+        <p id="host-update-force-hint" class="muted update-meta" hidden data-i18n="update.forceHint">此更新不可取消，将自动开始升级并重启</p>
+      </div>
       <div id="host-update-progress-wrap" class="update-progress-wrap" hidden>
         <div class="update-progress-bar" aria-hidden="true">
           <div id="host-update-progress-fill" class="update-progress-fill"></div>
@@ -539,8 +563,9 @@
         <p id="host-update-progress-text" class="muted update-progress-text"></p>
       </div>
       <div class="row" id="host-update-actions">
-        <button id="btn-host-update-apply" type="button" data-i18n="update.apply">立即升级</button>
-        <button id="btn-host-update-later" type="button" class="secondary" data-i18n="update.later">稍后</button>
+        <button id="btn-host-update-apply" type="button" data-i18n="update.apply">更新</button>
+        <button id="btn-host-update-later" type="button" class="secondary" data-i18n="update.cancel">取消</button>
+        <button id="btn-host-update-ok" type="button" class="secondary" hidden data-i18n="update.ok">知道了</button>
       </div>
     </div>
   </div>

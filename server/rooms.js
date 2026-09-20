@@ -261,6 +261,7 @@ function publicRoomView(room) {
     hasPassword: Boolean(room.hasPassword),
     allowTrade: Boolean(room.allowTrade),
     peacefulDev: room.peacefulDev !== false,
+    easyStart: room.gameType === 'lasidao' ? room.easyStart !== false : false,
     passiveHosted: Boolean(room.passiveHosted),
     canJoin: waiting && playerCount < room.maxPlayers,
     canSpectate: (waiting || playing) && !over,
@@ -316,6 +317,7 @@ function fullRoomView(room) {
     hasPassword: Boolean(room.hasPassword),
     allowTrade: Boolean(room.allowTrade),
     peacefulDev: room.peacefulDev !== false,
+    easyStart: room.gameType === 'lasidao' ? room.easyStart !== false : false,
     passiveHosted: Boolean(room.passiveHosted),
   };
 }
@@ -621,6 +623,7 @@ class RoomManager {
       turnTimeSec,
       allowTrade = false,
       peacefulDev = true,
+      easyStart = true,
       passiveHost = false,
       operatorId = null,
     } = {}
@@ -671,6 +674,7 @@ class RoomManager {
       turnTimeSec: cfg.turnTimeSec,
       allowTrade: cfg.type === 'lasidao' ? Boolean(allowTrade) : false,
       peacefulDev: cfg.type === 'lasidao' ? peacefulDev !== false : true,
+      easyStart: cfg.type === 'lasidao' ? easyStart !== false : false,
       turnTimer: null,
       game: null,
       createdAt: Date.now(),
@@ -710,7 +714,7 @@ class RoomManager {
    */
   updateSettings(
     playerId,
-    { name, hasPassword, password, maxPlayers, gameType, gameMode, turnTimeSec, allowTrade, peacefulDev } = {}
+    { name, hasPassword, password, maxPlayers, gameType, gameMode, turnTimeSec, allowTrade, peacefulDev, easyStart } = {}
   ) {
     const player = this.players.get(playerId);
     if (!player || !player.roomId) {
@@ -827,8 +831,11 @@ class RoomManager {
     if (cfg.type === 'lasidao') {
       if (peacefulDev != null) room.peacefulDev = Boolean(peacefulDev);
       else if (room.peacefulDev == null) room.peacefulDev = true;
+      if (easyStart != null) room.easyStart = Boolean(easyStart);
+      else if (room.easyStart == null) room.easyStart = true;
     } else {
       room.peacefulDev = true;
+      room.easyStart = false;
     }
     if (willClearBots) {
       clearAllBotSeats(room);

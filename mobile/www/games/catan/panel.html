@@ -1,0 +1,98 @@
+<!-- 卡坦岛对局面板 -->
+<div class="panel game-panel catan-panel" id="panel-catan" hidden>
+  <div class="catan-header">
+    <h2 data-i18n="catan.title">卡坦岛</h2>
+    <p id="catan-status" class="game-status muted"></p>
+    <p id="catan-roll" class="catan-roll" hidden></p>
+  </div>
+
+  <div class="catan-layout">
+    <div class="catan-board-wrap">
+      <div id="catan-board" class="catan-board" aria-label="卡坦岛地图"></div>
+    </div>
+
+    <div class="catan-side">
+      <section class="catan-section" id="catan-me-section">
+        <h3 class="game-sub" data-i18n="catan.yourResources">你的资源</h3>
+        <div id="catan-resources" class="catan-res-row"></div>
+        <div id="catan-dev-hand" class="catan-dev-row"></div>
+      </section>
+
+      <section class="catan-section" id="catan-actions">
+        <h3 class="game-sub" data-i18n="catan.actions">行动</h3>
+        <div class="catan-btn-row">
+          <button type="button" id="btn-catan-roll" hidden data-i18n="catan.roll">掷骰</button>
+          <button type="button" id="btn-catan-buy-dev" hidden data-i18n="catan.buyDev">买发展卡</button>
+          <button type="button" id="btn-catan-end" class="secondary" hidden data-i18n="catan.endTurn">结束回合</button>
+        </div>
+        <div class="catan-btn-row" id="catan-build-modes">
+          <button type="button" id="btn-catan-mode-settle" class="secondary" data-mode="settlement" data-i18n="catan.buildSettlement">建村</button>
+          <button type="button" id="btn-catan-mode-city" class="secondary" data-mode="city" data-i18n="catan.buildCity">建城</button>
+          <button type="button" id="btn-catan-mode-road" class="secondary" data-mode="road" data-i18n="catan.buildRoad">建路</button>
+          <button type="button" id="btn-catan-mode-robber" class="secondary" data-mode="robber" hidden data-i18n="catan.moveRobber">移强盗</button>
+        </div>
+        <p id="catan-hint" class="muted catan-hint"></p>
+      </section>
+
+      <section class="catan-section" id="catan-discard-section" hidden>
+        <h3 class="game-sub" data-i18n="catan.discardTitle">弃牌</h3>
+        <p id="catan-discard-need" class="muted"></p>
+        <div id="catan-discard-pick" class="catan-res-row"></div>
+        <button type="button" id="btn-catan-discard" data-i18n="catan.confirmDiscard">确认弃牌</button>
+      </section>
+
+      <section class="catan-section" id="catan-bank-section">
+        <h3 class="game-sub" data-i18n="catan.bankTrade">银行贸易</h3>
+        <div class="catan-trade-row">
+          <label><span data-i18n="catan.give">交出</span>
+            <select id="catan-bank-give"></select>
+          </label>
+          <label><span data-i18n="catan.want">换取</span>
+            <select id="catan-bank-want"></select>
+          </label>
+          <button type="button" id="btn-catan-bank" class="secondary" data-i18n="catan.doBank">兑换</button>
+        </div>
+        <p id="catan-bank-rate" class="muted"></p>
+      </section>
+
+      <section class="catan-section" id="catan-player-trade-section">
+        <h3 class="game-sub" data-i18n="catan.playerTrade">玩家交易</h3>
+        <div class="catan-trade-grid">
+          <div>
+            <div class="muted" data-i18n="catan.youGive">你给出</div>
+            <div id="catan-trade-give" class="catan-res-edit"></div>
+          </div>
+          <div>
+            <div class="muted" data-i18n="catan.youWant">你想要</div>
+            <div id="catan-trade-want" class="catan-res-edit"></div>
+          </div>
+        </div>
+        <label class="catan-trade-target"><span data-i18n="catan.toPlayer">对象</span>
+          <select id="catan-trade-to"></select>
+        </label>
+        <div class="catan-btn-row">
+          <button type="button" id="btn-catan-offer" data-i18n="catan.offer">发起报价</button>
+          <button type="button" id="btn-catan-cancel-trade" class="secondary" hidden data-i18n="catan.cancelTrade">取消报价</button>
+        </div>
+        <div id="catan-trade-pending" class="catan-trade-pending" hidden></div>
+      </section>
+
+      <section class="catan-section">
+        <h3 class="game-sub" data-i18n="catan.players">玩家</h3>
+        <ul id="catan-players" class="member-list"></ul>
+      </section>
+
+      <section class="catan-section">
+        <h3 class="game-sub" data-i18n="catan.log">动态</h3>
+        <ul id="catan-log" class="game-log"></ul>
+      </section>
+    </div>
+  </div>
+
+  <div id="catan-steal-modal" class="catan-modal" hidden>
+    <div class="catan-modal-card">
+      <p data-i18n="catan.stealTitle">选择掠夺对象</p>
+      <div id="catan-steal-list" class="catan-btn-row"></div>
+    </div>
+  </div>
+</div>

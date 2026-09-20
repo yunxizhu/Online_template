@@ -969,10 +969,38 @@ body.phase-room .lobby-people {
   font-size: 0.85rem;
 }
 
+.update-checking {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.85rem;
+  padding: 1.25rem 0.5rem 1rem;
+  text-align: center;
+}
+
+.update-checking[hidden],
+.update-result[hidden] {
+  display: none;
+}
+
+.update-check-spinner {
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 3px solid rgba(255, 255, 255, 0.14);
+  border-top-color: var(--accent, #6ec4b8);
+  border-radius: 50%;
+  animation: room-busy-spin 0.85s linear infinite;
+}
+
+.update-checking-text {
+  margin: 0;
+  color: var(--muted, #a8b0b8);
+}
+
 /* 强制升级弹窗须盖过被动锁屏，且可点击 */
 #host-update-modal {
   z-index: 2700;
-}
 }
 
 .changelog-dialog {
@@ -2625,4 +2653,47 @@ body.is-passive-locked .game-menu-panel {
 .passive-share-row button {
   flex-shrink: 0;
   white-space: nowrap;
+}
+
+.room-tunnel-share {
+  margin: 0 auto 1rem;
+  text-align: left;
+  width: 100%;
+  max-width: 28rem;
+}
+
+.room-tunnel-label {
+  display: block;
+  font-size: 0.82rem;
+  opacity: 0.85;
+  margin-bottom: 0.35rem;
+  color: #e8d4b0;
+}
+
+.room-tunnel-row {
+  display: flex;
+  gap: 0.45rem;
+  align-items: stretch;
+}
+
+.room-tunnel-row input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.82rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid rgba(240, 199, 138, 0.28);
+  background: rgba(20, 14, 10, 0.55);
+  color: inherit;
+}
+
+.room-tunnel-row button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.room-tunnel-hint {
+  margin: 0.4rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
 }

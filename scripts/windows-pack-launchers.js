@@ -197,8 +197,8 @@ function buildWindowsReadme({
     '主机差分更新（默认 Gitee）\n' +
     '--------\n' +
     '双击启动时会在命令行自动检查并升级，完成后打开客户端。\n' +
-    '也可在菜单点「检查更新」手动升级。\n' +
-    '禁用：在目录下放 update.off\n' +
+    '大厅也会后台自动检查；也可在菜单点「检查更新」手动升级。\n' +
+    '放 update.off：关闭启动前与大厅后台自动检查；菜单手动检查仍可升级。\n' +
     '自定义清单地址：update.url（一行 URL）\n' +
     '默认：https://raw.giteeusercontent.com/xiyunzhu/online_template/raw/ota/host-update.json\n'
   );

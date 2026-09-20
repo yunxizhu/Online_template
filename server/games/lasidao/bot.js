@@ -225,7 +225,11 @@ function houseSoftChaseMinScore(player, game) {
   return Math.max(0, 1 - Math.floor(s / 4));
 }
 function maxResourceHandFor(player) {
-  return 9 + (Number(player.expandResSlots) || 0) * 3;
+  return (
+    9 +
+    (Number(player.expandResSlots) || 0) * 3 +
+    (Number(player.easyStartResourceBonus) || 0)
+  );
 }
 function maxFuncHandFor(player) {
   return 3 + (Number(player.expandFuncSlots) || 0);
@@ -2803,6 +2807,11 @@ function _reserveActionCandidates(game, shadow, botState, handNow) {
 
   push(_killReserveAction(game, shadow));
 
+  // 未建集市：预留造价（兑换前优先建成）
+  push(
+    _constructReserveAction(shadow, game, (b) => b.buildType === 'exchange')
+  );
+
   const vil = Number(shadow.villagers) || 0;
   const free = freeHousesFor(shadow);
   const behind = _populationBehind(game, shadow);
@@ -3155,15 +3164,12 @@ function decideUseFuncCardHard(game, player, botState) {
     // ??????redraw
   }
 
-  // ?? 2. ?????freeExpand???
+  // 免费扩建：建筑格已满优先；功能手满次之（资源扩容交给建造流水线）
   const freeExpand = cards.find((c) => c.funcType === 'expand');
   if (freeExpand) {
-    const bldCap = maxBuildingsFor(player);
     const funcCap = maxFuncHandFor(player);
-    const unbuilt = (player.buildings || []).filter((b) => !b.built).length;
     const funcN = (player.funcCards || []).length;
-    // ??????????????
-    if (unbuilt >= bldCap && !player.roundExpandedBuilding) {
+    if (shouldPreferBuildingExpand(player)) {
       return {
         type: 'useFunc',
         payload: { cardId: freeExpand.id, direction: 'building' },
@@ -3271,9 +3277,12 @@ function _planPermanentActions(game, player, botState) {
     }
   }
 
-  // 进场空位≤2 才规划资源扩建；上限<15 时不看进场空位差；到 24 后不再扩资源手牌
+  // 建筑格已满优先规划扩建筑格，避免木石先被资源扩容花掉
   ensureBuildTurnEntryFree(player);
-  if (
+  if (shouldPreferBuildingExpand(player)) {
+    needs.expand = true;
+    needs.expandDir = 'building';
+  } else if (
     !resourceHandExpandCapped(player) &&
     (resourceHandCapEagerExpand(player) ||
       wantsExpandResource(botState) ||
@@ -3281,9 +3290,6 @@ function _planPermanentActions(game, player, botState) {
   ) {
     needs.expand = true;
     needs.expandDir = 'resource';
-  } else if (buildingSlotsTight(player) && !player.roundExpandedBuilding) {
-    needs.expand = true;
-    needs.expandDir = 'building';
   }
 
   return needs;
@@ -3974,6 +3980,10 @@ function shouldExpandResourceHand(player, game, botState) {
     player.__botWantExpandRes = false;
     return false;
   }
+  // 建筑格已满：先让建筑扩建，手牌未超上限时不抢木石
+  if (shouldPreferBuildingExpand(player) && !resourceHandOverCap(player)) {
+    return false;
+  }
   const free = freeResourceSlots(player);
   if (free <= 0) {
     player.__botWantExpandRes = true;
@@ -4019,6 +4029,14 @@ function prefersBuyFuncSink(player, game) {
 /** 建筑格是否紧张（已满或只剩 0 空位） */
 function buildingSlotsTight(player) {
   return (player.buildings || []).length >= maxBuildingsFor(player);
+}
+
+/**
+ * 离开建造前若建筑格已满，应先扩一次建筑格（本回合尚未扩过时）。
+ * 资源手牌扩容不得抢先花掉仅有的 1 木 1 石。
+ */
+function shouldPreferBuildingExpand(player) {
+  return Boolean(player) && buildingSlotsTight(player) && !player.roundExpandedBuilding;
 }
 
 /**
@@ -4198,14 +4216,15 @@ function decideSpendBeforePass(game, player, diff, botState) {
   // 5) 高压力兜底：扩建筑/功能位花木石；不轻易扩资源位
   if (urgency >= 60 && canPay(player.resources, EXPAND_COST)) {
     let dir = 'building';
-    if (buildingSlotsTight(player)) {
-      dir =
-        (player.funcCards || []).length >= maxFuncHandFor(player)
-          ? 'resource'
-          : 'function';
+    if (shouldPreferBuildingExpand(player)) {
+      dir = 'building';
+    } else if ((player.funcCards || []).length >= maxFuncHandFor(player)) {
+      dir = 'function';
+    } else if (wantExpandRes) {
+      dir = 'resource';
     }
     if (dir === 'resource' && !wantExpandRes) return null;
-    markExpandedResource(botState, player);
+    if (dir === 'resource') markExpandedResource(botState, player);
     return { type: 'expandPermanent', payload: { direction: dir } };
   }
 
@@ -4557,7 +4576,8 @@ function decideUseFuncCard(game, player, diff, botState) {
  * 4 建房：达高优冲分门槛（含兑换；门槛随当前分下调）
  * 5 繁殖：无需兑换
  * 5b 若本回合已繁殖且人口已满：decideBuildActionHard 入口额外优先建房（含兑换）
- * 6 扩资源格：手牌上限<15 则无视进场空位差（有木石就扩）；上限≥15 后需进场空位≤2 或爆牌标，无需兑换
+ * 6 扩资源格：手牌上限<15 则无视进场空位差（有木石就扩）；上限≥15 后需进场空位≤2 或爆牌标，无需兑换；
+ *   若建筑格已满且本回合未扩建筑，则让步给第 7 步（避免只扩手牌后无法再扩格）
  * 7 扩建筑格：建筑格已满（含兑换）
  * 8 建造筑：非宫殿，无需兑换
  * 9 繁殖：含兑换
@@ -4962,6 +4982,44 @@ function _isRedrawScoreOrTitleCard(player, card) {
   return false;
 }
 
+/** 手牌中未建造的集市 */
+function _unbuiltExchangeBuildings(player) {
+  return (player.buildings || []).filter(
+    (b) => b && !b.built && b.buildType === 'exchange'
+  );
+}
+
+/**
+ * 有未建集市时优先建成（改善兑换比）。
+ * allowExchange=false：仅现货；true：可兑换凑齐造价。
+ */
+function _tryConstructUnbuiltExchange(game, player, allowExchange) {
+  if (!game || !player) return null;
+  const markets = _unbuiltExchangeBuildings(player);
+  if (!markets.length) return null;
+  markets.sort((a, b) => {
+    const da = sumRes(a.cost || {});
+    const db = sumRes(b.cost || {});
+    if (da !== db) return da - db;
+    return (
+      scoreBuildingForHard(player, b, game) - scoreBuildingForHard(player, a, game)
+    );
+  });
+  for (const b of markets) {
+    if (canPay(player.resources, b.cost || {})) {
+      return { type: 'construct', payload: { buildingId: b.id } };
+    }
+  }
+  if (!allowExchange) return null;
+  for (const b of markets) {
+    const cost = b.cost || {};
+    if (!_canAffordCostViaExchange(game, player, cost, null)) continue;
+    const exch = _exchangeTowardCost(game, player, cost, null, null);
+    if (exch) return exch;
+  }
+  return null;
+}
+
 /** 现货付得起且能加分/冲称号的未建建筑立刻建造（不含普通工坊，避免挤掉繁殖） */
 function _tryConstructPayableScoreNow(game, player) {
   if (!game || !player) return null;
@@ -5201,17 +5259,30 @@ function decideBuildActionHard(game, player, botState) {
   const kill = _tryKillLineAction(game, player);
   if (kill) return kill;
 
+  // 未建集市：现货能建先建（改善后续兑换）
+  const mktCash = _tryConstructUnbuiltExchange(game, player, false);
+  if (mktCash) return mktCash;
+
   // 人口增长优先于普通建造/购卡（满房建房、繁殖、落后时腾房）
   const pop = _tryPopulationGrowthAction(game, player);
+  if (pop && pop.type === 'exchange') {
+    const mktEx = _tryConstructUnbuiltExchange(game, player, true);
+    if (mktEx) return mktEx;
+  }
   if (pop) return pop;
 
   // 仅现货分卡/称号建筑先建（普通工坊走流水线，不再抢繁殖）
   const scoreBuild = _tryConstructPayableScoreNow(game, player);
   if (scoreBuild) return scoreBuild;
 
+  // 能凑齐集市（含兑换）则先建，避免现货扩容/购卡花掉原料
+  const mktReady = _tryConstructUnbuiltExchange(game, player, true);
+  if (mktReady) return mktReady;
+
   // 先做所有「现货已够」的动作，避免靠前含兑换步骤抢走后面本可直接做的繁殖/扩建
   const cash = _hardBuildPipeline(game, player, botState, true);
   if (cash) return cash;
+
   const withEx = _hardBuildPipeline(game, player, botState, false);
   if (withEx) return withEx;
   return { type: 'pass' };
@@ -5464,6 +5535,10 @@ function _buildTryExpandResource(game, player, botState, opts) {
   } else if (player && player.roundExpandedResource) {
     return null;
   }
+  // 建筑格已满且本回合未扩建筑：把木石留给扩建筑格（手牌已超上限除外）
+  if (shouldPreferBuildingExpand(player) && !resourceHandOverCap(player)) {
+    return null;
+  }
   const allowExchange = Boolean(opts && opts.allowExchange);
   // 上限 < 15：无视进建造空位差，有资源就扩；
   // ≥15 后需爆牌标或进场空位紧（生产触及上限），才允许扩
@@ -5608,11 +5683,32 @@ function decideBuildAction(game, player, diff, botState) {
     return _finishBuildAct(player, kill);
   }
 
+  // 未建集市现货先建（兑换前改善兑换比）
+  const mktCash = _tryConstructUnbuiltExchange(game, player, false);
+  if (mktCash) {
+    _noteScorePushFromAction(game, player, mktCash);
+    return _finishBuildAct(player, mktCash);
+  }
+
   // 人口增长优先：繁殖/建房压过近胜购卡与普通建造
   const pop = _tryPopulationGrowthAction(game, player);
+  if (pop && pop.type === 'exchange') {
+    const mktEx = _tryConstructUnbuiltExchange(game, player, true);
+    if (mktEx) {
+      _noteScorePushFromAction(game, player, mktEx);
+      return _finishBuildAct(player, mktEx);
+    }
+  }
   if (pop) {
     _noteScorePushFromAction(game, player, pop);
     return _finishBuildAct(player, pop);
+  }
+
+  // 能凑齐未建集市（含兑换）则先建，再进入购卡/扩容等
+  const mktReady = _tryConstructUnbuiltExchange(game, player, true);
+  if (mktReady) {
+    _noteScorePushFromAction(game, player, mktReady);
+    return _finishBuildAct(player, mktReady);
   }
 
   // 近胜购卡前：现货分卡/称号建筑先建掉
@@ -5653,7 +5749,7 @@ function decideBuildAction(game, player, diff, botState) {
   const useFunc = decideUseFuncCard(game, player, diff, botState);
   if (useFunc) return _finishBuildAct(player, useFunc);
 
-  // normal/easy：空位≤9 也扩资源位
+  // normal/easy：空位≤9 也扩资源位；若需兑换凑扩建，先建未建集市
   if (
     shouldExpandResourceHand(player, game, botState) &&
     canPay(player.resources, EXPAND_COST)
@@ -5665,6 +5761,10 @@ function decideBuildAction(game, player, diff, botState) {
     });
   }
   if (shouldExpandResourceHand(player, game, botState)) {
+    const mktBeforeExpandEx = _tryConstructUnbuiltExchange(game, player, true);
+    if (mktBeforeExpandEx) {
+      return _finishBuildAct(player, mktBeforeExpandEx);
+    }
     const exch = _exchangeTowardCost(game, player, EXPAND_COST);
     if (exch) return _finishBuildAct(player, exch);
   }

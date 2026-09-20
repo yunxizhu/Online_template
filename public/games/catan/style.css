@@ -1,0 +1,246 @@
+/* 卡坦岛面板 */
+.catan-panel {
+  max-width: 1200px;
+}
+
+.catan-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(260px, 340px);
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 860px) {
+  .catan-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.catan-board-wrap {
+  width: 100%;
+  overflow: auto;
+  border-radius: 8px;
+  background: linear-gradient(160deg, #1a4a6e 0%, #0d2f4a 50%, #163a28 100%);
+  padding: 0.5rem;
+}
+
+.catan-board svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 70vh;
+}
+
+.catan-hex {
+  stroke: #1a2a1a;
+  stroke-width: 1.2;
+}
+
+.catan-hex.terrain-hills { fill: #b85c38; }
+.catan-hex.terrain-forest { fill: #2d6a3e; }
+.catan-hex.terrain-pasture { fill: #7cb342; }
+.catan-hex.terrain-fields { fill: #e6c84a; }
+.catan-hex.terrain-mountains { fill: #7a7e8a; }
+.catan-hex.terrain-desert { fill: #d4c4a0; }
+
+.catan-hex.legal-robber {
+  stroke: #ff5252;
+  stroke-width: 3;
+  cursor: pointer;
+}
+
+.catan-number {
+  fill: #f5f0e6;
+  stroke: #333;
+  stroke-width: 0.5;
+  font-size: 11px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+}
+
+.catan-number.hot {
+  fill: #ff7043;
+}
+
+.catan-robber {
+  fill: #111;
+  stroke: #eee;
+  stroke-width: 1;
+  pointer-events: none;
+}
+
+.catan-port-label {
+  fill: #e8f4ff;
+  font-size: 8px;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+}
+
+.catan-vertex {
+  fill: rgba(255, 255, 255, 0.15);
+  stroke: transparent;
+  stroke-width: 2;
+  cursor: default;
+}
+
+.catan-vertex.legal {
+  fill: rgba(255, 235, 59, 0.55);
+  stroke: #ffeb3b;
+  cursor: pointer;
+}
+
+.catan-vertex.building-settlement,
+.catan-vertex.building-city {
+  cursor: default;
+}
+
+.catan-edge {
+  stroke: rgba(255, 255, 255, 0.12);
+  stroke-width: 4;
+  stroke-linecap: round;
+  fill: none;
+  cursor: default;
+}
+
+.catan-edge.legal {
+  stroke: rgba(255, 235, 59, 0.7);
+  cursor: pointer;
+}
+
+.catan-edge.has-road {
+  stroke-width: 5;
+}
+
+.catan-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: 75vh;
+  overflow: auto;
+}
+
+.catan-section {
+  margin: 0;
+}
+
+.catan-res-row,
+.catan-dev-row,
+.catan-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.catan-res-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.08);
+  font-size: 0.9rem;
+  border: 1px solid transparent;
+}
+
+.catan-res-chip.res-brick { background: #f2d0c0; }
+.catan-res-chip.res-lumber { background: #c8e0c8; }
+.catan-res-chip.res-wool { background: #e0f0c8; }
+.catan-res-chip.res-grain { background: #f5ecc0; }
+.catan-res-chip.res-ore { background: #d8dce8; }
+
+.catan-res-chip button {
+  min-width: 1.4rem;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.85rem;
+}
+
+.catan-res-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.35rem 0;
+}
+
+.catan-trade-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.catan-trade-row,
+.catan-trade-target {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0.35rem 0;
+}
+
+.catan-trade-pending {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.catan-hint {
+  min-height: 1.2em;
+  margin: 0.35rem 0 0;
+}
+
+.catan-roll {
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.catan-player-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.catan-color-dot {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.catan-badge {
+  font-size: 0.75rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.catan-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+}
+
+.catan-modal[hidden] {
+  display: none !important;
+}
+
+.catan-modal-card {
+  background: var(--panel-bg, #fff);
+  color: inherit;
+  padding: 1rem 1.25rem;
+  border-radius: 10px;
+  min-width: 220px;
+  max-width: 90vw;
+}
+
+#catan-build-modes button.active {
+  outline: 2px solid #f0c040;
+}
