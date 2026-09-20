@@ -1,0 +1,310 @@
+#panel-splendor-duel { max-width: 900px; margin: 0 auto; }
+
+/* 可选行动区 */
+.sd-optional-area {
+  background: rgba(212,160,23,0.08);
+  border-radius: 8px;
+  padding: 0.5rem;
+  margin: 0.5rem 0;
+  text-align: center;
+}
+
+.sd-optional-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #d4a017;
+  margin-bottom: 0.3rem;
+}
+
+.sd-privileges-wrap {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-bottom: 0.3rem;
+}
+
+.sd-privilege-pool {
+  display: inline-flex;
+  gap: 0.2rem;
+  margin-left: 0.5rem;
+}
+
+.sd-privilege-token {
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 50%;
+  background: #6c757d;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 0.6rem;
+}
+
+.sd-privilege-token.active {
+  background: #d4a017;
+}
+
+.sd-opt-actions {
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+/* ====== 5×5 版图 ====== */
+.sd-board-wrap {
+  margin: 0.5rem 0;
+  text-align: center;
+}
+
+.sd-board-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 0.25rem;
+}
+
+.sd-board-grid {
+  display: inline-grid;
+  grid-template-columns: repeat(5, 2.6rem);
+  grid-template-rows: repeat(5, 2.6rem);
+  gap: 0.3rem;
+}
+
+.sd-grid-cell {
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 50%;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  cursor: default;
+  transition: transform 0.15s, box-shadow 0.15s;
+  border: 2px solid transparent;
+}
+
+.sd-grid-cell.is-selectable {
+  cursor: pointer;
+  border-color: #4dabf7;
+  box-shadow: 0 0 0 1px #4dabf7;
+}
+
+.sd-grid-cell.is-selectable:hover {
+  transform: scale(1.1);
+}
+
+.sd-grid-cell.is-selected {
+  border-color: #28a745;
+  box-shadow: 0 0 0 3px #28a745;
+  transform: scale(1.15);
+}
+
+.sd-grid-cell.empty {
+  background: transparent;
+  border: 2px dashed #ccc;
+}
+
+.sd-grid-cell.emerald { background: #27ae60; }
+.sd-grid-cell.sapphire { background: #2980b9; }
+.sd-grid-cell.ruby { background: #c0392b; }
+.sd-grid-cell.diamond { background: #bdc3c7; color: #2c3e50; }
+.sd-grid-cell.onyx { background: #2c3e50; }
+.sd-grid-cell.pearl { background: #9b59b6; }
+.sd-grid-cell.gold { background: #f1c40f; color: #2c3e50; }
+
+/* ====== 发展卡区 ====== */
+.sd-card-pyramid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0.5rem 0;
+}
+
+.sd-tier-row { display: flex; align-items: center; gap: 0.4rem; }
+
+.sd-tier-label {
+  width: 1.6rem; height: 1.6rem; border-radius: 50%;
+  background: #6c757d; color: #fff;
+  font-size: 0.75rem; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+
+.sd-tier-deck {
+  width: 3.6rem; height: 5rem; border-radius: 6px;
+  background: repeating-linear-gradient(45deg, #343a40, #343a40 6px, #495057 6px, #495057 12px);
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 0.75rem; flex-shrink: 0; cursor: default;
+}
+
+.sd-tier-deck.is-reservable { cursor: pointer; box-shadow: 0 0 0 2px #4dabf7; }
+.sd-tier-deck.is-reservable:hover { opacity: 0.9; }
+
+.sd-tier-cards { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+
+/* 卡牌 */
+.sd-card {
+  width: 7.5rem; min-height: 5rem; border-radius: 6px;
+  background: #fff; border: 1px solid #ccc; padding: 0.4rem;
+  display: flex; flex-direction: column; gap: 0.25rem;
+  font-size: 0.75rem; position: relative;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1); flex-shrink: 0;
+}
+
+.sd-card.is-selectable { cursor: pointer; border-color: #4dabf7; box-shadow: 0 0 0 2px #4dabf7; }
+.sd-card.is-selectable:hover { transform: translateY(-2px); }
+.sd-card.is-selected { box-shadow: 0 0 0 3px #28a745; }
+
+.sd-card-header { display: flex; justify-content: space-between; align-items: center; }
+
+.sd-card-prestige { font-weight: 700; font-size: 1rem; color: #d4a017; }
+.sd-card-crowns { font-size: 0.7rem; color: #c0392b; }
+.sd-card-ability { font-size: 0.65rem; color: #2980b9; }
+
+.sd-card-discount {
+  width: 1.4rem; height: 1.4rem; border-radius: 50%;
+  font-size: 0.65rem; display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700; text-transform: uppercase;
+}
+
+.sd-card-discount.emerald { background: #27ae60; }
+.sd-card-discount.sapphire { background: #2980b9; }
+.sd-card-discount.ruby { background: #c0392b; }
+.sd-card-discount.diamond { background: #bdc3c7; color: #2c3e50; }
+.sd-card-discount.onyx { background: #2c3e50; }
+
+.sd-card-costs { display: flex; flex-wrap: wrap; gap: 0.15rem; }
+
+.sd-cost-chip {
+  display: inline-flex; align-items: center; gap: 0.1rem;
+  padding: 0.05rem 0.3rem; border-radius: 4px;
+  font-size: 0.7rem; color: #fff; font-weight: 600;
+}
+
+.sd-cost-chip.emerald { background: #27ae60; }
+.sd-cost-chip.sapphire { background: #2980b9; }
+.sd-cost-chip.ruby { background: #c0392b; }
+.sd-cost-chip.diamond { background: #95a5a6; }
+.sd-cost-chip.onyx { background: #2c3e50; }
+.sd-cost-chip.pearl { background: #9b59b6; }
+
+/* ====== 王室卡 ====== */
+.sd-royalties-area { margin: 0.5rem 0; text-align: center; }
+.sd-royalties-label { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.25rem; }
+.sd-royalties-list { display: flex; justify-content: center; gap: 0.5rem; }
+
+.sd-royalty {
+  width: 5.5rem; min-height: 3rem; border-radius: 6px;
+  background: #fef9e7; border: 2px solid #d4a017;
+  padding: 0.3rem; display: flex; flex-direction: column; gap: 0.2rem;
+  font-size: 0.7rem; position: relative;
+}
+
+.sd-royalty.claimed { opacity: 0.55; border-color: #95a5a6; }
+
+.sd-royalty-prestige { font-weight: 700; color: #d4a017; }
+.sd-royalty-ability { font-size: 0.65rem; color: #2980b9; }
+.sd-royalty-claimed { font-size: 0.65rem; color: #27ae60; }
+
+/* ====== 对手区 ====== */
+.sd-opponent-area {
+  background: rgba(0,0,0,0.04); border-radius: 8px;
+  padding: 0.5rem; margin: 0.5rem 0;
+}
+
+.sd-opponent-header {
+  display: flex; justify-content: center; gap: 0.75rem;
+  font-size: 0.85rem; font-weight: 600; margin-bottom: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.sd-opponent-tokens, .sd-opponent-reserved, .sd-opponent-bonus {
+  display: flex; justify-content: center; gap: 0.25rem;
+  margin: 0.25rem 0;
+}
+
+/* 小token */
+.sd-mini-token {
+  width: 1.6rem; height: 1.6rem; border-radius: 50%;
+  font-size: 0.65rem; font-weight: 700; color: #fff;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+.sd-mini-token.emerald { background: #27ae60; }
+.sd-mini-token.sapphire { background: #2980b9; }
+.sd-mini-token.ruby { background: #c0392b; }
+.sd-mini-token.diamond { background: #bdc3c7; color: #2c3e50; }
+.sd-mini-token.onyx { background: #2c3e50; }
+.sd-mini-token.pearl { background: #9b59b6; }
+.sd-mini-token.gold { background: #f1c40f; color: #2c3e50; }
+
+/* 预留背面 */
+.sd-reserve-back {
+  width: 3rem; height: 4.2rem; border-radius: 4px;
+  background: #6c757d; display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 0.7rem;
+}
+
+/* ====== 我的区域 ====== */
+.sd-my-area {
+  margin-top: 0.75rem;
+  background: rgba(0,0,0,0.04); border-radius: 8px;
+  padding: 0.5rem;
+}
+
+.sd-my-header {
+  display: flex; justify-content: center; gap: 1rem;
+  font-size: 1rem; font-weight: 600; margin-bottom: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.sd-my-bonus { display: flex; justify-content: center; gap: 0.3rem; margin-bottom: 0.4rem; }
+
+.sd-reserved-label, .sd-tokens-label {
+  font-size: 0.75rem; color: var(--muted);
+  margin-bottom: 0.2rem; text-align: center;
+}
+
+.sd-my-reserved { display: flex; justify-content: center; gap: 0.3rem; margin-bottom: 0.4rem; min-height: 2rem; }
+.sd-my-tokens { display: flex; justify-content: center; gap: 0.4rem; margin-bottom: 0.4rem; min-height: 2.4rem; }
+
+.sd-bonus-dot {
+  width: 1.4rem; height: 1.4rem; border-radius: 50%;
+  font-size: 0.6rem; font-weight: 700; color: #fff;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+.sd-bonus-dot.emerald { background: #27ae60; }
+.sd-bonus-dot.sapphire { background: #2980b9; }
+.sd-bonus-dot.ruby { background: #c0392b; }
+.sd-bonus-dot.diamond { background: #bdc3c7; color: #2c3e50; }
+.sd-bonus-dot.onyx { background: #2c3e50; }
+
+/* ====== 中间信息 ====== */
+.sd-center-info {
+  text-align: center; font-size: 0.85rem;
+  color: var(--muted); min-height: 1.2rem; margin: 0.25rem 0;
+}
+
+.sd-mandatory-hint {
+  text-align: center; font-size: 0.8rem;
+  color: #d4a017; font-weight: 600; margin-bottom: 0.25rem;
+}
+
+/* ====== 操作 ====== */
+.sd-actions { justify-content: center; gap: 0.5rem; margin-top: 0.4rem; }
+
+.sd-hint {
+  font-size: 0.8rem; color: var(--muted);
+  text-align: center; margin-bottom: 0.25rem; width: 100%;
+}
+
+#sd-log { max-height: 140px; overflow-y: auto; }
+
+/* ====== 响应式 ====== */
+@media (max-width: 640px) {
+  .sd-card { width: 6.2rem; min-height: 4.2rem; padding: 0.3rem; font-size: 0.7rem; }
+  .sd-tier-deck { width: 2.8rem; height: 4rem; }
+  .sd-board-grid { grid-template-columns: repeat(5, 2.2rem); grid-template-rows: repeat(5, 2.2rem); gap: 0.2rem; }
+  .sd-grid-cell { width: 2.2rem; height: 2.2rem; font-size: 0.75rem; }
+}

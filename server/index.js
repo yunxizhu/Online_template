@@ -1364,6 +1364,31 @@ function emitGameState(room) {
   scheduleLasidaoSettleAnim(room);
 }
 
+function emitGameLoading(room) {
+  if (!room) return;
+  const progress = room._loadingProgress || {};
+  const ready = room._loadingReady || new Set();
+  for (const p of room.players) {
+    if (p.offline || p.left) continue;
+    io.to(p.id).emit('game:loading', {
+      state: publicStateForRoom(room, p.id),
+      progress,
+      readyCount: ready.size,
+      totalCount: (room.players || []).filter((x) => x && !x.left && !x.offline).length,
+    });
+  }
+  for (const o of room.observers || []) {
+    if (o.offline) continue;
+    io.to(o.id).emit('game:loading', {
+      state: publicStateForRoom(room, null),
+      spectator: true,
+      progress,
+      readyCount: ready.size,
+      totalCount: (room.players || []).filter((x) => x && !x.left && !x.offline).length,
+    });
+  }
+}
+
 function emitGameStarted(room) {
   if (!room) return;
   for (const p of room.players) {
@@ -1378,6 +1403,26 @@ function emitGameStarted(room) {
       state: publicStateForRoom(room, null),
       spectator: true,
     });
+  }
+}
+
+function broadcastLoadingProgress(room) {
+  if (!room) return;
+  const progress = room._loadingProgress || {};
+  const ready = room._loadingReady || new Set();
+  const totalCount = (room.players || []).filter((x) => x && !x.left && !x.offline).length;
+  const payload = {
+    progress,
+    readyCount: ready.size,
+    totalCount,
+  };
+  for (const p of room.players) {
+    if (p.offline || p.left) continue;
+    io.to(p.id).emit('game:loadingProgress', payload);
+  }
+  for (const o of room.observers || []) {
+    if (o.offline) continue;
+    io.to(o.id).emit('game:loadingProgress', payload);
   }
 }
 
@@ -2902,11 +2947,30 @@ io.on('connection', (socket) => {
       return;
     }
     emitRoomUpdate(result.room);
-    // 开局：立刻更新大厅状态并发送房间心跳
+    // 开局：先发送 game:loading，等所有人资源加载完成后再发 game:started
     mqttNotifyRoomStatusNow();
-    syncTurnTimer(result.room, { onTimeout: handleTurnTimeout });
-    emitGameStarted(result.room);
-    scheduleLasidaoInitAnnounce(result.room);
+    emitGameLoading(result.room);
+  });
+
+  socket.on('game:loadingProgress', (data = {}) => {
+    const progress = Number(data && data.progress) || 0;
+    const res = rooms.reportLoadingProgress(socket.id, progress);
+    if (res.ok && res.room) {
+      broadcastLoadingProgress(res.room);
+    }
+  });
+
+  socket.on('game:loadingReady', () => {
+    const res = rooms.reportLoadingReady(socket.id);
+    if (!res.ok || !res.room) return;
+    broadcastLoadingProgress(res.room);
+    if (res.allReady) {
+      const room = res.room;
+      // 所有人加载完成：正式开局，启动倒计时
+      syncTurnTimer(room, { onTimeout: handleTurnTimeout });
+      emitGameStarted(room);
+      scheduleLasidaoInitAnnounce(room);
+    }
   });
 
   socket.on('room:moveSeat', (data = {}) => {

@@ -1904,7 +1904,48 @@ class RoomManager {
       room.playingStartedAt = null;
       return { ok: false, error: err.message || '开局失败' };
     }
+
+    // 初始化资源加载同步跟踪（Bot 自动标记为已加载完成）
+    room._loadingReady = new Set();
+    room._loadingProgress = {};
+    for (const p of room.players || []) {
+      if (!p || p.left || p.offline) continue;
+      room._loadingProgress[p.id] = 0;
+      if (p.isBot) {
+        room._loadingReady.add(p.id);
+        room._loadingProgress[p.id] = 100;
+      }
+    }
+
     return { ok: true, room, gameModule: game };
+  }
+
+  /**
+   * 玩家报告资源加载进度（0-100）
+   */
+  reportLoadingProgress(playerId, progress) {
+    const player = this.players.get(playerId);
+    if (!player || !player.roomId) return { ok: false };
+    const room = this.getRoom(player.roomId);
+    if (!room || room.status !== 'playing' || !room.game) return { ok: false };
+    if (!room._loadingProgress) room._loadingProgress = {};
+    room._loadingProgress[playerId] = Math.max(0, Math.min(100, Number(progress) || 0));
+    return { ok: true, room };
+  }
+
+  /**
+   * 玩家报告资源加载完成
+   */
+  reportLoadingReady(playerId) {
+    const player = this.players.get(playerId);
+    if (!player || !player.roomId) return { ok: false };
+    const room = this.getRoom(player.roomId);
+    if (!room || room.status !== 'playing' || !room.game) return { ok: false };
+    if (!room._loadingReady) room._loadingReady = new Set();
+    room._loadingReady.add(playerId);
+    const allOnline = (room.players || []).filter((p) => p && !p.left && !p.offline).map((p) => p.id);
+    const allReady = allOnline.every((id) => room._loadingReady.has(id));
+    return { ok: true, room, allReady };
   }
 
   /**

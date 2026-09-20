@@ -6,6 +6,8 @@ const sgs = require('./sgs');
 const lasidao = require('./lasidao');
 const catan = require('./catan');
 const doudizhu = require('./doudizhu');
+const guandan = require('./guandan');
+const splendorDuel = require('./splendor-duel');
 
 /** @type {Record<string, object>} 顺序即创建房间下拉默认顺序 */
 const GAMES = {
@@ -15,6 +17,8 @@ const GAMES = {
   [lasidao.id]: lasidao,
   [catan.id]: catan,
   [doudizhu.id]: doudizhu,
+  [guandan.id]: guandan,
+  [splendorDuel.id]: splendorDuel,
 };
 
 function gameSupportsBot(game) {

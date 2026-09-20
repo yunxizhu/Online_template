@@ -171,7 +171,13 @@
     btnDeclineRejoin: document.getElementById('btn-decline-rejoin'),
     btnCloseRejoin: document.getElementById('btn-close-rejoin'),
     roomBusyOverlay: document.getElementById('room-busy-overlay'),
+    roomBusySpinner: document.querySelector('#room-busy-overlay .room-busy-spinner'),
     roomBusyMessage: document.getElementById('room-busy-message'),
+    roomBusyProgressWrap: document.getElementById('room-busy-progress-wrap'),
+    roomBusyProgressFill: document.getElementById('room-busy-progress-fill'),
+    roomBusyProgressText: document.getElementById('room-busy-progress-text'),
+    roomBusyPlayersGrid: document.getElementById('room-busy-players-grid'),
+    roomBusyPlayersStatus: document.getElementById('room-busy-players-status'),
     passiveLockOverlay: document.getElementById('passive-lock-overlay'),
     passiveLockTitle: document.getElementById('passive-lock-title'),
     passiveLockDesc: document.getElementById('passive-lock-desc'),
@@ -2359,13 +2365,14 @@
     } catch (_) {}
   }
 
-  async function mountGamePanels() {
+  async function mountGamePanels(onProgress) {
     syncRemoteAssetBase();
     const panelBase = isMobilePlayPage() ? '' : gameAssetBaseUrl();
     state.games = await fetchGamesCatalog();
     const result = await window.GameBoot.mountPanels(
       state.games,
-      panelBase || undefined
+      panelBase || undefined,
+      { onProgress }
     );
     if (result && result.fail && result.fail.length) {
       console.warn('部分游戏资源未加载', result.fail);
@@ -2394,6 +2401,8 @@
     if (type === 'catan') return Boolean(window.CatanUi);
     if (type === 'gomoku') return Boolean(window.GomokuBoard || el.gomokuCanvas);
     if (type === 'doudizhu') return Boolean(window.DoudizhuUi);
+    if (type === 'guandan') return Boolean(window.GuandanUi);
+    if (type === 'splendor-duel') return Boolean(window.SplendorDuelUi);
     return true;
   }
 
@@ -2465,6 +2474,8 @@
     el.panelIncan = document.getElementById('panel-incan');
     el.panelCatan = document.getElementById('panel-catan');
     el.panelDoudizhu = document.getElementById('panel-doudizhu');
+    el.panelGuandan = document.getElementById('panel-guandan');
+    el.panelSplendorDuel = document.getElementById('panel-splendor-duel');
     el.gameTitle = document.getElementById('game-title');
     el.gameStatus = document.getElementById('game-status');
     el.gameSides = document.getElementById('game-sides');
@@ -2680,6 +2691,7 @@
       el.roomBusyOverlay.hidden = false;
       el.roomBusyOverlay.dataset.busyMode = mode || '';
     }
+    if (el.roomBusySpinner) el.roomBusySpinner.hidden = false;
     if (el.roomBusyMessage) {
       el.roomBusyMessage.setAttribute('data-i18n-manual', '');
       el.roomBusyMessage.removeAttribute('data-i18n');
@@ -2693,11 +2705,20 @@
             ? tunnelConnectingMessage()
           : mode === 'create'
             ? t('create.creating')
+            : mode === 'loading'
+            ? '正在加载游戏资源…'
             : t('create.joining'));
     }
+    if (mode !== 'loading') {
+      if (el.roomBusyProgressWrap) el.roomBusyProgressWrap.hidden = true;
+      if (el.roomBusyPlayersGrid) {
+        el.roomBusyPlayersGrid.hidden = true;
+        el.roomBusyPlayersGrid.innerHTML = '';
+      }
+    }
     clearTimeout(roomBusyTimer);
-    // 隧道连接中：不自动超时关掉，保持转圈直到连上或用户离开
-    if (mode === 'connect') {
+    // 隧道连接中 / 加载游戏资源：不自动超时关掉
+    if (mode === 'connect' || mode === 'loading') {
       roomBusyTimer = null;
       return;
     }
@@ -2725,11 +2746,88 @@
     roomBusyTimer = null;
     if (el.roomBusyOverlay) el.roomBusyOverlay.hidden = true;
     document.documentElement.classList.remove('boot-joining');
+    if (el.roomBusyProgressWrap) el.roomBusyProgressWrap.hidden = true;
+    if (el.roomBusyPlayersGrid) {
+      el.roomBusyPlayersGrid.hidden = true;
+      el.roomBusyPlayersGrid.innerHTML = '';
+    }
+    if (el.roomBusySpinner) el.roomBusySpinner.hidden = false;
+    if (el.roomBusyPlayersStatus) {
+      el.roomBusyPlayersStatus.hidden = true;
+      el.roomBusyPlayersStatus.textContent = '';
+    }
   }
 
   function updateRoomBusyMessage(message) {
     if (!state.roomBusy || !message) return;
     if (el.roomBusyMessage) el.roomBusyMessage.textContent = message;
+  }
+
+  function showLoadingProgress(percent, playersText) {
+    if (el.roomBusyProgressWrap) el.roomBusyProgressWrap.hidden = false;
+    if (el.roomBusyProgressFill) {
+      el.roomBusyProgressFill.style.width = Math.max(0, Math.min(100, Number(percent) || 0)) + '%';
+    }
+    if (el.roomBusyProgressText) {
+      el.roomBusyProgressText.textContent = Math.round(Math.max(0, Math.min(100, Number(percent) || 0))) + '%';
+    }
+    if (el.roomBusyPlayersStatus) {
+      if (playersText) {
+        el.roomBusyPlayersStatus.hidden = false;
+        el.roomBusyPlayersStatus.textContent = playersText;
+      } else {
+        el.roomBusyPlayersStatus.hidden = true;
+      }
+    }
+  }
+
+  function renderLoadingPlayerCards(progress, readyCount, totalCount) {
+    if (!el.roomBusyPlayersGrid) return;
+    const grid = el.roomBusyPlayersGrid;
+    grid.hidden = false;
+    // 隐藏旧的总体进度条
+    if (el.roomBusyProgressWrap) el.roomBusyProgressWrap.hidden = true;
+    if (el.roomBusySpinner) el.roomBusySpinner.hidden = true;
+
+    const players = (state.room && state.room.players) || [];
+    // 只显示在线且未离开的座位玩家
+    const onlinePlayers = players.filter((p) => p && !p.left && !p.offline);
+
+    // 构建玩家 ID -> 数据的映射
+    const progressMap = progress || {};
+    const myId = state.me && state.me.id;
+
+    grid.innerHTML = '';
+    for (const p of onlinePlayers) {
+      const pct = Math.max(0, Math.min(100, Number(progressMap[p.id]) || 0));
+      const isReady = pct >= 100;
+      const card = document.createElement('div');
+      card.className = 'loading-player-card' + (p.id === myId ? ' is-me' : '') + (isReady ? ' is-ready' : '');
+      const name = document.createElement('p');
+      name.className = 'loading-player-name';
+      name.textContent = p.name || '玩家';
+      const barWrap = document.createElement('div');
+      barWrap.className = 'loading-player-bar';
+      const fill = document.createElement('div');
+      fill.className = 'loading-player-fill' + (isReady ? ' is-done' : '');
+      fill.style.width = pct + '%';
+      barWrap.appendChild(fill);
+      const pctText = document.createElement('p');
+      pctText.className = 'loading-player-pct';
+      pctText.textContent = isReady ? '已就绪' : pct + '%';
+      card.appendChild(name);
+      card.appendChild(barWrap);
+      card.appendChild(pctText);
+      grid.appendChild(card);
+    }
+
+    if (el.roomBusyMessage) {
+      el.roomBusyMessage.textContent = '等待所有玩家加载资源…';
+    }
+    if (el.roomBusyPlayersStatus) {
+      el.roomBusyPlayersStatus.hidden = false;
+      el.roomBusyPlayersStatus.textContent = `已就绪 ${readyCount}/${totalCount}`;
+    }
   }
 
   async function joinRoomWithBusy(joinFn) {
@@ -2764,6 +2862,40 @@
 
   /** 开局前尽量等卡图就绪；超时也放行，避免整局卡死 */
   const LASIDAO_ASSETS_WAIT_MS = 10000;
+
+  async function ensureGameAndAssetsReady(gameState, onProgress) {
+    if (onProgress) onProgress(0);
+
+    // Step 1: 挂载游戏 UI 面板 (~0% -> 35%)
+    await mountGamePanels((pct01) => {
+      if (onProgress) onProgress(Math.round(pct01));
+    });
+    if (onProgress) onProgress(35);
+
+    // Step 2: 加载游戏卡图资源 (~35% -> 100%)
+    if (gameState && gameState.type === 'lasidao' && !gameState.over) {
+      const A = window.LasidaoAssets;
+      if (A && typeof A.preloadPictures === 'function') {
+        if (typeof A.isPreloadDone === 'function' && !A.isPreloadDone()) {
+          try {
+            await A.preloadPictures({
+              onProgress: (total, done) => {
+                if (onProgress) {
+                  const pct = total > 0
+                    ? Math.round(35 + (done / total) * 65)
+                    : 100;
+                  onProgress(Math.min(100, pct));
+                }
+              },
+            });
+          } catch (err) {
+            console.warn('preloadPictures failed', err);
+          }
+        }
+      }
+    }
+    if (onProgress) onProgress(100);
+  }
 
   async function ensureLasidaoAssetsReady(opts) {
     const A = window.LasidaoAssets;
@@ -3359,6 +3491,13 @@
       if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = true;
       if (el.roomEasyStartWrap) el.roomEasyStartWrap.hidden = true;
       if (el.roomConflictDlcWrap) el.roomConflictDlcWrap.hidden = true;
+    } else if (g.id === 'guandan') {
+      el.maxPlayersWrap.hidden = true;
+      fillMaxPlayerOptions(4, 4, 4);
+      el.gameHint.textContent = t('create.hintGuandan');
+      if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = true;
+      if (el.roomEasyStartWrap) el.roomEasyStartWrap.hidden = true;
+      if (el.roomConflictDlcWrap) el.roomConflictDlcWrap.hidden = true;
     } else if (g.id === 'incan') {
       el.maxPlayersWrap.hidden = false;
       fillMaxPlayerOptions(g.minPlayers, g.maxPlayers, 6);
@@ -3428,6 +3567,13 @@
       } else {
         el.gameHint.textContent = t('create.hintSgsIdentity');
       }
+    } else if (g.id === 'splendor-duel') {
+      el.maxPlayersWrap.hidden = true;
+      fillMaxPlayerOptions(2, 2, 2);
+      el.gameHint.textContent = t('create.hintSplendorDuel');
+      if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = true;
+      if (el.roomEasyStartWrap) el.roomEasyStartWrap.hidden = true;
+      if (el.roomConflictDlcWrap) el.roomConflictDlcWrap.hidden = true;
     } else {
       if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = true;
       if (el.roomEasyStartWrap) el.roomEasyStartWrap.hidden = true;
@@ -4660,6 +4806,8 @@
   function hideAllGamePanels() {
     if (el.panelGomoku) el.panelGomoku.hidden = true;
     if (el.panelDoudizhu) el.panelDoudizhu.hidden = true;
+    if (el.panelGuandan) el.panelGuandan.hidden = true;
+    if (el.panelSplendorDuel) el.panelSplendorDuel.hidden = true;
     if (window.IncanUi) window.IncanUi.hide();
     if (window.CatanUi) window.CatanUi.hide();
     if (window.SgsUi) window.SgsUi.hide();
@@ -5158,6 +5306,98 @@
       if (el.gameSides) {
         const landlordName = game.landlordId ? playerNameById(game.landlordId) : t('common.dash');
         el.gameSides.textContent = t('doudizhu.landlordLabel', { name: landlordName });
+      }
+    } else if (game.type === 'guandan') {
+      hideAllGamePanels();
+      if (el.panelGuandan) el.panelGuandan.hidden = false;
+      if (window.GuandanUi) {
+        window.GuandanUi.render(game, net, {
+          meId: state.me && state.me.id,
+          playerNameById,
+          t,
+        });
+      }
+      if (el.gameTitle) {
+        el.gameTitle.textContent = gameLabelOf(
+          'guandan',
+          (state.room && state.room.gameLabel) || t('guandan.title')
+        );
+      }
+      if (el.gameStatus) {
+        if (game.over) {
+          if (game.winnerId && state.me) {
+            const winTeam = game.winnerTeam;
+            const myTeam = (
+              (game.teamA.includes(state.me.id) && 'A') ||
+              (game.teamB.includes(state.me.id) && 'B')
+            );
+            const mine = myTeam === winTeam;
+            if (mine) {
+              const levelText = t('guandan.levelUp', { n: game.levelsUp || 1 });
+              el.gameStatus.textContent = t('guandan.teamWin', { team: winTeam, levelUp: levelText });
+            } else {
+              el.gameStatus.textContent = t('guandan.teamLose', { team: winTeam });
+            }
+          } else {
+            el.gameStatus.textContent = t('guandan.ended');
+          }
+        } else {
+          const mine = state.me && game.currentPlayerId === state.me.id;
+          el.gameStatus.textContent = mine
+            ? t('guandan.yourTurn')
+            : t('guandan.waitNamed', { name: playerNameById(game.currentPlayerId) });
+        }
+      }
+      if (el.gameSides) {
+        const teamA = game.teamA || [];
+        const teamB = game.teamB || [];
+        const namesA = teamA.map(pid => playerNameById(pid) || pid).join(' & ');
+        const namesB = teamB.map(pid => playerNameById(pid) || pid).join(' & ');
+        el.gameSides.textContent = `A队: ${namesA} | B队: ${namesB}`;
+      }
+    } else if (game.type === 'splendor-duel') {
+      hideAllGamePanels();
+      if (el.panelSplendorDuel) el.panelSplendorDuel.hidden = false;
+      if (window.SplendorDuelUi) {
+        window.SplendorDuelUi.render(game, net, {
+          meId: state.me && state.me.id,
+          playerNameById,
+          t,
+        });
+      }
+      if (el.gameTitle) {
+        el.gameTitle.textContent = gameLabelOf(
+          'splendor-duel',
+          (state.room && state.room.gameLabel) || t('splendorDuel.title')
+        );
+      }
+      if (el.gameStatus) {
+        if (game.over) {
+          if (game.winnerId && state.me) {
+            el.gameStatus.textContent = game.winnerId === state.me.id
+              ? t('splendorDuel.youWin')
+              : t('splendorDuel.ended', { name: playerNameById(game.winnerId) });
+          } else {
+            el.gameStatus.textContent = t('splendorDuel.ended', { name: playerNameById(game.winnerId) });
+          }
+        } else {
+          const mine = state.me && game.currentPlayerId === state.me.id;
+          if (game.phase === 'discard') {
+            const discarding = game.discardPlayerId === state.me.id;
+            el.gameStatus.textContent = discarding
+              ? t('splendorDuel.discardPhase')
+              : t('splendorDuel.waitNamed', { name: playerNameById(game.discardPlayerId) });
+          } else {
+            el.gameStatus.textContent = mine
+              ? t('splendorDuel.yourTurn')
+              : t('splendorDuel.waitNamed', { name: playerNameById(game.currentPlayerId) });
+          }
+        }
+      }
+      if (el.gameSides) {
+        const ordered = game.turnOrder || [];
+        const names = ordered.map(pid => playerNameById(pid) || pid).join(' vs ');
+        el.gameSides.textContent = names;
       }
     } else {
       renderGomoku();
@@ -7369,28 +7609,34 @@
         state.me &&
           (data.room.observers || []).some((o) => o.id === state.me.id)
       );
-      const enterPlaying = () => {
-        ensureGamePanelsReady()
-          .then(() => {
-            showView('game');
-            if (state.game) renderGame();
-          })
-          .catch((err) => {
-            console.warn('game panels load failed', err);
-            resetGamePanelsState();
-            showToastSafe(t('game.loadFail'), 5000);
-            showView('game');
-            if (state.game) {
-              try {
-                renderGame();
-              } catch (_) {}
-            }
-          });
-      };
-      if (data.room.gameType === 'lasidao') {
-        ensureLasidaoAssetsReady().then(enterPlaying).catch(enterPlaying);
+      if (state.game) {
+        // 已经有游戏数据：重连/刷新，直接进入对局
+        const enterPlaying = () => {
+          ensureGamePanelsReady()
+            .then(() => {
+              showView('game');
+              if (state.game) renderGame();
+            })
+            .catch((err) => {
+              console.warn('game panels load failed', err);
+              resetGamePanelsState();
+              showToastSafe(t('game.loadFail'), 5000);
+              showView('game');
+              if (state.game) {
+                try {
+                  renderGame();
+                } catch (_) {}
+              }
+            });
+        };
+        if (data.room.gameType === 'lasidao') {
+          ensureLasidaoAssetsReady().then(enterPlaying).catch(enterPlaying);
+        } else {
+          enterPlaying();
+        }
       } else {
-        enterPlaying();
+        // 还没有游戏数据：房间刚开局，等待 game:loading 事件统一加载
+        showRoomBusy('loading', '正在加载游戏资源…');
       }
     } else {
       rememberActivePlay(data.room);
@@ -7575,6 +7821,54 @@
     closeAllModals();
     showToast(t('toast.roomUpdated'));
   });
+  net.on('game:loading', async (data) => {
+    if (leavingToLocal) return;
+    state.game = data.state;
+    if (data && data.spectator) state.isSpectator = true;
+    const roomId = state.room && state.room.id ? state.room.id : state._lastRoomId;
+    const seatId = data && data.state && data.state.me ? data.state.me.id : null;
+    rememberGameArchive({
+      roomId,
+      seatId,
+      phase: data && data.state ? data.state.phase : null,
+    });
+    // 显示加载遮罩并启动资源加载
+    showRoomBusy('loading', '正在加载游戏资源…');
+    // 先渲染玩家卡片
+    renderLoadingPlayerCards(data.progress, data.readyCount || 0, data.totalCount || 1);
+    try {
+      // 实际加载资源，并上报进度
+      await ensureGameAndAssetsReady(data.state, (pct) => {
+        if (typeof net.sendLoadingProgress === 'function') {
+          net.sendLoadingProgress(pct);
+        }
+        // 更新自己的卡片进度
+        if (state.me && state.me.id && state.roomBusy === 'loading') {
+          renderLoadingPlayerCards(
+            { ...(data.progress || {}), [state.me.id]: pct },
+            data.readyCount || 0,
+            data.totalCount || 1
+          );
+        }
+      });
+      // 资源加载完成，上报服务器
+      if (typeof net.sendLoadingReady === 'function') {
+        net.sendLoadingReady();
+      }
+    } catch (err) {
+      console.warn('game loading failed', err);
+      hideRoomBusy();
+    }
+  });
+
+  net.on('game:loadingProgress', (data) => {
+    if (state.roomBusy !== 'loading') return;
+    const progress = data && data.progress ? data.progress : {};
+    const readyCount = data && Number(data.readyCount) || 0;
+    const totalCount = data && Number(data.totalCount) || 1;
+    renderLoadingPlayerCards(progress, readyCount, totalCount);
+  });
+
   net.on('game:started', async (data) => {
     if (leavingToLocal) return;
     state.game = data.state;
@@ -7601,14 +7895,7 @@
       scheduleRenderGame(true);
       return;
     }
-    if (
-      data &&
-      data.state &&
-      data.state.type === 'lasidao' &&
-      !data.state.over
-    ) {
-      await ensureLasidaoAssetsReady();
-    }
+    hideRoomBusy();
     if (state.passiveMode) applyPassiveLockUi(true);
     showView('game');
     scheduleRenderGame(true);
@@ -8307,7 +8594,7 @@
     if (!nick) {
       hideRoomBusy();
       document.documentElement.classList.remove('boot-joining');
-      if (isGuestClient()) {
+      if (isGuestClient() && !bootJoin && !bootCreatePassive) {
         tryNavigateGuestReturn();
         return;
       }
@@ -8382,7 +8669,7 @@
   } else if (await bootMobilePlayJoin()) {
     /* bootMobilePlayJoin 内已预加载面板并在对局中 render */
   } else if (
-    isGuestClient() &&
+    (isGuestClient() || bootJoin || bootCreatePassive) &&
     (bootName || bootJoin || bootCreatePassive || bootQuery.get('guest') === '1')
   ) {
     await bootGuestDeepLink();

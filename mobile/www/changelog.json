@@ -2,6 +2,12 @@
   "schema": 1,
   "entries": [
     {
+      "version": "1.2.13",
+      "notes": "大幅度减少图片资源的大小，减小仅靠隧道进入的玩家的加载数据量",
+      "notesEn": "",
+      "publishedAt": "2026-09-20T16:36:47.206Z"
+    },
+    {
       "version": "1.2.12",
       "notes": "新增斗地主",
       "notesEn": "",

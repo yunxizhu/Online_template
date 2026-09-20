@@ -1,0 +1,62 @@
+<!-- 掼蛋对局面板 -->
+<div class="panel game-panel" id="panel-guandan" hidden>
+  <h2 id="game-title" data-i18n="guandan.title">掼蛋</h2>
+  <p id="game-status" class="game-status">—</p>
+  <p id="game-sides" class="muted"></p>
+
+  <!-- 当前级牌 -->
+  <div class="gd-level-area">
+    <span class="gd-level-label" data-i18n="guandan.level">当前级牌</span>
+    <span class="gd-level-value" id="gd-level-value">2</span>
+  </div>
+
+  <!-- 游戏桌面 -->
+  <div class="gd-table">
+    <!-- 对家区域 -->
+    <div class="gd-player-area gd-player-opposite" id="gd-area-opposite">
+      <div class="gd-player-name" id="gd-name-opposite"></div>
+      <div class="gd-player-role" id="gd-role-opposite"></div>
+      <div class="gd-hand-back" id="gd-hand-opposite"></div>
+      <div class="gd-hand-count" id="gd-count-opposite"></div>
+      <div class="gd-last-play" id="gd-play-opposite"></div>
+    </div>
+
+    <!-- 上家区域 -->
+    <div class="gd-player-area gd-player-prev" id="gd-area-prev">
+      <div class="gd-player-name" id="gd-name-prev"></div>
+      <div class="gd-player-role" id="gd-role-prev"></div>
+      <div class="gd-hand-back" id="gd-hand-prev"></div>
+      <div class="gd-hand-count" id="gd-count-prev"></div>
+      <div class="gd-last-play" id="gd-play-prev"></div>
+    </div>
+
+    <!-- 出牌区 -->
+    <div class="gd-center-area" id="gd-center-area">
+      <div class="gd-last-play-center" id="gd-last-play-center"></div>
+      <div class="gd-last-play-info" id="gd-last-play-info"></div>
+    </div>
+
+    <!-- 下家区域 -->
+    <div class="gd-player-area gd-player-next" id="gd-area-next">
+      <div class="gd-player-name" id="gd-name-next"></div>
+      <div class="gd-player-role" id="gd-role-next"></div>
+      <div class="gd-hand-back" id="gd-hand-next"></div>
+      <div class="gd-hand-count" id="gd-count-next"></div>
+      <div class="gd-last-play" id="gd-play-next"></div>
+    </div>
+  </div>
+
+  <!-- 我的手牌 -->
+  <div class="gd-my-area">
+    <div class="gd-my-info">
+      <span class="gd-my-role" id="gd-my-role"></span>
+      <span class="gd-my-count" id="gd-my-count"></span>
+    </div>
+    <div class="gd-my-hand" id="gd-my-hand"></div>
+    <div class="row las-actions gd-play-actions" id="gd-play-actions"></div>
+  </div>
+
+  <!-- 对局记录 -->
+  <h3 class="game-sub" data-i18n="guandan.log">出牌记录</h3>
+  <ul id="gd-log" class="game-log"></ul>
+</div>

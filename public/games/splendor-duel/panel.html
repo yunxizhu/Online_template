@@ -1,0 +1,90 @@
+<!-- 璀璨宝石·对决 对局面板 (BGA版 5×5) -->
+<div class="panel game-panel" id="panel-splendor-duel" hidden>
+  <h2 id="game-title" data-i18n="splendorDuel.title">璀璨宝石·对决</h2>
+  <p id="game-status" class="game-status">—</p>
+
+  <!-- 可选行动区 -->
+  <div class="sd-optional-area" id="sd-optional-area">
+    <div class="sd-optional-label" data-i18n="splendorDuel.optionalActions">可选行动</div>
+    <div class="sd-privileges-wrap">
+      <span class="sd-privilege-label" data-i18n="splendorDuel.privilegeLabel">剩余特权</span>
+      <span class="sd-privilege-pool" id="sd-privilege-pool"></span>
+    </div>
+    <div class="sd-opt-actions row" id="sd-opt-actions"></div>
+  </div>
+
+  <!-- 5×5 卷轴版图 -->
+  <div class="sd-board-wrap">
+    <div class="sd-board-label" data-i18n="splendorDuel.board">版图</div>
+    <div class="sd-board-grid" id="sd-board-grid"></div>
+  </div>
+
+  <!-- 发展卡金字塔 -->
+  <div class="sd-card-pyramid">
+    <div class="sd-tier-row" data-tier="3">
+      <div class="sd-tier-label">III</div>
+      <div class="sd-tier-deck" id="sd-deck-t3"></div>
+      <div class="sd-tier-cards" id="sd-board-t3"></div>
+    </div>
+    <div class="sd-tier-row" data-tier="2">
+      <div class="sd-tier-label">II</div>
+      <div class="sd-tier-deck" id="sd-deck-t2"></div>
+      <div class="sd-tier-cards" id="sd-board-t2"></div>
+    </div>
+    <div class="sd-tier-row" data-tier="1">
+      <div class="sd-tier-label">I</div>
+      <div class="sd-tier-deck" id="sd-deck-t1"></div>
+      <div class="sd-tier-cards" id="sd-board-t1"></div>
+    </div>
+  </div>
+
+  <!-- 王室卡区 -->
+  <div class="sd-royalties-area" id="sd-royalties-area">
+    <div class="sd-royalties-label" data-i18n="splendorDuel.royalties">王室卡牌</div>
+    <div class="sd-royalties-list" id="sd-royalties-list"></div>
+  </div>
+
+  <!-- 对手信息 -->
+  <div class="sd-opponent-area" id="sd-opponent-area">
+    <div class="sd-opponent-header">
+      <span class="sd-opponent-name" id="sd-opp-name"></span>
+      <span class="sd-opponent-prestige" id="sd-opp-prestige"></span>
+      <span class="sd-opponent-crowns" id="sd-opp-crowns"></span>
+      <span class="sd-opponent-privileges" id="sd-opp-privileges"></span>
+    </div>
+    <div class="sd-opponent-tokens" id="sd-opp-tokens"></div>
+    <div class="sd-opponent-reserved" id="sd-opp-reserved"></div>
+    <div class="sd-opponent-bonus" id="sd-opp-bonus"></div>
+  </div>
+
+  <!-- 中间信息 -->
+  <div class="sd-center-info" id="sd-center-info"></div>
+
+  <!-- 我的面板 -->
+  <div class="sd-my-area" id="sd-my-area">
+    <div class="sd-my-header">
+      <span class="sd-my-prestige" id="sd-my-prestige"></span>
+      <span class="sd-my-crowns" id="sd-my-crowns"></span>
+      <span class="sd-my-privileges" id="sd-my-privileges"></span>
+    </div>
+    <div class="sd-my-bonus" id="sd-my-bonus"></div>
+
+    <div class="sd-my-reserved-area">
+      <div class="sd-reserved-label" data-i18n="splendorDuel.reserved">预留卡</div>
+      <div class="sd-my-reserved" id="sd-my-reserved"></div>
+    </div>
+
+    <div class="sd-my-tokens-area">
+      <div class="sd-tokens-label" data-i18n="splendorDuel.myTokens">我的宝石</div>
+      <div class="sd-my-tokens" id="sd-my-tokens"></div>
+    </div>
+
+    <!-- 强制行动操作区 -->
+    <div class="sd-mandatory-hint" id="sd-mandatory-hint"></div>
+    <div class="sd-actions row" id="sd-actions"></div>
+  </div>
+
+  <!-- 对局记录 -->
+  <h3 class="game-sub" data-i18n="splendorDuel.log">对局记录</h3>
+  <ul id="sd-log" class="game-log"></ul>
+</div>

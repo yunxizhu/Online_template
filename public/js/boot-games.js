@@ -105,13 +105,15 @@ window.GameBoot = (function () {
     });
   }
 
-  async function mountOneGame(g, base, mount) {
+  async function mountOneGame(g, base, mount, opts = {}) {
+    const onStep = typeof opts.onStep === 'function' ? opts.onStep : null;
     const client = g && g.client;
     if (!client) return;
     const id = g.id || '';
 
     for (const href of client.styles || []) {
       await loadStylesheet(absAssetUrl(base, href));
+      if (onStep) onStep();
     }
 
     if (client.panel) {
@@ -125,6 +127,7 @@ window.GameBoot = (function () {
         if (old) old.remove();
       }
       mount.insertAdjacentHTML('beforeend', html);
+      if (onStep) onStep();
     }
 
     const scriptUrls = (client.scripts || []).map((src) =>
@@ -132,6 +135,7 @@ window.GameBoot = (function () {
     );
     for (const src of scriptUrls) {
       await loadScript(src);
+      if (onStep) onStep();
     }
 
     // 脚本 onload 但执行报错时，全局 API 仍可能缺失；清掉标签以便下次真正重载
@@ -148,7 +152,11 @@ window.GameBoot = (function () {
                 ? 'GomokuBoard'
                 : id === 'doudizhu'
                   ? 'DoudizhuUi'
-                  : null;
+                  : id === 'guandan'
+                    ? 'GuandanUi'
+                    : id === 'splendor-duel'
+                      ? 'SplendorDuelUi'
+                      : null;
     if (needGlobal && !window[needGlobal]) {
       for (const src of scriptUrls) {
         const el = findAssetEl('script', src);
@@ -156,12 +164,14 @@ window.GameBoot = (function () {
       }
       throw new Error(needGlobal + ' 未初始化（脚本可能执行失败）');
     }
+    if (onStep) onStep();
   }
 
   /**
    * @returns {{ ok: string[], fail: { id: string, error: string }[] }}
    */
-  async function mountPanels(games, baseUrl) {
+  async function mountPanels(games, baseUrl, opts = {}) {
+    const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
     const mount = document.getElementById('game-panels');
     if (!mount) return { ok: [], fail: [] };
     const base = baseUrl ? String(baseUrl).replace(/\/$/, '') : '';
@@ -169,10 +179,28 @@ window.GameBoot = (function () {
     const ok = [];
     const fail = [];
 
+    // 计算总步骤数（CSS + panel fetch + script + init check）
+    let totalSteps = 0;
+    for (const g of games || []) {
+      if (!g || !g.client) continue;
+      const c = g.client;
+      totalSteps += (c.styles || []).length;
+      totalSteps += c.panel ? 1 : 0;
+      totalSteps += (c.scripts || []).length;
+      totalSteps += 1; // init check
+    }
+    let completedSteps = 0;
+    function step() {
+      completedSteps += 1;
+      if (onProgress && totalSteps > 0) {
+        onProgress(Math.min(35, Math.round((completedSteps / totalSteps) * 35)));
+      }
+    }
+
     for (const g of games || []) {
       if (!g || !g.client) continue;
       try {
-        await mountOneGame(g, base, mount);
+        await mountOneGame(g, base, mount, { onStep: step });
         if (g.id) ok.push(g.id);
       } catch (err) {
         const msg = (err && err.message) || String(err);
@@ -182,6 +210,10 @@ window.GameBoot = (function () {
           const panel = document.getElementById('panel-' + g.id);
           if (panel) panel.remove();
         }
+        // 失败了也要推进进度，避免卡住
+        const c = g.client;
+        const skippedSteps = (c.styles || []).length + (c.panel ? 1 : 0) + (c.scripts || []).length + 1;
+        for (let i = 0; i < skippedSteps; i++) step();
       }
     }
 

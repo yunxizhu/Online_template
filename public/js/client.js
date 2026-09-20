@@ -295,6 +295,8 @@ window.GameNet = (function () {
       'room:reopenDone',
       'room:kicked',
       'room:verifyPassword:result',
+      'game:loading',
+      'game:loadingProgress',
       'game:started',
       'game:state',
       'game:pulse',
@@ -1173,6 +1175,14 @@ window.GameNet = (function () {
     return joinClientConfig.homeUrl ? String(joinClientConfig.homeUrl) : '';
   }
 
+  function sendLoadingProgress(progress) {
+    ensureSocket().emit('game:loadingProgress', { progress: Number(progress) || 0 });
+  }
+
+  function sendLoadingReady() {
+    ensureSocket().emit('game:loadingReady');
+  }
+
   function recallTunnelNick(opts = {}) {
     const timeoutMs = Math.max(300, Number(opts.timeoutMs) || 1200);
     return new Promise((resolve) => {
@@ -1292,5 +1302,7 @@ window.GameNet = (function () {
     recallTunnelNick,
     fetchTunnelNickHttp,
     rememberTunnelNick,
+    sendLoadingProgress,
+    sendLoadingReady,
   };
 })();

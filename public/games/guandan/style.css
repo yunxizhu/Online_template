@@ -1,0 +1,264 @@
+#panel-guandan {}
+
+.gd-level-area {
+  text-align: center;
+  margin: 0.5rem 0;
+  font-size: 1.1rem;
+}
+
+.gd-level-label {
+  font-weight: 600;
+  color: var(--muted);
+  margin-right: 0.5rem;
+}
+
+.gd-level-value {
+  display: inline-block;
+  width: 2rem;
+  height: 2rem;
+  line-height: 2rem;
+  border-radius: 50%;
+  background: #d4a017;
+  color: #fff;
+  font-weight: 700;
+  text-align: center;
+}
+
+/* 桌面 */
+.gd-table {
+  display: grid;
+  grid-template-areas:
+    ". opposite ."
+    "prev center next";
+  grid-template-columns: 1fr 2fr 1fr;
+  gap: 0.5rem;
+  max-width: 800px;
+  margin: 0 auto;
+  min-height: 200px;
+  align-items: start;
+}
+
+.gd-player-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.gd-player-opposite {
+  grid-area: opposite;
+}
+
+.gd-player-prev {
+  grid-area: prev;
+}
+
+.gd-player-next {
+  grid-area: next;
+}
+
+.gd-center-area {
+  grid-area: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100px;
+}
+
+.gd-player-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: center;
+  word-break: break-all;
+  max-width: 100%;
+}
+
+.gd-player-role {
+  font-size: 0.7rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  color: #fff;
+  background: #6c757d;
+}
+
+.gd-player-role.is-teamA {
+  background: #2980b9;
+}
+
+.gd-player-role.is-teamB {
+  background: #c0392b;
+}
+
+.gd-player-role.is-finished {
+  background: #27ae60;
+}
+
+.gd-hand-back {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.gd-hand-count {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.gd-last-play {
+  display: flex;
+  gap: 0.15rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  min-height: 2.8rem;
+}
+
+.gd-last-play-center {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  min-height: 4rem;
+}
+
+.gd-last-play-info {
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* 背面牌 */
+.card-back {
+  width: 1.4rem;
+  height: 2rem;
+  border-radius: 4px;
+  background: #8e44ad;
+  border: 1px solid #6c3483;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+/* 正面的牌 */
+.card {
+  width: 2.4rem;
+  height: 3.4rem;
+  border-radius: 6px;
+  background: #fff;
+  border: 1px solid #ccc;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  user-select: none;
+  cursor: default;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+
+.card.is-selectable {
+  cursor: pointer;
+}
+
+.card.is-selected {
+  transform: translateY(-0.8rem);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.25);
+  border-color: #4dabf7;
+}
+
+.card .card-rank {
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.card .card-suit {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.card.is-red .card-rank,
+.card.is-red .card-suit {
+  color: #c0392b;
+}
+
+.card.is-black .card-rank,
+.card.is-black .card-suit {
+  color: #2c3e50;
+}
+
+/* 级牌高亮 */
+.card.is-level {
+  border-color: #d4a017;
+  background: #fff9e6;
+}
+
+/* 我的手牌区 */
+.gd-my-area {
+  max-width: 800px;
+  margin: 0.75rem auto 0;
+  text-align: center;
+}
+
+.gd-my-info {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.gd-my-role {
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  color: #fff;
+  background: #6c757d;
+}
+
+.gd-my-role.is-teamA {
+  background: #2980b9;
+}
+
+.gd-my-role.is-teamB {
+  background: #c0392b;
+}
+
+.gd-my-hand {
+  display: flex;
+  justify-content: center;
+  gap: 0.15rem;
+  flex-wrap: wrap;
+  min-height: 3.8rem;
+  padding: 0.5rem 0.25rem;
+  background: rgba(0,0,0,0.05);
+  border-radius: 8px;
+}
+
+.gd-play-actions {
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+#gd-log {
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+/* 响应式 */
+@media (max-width: 520px) {
+  .gd-table {
+    grid-template-columns: 1fr 1.4fr 1fr;
+    gap: 0.3rem;
+  }
+
+  .card {
+    width: 2.1rem;
+    height: 3rem;
+  }
+
+  .card .card-rank,
+  .card .card-suit {
+    font-size: 0.85rem;
+  }
+}
