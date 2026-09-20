@@ -208,6 +208,8 @@
     "coreLockedHint": "Other players have joined — game type and seats are locked.",
     "modeStandard": "Standard",
     "hintGomoku": "Gomoku: 2 players, host plays black first.",
+    "hintDoudizhu": "Doudizhu: 3 players; highest bidder becomes landlord; first to play all cards wins.",
+    "hintIncanFull": "Incan Gold: 3–8 players; choose together, reveal after all lock.",
     "creating": "Creating…",
     "createTimeout": "Create timed out, please retry",
     "joining": "Joining room…",
@@ -309,6 +311,7 @@
     "incan": "Incan Gold",
     "lasidao": "Kalastan",
     "catan": "Catan",
+    "doudizhu": "Doudizhu",
     "modes": {
       "identity": "Identity",
       "standard": "Standard",
@@ -381,6 +384,36 @@
     "youWin": "You win! (five in a row)",
     "ended": "Game over",
     "waitNamed": "Waiting for {name}"
+  },
+  "doudizhu": {
+    "title": "Doudizhu",
+    "landlordCards": "Landlord Cards",
+    "bidHint": "Call score (0 = pass)",
+    "bidRecord": "{name} called {score}",
+    "bidPass": "Pass",
+    "bidScore": "Call {score}",
+    "role": {
+      "landlord": "Landlord",
+      "farmer": "Farmer"
+    },
+    "handCount": "Hand {count}",
+    "myHandCount": "My hand {count}",
+    "lastPlay": "{name} played",
+    "newRound": "New round",
+    "pass": "Pass",
+    "play": "Play",
+    "reset": "Reset",
+    "selectCards": "Please select cards to play",
+    "yourTurn": "Your turn",
+    "yourTurnBid": "Your turn to bid",
+    "waitBid": "Waiting for {name} to bid",
+    "waitNamed": "Waiting for {name}",
+    "landlordLabel": "Landlord: {name}",
+    "youWin": "You win!",
+    "win": "{name} wins",
+    "teamWin": "{team} win",
+    "ended": "Game over",
+    "log": "Play log"
   },
   "lasidao": {
     "title": "Kalastan",

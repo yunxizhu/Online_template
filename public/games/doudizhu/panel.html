@@ -1,0 +1,57 @@
+<!-- 斗地主对局面板 -->
+<div class="panel game-panel" id="panel-doudizhu" hidden>
+  <h2 id="game-title" data-i18n="doudizhu.title">斗地主</h2>
+  <p id="game-status" class="game-status">—</p>
+  <p id="game-sides" class="muted"></p>
+
+  <!-- 叫分阶段 -->
+  <div id="ddz-bid-area" class="ddz-bid-area" hidden>
+    <div class="ddz-bid-info" id="ddz-bid-info"></div>
+    <div class="row las-actions ddz-bid-actions" id="ddz-bid-actions"></div>
+  </div>
+
+  <!-- 游戏桌面 -->
+  <div class="ddz-table">
+    <!-- 地主牌（明牌） -->
+    <div class="ddz-landlord-cards" id="ddz-landlord-cards"></div>
+    <p class="ddz-landlord-label" id="ddz-landlord-label"></p>
+
+    <!-- 上家区域 -->
+    <div class="ddz-player-area ddz-player-prev" id="ddz-area-prev">
+      <div class="ddz-player-name" id="ddz-name-prev"></div>
+      <div class="ddz-player-role" id="ddz-role-prev"></div>
+      <div class="ddz-hand-back" id="ddz-hand-prev"></div>
+      <div class="ddz-hand-count" id="ddz-count-prev"></div>
+      <div class="ddz-last-play" id="ddz-play-prev"></div>
+    </div>
+
+    <!-- 出牌区 -->
+    <div class="ddz-center-area" id="ddz-center-area">
+      <div class="ddz-last-play-center" id="ddz-last-play-center"></div>
+      <div class="ddz-last-play-info" id="ddz-last-play-info"></div>
+    </div>
+
+    <!-- 下家区域 -->
+    <div class="ddz-player-area ddz-player-next" id="ddz-area-next">
+      <div class="ddz-player-name" id="ddz-name-next"></div>
+      <div class="ddz-player-role" id="ddz-role-next"></div>
+      <div class="ddz-hand-back" id="ddz-hand-next"></div>
+      <div class="ddz-hand-count" id="ddz-count-next"></div>
+      <div class="ddz-last-play" id="ddz-play-next"></div>
+    </div>
+  </div>
+
+  <!-- 我的手牌 -->
+  <div class="ddz-my-area">
+    <div class="ddz-my-info">
+      <span class="ddz-my-role" id="ddz-my-role"></span>
+      <span class="ddz-my-count" id="ddz-my-count"></span>
+    </div>
+    <div class="ddz-my-hand" id="ddz-my-hand"></div>
+    <div class="row las-actions ddz-play-actions" id="ddz-play-actions"></div>
+  </div>
+
+  <!-- 对局记录 -->
+  <h3 class="game-sub" data-i18n="doudizhu.log">出牌记录</h3>
+  <ul id="ddz-log" class="game-log"></ul>
+</div>

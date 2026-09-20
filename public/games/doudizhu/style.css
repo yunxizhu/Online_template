@@ -1,0 +1,270 @@
+#panel-doudizhu {}
+
+.ddz-bid-area {
+  text-align: center;
+  margin: 0.75rem 0;
+}
+
+.ddz-bid-info {
+  font-size: 1.1rem;
+  margin-bottom: 0.5rem;
+}
+
+.ddz-bid-actions {
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.ddz-bid-actions button {
+  min-width: 3.5rem;
+}
+
+/* 桌面 */
+.ddz-table {
+  display: grid;
+  grid-template-areas:
+    "landlord landlord landlord"
+    "prev center next";
+  grid-template-columns: 1fr 1.8fr 1fr;
+  gap: 0.5rem;
+  max-width: 720px;
+  margin: 0 auto;
+  min-height: 220px;
+  align-items: start;
+}
+
+.ddz-landlord-cards {
+  grid-area: landlord;
+  display: flex;
+  justify-content: center;
+  gap: 0.3rem;
+  min-height: 4rem;
+}
+
+.ddz-landlord-label {
+  grid-area: landlord;
+  text-align: center;
+  font-size: 0.85rem;
+  color: #bfa040;
+  margin: 0;
+  margin-top: 4.5rem;
+}
+
+.ddz-player-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.ddz-player-prev {
+  grid-area: prev;
+}
+
+.ddz-player-next {
+  grid-area: next;
+}
+
+.ddz-center-area {
+  grid-area: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100px;
+}
+
+.ddz-player-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: center;
+  word-break: break-all;
+  max-width: 100%;
+}
+
+.ddz-player-role {
+  font-size: 0.75rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  color: #fff;
+  background: #6c757d;
+}
+
+.ddz-player-role.is-landlord {
+  background: #d4a017;
+}
+
+.ddz-player-role.is-farmer {
+  background: #4f8c5e;
+}
+
+.ddz-hand-back {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.ddz-hand-count {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.ddz-last-play {
+  display: flex;
+  gap: 0.15rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  min-height: 2.8rem;
+}
+
+.ddz-last-play-center {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  min-height: 4rem;
+}
+
+.ddz-last-play-info {
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* 背面牌 */
+.card-back {
+  width: 1.4rem;
+  height: 2rem;
+  border-radius: 4px;
+  background: #3b5998;
+  border: 1px solid #2a406e;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+/* 正面的牌 */
+.card {
+  width: 2.4rem;
+  height: 3.4rem;
+  border-radius: 6px;
+  background: #fff;
+  border: 1px solid #ccc;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  user-select: none;
+  cursor: default;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+
+.card.is-selectable {
+  cursor: pointer;
+}
+
+.card.is-selected {
+  transform: translateY(-0.8rem);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.25);
+  border-color: #4dabf7;
+}
+
+.card .card-rank {
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.card .card-suit {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.card.is-red .card-rank,
+.card.is-red .card-suit {
+  color: #c0392b;
+}
+
+.card.is-black .card-rank,
+.card.is-black .card-suit {
+  color: #2c3e50;
+}
+
+/* 我的手牌区 */
+.ddz-my-area {
+  max-width: 720px;
+  margin: 0.75rem auto 0;
+  text-align: center;
+}
+
+.ddz-my-info {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.ddz-my-role {
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  color: #fff;
+  background: #6c757d;
+}
+
+.ddz-my-role.is-landlord {
+  background: #d4a017;
+}
+
+.ddz-my-role.is-farmer {
+  background: #4f8c5e;
+}
+
+.ddz-my-hand {
+  display: flex;
+  justify-content: center;
+  gap: 0.15rem;
+  flex-wrap: wrap;
+  min-height: 3.8rem;
+  padding: 0.5rem 0.25rem;
+  background: rgba(0,0,0,0.05);
+  border-radius: 8px;
+}
+
+.ddz-play-actions {
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+#ddz-log {
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+/* 响应式 */
+@media (max-width: 520px) {
+  .ddz-table {
+    grid-template-columns: 1fr 1.4fr 1fr;
+    gap: 0.3rem;
+  }
+
+  .card {
+    width: 2rem;
+    height: 2.8rem;
+  }
+
+  .card .card-rank {
+    font-size: 0.85rem;
+  }
+
+  .card .card-suit {
+    font-size: 0.85rem;
+  }
+
+  .card-back {
+    width: 1.1rem;
+    height: 1.6rem;
+  }
+}

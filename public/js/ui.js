@@ -2393,6 +2393,7 @@
     if (type === 'incan') return Boolean(window.IncanUi);
     if (type === 'catan') return Boolean(window.CatanUi);
     if (type === 'gomoku') return Boolean(window.GomokuBoard || el.gomokuCanvas);
+    if (type === 'doudizhu') return Boolean(window.DoudizhuUi);
     return true;
   }
 
@@ -2463,6 +2464,7 @@
     el.panelGomoku = document.getElementById('panel-gomoku');
     el.panelIncan = document.getElementById('panel-incan');
     el.panelCatan = document.getElementById('panel-catan');
+    el.panelDoudizhu = document.getElementById('panel-doudizhu');
     el.gameTitle = document.getElementById('game-title');
     el.gameStatus = document.getElementById('game-status');
     el.gameSides = document.getElementById('game-sides');
@@ -3347,6 +3349,13 @@
       el.maxPlayersWrap.hidden = true;
       fillMaxPlayerOptions(2, 2, 2);
       el.gameHint.textContent = t('create.hintGomoku');
+      if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = true;
+      if (el.roomEasyStartWrap) el.roomEasyStartWrap.hidden = true;
+      if (el.roomConflictDlcWrap) el.roomConflictDlcWrap.hidden = true;
+    } else if (g.id === 'doudizhu') {
+      el.maxPlayersWrap.hidden = true;
+      fillMaxPlayerOptions(3, 3, 3);
+      el.gameHint.textContent = t('create.hintDoudizhu');
       if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = true;
       if (el.roomEasyStartWrap) el.roomEasyStartWrap.hidden = true;
       if (el.roomConflictDlcWrap) el.roomConflictDlcWrap.hidden = true;
@@ -4650,6 +4659,7 @@
 
   function hideAllGamePanels() {
     if (el.panelGomoku) el.panelGomoku.hidden = true;
+    if (el.panelDoudizhu) el.panelDoudizhu.hidden = true;
     if (window.IncanUi) window.IncanUi.hide();
     if (window.CatanUi) window.CatanUi.hide();
     if (window.SgsUi) window.SgsUi.hide();
@@ -5100,6 +5110,55 @@
     } else if (game.type === 'sgs') {
       hideAllGamePanels();
       if (window.SgsUi) window.SgsUi.render(game, net);
+    } else if (game.type === 'doudizhu') {
+      hideAllGamePanels();
+      if (el.panelDoudizhu) el.panelDoudizhu.hidden = false;
+      if (window.DoudizhuUi) {
+        window.DoudizhuUi.render(game, net, {
+          meId: state.me && state.me.id,
+          playerNameById,
+          t,
+        });
+      }
+      if (el.gameTitle) {
+        el.gameTitle.textContent = gameLabelOf(
+          'doudizhu',
+          (state.room && state.room.gameLabel) || t('doudizhu.title')
+        );
+      }
+      if (el.gameStatus) {
+        if (game.over) {
+          if (game.winnerId && state.me) {
+            const winName = playerNameById(game.winnerId);
+            const mine = game.winnerId === state.me.id;
+            if (game.winners && game.winners.length === 1) {
+              el.gameStatus.textContent = mine
+                ? t('doudizhu.youWin')
+                : t('doudizhu.win', { name: winName });
+            } else {
+              const team = game.landlordId === state.me.id ? t('doudizhu.role.landlord') : t('doudizhu.role.farmer');
+              const winTeam = game.winners.includes(state.me.id) ? team : (team === t('doudizhu.role.landlord') ? t('doudizhu.role.farmer') : t('doudizhu.role.landlord'));
+              el.gameStatus.textContent = t('doudizhu.teamWin', { team: winTeam });
+            }
+          } else {
+            el.gameStatus.textContent = t('doudizhu.ended');
+          }
+        } else if (game.phase === 'bid') {
+          const mine = state.me && game.currentPlayerId === state.me.id;
+          el.gameStatus.textContent = mine
+            ? t('doudizhu.yourTurnBid')
+            : t('doudizhu.waitBid', { name: playerNameById(game.currentPlayerId) });
+        } else {
+          const mine = state.me && game.currentPlayerId === state.me.id;
+          el.gameStatus.textContent = mine
+            ? t('doudizhu.yourTurn')
+            : t('doudizhu.waitNamed', { name: playerNameById(game.currentPlayerId) });
+        }
+      }
+      if (el.gameSides) {
+        const landlordName = game.landlordId ? playerNameById(game.landlordId) : t('common.dash');
+        el.gameSides.textContent = t('doudizhu.landlordLabel', { name: landlordName });
+      }
     } else {
       renderGomoku();
     }

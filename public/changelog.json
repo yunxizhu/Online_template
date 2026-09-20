@@ -2,6 +2,12 @@
   "schema": 1,
   "entries": [
     {
+      "version": "1.2.12",
+      "notes": "新增斗地主",
+      "notesEn": "",
+      "publishedAt": "2026-09-20T13:01:33.212Z"
+    },
+    {
       "version": "1.2.11",
       "notes": "修正人机对于囚徒困境的判断",
       "notesEn": "",

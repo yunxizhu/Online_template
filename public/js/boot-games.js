@@ -146,7 +146,9 @@ window.GameBoot = (function () {
               ? 'CatanUi'
               : id === 'gomoku'
                 ? 'GomokuBoard'
-                : null;
+                : id === 'doudizhu'
+                  ? 'DoudizhuUi'
+                  : null;
     if (needGlobal && !window[needGlobal]) {
       for (const src of scriptUrls) {
         const el = findAssetEl('script', src);

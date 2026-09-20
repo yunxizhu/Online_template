@@ -208,6 +208,7 @@
     "coreLockedHint": "已有其他玩家进入，游戏类型与人数不可修改。",
     "modeStandard": "标准模式",
     "hintGomoku": "五子棋：双人局，房主执黑先手。",
+    "hintDoudizhu": "斗地主：3 人局，叫分最高者当地主，先出完牌者获胜。",
     "creating": "创建中…",
     "createTimeout": "创建房间超时，请重试",
     "joining": "进入房间中…",
@@ -309,6 +310,7 @@
     "incan": "印加宝藏",
     "lasidao": "卡拉斯坦",
     "catan": "卡坦岛",
+    "doudizhu": "斗地主",
     "modes": {
       "identity": "标准身份",
       "standard": "标准模式",
@@ -381,6 +383,36 @@
     "youWin": "你赢了！（连成五子）",
     "ended": "对局结束",
     "waitNamed": "等待 {name} 落子"
+  },
+  "doudizhu": {
+    "title": "斗地主",
+    "landlordCards": "底牌",
+    "bidHint": "请叫分（0 为不叫）",
+    "bidRecord": "{name} 叫 {score}",
+    "bidPass": "不叫",
+    "bidScore": "叫 {score} 分",
+    "role": {
+      "landlord": "地主",
+      "farmer": "农民"
+    },
+    "handCount": "手牌 {count}",
+    "myHandCount": "我的手牌 {count}",
+    "lastPlay": "{name} 出牌",
+    "newRound": "新一轮",
+    "pass": "不出",
+    "play": "出牌",
+    "reset": "重新选择",
+    "selectCards": "请先选择要出的牌",
+    "yourTurn": "轮到你出牌",
+    "yourTurnBid": "轮到你叫分",
+    "waitBid": "等待 {name} 叫分",
+    "waitNamed": "等待 {name} 出牌",
+    "landlordLabel": "地主：{name}",
+    "youWin": "你赢了！",
+    "win": "{name} 获胜",
+    "teamWin": "{team} 获胜",
+    "ended": "对局结束",
+    "log": "出牌记录"
   },
   "lasidao": {
     "title": "卡拉斯坦",
