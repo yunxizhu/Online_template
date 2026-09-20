@@ -6,6 +6,12 @@
     <p id="catan-roll" class="catan-roll" hidden></p>
   </div>
 
+  <div id="catan-turn-banner" class="catan-turn-banner" hidden>
+    <span class="catan-turn-banner-pulse" aria-hidden="true"></span>
+    <strong id="catan-turn-banner-title"></strong>
+    <span id="catan-turn-banner-text"></span>
+  </div>
+
   <div class="catan-layout">
     <div class="catan-board-wrap">
       <div id="catan-board" class="catan-board" aria-label="卡坦岛地图"></div>
@@ -93,6 +99,17 @@
     <div class="catan-modal-card">
       <p data-i18n="catan.stealTitle">选择掠夺对象</p>
       <div id="catan-steal-list" class="catan-btn-row"></div>
+    </div>
+  </div>
+
+  <div id="catan-fx-overlay" class="catan-fx-overlay" hidden>
+    <div class="catan-fx-card">
+      <div class="catan-dice-stage">
+        <div class="catan-die" id="catan-die-1"><span>?</span></div>
+        <div class="catan-die" id="catan-die-2"><span>?</span></div>
+      </div>
+      <p id="catan-fx-total" class="catan-fx-total"></p>
+      <p id="catan-fx-caption" class="catan-fx-caption"></p>
     </div>
   </div>
 </div>

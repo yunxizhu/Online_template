@@ -140,7 +140,7 @@
     {
       "id": "catan",
       "label": "卡坦岛",
-      "minPlayers": 3,
+      "minPlayers": 2,
       "maxPlayers": 4,
       "modes": [
         {

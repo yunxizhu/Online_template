@@ -39,6 +39,10 @@ window.CatanUi = (function () {
   let tradeGive = emptyRes();
   let tradeWant = emptyRes();
   let bound = false;
+  let lastPlayedRollId = null;
+  let fxBusy = false;
+  let flashVertices = [];
+  let renderOptsCache = null;
 
   function $(id) {
     return document.getElementById(id);
@@ -46,6 +50,160 @@ window.CatanUi = (function () {
 
   function emptyRes() {
     return { brick: 0, lumber: 0, wool: 0, grain: 0, ore: 0 };
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function formatGains(gains) {
+    return RESOURCES.filter((k) => gains && gains[k] > 0)
+      .map((k) => `${RES_LABEL[k]}+${gains[k]}`)
+      .join(' ');
+  }
+
+  function setDieFace(el, n) {
+    if (!el) return;
+    const span = el.querySelector('span') || el;
+    span.textContent = String(n);
+  }
+
+  async function playDiceAndProduceFx(game) {
+    const roll = game && game.lastRoll;
+    if (!roll || !roll.id || roll.id === lastPlayedRollId || fxBusy) return;
+    fxBusy = true;
+    lastPlayedRollId = roll.id;
+
+    const overlay = $('catan-fx-overlay');
+    const die1 = $('catan-die-1');
+    const die2 = $('catan-die-2');
+    const totalEl = $('catan-fx-total');
+    const caption = $('catan-fx-caption');
+    if (!overlay) {
+      fxBusy = false;
+      return;
+    }
+
+    overlay.hidden = false;
+    if (totalEl) totalEl.textContent = '';
+    if (caption) caption.textContent = '掷骰中…';
+    die1?.classList.add('rolling');
+    die2?.classList.add('rolling');
+
+    const t0 = Date.now();
+    while (Date.now() - t0 < 1100) {
+      setDieFace(die1, 1 + Math.floor(Math.random() * 6));
+      setDieFace(die2, 1 + Math.floor(Math.random() * 6));
+      await sleep(70);
+    }
+    die1?.classList.remove('rolling');
+    die2?.classList.remove('rolling');
+    setDieFace(die1, roll.d1);
+    setDieFace(die2, roll.d2);
+    if (totalEl) totalEl.textContent = `合计 ${roll.total}`;
+
+    if (roll.total === 7) {
+      if (caption) caption.textContent = '掷出 7！强盗出动';
+      await sleep(900);
+    } else {
+      const prod = game.lastProduction;
+      const list = (prod && prod.players) || [];
+      if (!list.length) {
+        if (caption) caption.textContent = '本回合无人获得资源';
+        await sleep(800);
+      } else {
+        for (const entry of list) {
+          flashVertices = entry.vertices || [];
+          if (caption) {
+            caption.textContent = `${entry.name} 获得 ${formatGains(entry.gains) || '资源'}`;
+          }
+          // 重绘棋盘以应用闪烁
+          if (lastGame && window.CatanBoardView) {
+            window.CatanBoardView.render($('catan-board'), lastGame, {
+              ...(renderOptsCache || {}),
+              flashVertices,
+            });
+          }
+          await sleep(1100);
+        }
+        flashVertices = [];
+        if (lastGame && window.CatanBoardView) {
+          window.CatanBoardView.render($('catan-board'), lastGame, {
+            ...(renderOptsCache || {}),
+            flashVertices: [],
+          });
+        }
+      }
+    }
+
+    overlay.hidden = true;
+    fxBusy = false;
+  }
+
+  function canOperate(game, viewerId) {
+    if (!game || game.over || !viewerId) return false;
+    if (game.phase === 'discard' && game.pendingDiscards?.[viewerId]) return true;
+    if (
+      game.phase === 'tradeResponse' &&
+      game.trade?.responders?.includes(viewerId)
+    ) {
+      return true;
+    }
+    if (game.currentPlayerId !== viewerId) return false;
+    return (
+      game.phase === 'setupSettlement' ||
+      game.phase === 'setupRoad' ||
+      game.phase === 'roll' ||
+      game.phase === 'robber' ||
+      game.phase === 'main'
+    );
+  }
+
+  function syncOperateVisibility(game, viewerId) {
+    const panel = $('panel-catan');
+    if (!panel) return;
+    const operating = canOperate(game, viewerId);
+    panel.classList.toggle('is-spectating-turn', !operating);
+
+    const needDiscard =
+      game.phase === 'discard' && game.pendingDiscards?.[viewerId];
+    const needTradeResp =
+      game.phase === 'tradeResponse' &&
+      game.trade?.responders?.includes(viewerId);
+    const isCur = game.currentPlayerId === viewerId;
+
+    const actions = $('catan-actions');
+    const bank = $('catan-bank-section');
+    const trade = $('catan-player-trade-section');
+    const discard = $('catan-discard-section');
+
+    // 非自己操作回合：隐藏行动/贸易；弃牌/回应交易例外
+    if (!operating) {
+      if (actions) actions.hidden = true;
+      if (bank) bank.hidden = true;
+      if (trade) trade.hidden = true;
+      return;
+    }
+
+    if (needDiscard) {
+      if (actions) actions.hidden = true;
+      if (bank) bank.hidden = true;
+      if (trade) trade.hidden = true;
+      return;
+    }
+
+    if (needTradeResp && !isCur) {
+      if (actions) actions.hidden = true;
+      if (bank) bank.hidden = true;
+      if (trade) trade.hidden = false;
+      return;
+    }
+
+    if (actions) actions.hidden = false;
+    const inMain = game.phase === 'main' && isCur;
+    if (bank) bank.hidden = !inMain;
+    if (trade) trade.hidden = !(inMain || needTradeResp);
+    if (discard && !needDiscard) discard.hidden = true;
   }
 
   function tKey(key, fallback, vars) {
@@ -89,13 +247,38 @@ window.CatanUi = (function () {
   function playerColors(game) {
     const map = {};
     const colors = (window.CatanBoardView && window.CatanBoardView.COLORS) || [
-      '#e53935',
-      '#1e88e5',
-      '#43a047',
-      '#fdd835',
+      '#d32f2f',
+      '#1565c0',
+      '#f5f5f5',
+      '#ef6c00',
     ];
     for (const p of game.players || []) {
-      map[p.id] = colors[p.colorIndex % colors.length];
+      map[p.id] = colors[(p.colorIndex || 0) % colors.length];
+    }
+    return map;
+  }
+
+  function playerColorName(p) {
+    const names =
+      (window.CatanBoardView && window.CatanBoardView.COLOR_NAMES) || [
+        '红',
+        '蓝',
+        '白',
+        '橙',
+      ];
+    return names[(p.colorIndex || 0) % names.length];
+  }
+
+  function playerPieceLabel(p) {
+    const name = String((p && p.name) || '').trim();
+    if (!name) return playerColorName(p);
+    return name.charAt(0);
+  }
+
+  function playerLabels(game) {
+    const map = {};
+    for (const p of game.players || []) {
+      map[p.id] = playerPieceLabel(p);
     }
     return map;
   }
@@ -232,7 +415,7 @@ window.CatanUi = (function () {
 
     function addCard(card, playable) {
       const chip = document.createElement('div');
-      chip.className = 'catan-res-chip';
+      chip.className = 'catan-res-chip dev-chip';
       chip.textContent = DEV_LABEL[card] || card;
       if (playable && card !== 'victory') {
         const btn = document.createElement('button');
@@ -247,7 +430,7 @@ window.CatanUi = (function () {
     for (const c of me.devCards || []) addCard(c, canPlay);
     for (const c of me.newDevCards || []) {
       const chip = document.createElement('div');
-      chip.className = 'catan-res-chip';
+      chip.className = 'catan-res-chip dev-chip';
       chip.textContent = `${DEV_LABEL[c] || c}(新)`;
       el.appendChild(chip);
     }
@@ -417,6 +600,150 @@ window.CatanUi = (function () {
     }
   }
 
+  function turnPrompt(game, meId, playerNameById) {
+    if (!game || game.over) {
+      return { hidden: true };
+    }
+    const curName = playerNameById(game.currentPlayerId) || '玩家';
+    const isCur = game.currentPlayerId === meId;
+    const discardNeed =
+      (game.pendingDiscards && meId && game.pendingDiscards[meId]) || 0;
+
+    if (game.phase === 'discard' && discardNeed > 0) {
+      return {
+        yours: true,
+        title: '轮到你',
+        text: `资源超过 7，请弃掉 ${discardNeed} 张`,
+        flashBtn: 'btn-catan-discard',
+      };
+    }
+    if (game.phase === 'discard') {
+      return {
+        yours: false,
+        title: '等待中',
+        text: '有人正在弃牌…',
+      };
+    }
+    if (
+      game.phase === 'tradeResponse' &&
+      game.trade &&
+      game.trade.responders &&
+      game.trade.responders.includes(meId)
+    ) {
+      return {
+        yours: true,
+        title: '轮到你',
+        text: '有人向你发起交易，请接受或拒绝',
+      };
+    }
+    if (game.phase === 'tradeResponse') {
+      return {
+        yours: false,
+        title: '等待交易',
+        text: `${curName} 的报价等待回应`,
+      };
+    }
+
+    if (isCur) {
+      if (game.phase === 'setupSettlement') {
+        return {
+          yours: true,
+          title: '轮到你',
+          text: '请在地图上点击高亮点放置初始定居点',
+          flashBtn: 'btn-catan-mode-settle',
+        };
+      }
+      if (game.phase === 'setupRoad') {
+        return {
+          yours: true,
+          title: '轮到你',
+          text: '请紧贴刚放的定居点放置一条初始道路',
+          flashBtn: 'btn-catan-mode-road',
+        };
+      }
+      if (game.phase === 'roll') {
+        return {
+          yours: true,
+          title: '轮到你',
+          text: '请先掷骰，再进行建造/贸易',
+          flashBtn: 'btn-catan-roll',
+        };
+      }
+      if (game.phase === 'robber') {
+        return {
+          yours: true,
+          title: '轮到你',
+          text: '请点击一块地形移动强盗，必要时选择掠夺对象',
+          flashBtn: 'btn-catan-mode-robber',
+        };
+      }
+      if (game.phase === 'main') {
+        if (game.roadBuildingLeft > 0 && game.roadBuildingPlayerId === meId) {
+          return {
+            yours: true,
+            title: '轮到你',
+            text: `道路建设：还需免费放置 ${game.roadBuildingLeft} 条路`,
+            flashBtn: 'btn-catan-mode-road',
+          };
+        }
+        return {
+          yours: true,
+          title: '轮到你',
+          text: '可建造 / 买发展卡 / 贸易；完成后点「结束回合」',
+          flashBtn: 'btn-catan-end',
+        };
+      }
+    }
+
+    const waitText = {
+      setupSettlement: `${curName} 正在放置初始定居点`,
+      setupRoad: `${curName} 正在放置初始道路`,
+      roll: `${curName} 需要掷骰`,
+      robber: `${curName} 正在移动强盗`,
+      main: `${curName} 的行动阶段（建造/贸易）`,
+    };
+    return {
+      yours: false,
+      title: '等待中',
+      text: waitText[game.phase] || `等待 ${curName} 行动`,
+    };
+  }
+
+  function renderTurnBanner(game, playerNameById) {
+    const banner = $('catan-turn-banner');
+    const titleEl = $('catan-turn-banner-title');
+    const textEl = $('catan-turn-banner-text');
+    if (!banner || !titleEl || !textEl) return;
+
+    // 清掉按钮闪烁
+    for (const id of [
+      'btn-catan-roll',
+      'btn-catan-end',
+      'btn-catan-discard',
+      'btn-catan-mode-settle',
+      'btn-catan-mode-road',
+      'btn-catan-mode-robber',
+    ]) {
+      const b = $(id);
+      if (b) b.classList.remove('catan-btn-flash');
+    }
+
+    const prompt = turnPrompt(game, meId, playerNameById);
+    if (prompt.hidden) {
+      banner.hidden = true;
+      return;
+    }
+    banner.hidden = false;
+    banner.classList.toggle('yours', Boolean(prompt.yours));
+    banner.classList.toggle('wait', !prompt.yours);
+    titleEl.textContent = prompt.title || '';
+    textEl.textContent = prompt.text || '';
+    if (prompt.flashBtn) {
+      const btn = $(prompt.flashBtn);
+      if (btn && !btn.hidden) btn.classList.add('catan-btn-flash');
+    }
+  }
+
   function render(game, net, opts) {
     const panel = $('panel-catan');
     if (!panel) return;
@@ -462,15 +789,18 @@ window.CatanUi = (function () {
     }
 
     // board
+    renderOptsCache = {
+      buildMode: mode,
+      playerColors: playerColors(game),
+      playerLabels: playerLabels(game),
+      onPick: onBoardPick,
+      flashVertices,
+    };
     if (window.CatanBoardView) {
-      window.CatanBoardView.render($('catan-board'), game, {
-        buildMode: mode,
-        playerColors: playerColors(game),
-        onPick: onBoardPick,
-      });
+      window.CatanBoardView.render($('catan-board'), game, renderOptsCache);
     }
 
-    // resources
+    // resources：始终可见自己的手牌；他人回合不展示可操作按钮
     if (me && me.resources) {
       renderResChips($('catan-resources'), me.resources, false);
     } else {
@@ -478,6 +808,8 @@ window.CatanUi = (function () {
       if (el) el.innerHTML = `<span class="muted">${tKey('catan.spectating', '观战中')}</span>`;
     }
     renderDevHand(game, me);
+
+    syncOperateVisibility(game, meId);
 
     // actions
     const you = game.you || {};
@@ -487,6 +819,7 @@ window.CatanUi = (function () {
     if (btnRoll) btnRoll.hidden = !you.canRoll;
     if (btnBuy) btnBuy.hidden = !you.canBuyDev;
     if (btnEnd) btnEnd.hidden = !you.canEndTurn;
+
 
     const btnRobber = $('btn-catan-mode-robber');
     if (btnRobber) btnRobber.hidden = game.phase !== 'robber';
@@ -535,6 +868,13 @@ window.CatanUi = (function () {
 
     renderDiscard(game, me);
     renderTrade(game, me);
+    renderTurnBanner(game, playerNameById);
+    syncOperateVisibility(game, meId);
+
+    // 全员掷骰 / 产资源动画（进行中不重复触发）
+    if (!fxBusy && game.lastRoll && game.lastRoll.id) {
+      playDiceAndProduceFx(game);
+    }
 
     // players
     const ul = $('catan-players');
@@ -546,9 +886,12 @@ window.CatanUi = (function () {
         const badges = [];
         if (p.hasLongestRoad) badges.push('最长路');
         if (p.hasLargestArmy) badges.push('最大军');
+        const colorName = playerColorName(p);
+        const mine = p.id === meId ? '（你）' : '';
         li.innerHTML = `<div class="catan-player-row">
-          <span class="catan-color-dot" style="background:${colors[p.id]}"></span>
-          <strong>${escapeHtml(p.name)}</strong>
+          <span class="catan-color-swatch" style="background:${colors[p.id]}" title="${colorName}方"></span>
+          <span class="catan-color-tag">${escapeHtml(colorName)}</span>
+          <strong>${escapeHtml(p.name)}${mine}</strong>
           <span class="muted">VP ${p.totalVp}${p.id === meId && p.victoryCards ? `（含暗${p.victoryCards}）` : ''}</span>
           <span class="muted">资源 ${p.resourceCount}</span>
           <span class="muted">发展 ${p.devCount}</span>

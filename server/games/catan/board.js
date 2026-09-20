@@ -97,19 +97,67 @@ function edgeKey(v1, v2) {
 }
 
 /**
- * 标准 9 港口：外圈指定边。
+ * 标准基础版港口种类（顺时针，自北侧起）：
+ * 3:1 通用 ×4 + 羊/矿/麦/砖/木 专港各一。
+ * 位置：沿海岸等距，每港口间隔 2 条海岸边（与实体版外框间距一致）。
  */
-const PORT_EDGE_SPECS = [
-  { q: 0, r: -2, corner: 4, kind: 'any', rate: 3 },
-  { q: 1, r: -2, corner: 5, kind: 'wool', rate: 2 },
-  { q: 2, r: -1, corner: 0, kind: 'any', rate: 3 },
-  { q: 2, r: 0, corner: 0, kind: 'ore', rate: 2 },
-  { q: 1, r: 1, corner: 1, kind: 'any', rate: 3 },
-  { q: -1, r: 2, corner: 2, kind: 'grain', rate: 2 },
-  { q: -2, r: 2, corner: 2, kind: 'any', rate: 3 },
-  { q: -2, r: 1, corner: 3, kind: 'lumber', rate: 2 },
-  { q: -1, r: -1, corner: 4, kind: 'brick', rate: 2 },
+const PORT_KINDS = [
+  { kind: 'any', rate: 3 },
+  { kind: 'wool', rate: 2 },
+  { kind: 'any', rate: 3 },
+  { kind: 'ore', rate: 2 },
+  { kind: 'any', rate: 3 },
+  { kind: 'grain', rate: 2 },
+  { kind: 'any', rate: 3 },
+  { kind: 'brick', rate: 2 },
+  { kind: 'lumber', rate: 2 },
 ];
+
+function placePorts(vertices, edges, hexes) {
+  const cx = hexes.reduce((s, h) => s + h.x, 0) / hexes.length;
+  const cy = hexes.reduce((s, h) => s + h.y, 0) / hexes.length;
+
+  function edgeAngle(e) {
+    const va = vertices.get(e.vertices[0]);
+    const vb = vertices.get(e.vertices[1]);
+    const mx = (va.x + vb.x) / 2;
+    const my = (va.y + vb.y) / 2;
+    return Math.atan2(my - cy, mx - cx);
+  }
+
+  const coastal = [...edges.values()].filter((e) => e.hexIds.length === 1);
+  coastal.sort((a, b) => edgeAngle(a) - edgeAngle(b));
+
+  // 从最靠北的海岸边起，每隔 3 条边放一个港（中间空 2 条）
+  let start = 0;
+  let best = Infinity;
+  const north = -Math.PI / 2;
+  coastal.forEach((e, i) => {
+    const d = Math.abs(edgeAngle(e) - north);
+    if (d < best) {
+      best = d;
+      start = i;
+    }
+  });
+
+  const ports = [];
+  const n = coastal.length;
+  // 30 条海岸边、9 港：间距交替 3/3/4，避免某一侧出现双倍空隙
+  const gaps = [3, 3, 4, 3, 3, 4, 3, 3, 4];
+  let idx = start;
+  for (let i = 0; i < PORT_KINDS.length; i++) {
+    const e = coastal[((idx % n) + n) % n];
+    const spec = PORT_KINDS[i];
+    ports.push({
+      edgeId: e.id,
+      vertices: e.vertices.slice(),
+      kind: spec.kind,
+      rate: spec.rate,
+    });
+    idx += gaps[i];
+  }
+  return ports;
+}
 
 function buildTopology() {
   const coords = generateHexCoords();
@@ -158,25 +206,7 @@ function buildTopology() {
     if (!vb.neighbors.includes(a)) vb.neighbors.push(a);
   }
 
-  const ports = [];
-  for (const spec of PORT_EDGE_SPECS) {
-    const v1 = vertexIdFromXY(
-      hexCornerXY(spec.q, spec.r, spec.corner).x,
-      hexCornerXY(spec.q, spec.r, spec.corner).y
-    );
-    const v2 = vertexIdFromXY(
-      hexCornerXY(spec.q, spec.r, (spec.corner + 1) % 6).x,
-      hexCornerXY(spec.q, spec.r, (spec.corner + 1) % 6).y
-    );
-    if (!vertices.has(v1) || !vertices.has(v2)) continue;
-    ports.push({
-      edgeId: edgeKey(v1, v2),
-      vertices: [v1, v2],
-      kind: spec.kind,
-      rate: spec.rate,
-    });
-  }
-
+  const ports = placePorts(vertices, edges, hexes);
   return { hexes, vertices, edges, ports };
 }
 

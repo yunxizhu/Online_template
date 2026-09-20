@@ -343,6 +343,9 @@ function resLabel(k) {
 }
 
 function produce(game, roll) {
+  /** @type {Map<string, { playerId: string, name: string, vertices: string[], gains: object, hexIds: number[] }>} */
+  const byPlayer = new Map();
+
   for (const tile of game.board.tiles) {
     if (tile.number !== roll) continue;
     if (tile.id === game.board.robberHexId) continue;
@@ -354,8 +357,35 @@ function produce(game, roll) {
       if (!p) continue;
       const n = b.kind === 'city' ? 2 : 1;
       p.resources[tile.resource] += n;
+
+      let entry = byPlayer.get(p.id);
+      if (!entry) {
+        entry = {
+          playerId: p.id,
+          name: p.name,
+          vertices: [],
+          gains: emptyResources(),
+          hexIds: [],
+        };
+        byPlayer.set(p.id, entry);
+      }
+      if (!entry.vertices.includes(vid)) entry.vertices.push(vid);
+      if (!entry.hexIds.includes(tile.id)) entry.hexIds.push(tile.id);
+      entry.gains[tile.resource] += n;
     }
   }
+
+  // 按座位顺序，便于客户端逐人播放
+  const players = [];
+  for (const p of game.players) {
+    if (byPlayer.has(p.id)) players.push(byPlayer.get(p.id));
+  }
+  game.lastProduction = {
+    rollId: game.lastRoll && game.lastRoll.id,
+    total: roll,
+    players,
+  };
+  return players;
 }
 
 function advanceSetup(game) {
@@ -494,6 +524,7 @@ function createGameState(room) {
     setupStep: 0,
     setupLastSettlement: null,
     lastRoll: null,
+    lastProduction: null,
     pendingDiscards: {},
     trade: null,
     roadBuildingLeft: 0,
@@ -574,7 +605,15 @@ function applyAction(game, playerId, action) {
       const d1 = 1 + Math.floor(Math.random() * 6);
       const d2 = 1 + Math.floor(Math.random() * 6);
       const total = d1 + d2;
-      game.lastRoll = { d1, d2, total };
+      game.lastRoll = {
+        id: `roll-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+        d1,
+        d2,
+        total,
+        byPlayerId: playerId,
+        at: Date.now(),
+      };
+      game.lastProduction = null;
       pushLog(game, `${p.name} 掷出 ${d1}+${d2}=${total}`);
       if (total === 7) {
         startDiscardPhase(game);
@@ -901,6 +940,7 @@ function publicGameState(game, viewerId) {
     winnerId: game.winnerId,
     currentPlayerId: currentPlayer(game)?.id || null,
     lastRoll: game.lastRoll,
+    lastProduction: game.lastProduction,
     longestRoadPlayerId: game.longestRoadPlayerId,
     largestArmyPlayerId: game.largestArmyPlayerId,
     trade: game.trade,
@@ -1103,11 +1143,11 @@ function onPlayerQuit(game, playerId) {
     }
   }
 
-  if (game.players.length < 3) {
+  if (game.players.length < 2) {
     game.over = true;
     game.phase = 'gameOver';
     game.winnerId = null;
-    pushLog(game, '玩家不足 3 人，游戏结束');
+    pushLog(game, '玩家不足 2 人，游戏结束');
     return;
   }
 

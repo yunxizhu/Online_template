@@ -469,6 +469,20 @@ function getLasidaoResourseDir() {
   return path.join(__dirname, 'games', 'lasidao', 'resourse');
 }
 app.use('/games/lasidao/res', express.static(getLasidaoResourseDir(), staticResOpts));
+
+// 卡坦岛资源：server/games/catan/resourse → /games/catan/res/
+function getCatanResourseDir() {
+  const envPath = process.env.LIANJI_CATAN_RESOURSE;
+  if (envPath) return envPath;
+  const isPkg = Boolean(process.pkg);
+  if (isPkg) {
+    const exeDir = path.dirname(process.execPath);
+    const external = path.join(exeDir, 'catan-resourse');
+    if (fs.existsSync(external)) return external;
+  }
+  return path.join(__dirname, 'games', 'catan', 'resourse');
+}
+app.use('/games/catan/res', express.static(getCatanResourseDir(), staticResOpts));
 // 浏览器默认还会请求 /favicon.ico
 app.get('/favicon.ico', (_req, res) => {
   res.redirect(301, '/favicon.svg');

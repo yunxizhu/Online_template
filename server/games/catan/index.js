@@ -5,7 +5,7 @@ const engine = require('./engine');
 module.exports = {
   id: 'catan',
   label: '卡坦岛',
-  minPlayers: 3,
+  minPlayers: 2,
   maxPlayers: 4,
   modes: [{ id: 'standard', label: '标准模式' }],
   client: {

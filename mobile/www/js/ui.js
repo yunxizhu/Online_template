@@ -3140,9 +3140,10 @@
   }
 
   function playerNameById(id) {
-    if (!state.room) return id;
+    if (id == null || id === '') return '—';
+    if (!state.room) return String(id);
     const p = state.room.players.find((x) => x.id === id);
-    const name = p ? p.name : id.slice(0, 6);
+    const name = p ? p.name : String(id).slice(0, 6);
     return playerHasLeft(id) ? t('app.playerLeft', { name }) : name;
   }
 
@@ -3332,17 +3333,14 @@
 
     if (g.id === 'gomoku') {
       el.maxPlayersWrap.hidden = true;
-      restoreMaxOptions();
-      el.roomMax.value = '2';
+      fillMaxPlayerOptions(2, 2, 2);
       el.gameHint.textContent = t('create.hintGomoku');
       if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = true;
       if (el.roomEasyStartWrap) el.roomEasyStartWrap.hidden = true;
       if (el.roomConflictDlcWrap) el.roomConflictDlcWrap.hidden = true;
     } else if (g.id === 'incan') {
       el.maxPlayersWrap.hidden = false;
-      restoreMaxOptions();
-      const v = Number(el.roomMax.value);
-      if (v < 3) el.roomMax.value = '6';
+      fillMaxPlayerOptions(g.minPlayers, g.maxPlayers, 6);
       el.gameHint.textContent = t('create.hintIncanFull');
       if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = true;
       if (el.roomEasyStartWrap) el.roomEasyStartWrap.hidden = true;
@@ -3414,7 +3412,7 @@
       if (el.roomEasyStartWrap) el.roomEasyStartWrap.hidden = true;
       if (el.roomConflictDlcWrap) el.roomConflictDlcWrap.hidden = true;
       el.maxPlayersWrap.hidden = false;
-      restoreMaxOptions();
+      fillMaxPlayerOptions(g.minPlayers, g.maxPlayers);
       el.gameHint.textContent = t('create.hintRange', { label: gameLabelOf(g.id, g.label), min: g.minPlayers, max: g.maxPlayers });
     }
     if (typeof syncEditRoomCoreLocks === 'function') {
@@ -3422,10 +3420,17 @@
     }
   }
 
-  function restoreMaxOptions() {
+  /** 按游戏人数范围填充「人数上限」下拉，不超出 min/max */
+  function fillMaxPlayerOptions(minPlayers, maxPlayers, preferred) {
+    const lo = Math.max(1, Number(minPlayers) || 2);
+    const hi = Math.max(lo, Number(maxPlayers) || lo);
     const cur = el.roomMax.value;
+    const prefer =
+      preferred != null && Number.isFinite(Number(preferred))
+        ? String(preferred)
+        : null;
     el.roomMax.innerHTML = '';
-    for (let n = 2; n <= 8; n++) {
+    for (let n = lo; n <= hi; n++) {
       const opt = document.createElement('option');
       opt.value = String(n);
       opt.textContent = String(n);
@@ -3433,6 +3438,10 @@
     }
     if ([...el.roomMax.options].some((o) => o.value === cur)) {
       el.roomMax.value = cur;
+    } else if (prefer && [...el.roomMax.options].some((o) => o.value === prefer)) {
+      el.roomMax.value = prefer;
+    } else {
+      el.roomMax.value = String(hi);
     }
   }
 
