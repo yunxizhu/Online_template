@@ -1177,22 +1177,12 @@ function stopControlTunnel() {
   controlTunnel = null;
 }
 
-/** 服务启动后在后台预热房间隧道，不阻塞 HTTP/MQTT 监听 */
+/**
+ * （已停用）原先服务启动后后台预热房间隧道。
+ * 现改为建房时再 ensure，降低 Cloudflare quick tunnel 申请频率。
+ */
 function warmupTunnelInBackground() {
-  if (!mqttBulletin || !mqttBulletin.enabled) return;
-  setImmediate(() => {
-    console.log('[tunnel:room] 后台预热中…');
-    ensurePublicTunnelUrl()
-      .then((url) => {
-        if (url) console.log('[tunnel:room] 后台预热完成');
-      })
-      .catch((err) => {
-        console.warn(
-          '[tunnel:room] 后台预热失败:',
-          err && err.message ? err.message : err
-        );
-      });
-  });
+  /* no-op：保留符号以免外部/旧脚本引用报错 */
 }
 
 function emitLobbyUpdate() {
@@ -3276,7 +3266,7 @@ server.listen(PORT, '0.0.0.0', () => {
     mqttBulletin.start().catch((err) => {
       console.warn('[mqtt] 启动失败:', err && err.message ? err.message : err);
     });
-    warmupTunnelInBackground();
+    // 不在启动时预热隧道，避免频繁申请 trycloudflare 触发限流；建房时再 ensure
   }
 
   const openFlag = String(process.env.OPEN_BROWSER || '').toLowerCase();
