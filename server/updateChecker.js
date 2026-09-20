@@ -378,7 +378,8 @@ class HostUpdateChecker {
       };
       return this.lastCheck;
     }
-    if (this._checkPromise && !opts.force) return this._checkPromise;
+    // 多开大厅同时 refresh 时合并为一次联网检测，避免并发拉 manifest / 冲突
+    if (this._checkPromise) return this._checkPromise;
     this._checkPromise = this._doCheck()
       .catch((err) => {
         const fail = {

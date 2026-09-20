@@ -242,8 +242,16 @@
 
   /* Windows 主机 OTA：须在 showView 等早期调用之前初始化，避免 TDZ */
   const HOST_UPDATE_DISMISS_KEY = 'lianji.hostUpdate.dismissed';
+  /** 多开本机大厅时，仅一个标签页执行后台检测，避免并发 check/apply 冲突 */
+  const HOST_UPDATE_CHECK_SLOT_KEY = 'lianji.hostUpdate.checkSlot';
+  /** 升级生命周期同步：available / apply-started / reload-after-update */
+  const HOST_UPDATE_EVENT_KEY = 'lianji.hostUpdate.event';
+  /** @deprecated 兼容旧信号 */
+  const HOST_UPDATE_RELOAD_KEY = 'lianji.hostUpdate.reload';
   const HOST_UPDATE_CHECK_INTERVAL_MS = 60 * 1000;
   const HOST_UPDATE_AUTO_APPLY_SEC = 3;
+  const hostUpdateTabId =
+    't' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
   let hostUpdateApplying = false;
   let hostUpdatePollTimer = null;
   let hostUpdateBgTimer = null;
@@ -251,6 +259,10 @@
   let hostUpdateAutoSecLeft = 0;
   let hostUpdateCheckInFlight = false;
   let hostUpdateScheduleTimer = null;
+  let hostUpdatePeerReloadInFlight = false;
+  /** 跟随其它窗口升级：只同步 UI / 进度，不发起 apply */
+  let hostUpdateFollowerMode = false;
+  let hostUpdateBc = null;
   /** 本机曾开启被动模式：关客户端后再开仍自动进入，除非主动退出 */
   const PASSIVE_FLAG_KEY = 'lianji.passiveMode';
   let passiveRestoreTimer = null;
@@ -8539,7 +8551,9 @@
     if (!isHostConsolePage()) return false;
     // update.off：禁用大厅后台自动检查
     if (state.hostUpdateAutoEnabled === false) return false;
-    if (hostUpdateApplying) return false;
+    if (hostUpdateApplying || hostUpdateFollowerMode || hostUpdatePeerReloadInFlight) {
+      return false;
+    }
     if (el.hostUpdateModal && !el.hostUpdateModal.hidden) return false;
     if (isPlayingGameNow()) return false;
     if (state.passiveMode) return true;
@@ -8843,10 +8857,25 @@
       }
       return info;
     }
-    // 后台检查：一律强制升级（不可拒绝）
+    // 后台检查：一律强制升级（不可拒绝）；同步通知其它多开窗口立刻显示进度
     if (background) {
       if (isPlayingGameNow()) return info;
+      if (hostUpdateFollowerMode || hostUpdatePeerReloadInFlight) return info;
       showHostUpdateModal({ ...info, force: true }, { force: true, allowCancel: false });
+      postHostUpdatePeerEvent({
+        type: 'update-available',
+        info: {
+          available: true,
+          force: true,
+          canApply: true,
+          localVersion: info.localVersion,
+          remoteVersion: info.remoteVersion,
+          notes: info.notes || '',
+          notesEn: info.notesEn || '',
+          changedCount: info.changedCount || 0,
+          totalBytes: info.totalBytes || 0,
+        },
+      });
       return info;
     }
     if (!manual && !info.force && isHostUpdateDismissed(info.remoteVersion)) {
@@ -8908,23 +8937,197 @@
     return false;
   }
 
+  function postHostUpdatePeerEvent(msg) {
+    const payload = Object.assign({ at: Date.now(), from: hostUpdateTabId }, msg || {});
+    try {
+      localStorage.setItem(HOST_UPDATE_EVENT_KEY, JSON.stringify(payload));
+    } catch (_) {}
+    // 兼容旧版只监听 reload key 的窗口
+    if (payload.type === 'reload-after-update') {
+      try {
+        localStorage.setItem(HOST_UPDATE_RELOAD_KEY, JSON.stringify(payload));
+      } catch (_) {}
+    }
+    try {
+      if (hostUpdateBc) hostUpdateBc.postMessage(payload);
+    } catch (_) {}
+  }
+
+  function stopHostUpdateProgressPoll() {
+    if (hostUpdatePollTimer) {
+      clearInterval(hostUpdatePollTimer);
+      hostUpdatePollTimer = null;
+    }
+  }
+
+  function startHostUpdateProgressPoll() {
+    stopHostUpdateProgressPoll();
+    hostUpdatePollTimer = setInterval(() => {
+      fetchUpdateStatus(false)
+        .then((st) => {
+          if (!st) return;
+          if (st.progress) {
+            setHostUpdateProgress(st.progress);
+          } else if (st.applying) {
+            setHostUpdateProgress({
+              current: 0,
+              total: 1,
+              message: t('update.working'),
+            });
+          }
+        })
+        .catch(() => {});
+    }, 500);
+  }
+
+  /** 跟随其它窗口：立刻显示升级中，并轮询服务端进度（不发起 apply） */
+  function enterHostUpdateFollowerMode(initialProgress) {
+    hostUpdateFollowerMode = true;
+    clearHostUpdateAutoApply();
+    if (el.btnHostUpdateApply) {
+      el.btnHostUpdateApply.disabled = true;
+      el.btnHostUpdateApply.hidden = true;
+    }
+    if (el.btnHostUpdateLater) el.btnHostUpdateLater.hidden = true;
+    if (el.btnHostUpdateOk) el.btnHostUpdateOk.hidden = true;
+    setHostUpdateProgress(
+      initialProgress || {
+        current: 0,
+        total: 1,
+        message: t('update.peerWorking'),
+      }
+    );
+    if (el.hostUpdateModal) {
+      el.hostUpdateModal.dataset.force = '1';
+      el.hostUpdateModal.hidden = false;
+    }
+    startHostUpdateProgressPoll();
+  }
+
+  async function reloadAfterHostUpdateReady() {
+    stopHostUpdateProgressPoll();
+    const ok = await waitForServerRestart(90000);
+    if (ok) {
+      try {
+        localStorage.removeItem(HOST_UPDATE_DISMISS_KEY);
+      } catch (_) {}
+      try {
+        localStorage.removeItem(HOST_UPDATE_CHECK_SLOT_KEY);
+      } catch (_) {}
+      location.reload();
+      return true;
+    }
+    showToast(t('update.restartTimeout'));
+    if (el.hostUpdateModal) el.hostUpdateModal.hidden = true;
+    hostUpdateFollowerMode = false;
+    hostUpdatePeerReloadInFlight = false;
+    return false;
+  }
+
+  /** 其它窗口收到升级完成信号：展示重启提示并刷新 */
+  function handlePeerHostUpdateReload(fromId) {
+    if (fromId && fromId === hostUpdateTabId) return;
+    if (hostUpdateApplying || hostUpdatePeerReloadInFlight) return;
+    hostUpdatePeerReloadInFlight = true;
+    hostUpdateFollowerMode = true;
+    clearHostUpdateAutoApply();
+    stopHostUpdateProgressPoll();
+    try {
+      if (el.hostUpdateModal) {
+        setHostUpdateProgress({
+          current: 1,
+          total: 1,
+          message: t('update.restarting'),
+        });
+        el.hostUpdateModal.hidden = false;
+      }
+    } catch (_) {}
+    reloadAfterHostUpdateReady().catch(() => {});
+  }
+
+  function handlePeerHostUpdateEvent(msg) {
+    if (!msg || msg.from === hostUpdateTabId) return;
+    if (msg.type === 'update-available') {
+      if (hostUpdateApplying || hostUpdatePeerReloadInFlight) return;
+      // 本窗口已是主导（强制升级弹窗已开）：继续自己的倒计时 apply，不被同伴 available 抢成跟随者
+      if (
+        !hostUpdateFollowerMode &&
+        el.hostUpdateModal &&
+        !el.hostUpdateModal.hidden &&
+        el.hostUpdateModal.dataset.force
+      ) {
+        return;
+      }
+      // 立刻同步弹出「升级中」，避免有窗口空白卡住
+      if (msg.info) {
+        showHostUpdateModal(
+          { ...msg.info, force: true, canApply: false },
+          { force: true, allowCancel: false, autoCountdown: false }
+        );
+      }
+      enterHostUpdateFollowerMode();
+      return;
+    }
+    if (msg.type === 'apply-started') {
+      if (hostUpdateApplying || hostUpdatePeerReloadInFlight) return;
+      enterHostUpdateFollowerMode(msg.progress);
+      return;
+    }
+    if (msg.type === 'reload-after-update') {
+      handlePeerHostUpdateReload(msg.from);
+    }
+  }
+
+  function ensureHostUpdatePeerReloadListener() {
+    if (typeof window === 'undefined') return;
+    if (window.__lianjiHostUpdateReloadBound) return;
+    window.__lianjiHostUpdateReloadBound = true;
+    window.addEventListener('storage', (ev) => {
+      if (!ev || !ev.newValue) return;
+      if (ev.key !== HOST_UPDATE_EVENT_KEY && ev.key !== HOST_UPDATE_RELOAD_KEY) return;
+      let data = null;
+      try {
+        data = JSON.parse(ev.newValue);
+      } catch (_) {
+        data = null;
+      }
+      if (!data) return;
+      if (ev.key === HOST_UPDATE_RELOAD_KEY && !data.type) {
+        data.type = 'reload-after-update';
+      }
+      handlePeerHostUpdateEvent(data);
+    });
+    try {
+      if (typeof BroadcastChannel === 'function') {
+        hostUpdateBc = new BroadcastChannel('lianji-host-update');
+        hostUpdateBc.onmessage = (ev) => {
+          handlePeerHostUpdateEvent(ev && ev.data);
+        };
+      }
+    } catch (_) {
+      hostUpdateBc = null;
+    }
+  }
+
+  function isHostUpdateBusyConflict(status, message) {
+    if (status === 409) return true;
+    const m = String(message || '');
+    return /正在更新/.test(m) || /updating/i.test(m);
+  }
+
   async function applyHostUpdate() {
-    if (hostUpdateApplying) return;
+    if (hostUpdateApplying || hostUpdateFollowerMode || hostUpdatePeerReloadInFlight) {
+      return;
+    }
     hostUpdateApplying = true;
     clearHostUpdateAutoApply();
     if (el.btnHostUpdateApply) el.btnHostUpdateApply.disabled = true;
     if (el.btnHostUpdateLater) el.btnHostUpdateLater.disabled = true;
     setHostUpdateProgress({ current: 0, total: 1, message: t('update.working') });
+    postHostUpdatePeerEvent({ type: 'apply-started' });
+    startHostUpdateProgressPoll();
 
     const origin = (net && net.getLocalOrigin && net.getLocalOrigin()) || '';
-    if (hostUpdatePollTimer) clearInterval(hostUpdatePollTimer);
-    hostUpdatePollTimer = setInterval(() => {
-      fetchUpdateStatus(false)
-        .then((st) => {
-          if (st && st.progress) setHostUpdateProgress(st.progress);
-        })
-        .catch(() => {});
-    }, 500);
 
     try {
       const res = await fetch(origin + '/api/update/apply', {
@@ -8933,6 +9136,12 @@
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        // 其它窗口已在升级：本窗口改为跟随，禁止倒计时死循环重试
+        if (isHostUpdateBusyConflict(res.status, data.message)) {
+          hostUpdateApplying = false;
+          enterHostUpdateFollowerMode(data.progress);
+          return;
+        }
         throw new Error(data.message || t('update.applyFail'));
       }
       setHostUpdateProgress({
@@ -8940,17 +9149,10 @@
         total: 1,
         message: t('update.restarting'),
       });
-      const ok = await waitForServerRestart(90000);
-      if (ok) {
-        try {
-          localStorage.removeItem(HOST_UPDATE_DISMISS_KEY);
-        } catch (_) {}
-        location.reload();
-      } else {
-        showToast(t('update.restartTimeout'));
-        if (el.hostUpdateModal) el.hostUpdateModal.hidden = true;
-      }
+      postHostUpdatePeerEvent({ type: 'reload-after-update' });
+      await reloadAfterHostUpdateReady();
     } catch (err) {
+      if (hostUpdateFollowerMode) return;
       setHostUpdateProgress({
         current: 0,
         total: 1,
@@ -8973,17 +9175,42 @@
       }
       throw err;
     } finally {
-      if (hostUpdatePollTimer) {
-        clearInterval(hostUpdatePollTimer);
-        hostUpdatePollTimer = null;
+      if (!hostUpdateFollowerMode) {
+        stopHostUpdateProgressPoll();
       }
       hostUpdateApplying = false;
+    }
+  }
+
+  /**
+   * 多开本机控制台时抢占检测槽：同一持有期内只有一个标签页跑后台 OTA。
+   * 对局中的标签页会先被 canBackgroundHostUpdateCheck 拦住，从而把槽让给大厅页。
+   */
+  function tryClaimBackgroundHostUpdateSlot() {
+    const now = Date.now();
+    const holdMs = Math.max(10 * 1000, HOST_UPDATE_CHECK_INTERVAL_MS - 5 * 1000);
+    try {
+      const raw = localStorage.getItem(HOST_UPDATE_CHECK_SLOT_KEY);
+      if (raw) {
+        const data = JSON.parse(raw);
+        const until = Number(data && data.until) || 0;
+        const owner = String((data && data.owner) || '');
+        if (until > now && owner && owner !== hostUpdateTabId) return false;
+      }
+      localStorage.setItem(
+        HOST_UPDATE_CHECK_SLOT_KEY,
+        JSON.stringify({ owner: hostUpdateTabId, until: now + holdMs })
+      );
+      return true;
+    } catch (_) {
+      return true;
     }
   }
 
   async function runBackgroundHostUpdateCheck() {
     if (!canBackgroundHostUpdateCheck()) return;
     if (hostUpdateCheckInFlight) return;
+    if (!tryClaimBackgroundHostUpdateSlot()) return;
     hostUpdateCheckInFlight = true;
     try {
       await checkHostUpdate({ background: true });
@@ -9031,6 +9258,7 @@
   }
 
   // 本机控制台：大厅 / 未开局房间 / 被动模式后台检查；对局中延后
+  ensureHostUpdatePeerReloadListener();
   ensureHostUpdateBackgroundLoop();
 })();
 

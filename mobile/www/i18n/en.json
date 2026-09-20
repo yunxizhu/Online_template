@@ -270,6 +270,7 @@
     "cancel": "Cancel",
     "ok": "Got it",
     "working": "Downloading and applying update…",
+    "peerWorking": "Another window is updating. Waiting here…",
     "restarting": "Update done. Restarting server…",
     "restartTimeout": "Server restart timed out. Please refresh manually",
     "checkFail": "Update check failed",

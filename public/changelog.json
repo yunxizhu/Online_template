@@ -2,6 +2,30 @@
   "schema": 1,
   "entries": [
     {
+      "version": "1.2.11",
+      "notes": "修正人机对于囚徒困境的判断",
+      "notesEn": "",
+      "publishedAt": "2026-09-20T10:40:33.370Z"
+    },
+    {
+      "version": "1.2.10",
+      "notes": "测试多开更新",
+      "notesEn": "",
+      "publishedAt": "2026-09-20T10:33:02.438Z"
+    },
+    {
+      "version": "1.2.9",
+      "notes": "修复多开时，多端升级冲突的问题",
+      "notesEn": "",
+      "publishedAt": "2026-09-20T10:31:13.619Z"
+    },
+    {
+      "version": "1.2.8",
+      "notes": "优化卡坦岛的显示ui",
+      "notesEn": "",
+      "publishedAt": "2026-09-20T10:26:03.034Z"
+    },
+    {
       "version": "1.2.7",
       "notes": "新增卡坦岛",
       "notesEn": "",

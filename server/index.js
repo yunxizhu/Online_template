@@ -418,9 +418,9 @@ function findLiveSessionPeer(sessionId, exceptSocketId) {
 
 const rooms = new RoomManager();
 let mqttBulletin = null;
-/** 房间隧道：MQTT 进房 / 对局；可探活换址、可房主重开换址 */
+/** 房间隧道：MQTT 进房 / 对局；仅探活失败换址，退出房间/结束对局不重启 */
 let tunnel = null;
-/** 被动控制隧道：分享入口；运行期尽量不换址；可选命名隧道跨重启固定 */
+/** 被动控制隧道：分享入口；每次重启/换址使用随机 trycloudflare 地址 */
 let controlTunnel = null;
 
 /** 实例对外展示名：取大厅内第一个玩家，无玩家则为空（空实例不出现在他人大厅） */
@@ -502,7 +502,7 @@ app.get('/api/info', (_req, res) => {
     publicUrl: getControlPublicUrl() || getRoomPublicUrl() || null,
     controlUrl: getControlPublicUrl() || null,
     roomUrl: getRoomPublicUrl() || null,
-    controlTunnelNamed: Boolean(controlTunnel && controlTunnel.isNamed()),
+    controlTunnelNamed: false,
     games: listGames(),
     version: hostUpdate.getLocalVersion(),
     updateEnabled: !hostUpdate.disabled,
@@ -892,9 +892,6 @@ function afterPlayingMutation(room, { wasOver = false, wasStatus = null } = {}) 
   if ((nowOver && !wasOver) || (wasStatus && nowStatus && wasStatus !== nowStatus)) {
     mqttNotifyRoomStatusNow();
   }
-  if (nowOver && !wasOver) {
-    stopTunnelIfIdle();
-  }
 }
 
 /** 房间主动解散时立刻清掉 MQTT retained，不等心跳超时 */
@@ -1049,12 +1046,11 @@ function nudgeStaleTunnelPlayers() {
   }
 }
 
-/** 本机仍有未挂起房间时，禁止因公网探活误杀隧道（改由房主确认重开） */
+/** 本机仍有未挂起房间时，禁止因公网探活误杀隧道（含结算中；仅探活失败才换址） */
 function hasActiveHostedRoom() {
   try {
     for (const room of rooms.rooms.values()) {
       if (!room || room.pendingLobby) continue;
-      if (room.game && room.game.over) continue;
       return true;
     }
   } catch (_) {
@@ -1064,27 +1060,14 @@ function hasActiveHostedRoom() {
 }
 
 /**
- * 无活跃房间时：不关掉房间隧道，后台确保公网地址就绪，避免下次开房冷启动很慢。
+ * 退出房间 / 结束对局不再重启或预热换址；隧道一直维持，仅探活失败会换新。
+ * 保留函数名以免改散各处调用点。
  */
 function prepareTunnelIfIdle() {
-  if (hasActiveHostedRoom()) return;
-  setImmediate(() => {
-    if (hasActiveHostedRoom()) return;
-    console.log('[tunnel:room] 房间已空闲，后台准备下次开房隧道…');
-    ensurePublicTunnelUrl()
-      .then((url) => {
-        if (url) console.log('[tunnel:room] 下次开房隧道已就绪');
-      })
-      .catch((err) => {
-        console.warn(
-          '[tunnel:room] 空闲预热失败:',
-          err && err.message ? err.message : err
-        );
-      });
-  });
+  /* no-op */
 }
 
-/** @deprecated 兼容旧名：现为预热而非停止 */
+/** @deprecated 兼容旧名：现为 no-op（不再因空闲停隧道/换址） */
 function stopTunnelIfIdle() {
   prepareTunnelIfIdle();
 }
@@ -1150,8 +1133,8 @@ function attachTunnelHooks(t) {
 
 function attachControlTunnelHooks(t) {
   if (!t) return t;
-  // 控制隧道默认不因探活换址；命名隧道可重启进程但地址不变
-  t.shouldProtect = () => true;
+  // 控制隧道与房间隧道一样：僵死则换新随机地址
+  t.shouldProtect = () => false;
   t.onUrl = (url) => {
     console.log('[tunnel:control] 控制入口就绪:', url || '');
     emitPassiveControlUpdate();
@@ -1161,7 +1144,7 @@ function attachControlTunnelHooks(t) {
     emitLobbyUpdate();
   };
   t.onLost = () => {
-    // 不影响房间隧道；快速控制隧道换址前短暂不可达
+    // 不影响房间隧道；换址前短暂不可达
     console.warn('[tunnel:control] 控制隧道中断，正在重连…');
     emitPassiveControlUpdate();
   };
@@ -2348,7 +2331,8 @@ io.on('connection', (socket) => {
 
   /**
    * 房主确认「房间状态错误，是否重开」：
-   * 立刻换隧道 → 解散旧房并清 MQTT → 建新房 → 广播转移通知。
+   * 维持现有隧道（不主动换址）→ 解散旧房并清 MQTT → 建新房 → 广播转移通知。
+   * 换隧道仅由探活失败触发。
    */
   socket.on('room:reopenTunnel', async () => {
     const me = rooms.getPlayer(socket.id);
@@ -2401,15 +2385,11 @@ io.on('connection', (socket) => {
       socket.emit('room:creating', { message, roomId: oldRoomId });
 
     try {
-      progress('正在重建公网隧道…');
+      progress('正在确认公网隧道…');
       if (!tunnel) tunnel = attachTunnelHooks(new QuickTunnel({ label: 'room' }));
-      let publicUrl = '';
-      if (typeof tunnel.forceRotateAndWait === 'function') {
-        publicUrl = await tunnel.forceRotateAndWait('host-reopen');
-      } else {
-        publicUrl = await ensurePublicTunnelUrl();
-      }
-      if (!publicUrl) throw new Error('未能获得新的公网地址');
+      // 不 forceRotate：沿用现有地址；仅进程已死时 ensure 会拉起
+      const publicUrl = await ensurePublicTunnelUrl();
+      if (!publicUrl) throw new Error('未能获得公网地址');
 
       // 先清旧房心跳，再解散本机房间
       mqttClearRoomOnDissolve();

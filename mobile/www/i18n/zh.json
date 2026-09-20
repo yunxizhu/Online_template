@@ -270,6 +270,7 @@
     "cancel": "取消",
     "ok": "知道了",
     "working": "正在下载并应用更新…",
+    "peerWorking": "另一窗口正在升级，本窗口同步等待…",
     "restarting": "更新完成，正在重启服务…",
     "restartTimeout": "服务重启超时，请手动刷新页面",
     "checkFail": "检查更新失败",
