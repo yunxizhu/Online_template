@@ -299,7 +299,7 @@ function buildSpecialDeck(profile) {
 
 /**
  * 事件牌目录（仅元数据；张数只在 deckProfiles.js 配置）
- * trigger: dispatch=派遣时 / settle=结算抵消后
+ * trigger: dispatch=自己回合派遣自己的骰时 / settle=结算抵消后
  * setup: 上场初始化
  */
 const ENVIRONMENT_CATALOG = [
@@ -309,7 +309,7 @@ const ENVIRONMENT_CATALOG = [
     trigger: 'settle',
     dispatchAlso: true,
     setup: 'neutral1',
-    desc: '上场在本格放置 1 枚中立骰。派遣时：额外在本格放置 1 枚中立骰。结算抵消后：最后一名玩家（可并列；未放置者固定为最后一名）各弃 n 张资源卡，n=第一名骰子数；该弃牌在个人产出（含许愿井）后、建造前进行',
+    desc: '上场在本格放置 1 枚中立骰。自己回合派遣自己的骰到本格时：额外在本格放置 1 枚中立骰。结算抵消后：最后一名玩家（可并列；未放置者固定为最后一名）各弃 n 张资源卡，n=第一名骰子数；该弃牌在个人产出（含许愿井）后、建造前进行',
   },
   {
     envType: 'barrenHarvest',
@@ -328,14 +328,14 @@ const ENVIRONMENT_CATALOG = [
     envType: 'clearSky',
     label: '晴空万里',
     trigger: 'dispatch',
-    desc: '派遣时：派遣者任选获得与此次派遣数量相同的资源（可重复）',
+    desc: '自己回合派遣自己的骰时：派遣者任选获得与此次派遣数量相同的资源（可重复）',
   },
   {
     envType: 'enterFray',
     label: '以身入局',
     trigger: 'dispatch',
     setup: 'neutral3',
-    desc: '上场时在本格放置 3 枚中立骰。派遣时可将本格与此次派遣数量相同的中立骰移到任意板块数字格（不足则全部移动；无中立骰则不可发动）',
+    desc: '上场时在本格放置 3 枚中立骰。自己回合派遣自己的骰时可将本格与此次派遣数量相同的中立骰移到任意板块数字格（不足则全部移动；无中立骰则不可发动）',
   },
   {
     envType: 'oneMountain',
@@ -375,20 +375,20 @@ const ENVIRONMENT_CATALOG = [
     envType: 'recall',
     label: '召回',
     trigger: 'dispatch',
-    desc: '派遣时：将场上你自己的 1 枚骰子收回到手中（不可召回本次刚放置的骰子；本格有旧骰时可召回旧骰）；若没有可召回的则跳过',
+    desc: '自己回合派遣自己的骰时：将场上你自己的 1 枚骰子收回到手中（不可召回本次刚放置的骰子；本格有旧骰时可召回旧骰）；若没有可召回的则跳过',
   },
   {
     envType: 'weiQiRescueZhao',
     label: '围魏救赵',
     trigger: 'dispatch',
     setup: 'neutralAdjacentSlots',
-    desc: '上场时：在本格周边数字格（1↔24、2↔135、3↔26、4↔15、5↔246、6↔35）于资源区各放置 1 枚中立骰。派遣时：选择任意有其他中立骰的板块，将其上全部中立骰集中到本事件格',
+    desc: '上场时：在本格周边数字格（1↔24、2↔135、3↔26、4↔15、5↔246、6↔35）于资源区各放置 1 枚中立骰。自己回合派遣自己的骰时：选择任意有其他中立骰的板块，将其上全部中立骰集中到本事件格',
   },
   {
     envType: 'teleport',
     label: '传送',
     trigger: 'dispatch',
-    desc: '派遣：在自己的回合中，成为本格最大者时（首次亦触发；继续加码不重复），将场上任意板块任意玩家（含中立）的 1 枚骰子传送到任意有板块的格子（触发目标格派遣事件）',
+    desc: '派遣：在自己的回合中，成为本格最大者时（首次亦触发；继续加码不重复），将场上任意板块任意玩家（含中立）的 1 枚骰子传送到任意有板块的格子（仅当传送的是自己的骰子时，触发目标格派遣事件）',
   },
   {
     envType: 'keepOverflow',

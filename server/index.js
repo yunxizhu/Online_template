@@ -1412,10 +1412,26 @@ function seatAutoDifficulty(seat) {
   return (seat && seat.botDifficulty) || 'normal';
 }
 
-/** 人机行动指纹：用于检测「决策/超时后状态未变」的卡死 */
+/** 人机行动指纹：用于检测「决策/超时后状态未变」的卡死。
+ * 建造/生产可以连续行动且不换人，必须把资源、繁殖、日志也算进去，
+ * 否则一次成功的繁殖会被当成卡死并强制跳过。
+ */
 function botActingFingerprint(game, playerId) {
   if (!game || !playerId) return '';
   const ev = game.pendingEventChoice;
+  const p = Array.isArray(game.players)
+    ? game.players.find((x) => x && x.id === playerId)
+    : null;
+  const res = (p && p.resources) || {};
+  const log = game.log;
+  const lastLog =
+    log && log.length
+      ? String(
+          (log[log.length - 1] && (log[log.length - 1].text || log[log.length - 1])) ||
+            ''
+        )
+      : '';
+  const dice = (game.dice && game.dice[playerId]) || [];
   const parts = [
     game.phase || '',
     game.currentPlayerId || '',
@@ -1437,6 +1453,28 @@ function botActingFingerprint(game, playerId) {
     game.pendingWelfareMinimumChoices[playerId]
       ? 'welfare'
       : '',
+    p
+      ? [
+          p.villagers,
+          p.houses,
+          p.roundBred ? 1 : 0,
+          p.roundBuiltHouse ? 1 : 0,
+          p.expandResSlots,
+          p.expandSlots,
+          p.dispatched,
+          p.voided,
+          res.wood,
+          res.stone,
+          res.food,
+          res.iron,
+          (p.funcCards || []).length,
+          (p.buildings || []).length,
+          p.buildTurnBuyFuncCount,
+          game.buildPassed && game.buildPassed[playerId] ? 1 : 0,
+          dice.length,
+        ].join(',')
+      : '',
+    lastLog,
   ];
   return parts.join('|');
 }
@@ -1456,7 +1494,7 @@ function scheduleBotTick(room) {
   if (!actors.length) return;
 
   // 判断 bot 是否刚摇完骰子准备派遣，是则停留更久让玩家看清骰子
-  let delay = 500 + Math.floor(Math.random() * 300); // 500-800ms
+  let delay = 1200 + Math.floor(Math.random() * 300); // 1200-1500ms
     for (const id of actors) {
     if (
       room.game.phase === 'produce' &&
@@ -1485,11 +1523,22 @@ function scheduleBotTick(room) {
       if (!seatAutoPlays(seat)) continue;
       const beforeKey = botActingFingerprint(room.game, id);
       try {
-        const botAction = mod.decideBotAction(
+        let botAction = mod.decideBotAction(
           room.game,
           id,
           seatAutoDifficulty(seat)
         );
+        // 兑换连打熔断：同玩家连续兑换过多 → 强制 pass，避免 1:1 集市卡死整桌
+        if (botAction && botAction.type === 'exchange') {
+          if (!room._botExchangeStreak) room._botExchangeStreak = {};
+          room._botExchangeStreak[id] = (room._botExchangeStreak[id] || 0) + 1;
+          if (room._botExchangeStreak[id] >= 4) {
+            botAction = { type: 'pass' };
+            room._botExchangeStreak[id] = 0;
+          }
+        } else if (room._botExchangeStreak) {
+          room._botExchangeStreak[id] = 0;
+        }
         if (botAction) {
           const result = mod.applyAction(room.game, id, botAction);
           if (!result || !result.ok) {

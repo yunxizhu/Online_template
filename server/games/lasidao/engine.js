@@ -1678,6 +1678,9 @@ function createGameState(room) {
     roundBuiltHouse: false,
     roundBred: false,
     roundExpanded: false,
+    roundExpandedResource: false,
+    roundExpandedBuilding: false,
+    roundExpandedFunction: false,
     pendingDiscardFunc: false,
     pendingDiscardBuild: null, // 建筑格不足时需弃一张未建造腾位（入手超限或拆迁爆牌）
     pendingDiscardRes: false, // 手牌资源超上限
@@ -1686,7 +1689,8 @@ function createGameState(room) {
     expandSlots: 0, // 扩建建筑格后增加的无数字格数量
     expandFuncSlots: 0, // 扩建功能卡格后增加的上限
     expandResSlots: 0, // 扩建资源卡位次数（每次 +3 手牌资源上限）
-    buildTurnUsedBuyFunc: false, // 本建造回合已购买功能卡（不可重置）
+    buildTurnUsedBuyFunc: false, // 本建造回合已购买过功能卡
+    buildTurnBuyFuncCount: 0, // 本建造回合已购买功能卡次数（人机策略节制；引擎不设硬上限）
     buildTurnUsedRedraw: false, // 本建造回合已使用重抽（不可重置）
   }));
 
@@ -1924,6 +1928,9 @@ function beginProduce(game) {
     p.roundBuiltHouse = false;
     p.roundBred = false;
     p.roundExpanded = false;
+    p.roundExpandedResource = false;
+    p.roundExpandedBuilding = false;
+    p.roundExpandedFunction = false;
   }
   // 清空各大区数字格工人（再补回事件牌上场中立骰）
   clearAllSlotWorkers(game);
@@ -3087,7 +3094,7 @@ function actEventTeleportTo(game, player, payload) {
     `${player.name}「${teleportLabel}」：将 ${teleportWorkerLabel(game, fromTargetId)} 的骰子从${AREA_LABELS[fromArea]}区 ${fromNumber} 号格传送到${AREA_LABELS[toArea]}区 ${toNumber} 号格` +
       (removed.wasEnhanced ? '（强化）' : '')
   );
-  // 清传送 pending，再按落点触发派遣事件（与雇佣军落点一致；派遣者=发动传送的玩家）
+  // 清传送 pending，再按落点尝试派遣事件（仅传送自己的骰时触发）
   game.pendingEventChoice = null;
   const ev = applyEnvironmentOnDispatch(game, {
     player,
@@ -3095,6 +3102,7 @@ function actEventTeleportTo(game, player, payload) {
     number: toNumber,
     count: 1,
     boostAdd: removed.wasEnhanced ? 1 : 0,
+    workerId: fromTargetId,
     pushLog,
     syncResourceHandPending,
     pushToDiscard,
@@ -3270,13 +3278,14 @@ function actMercenaryPlace(game, player, payload) {
         `${player.name} 雇佣军放置 ${face}：${AREA_LABELS[area]}区`
       );
     }
-    // 放到有「派遣触发」事件的格上时，同样触发
+    // 雇佣军落下的是自己的骰，可触发派遣事件
     const ev = applyEnvironmentOnDispatch(game, {
       player,
       area,
       number: face,
       count: 1,
       boostAdd: 0,
+      workerId: player.id,
       pushLog,
       syncResourceHandPending,
       pushToDiscard,
@@ -3464,6 +3473,15 @@ function ensureSettleActPlayer(game) {
   finishSettleActPhase(game);
 }
 
+/** 轮到该玩家建造时记下资源空位，本回合扩建只看这个数 */
+function noteBuildTurnEntryFree(player) {
+  if (!player) return;
+  player.buildTurnEntryFreeRes = Math.max(
+    0,
+    maxResourceHandFor(player) - sumRes(player.resources || {})
+  );
+}
+
 function beginBuild(game) {
   if (game.over) return;
   clearPostProduceBoard(game);
@@ -3474,7 +3492,10 @@ function beginBuild(game) {
   for (const p of alivePlayers(game)) {
     p.pendingDiscardRes = false;
     p.buildTurnUsedBuyFunc = false;
+    p.buildTurnBuyFuncCount = 0;
     p.buildTurnUsedRedraw = false;
+    p.buildTurnEntryFreeRes = null;
+    p.buildTurnFinaleExpanded = false;
   }
   // 按生产阶段派遣完毕顺序决定建造阶段行动顺序（第一个派遣完的先建造）
   const order = game.produceFinishOrder || [];
@@ -3485,6 +3506,8 @@ function beginBuild(game) {
   const p = playerById(game, startId);
   if (!p || p.left) {
     advanceBuildTurn(game);
+  } else {
+    noteBuildTurnEntryFree(p);
   }
   // 为每位玩家保存建造阶段初始快照，用于重置回合
   game.buildSnapshots = {};
@@ -3506,6 +3529,9 @@ function makeBuildSnapshot(player) {
     roundBuiltHouse: player.roundBuiltHouse,
     roundBred: player.roundBred,
     roundExpanded: player.roundExpanded,
+    roundExpandedResource: Boolean(player.roundExpandedResource),
+    roundExpandedBuilding: Boolean(player.roundExpandedBuilding),
+    roundExpandedFunction: Boolean(player.roundExpandedFunction),
     expandSlots: player.expandSlots,
     expandFuncSlots: player.expandFuncSlots,
     expandResSlots: player.expandResSlots,
@@ -3593,6 +3619,9 @@ function actResetBuildTurn(game, player) {
   player.roundBuiltHouse = snap.roundBuiltHouse;
   player.roundBred = snap.roundBred;
   player.roundExpanded = snap.roundExpanded;
+  player.roundExpandedResource = Boolean(snap.roundExpandedResource);
+  player.roundExpandedBuilding = Boolean(snap.roundExpandedBuilding);
+  player.roundExpandedFunction = Boolean(snap.roundExpandedFunction);
   player.expandSlots = snap.expandSlots;
   player.expandFuncSlots = snap.expandFuncSlots;
   player.expandResSlots = snap.expandResSlots;
@@ -3642,14 +3671,16 @@ function advanceBuildTurn(game) {
     const p = playerById(game, pid);
     if (p && !p.left) {
       game.currentPlayerId = pid;
-        return;
-      }
+      noteBuildTurnEntryFree(p);
+      return;
+    }
   }
 
   // 后备：按座位顺序找未 pass 的存活玩家
   for (const p of alive) {
     if (!game.buildPassed[p.id]) {
       game.currentPlayerId = p.id;
+      noteBuildTurnEntryFree(p);
       return;
     }
   }
@@ -4040,10 +4071,22 @@ function actPlaceDice(game, player, payload) {
       return { ok: false, error: `最多派遣 ${wild} 枚` };
     }
   } else {
-  const matching = dice.filter((d) => d === face);
-  if (!matching.length) {
-    return { ok: false, error: '没有该点数的骰子' };
-  }
+    const matching = dice.filter((d) => d === face);
+    if (!matching.length) {
+      return { ok: false, error: '没有该点数的骰子' };
+    }
+    // 与拉斯维加斯同点规则一致：选定点数后必须一次派完该点数全部骰（含强化）
+    const want = Number(payload.count);
+    if (
+      Number.isInteger(want) &&
+      want >= 1 &&
+      want !== matching.length
+    ) {
+      return {
+        ok: false,
+        error: `必须派遣全部 ${matching.length} 枚点数 ${face}`,
+      };
+    }
     count = matching.length;
   }
 
@@ -4081,12 +4124,14 @@ function actPlaceDice(game, player, payload) {
     if (!game.diceBoosted) game.diceBoosted = {};
     game.diceBoosted[player.id] = nextBoost;
   } else {
+    let left = count;
     const nextDice = [];
     const nextBoost = [];
     for (let i = 0; i < dice.length; i++) {
       const d = dice[i];
       const b = Boolean(boostFlags[i]);
-      if (d === face) {
+      if (d === face && left > 0) {
+        left -= 1;
         if (b) boostAdd += 1;
         continue;
       }
@@ -4119,13 +4164,14 @@ function actPlaceDice(game, player, payload) {
       (boostAdd ? `（强化 ${boostAdd}）` : '') +
       (remote ? '（遥控）' : '')
   );
-  // 事件牌：派遣触发（资源区 1–6）
+  // 事件牌：派遣触发（资源区 1–6；本次放下的是自己的骰）
   const ev = applyEnvironmentOnDispatch(game, {
     player,
     area,
     number: face,
     count,
     boostAdd,
+    workerId: player.id,
     pushLog,
     syncResourceHandPending,
     pushToDiscard,
@@ -6158,12 +6204,14 @@ function useExpand(game, player, payload) {
 
   if (direction === 'building') {
     player.expandSlots = (Number(player.expandSlots) || 0) + 1;
+    player.roundExpandedBuilding = true;
     pushLog(
       game,
       `${player.name} 扩建建筑格（建筑上限 ${maxBuildingsFor(player)}）`
     );
   } else if (direction === 'function') {
     player.expandFuncSlots = (Number(player.expandFuncSlots) || 0) + 1;
+    player.roundExpandedFunction = true;
     pushLog(
       game,
       `${player.name} 扩建功能卡格（功能上限 ${maxFuncHandFor(player)}）`
@@ -6171,13 +6219,15 @@ function useExpand(game, player, payload) {
     if (player.funcCards.length > maxFuncHandFor(player)) {
       syncFuncHandPending(player);
     }
-    } else {
+  } else {
     player.expandResSlots = (Number(player.expandResSlots) || 0) + 1;
+    player.roundExpandedResource = true;
     pushLog(
       game,
       `${player.name} 扩建资源卡位（资源上限 ${maxResourceHandFor(player)}）`
     );
   }
+  player.roundExpanded = true;
   return { ok: true };
 }
 
@@ -6329,6 +6379,7 @@ function useRedraw(game, player, payload) {
 function actBuyFuncCardPermanent(game, player) {
   const block = rejectIfBuildPhaseCardDiscardPending(player);
   if (block) return block;
+  // 次数由人机策略自行节制（空位宽时可连买到手牌 < 6）；引擎只校验费用
   if (!canPay(player.resources, BUY_FUNC_COST)) {
     return { ok: false, error: '需要 1 木 1 石 1 小麦 1 铁' };
   }
@@ -6396,8 +6447,17 @@ function startDrawPickOne(game, player, meta) {
     redrawCardId: meta.redrawCardId || null,
     options: drawn,
   };
-  if (meta.source === 'buyFunc') player.buildTurnUsedBuyFunc = true;
-  else if (meta.source === 'redraw') player.buildTurnUsedRedraw = true;
+  if (meta.source === 'buyFunc') {
+    const prev = Math.max(
+      0,
+      Number(player.buildTurnBuyFuncCount) || 0,
+      player.buildTurnUsedBuyFunc ? 1 : 0
+    );
+    player.buildTurnBuyFuncCount = prev + 1;
+    player.buildTurnUsedBuyFunc = true;
+  } else if (meta.source === 'redraw') {
+    player.buildTurnUsedRedraw = true;
+  }
   if (meta.logText) pushLog(game, meta.logText);
   return { ok: true, awaitingPick: true };
 }

@@ -2399,6 +2399,18 @@ window.LasidaoUi = (function () {
     return Object.values(workers || {}).some((n) => (Number(n) || 0) > 0);
   }
 
+  /** 同一格里强化和普通分开画，避免混放时整组看起来都是普通骰 */
+  function appendWorkerKindDice(row, face, color, boostedN, normalN) {
+    const boosted = Math.max(0, Number(boostedN) || 0);
+    const normal = Math.max(0, Number(normalN) || 0);
+    if (boosted > 0) {
+      row.appendChild(makeDieEl(face, 'is-mini is-placed is-boosted', color));
+    }
+    if (normal > 0) {
+      row.appendChild(makeDieEl(face, 'is-mini is-placed', color));
+    }
+  }
+
   function appendWorkerDice(container, face, workers, players, game, opts) {
     opts = opts || {};
     const boosts = opts.boosts || {};
@@ -2452,14 +2464,7 @@ window.LasidaoUi = (function () {
         'las-worker-row is-compact' +
         (isPreviewMerge ? ' is-dispatch-preview-row' : '');
       row.dataset.pid = pid;
-      const dieBoosted = boosted > 0 && boosted >= count;
-      row.appendChild(
-        makeDieEl(
-          face,
-          'is-mini is-placed' + (dieBoosted ? ' is-boosted' : ''),
-          color
-        )
-      );
+      appendWorkerKindDice(row, face, color, boosted, count - boosted);
       const mul = document.createElement('span');
       mul.className = 'las-worker-mul';
       mul.textContent = '\u00d7' + formatWorkerStrength(count, boosted);
@@ -2493,17 +2498,10 @@ window.LasidaoUi = (function () {
       const count = previewCount;
       const boosted = previewBoostAdd;
       const color = playerDieColor(players, pid, game);
-      const dieBoosted = boosted > 0 && boosted >= count;
       const row = document.createElement('div');
       row.className = 'las-worker-row is-compact is-dispatch-preview-row';
       row.dataset.pid = pid;
-      row.appendChild(
-        makeDieEl(
-          face,
-          'is-mini is-placed' + (dieBoosted ? ' is-boosted' : ''),
-          color
-        )
-      );
+      appendWorkerKindDice(row, face, color, boosted, count - boosted);
       const mul = document.createElement('span');
       mul.className = 'las-worker-mul';
       mul.textContent = '\u00d7' + formatWorkerStrength(count, boosted);
@@ -3778,20 +3776,23 @@ window.LasidaoUi = (function () {
       source = diceAnim.finalDice || [];
     } else if (
       lastGame &&
+      isMyTurn(lastGame, lastMeId) &&
       lastGame.phase === 'produce' &&
       !isAwaitingRoll(lastGame) &&
       Array.isArray(lastGame.dice) &&
       lastGame.dice.length
     ) {
       source = lastGame.dice;
-      // 与服务端对齐动画定稿，避免旁观残留点数继续可点
+      // 只在自己回合对齐。旁观时 lastGame.dice / diceBoosted 是自己的，
+      // 写进动画会把别人的骰面配上自己的强化标记。
       const serverKey = source.join(',');
       const animKey = (diceAnim.finalDice || []).join(',');
       if (serverKey !== animKey) {
         diceAnim.finalDice = source.slice();
-        diceAnim.finalBoosted = Array.isArray(lastGame.diceBoosted)
+        const boost = Array.isArray(lastGame.diceBoosted)
           ? lastGame.diceBoosted.slice()
           : [];
+        diceAnim.finalBoosted = source.map((_, i) => Boolean(boost[i]));
       }
     } else {
       source = diceAnim.finalDice || [];
@@ -6698,10 +6699,18 @@ window.LasidaoUi = (function () {
 
   function startSpectatorDiceAnimation(finalDice, color, actorName, boostFlags) {
     clearDiceTimers();
+    if (diceReadyWatchdog) {
+      clearTimeout(diceReadyWatchdog);
+      diceReadyWatchdog = null;
+    }
     resetDiceSelection();
+    const animGen = (Number(diceAnim._animGen) || 0) + 1;
+    diceAnim._animGen = animGen;
     diceAnim.stage = 'rolling';
     diceAnim.finalDice = finalDice.slice();
-    diceAnim.finalBoosted = (boostFlags || []).slice();
+    const flags = (boostFlags || []).map((b) => Boolean(b));
+    diceAnim.finalBoosted = flags.slice();
+    diceAnim.actorColor = color || '';
 
     const wrap = $('las-dice-wrap');
     const diceEl = $('las-dice');
@@ -6720,7 +6729,7 @@ window.LasidaoUi = (function () {
     for (let i = 0; i < n; i++) {
       const el = makeDieEl(
         1 + Math.floor(Math.random() * 6),
-        'is-rolling' + (diceAnim.finalBoosted[i] ? ' is-boosted' : ''),
+        'is-rolling' + (flags[i] ? ' is-boosted' : ''),
         color
       );
       diceEl.appendChild(el);
@@ -6728,6 +6737,7 @@ window.LasidaoUi = (function () {
     }
 
     const spin = setInterval(() => {
+      if (diceAnim._animGen !== animGen) return;
       for (const el of dieNodes) {
         el.textContent = String(1 + Math.floor(Math.random() * 6));
       }
@@ -6735,12 +6745,13 @@ window.LasidaoUi = (function () {
     diceAnim.intervals.push(spin);
 
     const t1 = setTimeout(() => {
+      if (diceAnim._animGen !== animGen) return;
       clearInterval(spin);
       for (let i = 0; i < n; i++) {
         const el = dieNodes[i];
         el.classList.remove('is-rolling');
         el.classList.add('is-reveal');
-        if (diceAnim.finalBoosted[i]) el.classList.add('is-boosted');
+        el.classList.toggle('is-boosted', Boolean(flags[i]));
         const v = finalDice[i];
         el.textContent = v === 0 ? t('lasidao.wildDie') : String(v);
       }
@@ -6748,51 +6759,17 @@ window.LasidaoUi = (function () {
     }, 900);
     diceAnim.timers.push(t1);
 
-    const t2 = setTimeout(() => {
-      diceAnim.stage = 'grouping';
-      updateDiceHint();
-
-      const counts = countByFace(finalDice);
-      const faces = Object.keys(counts)
-        .map(Number)
-        .sort((a, b) => a - b);
-      const faceIndex = {};
-      faces.forEach((f, i) => {
-        faceIndex[f] = i;
-      });
-
-      const groupWidth = 64;
-      const totalW = faces.length * groupWidth + (faces.length - 1) * 8;
-      const startX = -totalW / 2 + groupWidth / 2;
-
-      for (let i = 0; i < n; i++) {
-        const face = finalDice[i];
-        const gi = faceIndex[face];
-        const el = dieNodes[i];
-        const fromRect = el.getBoundingClientRect();
-        const stage = $('las-dice-stage');
-        const stageRect = stage
-          ? stage.getBoundingClientRect()
-          : { left: 0, width: 300, top: fromRect.top };
-        const targetCenterX =
-          stageRect.left + stageRect.width / 2 + startX + gi * (groupWidth + 8);
-        const curCenterX = fromRect.left + fromRect.width / 2;
-        const dx = targetCenterX - curCenterX;
-        el.classList.add('is-fly');
-        el.style.transform = 'translateX(' + dx + 'px)';
-        el.style.opacity = '0.35';
-      }
-    }, 1300);
-    diceAnim.timers.push(t2);
-
+    // 不要按点数飞到同一点：同点里既有强化又有普通时会叠在一起，看起来像标错了
     const t3 = setTimeout(() => {
+      if (diceAnim._animGen !== animGen) return;
       diceAnim.stage = 'ready';
-      renderSpectatorDice(finalDice, color, diceAnim.finalBoosted);
+      diceAnim.finalBoosted = flags.slice();
+      renderSpectatorDice(finalDice, color, flags);
       const hint = $('las-dice-hint');
       if (hint) {
         hint.textContent = t('lasidao.otherDiceHint', { name: actorName });
       }
-    }, 1800);
+    }, 1200);
     diceAnim.timers.push(t3);
   }
 
@@ -7132,12 +7109,12 @@ window.LasidaoUi = (function () {
     groupsEl.innerHTML = '';
     diceEl.hidden = false;
     diceEl.innerHTML = '';
-    const flags = boostFlags || diceAnim.finalBoosted || [];
+    const src = boostFlags || diceAnim.finalBoosted || [];
     dice.forEach((v, i) => {
       diceEl.appendChild(
         makeDieEl(
           v === 0 ? t('lasidao.wildDie') : v,
-          flags[i] ? 'is-boosted' : '',
+          src[i] ? 'is-boosted' : '',
           color
         )
       );
@@ -9528,6 +9505,31 @@ window.LasidaoUi = (function () {
     return ((game && game.winners) || []).join(',') + '@' + ((game && game.round) || 0);
   }
 
+  function victoryTitleListText(player) {
+    const labels = (player && player.titles ? player.titles : [])
+      .map((x) => (x && x.label) || '')
+      .filter(Boolean);
+    if (!labels.length) return t('lasidao.victoryTitlesNone');
+    return t('lasidao.victoryTitles', { list: labels.join('、') });
+  }
+
+  function victoryBuiltBuildingsListText(player) {
+    const counts = new Map();
+    for (const b of (player && player.buildings) || []) {
+      if (!b || !b.built) continue;
+      const label = b.label || t('lasidao.faceDown');
+      counts.set(label, (counts.get(label) || 0) + 1);
+    }
+    if (!counts.size) return t('lasidao.victoryBuildingsNone');
+    const parts = [];
+    for (const [label, n] of counts) {
+      parts.push(
+        n > 1 ? t('lasidao.victoryBuildingQty', { label, n }) : label
+      );
+    }
+    return t('lasidao.victoryBuildings', { list: parts.join('、') });
+  }
+
   function renderVictoryModalContent(game, meId) {
     const titleEl = $('las-victory-title');
     const subEl = $('las-victory-sub');
@@ -9632,6 +9634,14 @@ window.LasidaoUi = (function () {
         buildMax: maxB,
       });
       info.appendChild(stats);
+      const titlesLine = document.createElement('div');
+      titlesLine.className = 'las-victory-detail muted';
+      titlesLine.textContent = victoryTitleListText(p);
+      info.appendChild(titlesLine);
+      const buildingsLine = document.createElement('div');
+      buildingsLine.className = 'las-victory-detail muted';
+      buildingsLine.textContent = victoryBuiltBuildingsListText(p);
+      info.appendChild(buildingsLine);
       row.appendChild(info);
 
       const score = document.createElement('div');
