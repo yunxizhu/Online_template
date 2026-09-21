@@ -892,6 +892,35 @@ function afterPlayingMutation(room, { wasOver = false, wasStatus = null } = {}) 
   if ((nowOver && !wasOver) || (wasStatus && nowStatus && wasStatus !== nowStatus)) {
     mqttNotifyRoomStatusNow();
   }
+  scheduleDoudizhuNextHand(room);
+}
+
+/** 斗地主：本局结束且系列赛未完 → 短暂展示结果后自动开下一局 */
+const _ddzNextHandTimers = new Map();
+function scheduleDoudizhuNextHand(room) {
+  if (!room || room.gameType !== 'doudizhu' || !room.game) return;
+  const g = room.game;
+  if (!g.handOver || g.matchOver || g.over) return;
+  if (g.matchIndex >= g.matchGames) return;
+
+  const roomId = room.id;
+  if (_ddzNextHandTimers.has(roomId)) return;
+  const timer = setTimeout(() => {
+    _ddzNextHandTimers.delete(roomId);
+    const cur = rooms.getRoom(roomId);
+    if (!cur || cur.status !== 'playing' || !cur.game) return;
+    if (cur.gameType !== 'doudizhu') return;
+    const mod = getGame('doudizhu');
+    if (!mod || typeof mod.startNextHand !== 'function') return;
+    if (!cur.game.handOver || cur.game.matchOver || cur.game.over) return;
+    const result = mod.startNextHand(cur.game);
+    if (!result || !result.ok) return;
+    emitGameState(cur);
+    emitRoomUpdate(cur);
+    syncTurnTimer(cur, { onTimeout: handleTurnTimeout });
+    scheduleBotTick(cur);
+  }, 3200);
+  _ddzNextHandTimers.set(roomId, timer);
 }
 
 /** 房间主动解散时立刻清掉 MQTT retained，不等心跳超时 */
@@ -1177,12 +1206,22 @@ function stopControlTunnel() {
   controlTunnel = null;
 }
 
-/**
- * （已停用）原先服务启动后后台预热房间隧道。
- * 现改为建房时再 ensure，降低 Cloudflare quick tunnel 申请频率。
- */
+/** 服务启动后在后台预热房间隧道，不阻塞 HTTP/MQTT 监听 */
 function warmupTunnelInBackground() {
-  /* no-op：保留符号以免外部/旧脚本引用报错 */
+  if (!mqttBulletin || !mqttBulletin.enabled) return;
+  setImmediate(() => {
+    console.log('[tunnel:room] 后台预热中…');
+    ensurePublicTunnelUrl()
+      .then((url) => {
+        if (url) console.log('[tunnel:room] 后台预热完成');
+      })
+      .catch((err) => {
+        console.warn(
+          '[tunnel:room] 后台预热失败:',
+          err && err.message ? err.message : err
+        );
+      });
+  });
 }
 
 function emitLobbyUpdate() {
@@ -2148,6 +2187,11 @@ io.on('connection', (socket) => {
     });
   });
 
+  // 前端打开创建面板时就开始后台预热隧道，不必等到点击创建
+  socket.on('room:warmupTunnel', () => {
+    ensurePublicTunnelUrl().catch(() => {});
+  });
+
   socket.on('room:create', async (data = {}) => {
     let wantPassive = Boolean(data.passiveHost);
     // 隧道远程操控被动主机：即使未显式带 passiveHost，也走代开
@@ -2216,6 +2260,7 @@ io.on('connection', (socket) => {
       allowTrade: data.allowTrade,
       peacefulDev: data.peacefulDev,
       easyStart: data.easyStart,
+      matchGames: data.matchGames,
       passiveHost: wantPassive && Boolean(operatorId),
       operatorId,
     });
@@ -2397,6 +2442,7 @@ io.on('connection', (socket) => {
       allowTrade: Boolean(oldRoom.allowTrade),
       peacefulDev: oldRoom.peacefulDev !== false,
       easyStart: oldRoom.easyStart !== false,
+      matchGames: oldRoom.matchGames,
     };
     const targets = [];
     for (const p of oldRoom.players || []) {
@@ -3047,6 +3093,7 @@ io.on('connection', (socket) => {
       allowTrade: data.allowTrade,
       peacefulDev: data.peacefulDev,
       easyStart: data.easyStart,
+      matchGames: data.matchGames,
     });
     if (!result.ok) {
       socket.emit('room:error', { message: result.error });
@@ -3105,7 +3152,10 @@ io.on('connection', (socket) => {
     });
 
     if (!result.ok) {
-      socket.emit('game:error', { message: result.error });
+      socket.emit('game:error', {
+        message: result.error,
+        code: result.code || null,
+      });
       return;
     }
 
@@ -3330,7 +3380,7 @@ server.listen(PORT, '0.0.0.0', () => {
     mqttBulletin.start().catch((err) => {
       console.warn('[mqtt] 启动失败:', err && err.message ? err.message : err);
     });
-    // 不在启动时预热隧道，避免频繁申请 trycloudflare 触发限流；建房时再 ensure
+    warmupTunnelInBackground();
   }
 
   const openFlag = String(process.env.OPEN_BROWSER || '').toLowerCase();

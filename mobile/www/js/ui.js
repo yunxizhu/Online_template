@@ -2949,6 +2949,11 @@
     el.viewRoom.hidden = name !== 'room';
     el.viewGame.hidden = name !== 'game';
 
+    // 离开对局/房间视图时，关闭可能残留的 loading/assets 遮罩
+    if (name !== 'game' && state.roomBusy && (state.roomBusy === 'loading' || state.roomBusy === 'assets')) {
+      hideRoomBusy();
+    }
+
     document.body.classList.remove('phase-lobby', 'phase-room', 'phase-game');
     document.body.classList.add(
       name === 'room' ? 'phase-room' : name === 'game' ? 'phase-game' : 'phase-lobby'

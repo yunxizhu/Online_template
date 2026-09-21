@@ -158,26 +158,32 @@ window.LasidaoAssets = (function () {
     const total = urls.length;
     let done = 0;
 
-    function tick() {
-      done += 1;
-      if (onProgress) onProgress(total, done);
-    }
-
-    _preloadPromise = Promise.all(
-      urls.map((u) =>
-        warmImage(u).finally(tick)
-      )
-    )
-      .then(() => {
-        _preloadDone = true;
-        return true;
-      })
-      .catch(() => {
-        // 仍标记完成，避免每次阶段切换反复卡住整局渲染
-        _preloadDone = true;
-        _preloadPromise = null;
-        return false;
-      });
+    _preloadPromise = (async () => {
+      // 避免缓存命中时瞬间完成：分批加载，每批至少展示一小段时间
+      const BATCH = Math.max(1, Math.min(5, Math.ceil(urls.length / 12)));
+      const MIN_STEP_MS = 60;
+      for (let i = 0; i < urls.length; i += BATCH) {
+        const slice = urls.slice(i, i + BATCH);
+        const t0 = performance.now();
+        await Promise.all(slice.map((u) => warmImage(u)));
+        done += slice.length;
+        if (onProgress) onProgress(total, done);
+        const elapsed = performance.now() - t0;
+        if (elapsed < MIN_STEP_MS) {
+          await new Promise((r) =>
+            setTimeout(r, Math.ceil(MIN_STEP_MS - elapsed))
+          );
+        }
+      }
+      _preloadDone = true;
+      return true;
+    })();
+    _preloadPromise.catch(() => {
+      // 仍标记完成，避免每次阶段切换反复卡住整局渲染
+      _preloadDone = true;
+      _preloadPromise = null;
+      return false;
+    });
     return _preloadPromise;
   }
 

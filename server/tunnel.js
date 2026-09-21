@@ -689,6 +689,20 @@ class QuickTunnel {
 
     // 对局中 / 房内已有多人：公网失败只记日志，禁止误杀隧道
     if (!fatal && this._isProtected()) {
+      // DNS 未解析是域名本身对本机不可达，保护也不该死等；让它按 DNS 阈值快速换址
+      if (isDnsNotFoundReason(reason)) {
+        this._healthFails += 1;
+        if (this._healthFails >= DNS_HEALTH_FAILS) {
+          console.warn(
+            `${this._logPrefix()} 公网探活 DNS 失败，即使保护状态也强制换址: ${reason}`
+          );
+          this._forceRotate(reason);
+          return;
+        }
+        this._scheduleHealthTick(true);
+        return;
+      }
+
       this._healthFails = 0;
       this._protectedSkipLogs += 1;
       if (this._protectedSkipLogs === 1 || this._protectedSkipLogs % 8 === 0) {

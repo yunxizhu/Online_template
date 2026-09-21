@@ -19,6 +19,8 @@ module.exports = {
   getActingPlayerIds: engine.getActingPlayerIds,
   onPlayerQuit: engine.onPlayerQuit,
   forceTimeout: engine.forceTimeout,
+  startNextHand: engine.startNextHand,
+  clampMatchGames: engine.clampMatchGames,
   /** 斗地主不需要AI和托管 */
   supportsHosting: false,
 };

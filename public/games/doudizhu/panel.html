@@ -1,54 +1,82 @@
 <!-- 斗地主对局面板 -->
 <div class="panel game-panel" id="panel-doudizhu" hidden>
   <h2 id="game-title" data-i18n="doudizhu.title">斗地主</h2>
-  <p id="game-status" class="game-status">—</p>
-  <p id="game-sides" class="muted"></p>
+  <p id="game-status" class="game-status">-</p>
+  <p id="game-sides" class="muted" hidden></p>
 
-  <!-- 叫分阶段 -->
-  <div id="ddz-bid-area" class="ddz-bid-area" hidden>
-    <div class="ddz-bid-info" id="ddz-bid-info"></div>
-    <div class="row las-actions ddz-bid-actions" id="ddz-bid-actions"></div>
+  <!-- 本局结果 / 总排名浮层 -->
+  <div class="ddz-result-overlay" id="ddz-result-overlay" hidden>
+    <div class="ddz-result-card" id="ddz-result-card"></div>
   </div>
 
-  <!-- 游戏桌面 -->
-  <div class="ddz-table">
-    <!-- 地主牌（明牌） -->
-    <div class="ddz-landlord-cards" id="ddz-landlord-cards"></div>
-    <p class="ddz-landlord-label" id="ddz-landlord-label"></p>
+  <div class="ddz-layout">
+    <!-- 左侧：牌桌主区域（约 3/4） -->
+    <div class="ddz-main">
+      <!-- 叫分阶段 -->
+      <div id="ddz-bid-area" class="ddz-bid-area" hidden>
+        <div class="ddz-bid-info" id="ddz-bid-info"></div>
+        <div class="row las-actions ddz-bid-actions" id="ddz-bid-actions"></div>
+      </div>
 
-    <!-- 上家区域 -->
-    <div class="ddz-player-area ddz-player-prev" id="ddz-area-prev">
-      <div class="ddz-player-name" id="ddz-name-prev"></div>
-      <div class="ddz-player-role" id="ddz-role-prev"></div>
-      <div class="ddz-hand-back" id="ddz-hand-prev"></div>
-      <div class="ddz-hand-count" id="ddz-count-prev"></div>
-      <div class="ddz-last-play" id="ddz-play-prev"></div>
+      <!-- 游戏桌面 -->
+      <div class="ddz-table">
+        <!-- 记牌器：牌桌左上角 -->
+        <div class="ddz-card-tracker" id="ddz-card-tracker" hidden>
+          <div class="ddz-ct-header">
+            <span class="ddz-ct-title" data-i18n="doudizhu.cardTracker">记牌器</span>
+            <span class="ddz-ct-remain" id="ddz-ct-remain"></span>
+          </div>
+          <div class="ddz-ct-grid" id="ddz-ct-grid"></div>
+        </div>
+
+        <!-- 地主牌（明牌） -->
+        <div class="ddz-landlord-cards" id="ddz-landlord-cards"></div>
+        <p class="ddz-landlord-label" id="ddz-landlord-label"></p>
+
+        <!-- 上家区域 -->
+        <div class="ddz-player-area ddz-player-prev" id="ddz-area-prev">
+          <div class="ddz-player-name" id="ddz-name-prev"></div>
+          <div class="ddz-player-role" id="ddz-role-prev"></div>
+          <div class="ddz-hand-back" id="ddz-hand-prev"></div>
+          <div class="ddz-hand-count" id="ddz-count-prev"></div>
+          <div class="ddz-last-play" id="ddz-play-prev"></div>
+        </div>
+
+        <!-- 出牌区 -->
+        <div class="ddz-center-area" id="ddz-center-area">
+          <div class="ddz-last-play-center" id="ddz-last-play-center"></div>
+          <div class="ddz-last-play-info" id="ddz-last-play-info"></div>
+        </div>
+
+        <!-- 下家区域 -->
+        <div class="ddz-player-area ddz-player-next" id="ddz-area-next">
+          <div class="ddz-player-name" id="ddz-name-next"></div>
+          <div class="ddz-player-role" id="ddz-role-next"></div>
+          <div class="ddz-hand-back" id="ddz-hand-next"></div>
+          <div class="ddz-hand-count" id="ddz-count-next"></div>
+          <div class="ddz-last-play" id="ddz-play-next"></div>
+        </div>
+      </div>
+
+      <!-- 我的手牌 -->
+      <div class="ddz-my-area">
+        <div class="ddz-my-info">
+          <span class="ddz-my-role" id="ddz-my-role"></span>
+          <span class="ddz-my-count" id="ddz-my-count"></span>
+        </div>
+        <div class="ddz-my-hand" id="ddz-my-hand"></div>
+        <div class="row las-actions ddz-play-actions" id="ddz-play-actions"></div>
+      </div>
     </div>
 
-    <!-- 出牌区 -->
-    <div class="ddz-center-area" id="ddz-center-area">
-      <div class="ddz-last-play-center" id="ddz-last-play-center"></div>
-      <div class="ddz-last-play-info" id="ddz-last-play-info"></div>
-    </div>
-
-    <!-- 下家区域 -->
-    <div class="ddz-player-area ddz-player-next" id="ddz-area-next">
-      <div class="ddz-player-name" id="ddz-name-next"></div>
-      <div class="ddz-player-role" id="ddz-role-next"></div>
-      <div class="ddz-hand-back" id="ddz-hand-next"></div>
-      <div class="ddz-hand-count" id="ddz-count-next"></div>
-      <div class="ddz-last-play" id="ddz-play-next"></div>
-    </div>
-  </div>
-
-  <!-- 我的手牌 -->
-  <div class="ddz-my-area">
-    <div class="ddz-my-info">
-      <span class="ddz-my-role" id="ddz-my-role"></span>
-      <span class="ddz-my-count" id="ddz-my-count"></span>
-    </div>
-    <div class="ddz-my-hand" id="ddz-my-hand"></div>
-    <div class="row las-actions ddz-play-actions" id="ddz-play-actions"></div>
+    <!-- 右侧：玩家信息面板（约 1/4） -->
+    <aside class="ddz-side-panel" id="ddz-side-panel">
+      <h3 class="ddz-side-title" data-i18n="doudizhu.sideTitle">对局信息</h3>
+      <div class="ddz-match-progress" id="ddz-match-progress"></div>
+      <div class="ddz-hand-detail" id="ddz-hand-detail"></div>
+      <h4 class="ddz-side-subtitle" data-i18n="doudizhu.playersTitle">玩家积分</h4>
+      <div class="ddz-scoreboard" id="ddz-scoreboard"></div>
+    </aside>
   </div>
 
   <!-- 对局记录 -->

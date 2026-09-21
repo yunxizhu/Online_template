@@ -262,6 +262,7 @@ function publicRoomView(room) {
     allowTrade: Boolean(room.allowTrade),
     peacefulDev: room.peacefulDev !== false,
     easyStart: room.gameType === 'lasidao' ? room.easyStart !== false : false,
+    matchGames: room.gameType === 'doudizhu' ? Number(room.matchGames) || 5 : null,
     passiveHosted: Boolean(room.passiveHosted),
     canJoin: waiting && playerCount < room.maxPlayers,
     canSpectate: (waiting || playing) && !over,
@@ -318,6 +319,7 @@ function fullRoomView(room) {
     allowTrade: Boolean(room.allowTrade),
     peacefulDev: room.peacefulDev !== false,
     easyStart: room.gameType === 'lasidao' ? room.easyStart !== false : false,
+    matchGames: room.gameType === 'doudizhu' ? Number(room.matchGames) || 5 : null,
     passiveHosted: Boolean(room.passiveHosted),
   };
 }
@@ -626,6 +628,7 @@ class RoomManager {
       easyStart = true,
       passiveHost = false,
       operatorId = null,
+      matchGames,
     } = {}
   ) {
     const player = this.players.get(playerId);
@@ -679,6 +682,18 @@ class RoomManager {
       game: null,
       createdAt: Date.now(),
       playingStartedAt: null,
+      // 斗地主：系列赛局数（1-11，默认 5）
+      matchGames:
+        cfg.type === 'doudizhu'
+          ? (() => {
+              const doudizhu = getGame('doudizhu');
+              const clamp =
+                doudizhu && typeof doudizhu.clampMatchGames === 'function'
+                  ? doudizhu.clampMatchGames
+                  : (n) => Math.max(1, Math.min(11, Math.floor(Number(n)) || 5));
+              return clamp(matchGames != null ? matchGames : 5);
+            })()
+          : null,
       // 隧道就绪并房主进房前：不进大厅列表、人员仍显示空闲、不广播房间
       pendingLobby: true,
       passiveHosted: Boolean(passiveHost),
@@ -714,7 +729,7 @@ class RoomManager {
    */
   updateSettings(
     playerId,
-    { name, hasPassword, password, maxPlayers, gameType, gameMode, turnTimeSec, allowTrade, peacefulDev, easyStart } = {}
+    { name, hasPassword, password, maxPlayers, gameType, gameMode, turnTimeSec, allowTrade, peacefulDev, easyStart, matchGames } = {}
   ) {
     const player = this.players.get(playerId);
     if (!player || !player.roomId) {
@@ -820,6 +835,18 @@ class RoomManager {
     room.gameMode = cfg.modeId;
     room.gameModeLabel = cfg.modeLabel;
     room.turnTimeSec = cfg.turnTimeSec;
+    if (cfg.type === 'doudizhu') {
+      const doudizhu = getGame('doudizhu');
+      const clamp =
+        doudizhu && typeof doudizhu.clampMatchGames === 'function'
+          ? doudizhu.clampMatchGames
+          : (n) => Math.max(1, Math.min(11, Math.floor(Number(n)) || 5));
+      room.matchGames = clamp(
+        matchGames != null ? matchGames : room.matchGames != null ? room.matchGames : 5
+      );
+    } else {
+      room.matchGames = null;
+    }
     if (allowTrade != null || cfg.type === 'lasidao') {
       room.allowTrade =
         cfg.type === 'lasidao'
@@ -1929,7 +1956,10 @@ class RoomManager {
     const room = this.getRoom(player.roomId);
     if (!room || room.status !== 'playing' || !room.game) return { ok: false };
     if (!room._loadingProgress) room._loadingProgress = {};
-    room._loadingProgress[playerId] = Math.max(0, Math.min(100, Number(progress) || 0));
+    const next = Math.max(0, Math.min(100, Number(progress) || 0));
+    const prev = Number(room._loadingProgress[playerId]) || 0;
+    // 进度只升不降，避免乱序上报把百分比打回去
+    room._loadingProgress[playerId] = Math.max(prev, next);
     return { ok: true, room };
   }
 

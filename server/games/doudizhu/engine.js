@@ -259,22 +259,43 @@ function removeCardsFromHand(hand, cardIds) {
   });
 }
 
-function createGameState(room) {
-  const players = room.players.slice(0, 3);
-  const turnOrder = players.map((p) => p.id);
+function clampMatchGames(n) {
+  const v = Math.floor(Number(n));
+  if (!Number.isFinite(v)) return 5;
+  return Math.max(1, Math.min(11, v));
+}
 
+function createEmptyScores(turnOrder) {
+  const scores = {};
+  for (const pid of turnOrder) scores[pid] = 0;
+  return scores;
+}
+
+function dealHands(turnOrder) {
   const deck = shuffle(buildDeck());
   const hands = {};
   for (const pid of turnOrder) {
     hands[pid] = deck.splice(0, 17).sort(handSort);
   }
   const landlordCards = deck.splice(0, 3);
+  return { hands, landlordCards };
+}
+
+function createGameState(room) {
+  const seated = (room.players || []).filter((p) => p && p.id).slice(0, 3);
+  const turnOrder = seated.map((p) => p.id);
+  const { hands, landlordCards } = dealHands(turnOrder);
 
   const bidScores = {};
-  for (const pid of turnOrder) bidScores[pid] = -1;
-
   const playedCount = {};
-  for (const pid of turnOrder) playedCount[pid] = 0;
+  const playHands = {};
+  for (const pid of turnOrder) {
+    bidScores[pid] = -1;
+    playedCount[pid] = 0;
+    playHands[pid] = 0;
+  }
+
+  const matchGames = clampMatchGames(room.matchGames != null ? room.matchGames : 5);
 
   return {
     type: 'doudizhu',
@@ -292,6 +313,22 @@ function createGameState(room) {
     lastValidPlayerId: null,
     passCount: 0,
     playedCount,
+    playHands,
+    // 积分制
+    baseScore: 1,
+    bombCount: 0,
+    multiplier: 1,
+    spring: false,
+    springType: null, // 'spring' | 'anti' | null
+    handDelta: {},
+    handScore: 0,
+    scores: createEmptyScores(turnOrder),
+    matchGames,
+    matchIndex: 1,
+    handOver: false,
+    matchOver: false,
+    ranking: null,
+    handResult: null,
     winnerId: null,
     winners: [],
     over: false,
@@ -320,6 +357,7 @@ function resolveBid(game) {
   game.bidWinnerId = winnerId;
   game.landlordId = winnerId;
   game.bidMaxScore = maxScore;
+  game.multiplier = Math.max(1, maxScore);
   game.hands[winnerId] = game.hands[winnerId].concat(game.landlordCards).sort(handSort);
   game.phase = 'play';
   game.turnIndex = game.turnOrder.indexOf(winnerId);
@@ -329,9 +367,175 @@ function resolveBid(game) {
   game.passCount = 0;
 }
 
+function computeMultiplier(game) {
+  const bid = Math.max(1, Number(game.bidMaxScore) || 1);
+  const bombs = Math.max(0, Number(game.bombCount) || 0);
+  let mult = bid * Math.pow(2, bombs);
+  if (game.spring) mult *= 2;
+  return mult;
+}
+
+function settleHand(game) {
+  const landlordId = game.landlordId;
+  const landlordWin = game.winners && game.winners.includes(landlordId);
+  const farmers = game.turnOrder.filter((id) => id !== landlordId);
+
+  // 春天 / 反春天
+  let spring = false;
+  let springType = null;
+  if (landlordWin) {
+    const farmersSilent = farmers.every((id) => (game.playHands[id] || 0) === 0);
+    if (farmersSilent) {
+      spring = true;
+      springType = 'spring';
+    }
+  } else {
+    if ((game.playHands[landlordId] || 0) <= 1) {
+      spring = true;
+      springType = 'anti';
+    }
+  }
+  game.spring = spring;
+  game.springType = springType;
+  game.multiplier = computeMultiplier(game);
+
+  const base = Number(game.baseScore) || 1;
+  const unit = base * game.multiplier;
+  game.handScore = unit;
+
+  const delta = {};
+  for (const pid of game.turnOrder) delta[pid] = 0;
+  if (landlordWin) {
+    delta[landlordId] = unit * 2;
+    for (const fid of farmers) delta[fid] = -unit;
+  } else {
+    delta[landlordId] = -unit * 2;
+    for (const fid of farmers) delta[fid] = unit;
+  }
+  game.handDelta = delta;
+  for (const pid of game.turnOrder) {
+    game.scores[pid] = (Number(game.scores[pid]) || 0) + delta[pid];
+  }
+
+  game.handOver = true;
+  game.phase = 'handResult';
+  game.currentPlayerId = null;
+  game.handResult = {
+    matchIndex: game.matchIndex,
+    matchGames: game.matchGames,
+    landlordId,
+    landlordWin: Boolean(landlordWin),
+    winners: (game.winners || []).slice(),
+    bidMaxScore: game.bidMaxScore,
+    bombCount: game.bombCount,
+    spring,
+    springType,
+    multiplier: game.multiplier,
+    baseScore: base,
+    handScore: unit,
+    handDelta: { ...delta },
+    scores: { ...game.scores },
+  };
+
+  if (game.matchIndex >= game.matchGames) {
+    finishMatch(game);
+  } else {
+    game.over = false;
+    game.matchOver = false;
+  }
+}
+
+function finishMatch(game) {
+  game.matchOver = true;
+  game.over = true;
+  game.phase = 'matchResult';
+  const ranking = game.turnOrder
+    .map((id) => ({
+      playerId: id,
+      score: Number(game.scores[id]) || 0,
+    }))
+    .sort((a, b) => b.score - a.score);
+  ranking.forEach((row, i) => {
+    row.rank = i + 1;
+  });
+  game.ranking = ranking;
+}
+
+/**
+ * 进入下一局：保留累计积分与局数设置，重新发牌叫分
+ */
+function startNextHand(game) {
+  if (!game || game.matchOver || game.over) {
+    return { ok: false, error: '系列赛已结束' };
+  }
+  if (!game.handOver) {
+    return { ok: false, error: '本局尚未结束' };
+  }
+  if (game.matchIndex >= game.matchGames) {
+    finishMatch(game);
+    return { ok: true, state: publicGameState(game, null) };
+  }
+
+  const turnOrder = game.turnOrder.slice();
+  const scores = { ...game.scores };
+  const matchGames = game.matchGames;
+  const matchIndex = game.matchIndex + 1;
+  const startedAt = game.startedAt;
+
+  // 轮转首叫：座位顺序不变，仅从下一位开始叫分
+  const startIdx = (matchIndex - 1) % turnOrder.length;
+
+  const { hands, landlordCards } = dealHands(turnOrder);
+  const bidScores = {};
+  const playedCount = {};
+  const playHands = {};
+  for (const pid of turnOrder) {
+    bidScores[pid] = -1;
+    playedCount[pid] = 0;
+    playHands[pid] = 0;
+  }
+
+  game.phase = 'bid';
+  game.turnOrder = turnOrder;
+  game.turnIndex = startIdx;
+  game.currentPlayerId = turnOrder[startIdx];
+  game.hands = hands;
+  game.landlordCards = landlordCards;
+  game.landlordId = null;
+  game.bidScores = bidScores;
+  game.bidWinnerId = null;
+  game.bidMaxScore = 0;
+  game.lastPlay = null;
+  game.lastValidPlayerId = null;
+  game.passCount = 0;
+  game.playedCount = playedCount;
+  game.playHands = playHands;
+  game.bombCount = 0;
+  game.multiplier = 1;
+  game.spring = false;
+  game.springType = null;
+  game.handDelta = {};
+  game.handScore = 0;
+  game.handResult = null;
+  game.winnerId = null;
+  game.winners = [];
+  game.handOver = false;
+  game.matchOver = false;
+  game.over = false;
+  game.ranking = null;
+  game.scores = scores;
+  game.matchGames = matchGames;
+  game.matchIndex = matchIndex;
+  game.startedAt = startedAt;
+  game.baseScore = 1;
+
+  return { ok: true };
+}
+
 function applyAction(game, playerId, action) {
   if (!game) return { ok: false, error: '对局未开始' };
-  if (game.over) return { ok: false, error: '对局已结束' };
+  if (game.matchOver || game.over) return { ok: false, error: '对局已结束' };
+  if (game.handOver) return { ok: false, error: '本局已结束，请等待下一局' };
   if (playerId !== game.currentPlayerId) {
     return { ok: false, error: '还没轮到你' };
   }
@@ -349,6 +553,7 @@ function applyAction(game, playerId, action) {
     }
 
     game.bidScores[playerId] = score;
+    if (score > game.bidMaxScore) game.bidMaxScore = score;
     if (score === 3) {
       resolveBid(game);
       return { ok: true, state: publicGameState(game, playerId) };
@@ -365,12 +570,10 @@ function applyAction(game, playerId, action) {
 
   if (game.phase === 'play') {
     if (type === 'pass') {
-      // 第一手必须由地主出
       if (!game.lastPlay && game.turnOrder[game.turnIndex] === game.landlordId) {
         return { ok: false, error: '第一手必须出牌' };
       }
 
-      // 当前出牌者不能在自己已经是最新出牌者时pass（实际不会发生，但保险）
       if (
         game.lastValidPlayerId === playerId &&
         game.passCount >= game.turnOrder.length - 1
@@ -405,11 +608,11 @@ function applyAction(game, playerId, action) {
       cardIds.includes(c.id)
     );
     const play = classifyPlay(selectedCards);
-    if (!play) return { ok: false, error: '牌型不合法' };
+    if (!play) return { ok: false, error: '牌型不合法', code: 'invalid_play' };
 
     if (game.lastPlay && game.lastPlay.playerId !== playerId) {
       if (!canBeat(game.lastPlay.play, play)) {
-        return { ok: false, error: '牌型或大小不足以压过上家' };
+        return { ok: false, error: '牌型或大小不足以压过上家', code: 'invalid_play' };
       }
     }
 
@@ -418,6 +621,7 @@ function applyAction(game, playerId, action) {
       cardIds
     );
     game.playedCount[playerId] = (game.playedCount[playerId] || 0) + cardIds.length;
+    game.playHands[playerId] = (game.playHands[playerId] || 0) + 1;
     game.lastPlay = {
       playerId,
       cards: selectedCards.map((c) => ({ ...c })),
@@ -426,14 +630,19 @@ function applyAction(game, playerId, action) {
     game.lastValidPlayerId = playerId;
     game.passCount = 0;
 
+    if (play.type === 'bomb' || play.type === 'rocket') {
+      game.bombCount = (game.bombCount || 0) + 1;
+      game.multiplier = computeMultiplier(game);
+    }
+
     if (game.hands[playerId].length === 0) {
-      game.over = true;
       game.winnerId = playerId;
       if (playerId === game.landlordId) {
         game.winners = [game.landlordId];
       } else {
         game.winners = game.turnOrder.filter((id) => id !== game.landlordId);
       }
+      settleHand(game);
     } else {
       game.turnIndex = (game.turnIndex + 1) % game.turnOrder.length;
       game.currentPlayerId = game.turnOrder[game.turnIndex];
@@ -470,9 +679,12 @@ function publicGameState(game, viewerId) {
     handCounts,
     hands: visibleHands,
     landlordId: game.landlordId,
-    landlordCards: game.landlordCards
-      ? game.landlordCards.map((c) => ({ ...c }))
-      : [],
+    landlordCards:
+      game.landlordId && game.landlordCards
+        ? game.landlordCards.map((c) => ({ ...c }))
+        : [],
+    landlordCardsHidden:
+      !game.landlordId && !!(game.landlordCards && game.landlordCards.length),
     bidScores: { ...game.bidScores },
     bidWinnerId: game.bidWinnerId,
     bidMaxScore: game.bidMaxScore,
@@ -486,32 +698,65 @@ function publicGameState(game, viewerId) {
     lastValidPlayerId: game.lastValidPlayerId,
     passCount: game.passCount,
     playedCount: { ...game.playedCount },
+    playHands: { ...(game.playHands || {}) },
+    baseScore: game.baseScore || 1,
+    bombCount: game.bombCount || 0,
+    multiplier: game.multiplier || 1,
+    spring: Boolean(game.spring),
+    springType: game.springType || null,
+    handDelta: game.handDelta ? { ...game.handDelta } : {},
+    handScore: game.handScore || 0,
+    scores: game.scores ? { ...game.scores } : {},
+    matchGames: game.matchGames || 5,
+    matchIndex: game.matchIndex || 1,
+    handOver: Boolean(game.handOver),
+    matchOver: Boolean(game.matchOver),
+    ranking: game.ranking
+      ? game.ranking.map((r) => ({ ...r }))
+      : null,
+    handResult: game.handResult
+      ? {
+          ...game.handResult,
+          winners: (game.handResult.winners || []).slice(),
+          handDelta: { ...(game.handResult.handDelta || {}) },
+          scores: { ...(game.handResult.scores || {}) },
+        }
+      : null,
     winnerId: game.winnerId,
     winners: game.winners ? game.winners.slice() : [],
-    over: game.over,
+    over: Boolean(game.over),
     startedAt: game.startedAt,
   };
 }
 
 function getActingPlayerIds(game) {
-  if (!game || game.over) return [];
+  if (!game || game.over || game.matchOver || game.handOver) return [];
   return game.currentPlayerId ? [game.currentPlayerId] : [];
 }
 
 function onPlayerQuit(game, playerId) {
-  if (!game || game.over) return;
-  game.over = true;
+  if (!game || game.over || game.matchOver) return;
+  // 中途退出：直接结束系列赛，按当前累计分出排名
+  game.handOver = true;
+  game.winnerId = null;
   if (playerId === game.landlordId) {
     game.winners = game.turnOrder.filter((id) => id !== playerId);
-    game.winnerId = game.winners[0];
-  } else {
+  } else if (game.landlordId) {
     game.winners = [game.landlordId];
-    game.winnerId = game.landlordId;
+  } else {
+    game.winners = game.turnOrder.filter((id) => id !== playerId);
   }
+  finishMatch(game);
 }
 
 function forceTimeout(game, playerId) {
-  if (!game || game.over || playerId !== game.currentPlayerId) {
+  if (
+    !game ||
+    game.over ||
+    game.matchOver ||
+    game.handOver ||
+    playerId !== game.currentPlayerId
+  ) {
     return { ok: false, error: '无需操作' };
   }
 
@@ -525,8 +770,7 @@ function forceTimeout(game, playerId) {
   const hand = game.hands[playerId];
   if (!hand || !hand.length) return { ok: false, error: '无牌可出' };
 
-  const mustPlay =
-    !game.lastPlay || game.lastValidPlayerId === playerId;
+  const mustPlay = !game.lastPlay || game.lastValidPlayerId === playerId;
   if (!mustPlay) {
     return applyAction(game, playerId, { type: 'pass', payload: {} });
   }
@@ -545,4 +789,6 @@ module.exports = {
   getActingPlayerIds,
   onPlayerQuit,
   forceTimeout,
+  startNextHand,
+  clampMatchGames,
 };

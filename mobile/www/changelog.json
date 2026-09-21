@@ -2,6 +2,18 @@
   "schema": 1,
   "entries": [
     {
+      "version": "1.2.16",
+      "notes": "优化斗地主和掼蛋的ui显示",
+      "notesEn": "",
+      "publishedAt": "2026-09-21T11:21:59.900Z"
+    },
+    {
+      "version": "1.2.15",
+      "notes": "修复游戏结束后回到大厅，会残留游戏加载框的问题",
+      "notesEn": "",
+      "publishedAt": "2026-09-21T06:20:38.112Z"
+    },
+    {
       "version": "1.2.14",
       "notes": "修复部分卡面无法显示的问题",
       "notesEn": "",

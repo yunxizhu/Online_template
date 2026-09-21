@@ -96,6 +96,8 @@
     roomPasswordWrap: document.getElementById('room-password-wrap'),
     joinPassword: document.getElementById('join-password'),
     roomTurnTime: document.getElementById('room-turn-time'),
+    roomMatchGames: document.getElementById('room-match-games'),
+    roomMatchGamesWrap: document.getElementById('room-match-games-wrap'),
     gameHint: document.getElementById('game-hint'),
     btnCreateRoom: document.getElementById('btn-create-room'),
     createRoomTitle: document.getElementById('create-room-title'),
@@ -1393,7 +1395,13 @@
       const room = list.find((r) => String(r && r.id ? r.id : '').toUpperCase() === id);
       if (!room) continue;
       // 服务端仍认为我在房间里 → 清理本地「已离开」标记，避免阻挡重连弹窗
+      // 保护期：刚离开后服务端列表可能仍有延迟，短时间内不清理
       if (isSelfInRoomPlayers(room)) {
+        const leftAt = Number(state._leftRooms[id] || 0);
+        const cooldown = 3000; // 3 秒内保留标记，防止服务端列表延迟
+        if (leftAt && now - leftAt < cooldown) {
+          continue;
+        }
         delete state._leftRooms[id];
         delete map[id];
         changed = true;
@@ -2282,6 +2290,14 @@
       syncRemoteAssetBase();
       return '';
     }
+    // 本机/局域网打开的页面：静态面板、样式、catalog 走同源。
+    // 即便 socket 连着远端隧道，也不要从 trycloudflare 拉 UI——隧道一抖就 DNS/CORS 失败，
+    // 还会在开局 loading 里把「部分游戏资源未加载」打出来。
+    const access = state.access || detectPageAccess();
+    if (access === 'console' || access === 'lan') {
+      syncRemoteAssetBase();
+      return '';
+    }
     try {
       if (net.isOnRemoteHost && net.isOnRemoteHost()) {
         return String(net.getCurrentUrl() || '').replace(/\/$/, '');
@@ -2380,6 +2396,9 @@
     if (I18n && typeof I18n.applyDom === 'function') {
       I18n.applyDom(document.getElementById('game-panels') || document);
     }
+    // 开局 loading 会重新挂载 panel DOM；必须重绑 el.panel*，否则 hidden=false 作用在已脱离文档的旧节点上，画面空白
+    bindGamePanelUi();
+    gamePanelsBound = gamePanelsMounted();
     return result;
   }
 
@@ -2476,9 +2495,10 @@
     el.panelDoudizhu = document.getElementById('panel-doudizhu');
     el.panelGuandan = document.getElementById('panel-guandan');
     el.panelSplendorDuel = document.getElementById('panel-splendor-duel');
-    el.gameTitle = document.getElementById('game-title');
-    el.gameStatus = document.getElementById('game-status');
-    el.gameSides = document.getElementById('game-sides');
+    // 多游戏 panel 复用了同名 id；不要用全局 getElementById（会命中第一个）
+    el.gameTitle = null;
+    el.gameStatus = null;
+    el.gameSides = null;
     el.gomokuCanvas = document.getElementById('gomoku-board');
     if (el.gomokuCanvas && window.GomokuBoard) {
       board = window.GomokuBoard.create(el.gomokuCanvas);
@@ -2487,6 +2507,19 @@
     if (window.CatanUi) window.CatanUi.bindButtons(net);
     if (window.SgsUi) window.SgsUi.bindButtons(net);
     if (window.LasidaoUi) window.LasidaoUi.bindButtons(net);
+  }
+
+  /** 在当前游戏面板内解析标题/状态节点（避免多 panel 重复 id 串台） */
+  function bindActiveGameMeta(panel) {
+    if (!panel) {
+      el.gameTitle = null;
+      el.gameStatus = null;
+      el.gameSides = null;
+      return;
+    }
+    el.gameTitle = panel.querySelector('#game-title');
+    el.gameStatus = panel.querySelector('#game-status');
+    el.gameSides = panel.querySelector('#game-sides');
   }
 
   // 访客深链 / 安卓 play：先连房间；游戏面板从 APK 内本地加载（避免跨域 fetch 失败）
@@ -2742,6 +2775,9 @@
 
   function hideRoomBusy() {
     state.roomBusy = null;
+    state._loadingProgress = null;
+    state._loadingReadyCount = 0;
+    state._loadingTotalCount = 0;
     clearTimeout(roomBusyTimer);
     roomBusyTimer = null;
     if (el.roomBusyOverlay) el.roomBusyOverlay.hidden = true;
@@ -3082,6 +3118,11 @@
     el.viewLobby.hidden = name !== 'lobby';
     el.viewRoom.hidden = name !== 'room';
     el.viewGame.hidden = name !== 'game';
+
+    // 离开对局/房间视图时，关闭可能残留的 loading/assets 遮罩
+    if (name !== 'game' && state.roomBusy && (state.roomBusy === 'loading' || state.roomBusy === 'assets')) {
+      hideRoomBusy();
+    }
 
     document.body.classList.remove('phase-lobby', 'phase-room', 'phase-game');
     document.body.classList.add(
@@ -3451,6 +3492,7 @@
     const gameChanged = lastCreateGameId !== g.id;
     lastCreateGameId = g.id;
     if (el.gameModeWrap) el.gameModeWrap.hidden = false;
+    if (el.roomMatchGamesWrap) el.roomMatchGamesWrap.hidden = true;
     if (el.gameMode) {
       let cur = el.gameMode.value;
       if (g.id === 'lasidao' && (cur === 'standard' || cur === 'solo')) cur = 'melee';
@@ -3484,6 +3526,7 @@
       if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = true;
       if (el.roomEasyStartWrap) el.roomEasyStartWrap.hidden = true;
       if (el.roomConflictDlcWrap) el.roomConflictDlcWrap.hidden = true;
+      if (el.roomMatchGamesWrap) el.roomMatchGamesWrap.hidden = true;
     } else if (g.id === 'doudizhu') {
       el.maxPlayersWrap.hidden = true;
       fillMaxPlayerOptions(3, 3, 3);
@@ -3491,6 +3534,7 @@
       if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = true;
       if (el.roomEasyStartWrap) el.roomEasyStartWrap.hidden = true;
       if (el.roomConflictDlcWrap) el.roomConflictDlcWrap.hidden = true;
+      if (el.roomMatchGamesWrap) el.roomMatchGamesWrap.hidden = false;
     } else if (g.id === 'guandan') {
       el.maxPlayersWrap.hidden = true;
       fillMaxPlayerOptions(4, 4, 4);
@@ -3498,6 +3542,7 @@
       if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = true;
       if (el.roomEasyStartWrap) el.roomEasyStartWrap.hidden = true;
       if (el.roomConflictDlcWrap) el.roomConflictDlcWrap.hidden = true;
+      if (el.roomMatchGamesWrap) el.roomMatchGamesWrap.hidden = true;
     } else if (g.id === 'incan') {
       el.maxPlayersWrap.hidden = false;
       fillMaxPlayerOptions(g.minPlayers, g.maxPlayers, 6);
@@ -4804,6 +4849,12 @@
   }
 
   function hideAllGamePanels() {
+    // 始终用当前 DOM 上的 panel（loading 重挂后旧引用已脱离文档）
+    el.panelGomoku = document.getElementById('panel-gomoku') || el.panelGomoku;
+    el.panelDoudizhu = document.getElementById('panel-doudizhu') || el.panelDoudizhu;
+    el.panelGuandan = document.getElementById('panel-guandan') || el.panelGuandan;
+    el.panelSplendorDuel =
+      document.getElementById('panel-splendor-duel') || el.panelSplendorDuel;
     if (el.panelGomoku) el.panelGomoku.hidden = true;
     if (el.panelDoudizhu) el.panelDoudizhu.hidden = true;
     if (el.panelGuandan) el.panelGuandan.hidden = true;
@@ -4828,7 +4879,10 @@
   function renderGomoku() {
     const game = state.game;
     hideAllGamePanels();
+    // 防止 loading 重挂后 el 引用过期
+    el.panelGomoku = document.getElementById('panel-gomoku') || el.panelGomoku;
     if (el.panelGomoku) el.panelGomoku.hidden = false;
+    bindActiveGameMeta(el.panelGomoku);
 
     if (el.gameTitle) {
       el.gameTitle.textContent = gameLabelOf(
@@ -5260,7 +5314,10 @@
       if (window.SgsUi) window.SgsUi.render(game, net);
     } else if (game.type === 'doudizhu') {
       hideAllGamePanels();
+      el.panelDoudizhu =
+        document.getElementById('panel-doudizhu') || el.panelDoudizhu;
       if (el.panelDoudizhu) el.panelDoudizhu.hidden = false;
+      bindActiveGameMeta(el.panelDoudizhu);
       if (window.DoudizhuUi) {
         window.DoudizhuUi.render(game, net, {
           meId: state.me && state.me.id,
@@ -5275,22 +5332,10 @@
         );
       }
       if (el.gameStatus) {
-        if (game.over) {
-          if (game.winnerId && state.me) {
-            const winName = playerNameById(game.winnerId);
-            const mine = game.winnerId === state.me.id;
-            if (game.winners && game.winners.length === 1) {
-              el.gameStatus.textContent = mine
-                ? t('doudizhu.youWin')
-                : t('doudizhu.win', { name: winName });
-            } else {
-              const team = game.landlordId === state.me.id ? t('doudizhu.role.landlord') : t('doudizhu.role.farmer');
-              const winTeam = game.winners.includes(state.me.id) ? team : (team === t('doudizhu.role.landlord') ? t('doudizhu.role.farmer') : t('doudizhu.role.landlord'));
-              el.gameStatus.textContent = t('doudizhu.teamWin', { team: winTeam });
-            }
-          } else {
-            el.gameStatus.textContent = t('doudizhu.ended');
-          }
+        if (game.matchOver || game.over) {
+          el.gameStatus.textContent = t('doudizhu.matchFinished');
+        } else if (game.handOver) {
+          el.gameStatus.textContent = t('doudizhu.handFinishedNext');
         } else if (game.phase === 'bid') {
           const mine = state.me && game.currentPlayerId === state.me.id;
           el.gameStatus.textContent = mine
@@ -5304,12 +5349,15 @@
         }
       }
       if (el.gameSides) {
-        const landlordName = game.landlordId ? playerNameById(game.landlordId) : t('common.dash');
-        el.gameSides.textContent = t('doudizhu.landlordLabel', { name: landlordName });
+        el.gameSides.hidden = true;
+        el.gameSides.textContent = '';
       }
     } else if (game.type === 'guandan') {
       hideAllGamePanels();
+      el.panelGuandan =
+        document.getElementById('panel-guandan') || el.panelGuandan;
       if (el.panelGuandan) el.panelGuandan.hidden = false;
+      bindActiveGameMeta(el.panelGuandan);
       if (window.GuandanUi) {
         window.GuandanUi.render(game, net, {
           meId: state.me && state.me.id,
@@ -5349,15 +5397,15 @@
         }
       }
       if (el.gameSides) {
-        const teamA = game.teamA || [];
-        const teamB = game.teamB || [];
-        const namesA = teamA.map(pid => playerNameById(pid) || pid).join(' & ');
-        const namesB = teamB.map(pid => playerNameById(pid) || pid).join(' & ');
-        el.gameSides.textContent = `A队: ${namesA} | B队: ${namesB}`;
+        el.gameSides.hidden = true;
+        el.gameSides.textContent = '';
       }
     } else if (game.type === 'splendor-duel') {
       hideAllGamePanels();
+      el.panelSplendorDuel =
+        document.getElementById('panel-splendor-duel') || el.panelSplendorDuel;
       if (el.panelSplendorDuel) el.panelSplendorDuel.hidden = false;
+      bindActiveGameMeta(el.panelSplendorDuel);
       if (window.SplendorDuelUi) {
         window.SplendorDuelUi.render(game, net, {
           meId: state.me && state.me.id,
@@ -5805,6 +5853,12 @@
       const v = String(Number(room.turnTimeSec) || 0);
       if ([...el.roomTurnTime.options].some((o) => o.value === v)) {
         el.roomTurnTime.value = v;
+      }
+    }
+    if (el.roomMatchGames && room.matchGames != null) {
+      const v = String(Number(room.matchGames) || 5);
+      if ([...el.roomMatchGames.options].some((o) => o.value === v)) {
+        el.roomMatchGames.value = v;
       }
     }
     if (el.roomAllowTrade) {
@@ -6409,6 +6463,12 @@
         return;
       }
       setCreatePanelOpen(el.createRoomModal.hidden, 'create');
+      // 打开创建面板就开始后台预热隧道，不等到点确认再启动
+      try {
+        net.warmupRoomTunnel();
+      } catch (_) {
+        /* ignore */
+      }
     });
   }
   if (el.btnCloseCreate) {
@@ -6961,6 +7021,10 @@
       allowTrade: Boolean(el.roomAllowTrade && el.roomAllowTrade.checked),
       easyStart: Boolean(el.roomEasyStart && el.roomEasyStart.checked),
       peacefulDev: !(el.roomConflictDlc && el.roomConflictDlc.checked),
+      matchGames:
+        el.gameType && el.gameType.value === 'doudizhu' && el.roomMatchGames
+          ? Number(el.roomMatchGames.value) || 5
+          : undefined,
     };
 
     if (state.createModalMode === 'edit') {
@@ -7643,6 +7707,11 @@
       state.game = null;
       showView('room');
       renderRoom();
+      // 进等待室即在后台静默挂载面板 + 预热资源，开局时秒进
+      if (data.room.gameType) {
+        ensureGamePanelsReady().catch(() => {});
+        kickLasidaoPreload(data.room);
+      }
       if (keepEdit && prev) {
         const gameChanged =
           prev.gameType !== data.room.gameType ||
@@ -7821,6 +7890,18 @@
     closeAllModals();
     showToast(t('toast.roomUpdated'));
   });
+  function mergeLoadingProgress(incoming) {
+    if (!state._loadingProgress) state._loadingProgress = {};
+    if (!incoming || typeof incoming !== 'object') return state._loadingProgress;
+    for (const id of Object.keys(incoming)) {
+      const next = Math.max(0, Math.min(100, Number(incoming[id]) || 0));
+      const prev = Number(state._loadingProgress[id]) || 0;
+      // 只升不降，避免本地回调用开局快照把别人进度打回 0
+      if (next >= prev) state._loadingProgress[id] = next;
+    }
+    return state._loadingProgress;
+  }
+
   net.on('game:loading', async (data) => {
     if (leavingToLocal) return;
     state.game = data.state;
@@ -7834,20 +7915,27 @@
     });
     // 显示加载遮罩并启动资源加载
     showRoomBusy('loading', '正在加载游戏资源…');
-    // 先渲染玩家卡片
-    renderLoadingPlayerCards(data.progress, data.readyCount || 0, data.totalCount || 1);
+    state._loadingProgress = { ...(data.progress || {}) };
+    state._loadingReadyCount = data.readyCount || 0;
+    state._loadingTotalCount = data.totalCount || 1;
+    renderLoadingPlayerCards(
+      state._loadingProgress,
+      state._loadingReadyCount,
+      state._loadingTotalCount
+    );
     try {
       // 实际加载资源，并上报进度
       await ensureGameAndAssetsReady(data.state, (pct) => {
         if (typeof net.sendLoadingProgress === 'function') {
           net.sendLoadingProgress(pct);
         }
-        // 更新自己的卡片进度
+        // 更新自己的卡片进度（合并进共享 map，勿用开局时的 data.progress 快照）
         if (state.me && state.me.id && state.roomBusy === 'loading') {
+          mergeLoadingProgress({ [state.me.id]: pct });
           renderLoadingPlayerCards(
-            { ...(data.progress || {}), [state.me.id]: pct },
-            data.readyCount || 0,
-            data.totalCount || 1
+            state._loadingProgress,
+            state._loadingReadyCount,
+            state._loadingTotalCount
           );
         }
       });
@@ -7863,10 +7951,14 @@
 
   net.on('game:loadingProgress', (data) => {
     if (state.roomBusy !== 'loading') return;
-    const progress = data && data.progress ? data.progress : {};
-    const readyCount = data && Number(data.readyCount) || 0;
-    const totalCount = data && Number(data.totalCount) || 1;
-    renderLoadingPlayerCards(progress, readyCount, totalCount);
+    mergeLoadingProgress(data && data.progress ? data.progress : {});
+    state._loadingReadyCount = (data && Number(data.readyCount)) || 0;
+    state._loadingTotalCount = (data && Number(data.totalCount)) || 1;
+    renderLoadingPlayerCards(
+      state._loadingProgress,
+      state._loadingReadyCount,
+      state._loadingTotalCount
+    );
   });
 
   net.on('game:started', async (data) => {
@@ -7958,12 +8050,29 @@
     }
   });
   net.on('game:error', (data) => {
-    showToast(data.message || t('toast.opFail'));
+    let handled = false;
     if (
+      state.game &&
+      state.game.type === 'doudizhu' &&
+      window.DoudizhuUi &&
+      typeof window.DoudizhuUi.onGameError === 'function'
+    ) {
+      handled = Boolean(window.DoudizhuUi.onGameError(data, { t }));
+    } else if (
+      state.game &&
+      state.game.type === 'guandan' &&
+      window.GuandanUi &&
+      typeof window.GuandanUi.onGameError === 'function'
+    ) {
+      handled = Boolean(window.GuandanUi.onGameError(data, { t }));
+    } else if (
       window.LasidaoUi &&
       typeof window.LasidaoUi.onGameError === 'function'
     ) {
       window.LasidaoUi.onGameError(data);
+    }
+    if (!handled) {
+      showToast(data.message || t('toast.opFail'));
     }
   });
   net.on('chat:message', (msg) => pushChatMessage(msg));
@@ -8137,17 +8246,36 @@
     }
   }
 
-  function scheduleRemoteRecover() {
-    if (!net.isOnRemoteHost() || remoteRecovering) return;
+  function scheduleRemoteRecover(opts = {}) {
+    if (remoteRecovering) return;
+    // 默认只在「当前指向远端」时启动；force 用于恢复失败后仍停在本机、但对局未结束的续试
+    if (!opts.force && !net.isOnRemoteHost()) return;
+    if (!isInLiveSession()) return;
+    // 已经连上远端：不必再恢复
+    if (
+      net.isOnRemoteHost() &&
+      typeof net.isConnected === 'function' &&
+      net.isConnected()
+    ) {
+      return;
+    }
     cancelRemoteRecover();
     // 判断自己是否是房主：非房主延迟更长，给房主重启隧道留出时间
     const isHost = Boolean(
       state.room && state.me && String(state.room.hostId) === String(state.me.id)
     );
-    const delayMs = isHost ? 2500 : 12000;
+    const delayMs = opts.force ? 5000 : isHost ? 2500 : 12000;
     remoteRecoverTimer = setTimeout(() => {
       remoteRecoverTimer = null;
       recoverRemoteSession().catch((err) => {
+        // 对局进行中：别因恢复异常直接踢回大厅，稍后再试
+        if (state.game && !state.game.over) {
+          showToast((err && err.message) || t('toast.tunnelLost'));
+          remoteRecovering = false;
+          state._rejoining = false;
+          scheduleRemoteRecover({ force: true });
+          return;
+        }
         bounceToLocalLobby(err && err.message ? err.message : t('toast.roomInvalid'), {
           clearArchive: false,
         });
@@ -8168,6 +8296,8 @@
     reloadTakeover = false;
     state._rejoining = true;
     const deadHost = net.getCurrentUrl();
+    const deadHosts = new Set();
+    if (deadHost) deadHosts.add(originOf(deadHost));
     const name =
       state.playerName || (el.playerName && el.playerName.value) || t('app.playerDefault');
     showToast(t('toast.tunnelLost'));
@@ -8187,6 +8317,10 @@
       } catch (_) {
         return '';
       }
+    }
+
+    function stillInActiveGame() {
+      return Boolean(state.game && !state.game.over);
     }
 
     try {
@@ -8225,7 +8359,8 @@
         });
       }
       let notFoundStreak = 0;
-      const deadline = Date.now() + 180000;
+      // 对局中多等一会儿：房主换隧道经常超过 3 分钟
+      const deadline = Date.now() + (stillInActiveGame() ? 600000 : 180000);
       while (Date.now() < deadline) {
         if (leavingToLocal || reloadTakeover) return;
         if (
@@ -8246,16 +8381,21 @@
             probe = null;
           }
         }
-        if (probe && probeMissesRoom(probe)) {
+        let host = (probe && probe.host) || '';
+        const recovering = Boolean(probe && probe.tunnelRecovering);
+        if (!host || recovering || (host && deadHosts.has(originOf(host)))) {
+          const mqttHost = await resolveMqttHost();
+          if (mqttHost && !deadHosts.has(originOf(mqttHost))) {
+            host = mqttHost;
+          } else if (host && deadHosts.has(originOf(host))) {
+            host = '';
+          }
+        }
+        // 本机 probe 找不到远端房间是常态；只有 MQTT 也没有地址时才累计「房间消失」
+        if (probe && probeMissesRoom(probe) && !host && !recovering) {
           notFoundStreak += 1;
         } else {
           notFoundStreak = 0;
-        }
-        let host = (probe && probe.host) || '';
-        const recovering = Boolean(probe && probe.tunnelRecovering);
-        if (!host || recovering) {
-          const mqttHost = await resolveMqttHost();
-          if (mqttHost) host = mqttHost;
         }
         const roomStillThere = Boolean(
           (probe && probe.ok) || recovering || host
@@ -8266,7 +8406,7 @@
           if (
             recovering ||
             !hostOrigin ||
-            hostOrigin === originOf(deadHost)
+            deadHosts.has(hostOrigin)
           ) {
             await sleepMs(2000);
             continue;
@@ -8276,6 +8416,7 @@
             const opts = rejoinLobbyOpts(probe || { roomId });
             await net.joinRoomOnHost(roomId, name, host, {
               ...opts,
+              deadHosts,
               local: probe && probe.local === true,
               preferLocal: probe && probe.local === true,
             });
@@ -8285,13 +8426,26 @@
               return;
             }
           } catch (_) {
-            /* 新地址可能还没就绪，继续等 */
+            // 新地址 DNS 未就绪 / 仍是废域名：记入黑名单，等房主换址
+            if (hostOrigin) deadHosts.add(hostOrigin);
           }
-        } else if (notFoundStreak >= 20) {
+        } else if (notFoundStreak >= 30) {
+          // 对局进行中：房间短暂从 MQTT 列表消失也不踢人，继续等
+          if (stillInActiveGame()) {
+            showToast(t('toast.tunnelLost'));
+            notFoundStreak = 0;
+            await sleepMs(3000);
+            continue;
+          }
           await bounceToLocalLobby(t('toast.roomInvalid'), { clearArchive: false });
           return;
         }
         await sleepMs(2000);
+      }
+      if (stillInActiveGame()) {
+        // 超时也不退局，稍后再启一轮恢复
+        showToast(t('toast.tunnelLost'));
+        return;
       }
       await bounceToLocalLobby(t('toast.roomInvalid'), { clearArchive: false });
     } finally {
@@ -8302,6 +8456,17 @@
       }
       remoteRecovering = false;
       if (!reloadTakeover) state._rejoining = false;
+      // 对局仍在、恢复未成功：自动再排一轮，避免卡死在半断线状态
+      if (!leavingToLocal && !reloadTakeover && stillInActiveGame()) {
+        const backOnRemote =
+          typeof net.isOnRemoteHost === 'function' &&
+          net.isOnRemoteHost() &&
+          typeof net.isConnected === 'function' &&
+          net.isConnected();
+        if (!backOnRemote) {
+          scheduleRemoteRecover({ force: true });
+        }
+      }
     }
   }
 

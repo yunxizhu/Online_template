@@ -7,6 +7,7 @@ window.SplendorDuelUi = (function () {
   let selectedCells = [];
   let selectedCardId = null;
   let discardColors = [];
+  let nameOf = (id) => (id == null ? '—' : String(id));
 
   const COLORS = ['emerald','sapphire','ruby','diamond','onyx','pearl'];
   const GOLD = 'gold';
@@ -29,7 +30,7 @@ window.SplendorDuelUi = (function () {
     els.myBonus=getEl('sd-my-bonus');els.myReserved=getEl('sd-my-reserved');els.myTokens=getEl('sd-my-tokens');
     els.actions=getEl('sd-actions');els.log=getEl('sd-log');
   }
-  function clear(el){ while(el.firstChild) el.removeChild(el.firstChild); }
+  function clear(el){ if(!el) return; while(el.firstChild) el.removeChild(el.firstChild); }
   function oppId(game,me){ return game.turnOrder.find(id=>id!==me)||null; }
 
   function mini(col,n){ const d=document.createElement('div'); d.className='sd-mini-token '+col; d.textContent=(NAMES[col]||col).charAt(0)+n; return d; }
@@ -207,7 +208,7 @@ window.SplendorDuelUi = (function () {
     clear(els.oppName); clear(els.oppPrestige); clear(els.oppCrowns); clear(els.oppPrivileges);
     clear(els.oppTokens); clear(els.oppReserved); clear(els.oppBonus);
     if(!oId) return;
-    els.oppName.textContent=net&&net.playerNameById?net.playerNameById(oId):oId;
+    els.oppName.textContent=nameOf(oId);
     const p=game.players[oId]; if(!p) return;
     els.oppPrestige.textContent=t('splendorDuel.prestige',{n:p.prestige});
     els.oppCrowns.textContent=t('splendorDuel.crowns',{n:p.crowns});
@@ -283,7 +284,7 @@ window.SplendorDuelUi = (function () {
     if(!game.lastAction) return;
     const la=game.lastAction;
     const li=document.createElement('li');
-    const name=net&&net.playerNameById?net.playerNameById(la.playerId):la.playerId;
+    const name=nameOf(la.playerId);
     if(la.type==='take_tokens'){
       const cols=(la.colors||[]).map(c=>NAMES[c]||c).join('\u3001');
       li.textContent=t('splendorDuel.logTake',{name,colors:cols});
@@ -307,14 +308,13 @@ window.SplendorDuelUi = (function () {
     clear(els.centerInfo);
     if(game.over){
       if(game.winnerId===meId) els.centerInfo.textContent=t('splendorDuel.youWin');
-      else els.centerInfo.textContent=t('splendorDuel.ended',{name:SplendorDuelUi._lastNet&&SplendorDuelUi._lastNet.playerNameById?SplendorDuelUi._lastNet.playerNameById(game.winnerId):game.winnerId});
+      else els.centerInfo.textContent=t('splendorDuel.ended',{name:nameOf(game.winnerId)});
       return;
     }
     if(game.phase==='discard'){ els.centerInfo.textContent=t('splendorDuel.discardPhase'); return; }
     if(game.currentPlayerId===meId) els.centerInfo.textContent=t('splendorDuel.yourTurn');
     else {
-      const nm=SplendorDuelUi._lastNet&&SplendorDuelUi._lastNet.playerNameById?SplendorDuelUi._lastNet.playerNameById(game.currentPlayerId):game.currentPlayerId;
-      els.centerInfo.textContent=t('splendorDuel.waitNamed',{name:nm});
+      els.centerInfo.textContent=t('splendorDuel.waitNamed',{name:nameOf(game.currentPlayerId)});
     }
   }
 
@@ -336,15 +336,34 @@ window.SplendorDuelUi = (function () {
   function _validTake(){ const c=selectedCells; if(!c||c.length<1||c.length>3) return false; if(c.length===1) return true; const sameRow=c.every(([r,cc])=>r===c[0][0]); const sameCol=c.every(([r,cc])=>cc===c[0][1]); const d1=c.every(([r,cc])=>r-cc===c[0][0]-c[0][1]); const d2=c.every(([r,cc])=>r+cc===c[0][0]+c[0][1]); if(!sameRow&&!sameCol&&!d1&&!d2) return false; const s=c.slice().sort((a,b)=>a[0]!==b[0]?a[0]-b[0]:a[1]-b[1]); for(let i=1;i<s.length;i++){ const dr=Math.abs(s[i][0]-s[i-1][0]); const dc=Math.abs(s[i][1]-s[i-1][1]); if(dr>1||dc>1) return false; } return true; }
   function _isDiscard(game,meId){ return game.phase==='discard' && game.discardPlayerId===meId; }
   function _reset(){ mandatoryMode=null; privilegeMode=null; selectedCells=[]; selectedCardId=null; discardColors=[]; _forceRefresh(); }
-  function _forceRefresh(){ if(SplendorDuelUi._lastState) render(SplendorDuelUi._lastState,SplendorDuelUi._lastNet,{meId:SplendorDuelUi._lastMeId,t:SplendorDuelUi._lastT}); }
+  function _forceRefresh(){
+    if(SplendorDuelUi._lastState){
+      render(SplendorDuelUi._lastState,SplendorDuelUi._lastNet,{
+        meId:SplendorDuelUi._lastMeId,
+        t:SplendorDuelUi._lastT,
+        playerNameById:SplendorDuelUi._lastNameOf,
+      });
+    }
+  }
 
   /* ===== 主入口 ===== */
   function render(game,net,opts={}){
     if(!game||game.type!=='splendor-duel') return;
     initElements();
-    const meId=opts.meId||null; const t=opts.t||((k,p)=>k);
+    const meId=opts.meId||null;
+    const t=opts.t||((k)=>k);
+    nameOf =
+      typeof opts.playerNameById === 'function'
+        ? opts.playerNameById
+        : net && typeof net.playerNameById === 'function'
+          ? net.playerNameById
+          : (id) => (id == null ? '—' : String(id));
     if(!els.panel) return;
-    SplendorDuelUi._lastState=game; SplendorDuelUi._lastNet=net; SplendorDuelUi._lastMeId=meId; SplendorDuelUi._lastT=t;
+    SplendorDuelUi._lastState=game;
+    SplendorDuelUi._lastNet=net;
+    SplendorDuelUi._lastMeId=meId;
+    SplendorDuelUi._lastT=t;
+    SplendorDuelUi._lastNameOf=nameOf;
     const isActive=meId===game.currentPlayerId && !game.over && (game.phase==='play' || (game.phase==='discard' && game.discardPlayerId===meId));
     renderOptional(game,isActive,meId,t,net);
     renderBoard(game,isActive);
@@ -357,5 +376,5 @@ window.SplendorDuelUi = (function () {
     renderLog(game,meId,net,t);
   }
 
-  return { render, _lastState:null, _lastNet:null, _lastMeId:null, _lastT:null };
+  return { render, _lastState:null, _lastNet:null, _lastMeId:null, _lastT:null, _lastNameOf:null };
 })();

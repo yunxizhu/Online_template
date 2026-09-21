@@ -378,11 +378,11 @@ function applyAction(game, playerId, action) {
     cardIds.includes(c.id)
   );
   const play = classifyPlay(selectedCards, game.level);
-  if (!play) return { ok: false, error: '牌型不合法' };
+  if (!play) return { ok: false, error: '牌型不合法', code: 'invalid_play' };
 
   if (game.lastPlay && game.lastPlay.playerId !== playerId) {
     if (!canBeat(game.lastPlay.play, play, game.level)) {
-      return { ok: false, error: '牌型或大小不足以压过上家' };
+      return { ok: false, error: '牌型或大小不足以压过上家', code: 'invalid_play' };
     }
   }
 

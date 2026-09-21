@@ -719,6 +719,14 @@ window.GameNet = (function () {
     });
   }
 
+  function warmupRoomTunnel() {
+    try {
+      ensureSocket().emit('room:warmupTunnel');
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
   function reopenTunnelRoom() {
     ensureSocket().emit('room:reopenTunnel');
   }
@@ -876,7 +884,9 @@ window.GameNet = (function () {
    */
   async function joinRoomOnHost(roomId, playerName, host, opts = {}) {
     const remote = !(opts.local || opts.preferLocal);
-    const deadHosts = new Set();
+    // 允许调用方传入共享的 deadHosts（隧道恢复循环里复用，避免反复撞同一死域名）
+    const deadHosts =
+      opts.deadHosts instanceof Set ? opts.deadHosts : new Set();
 
     async function doJoin(targetHost) {
       let candidates = [];
@@ -920,7 +930,12 @@ window.GameNet = (function () {
     let activeHost = host;
     if (remote) {
       const fresh = await refreshRemoteHost(roomId, host, deadHosts);
-      if (fresh) activeHost = fresh;
+      if (fresh) {
+        activeHost = fresh;
+      } else if (host && deadHosts.has(normalizeUrl(host))) {
+        // 首选地址已死且暂无新址：别再撞一次 DNS
+        activeHost = '';
+      }
     }
 
     try {
@@ -1175,8 +1190,22 @@ window.GameNet = (function () {
     return joinClientConfig.homeUrl ? String(joinClientConfig.homeUrl) : '';
   }
 
+  let _loadingLastSent = -1;
+  let _loadingPending = null;
+  let _loadingThrottleTimer = null;
   function sendLoadingProgress(progress) {
-    ensureSocket().emit('game:loadingProgress', { progress: Number(progress) || 0 });
+    const p = Math.max(0, Math.min(100, Math.round(Number(progress) || 0)));
+    if (p === _loadingLastSent) return;
+    _loadingPending = p;
+    if (_loadingThrottleTimer) return;
+    _loadingThrottleTimer = setTimeout(() => {
+      _loadingThrottleTimer = null;
+      if (_loadingPending !== null && _loadingPending !== _loadingLastSent) {
+        _loadingLastSent = _loadingPending;
+        ensureSocket().emit('game:loadingProgress', { progress: _loadingPending });
+        _loadingPending = null;
+      }
+    }, 120);
   }
 
   function sendLoadingReady() {
@@ -1270,6 +1299,7 @@ window.GameNet = (function () {
     renamePlayer,
     renamePlayerAndWait,
     createRoom,
+    warmupRoomTunnel,
     reopenTunnelRoom,
     createRoomOnHost,
     setPassive,
