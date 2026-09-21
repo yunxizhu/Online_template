@@ -1483,8 +1483,11 @@ window.LasidaoUi = (function () {
       tip.className = 'las-card-tip';
       tip.hidden = true;
     }
-    // 规则弹窗会挂到 body；大图 tip 也必须在 body，且 z-index 高于 .modal
-    if (tip.parentNode !== document.body) {
+    // 跟随 las-overlay-root，跟随面板一起显隐，避免离开游戏后残留在大厅
+    const root = $('las-overlay-root');
+    if (root && tip.parentNode !== root) {
+      root.appendChild(tip);
+    } else if (!root && tip.parentNode !== document.body) {
       document.body.appendChild(tip);
     }
     return tip;
@@ -9847,6 +9850,7 @@ window.LasidaoUi = (function () {
     const panel = $('panel-lasidao');
     if (!panel || !game) return;
     hideOthers();
+    hideCardTip();
     panel.hidden = false;
     setLasOverlayVisible(true);
     bindLasScale();
