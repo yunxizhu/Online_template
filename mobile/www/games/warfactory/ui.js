@@ -79,7 +79,6 @@ window.WarFactoryUi = (function () {
   let labsView = []; // {id,x,y,owner,hp,hpMax}
   let hqView = []; // {id,x,y,owner,hp,hpMax,down}
   let rpView = []; // 各玩家科技点（与 meta.players 同序）
-  let ucView = []; // 各玩家当前部队数（与 meta.players 同序）：兵力预警用
   const selection = new Set();
   let selFacId = 0; // 当前选中的本方工厂：右键为其设置集结点（0 = 未选中）
   let selHqId = 0; // 当前选中的本方总部：右侧面板展示亲兵进化（0 = 未选中）
@@ -1881,15 +1880,14 @@ window.WarFactoryUi = (function () {
 
   /**
    * 左上角科技点面板：当前研究点数 / 每秒产出 / 距下次进化的进度。
-   * 只有占领研究所才产出（每座每 3 秒 2 点），500 点可进化一次单位。
+   * 只有占领研究所才产出（每座 3 点/秒），500 点可进化一次单位。
    */
   function drawTechHud() {
     if (!meta || meta.phase === 'countdown') return;
     const c = ctx;
     const mine = myPlayerIndex();
     const cost = (meta.consts && meta.consts.evolveRpCost) || 500;
-    const perLab = (meta.consts && meta.consts.rpPerLab) || 2;
-    const periodSec = Math.max(1, Math.round(((meta.consts && meta.consts.rpPeriodMs) || 3000) / 1000));
+    const perLab = (meta.consts && meta.consts.rpPerLab) || 3;
     const viewing = mine >= 0 && !isSpectator ? mine : -1;
 
     const x = 14;
@@ -1919,13 +1917,7 @@ window.WarFactoryUi = (function () {
       c.fillText(String(Math.floor(rp)), x + 12, y + 50);
       c.fillStyle = hexAlpha(INK, 0.62);
       c.font = '500 12px ' + CALLOUT_FONT;
-      c.fillText(
-        nLabs > 0
-          ? `+${rate} / ${periodSec}秒 · 研究所 ×${nLabs}`
-          : '未占研究所 · 不产出',
-        x + 12,
-        y + 68
-      );
+      c.fillText(nLabs > 0 ? `+${rate} / 秒 · 研究所 ×${nLabs}` : '未占研究所 · 不产出', x + 12, y + 68);
 
       // 距下次进化（每 cost 点可进化一次）
       const prog = clamp((rp % cost) / cost, 0, 1);
@@ -1961,52 +1953,6 @@ window.WarFactoryUi = (function () {
         c.textAlign = 'left';
       });
     }
-    c.restore();
-  }
-
-  /**
-   * 右上角兵力预警：仅当本方部队数达到 PLAYER_UNIT_WARN（默认 350）时才显示，平时完全不出现。
-   * 面板（选中工厂/总部时）也占右上角，此时提示下移到面板下方，避免互相遮挡。
-   */
-  function drawUnitCapWarn() {
-    if (!meta || meta.phase === 'countdown') return;
-    if (isSpectator) return;
-    const mine = myPlayerIndex();
-    if (mine < 0) return;
-    const warn = (meta.consts && meta.consts.playerUnitWarn) || 350;
-    const cap = (meta.consts && meta.consts.playerUnitCap) || 400;
-    const n = ucView.length ? ucView[mine] || 0 : 0;
-    if (n < warn) return;
-
-    const c = ctx;
-    const full = n >= cap;
-    const text = full ? `兵力已达上限 ${n} / ${cap}` : `兵力 ${n} / ${cap}（接近上限）`;
-    c.save();
-    c.font = '600 12px ' + CALLOUT_FONT;
-    const tw = c.measureText(text).width;
-    const w = Math.ceil(tw) + 26;
-    const h = 26;
-    const x = cssW - w - 14;
-    let y = 14;
-    // 选中建筑时右侧面板占据右上角 → 提示顺势下移
-    if (facPanelEl && !facPanelEl.hidden) {
-      const ph = facPanelEl.offsetHeight || facPanelEl.clientHeight || 0;
-      if (ph > 0) y = 12 + ph + 8;
-    }
-
-    c.fillStyle = full ? 'rgba(160,58,44,0.94)' : 'rgba(163,116,42,0.92)';
-    c.fillRect(x, y, w, h);
-    c.strokeStyle = hexAlpha(INK, 0.5);
-    c.lineWidth = 1.2;
-    c.strokeRect(x, y, w, h);
-    c.fillStyle = '#f6efdd';
-    c.textAlign = 'left';
-    c.textBaseline = 'middle';
-    c.beginPath();
-    c.arc(x + 13, y + h / 2, 4, 0, TAU);
-    c.fill();
-    c.fillText(text, x + 23, y + h / 2 + 0.5);
-    c.textBaseline = 'alphabetic';
     c.restore();
   }
 
@@ -2527,14 +2473,6 @@ window.WarFactoryUi = (function () {
     }
     // 科技点（与 meta.players 同序）
     if (snap.rp) rpView = snap.rp.slice();
-    // 兵力（与 meta.players 同序）：服务端下发优先，缺失时本地按快照单位统计
-    if (snap.uc) {
-      ucView = snap.uc.slice();
-    } else {
-      const cnt = {};
-      for (const u of units.values()) cnt[u.oi] = (cnt[u.oi] || 0) + 1;
-      ucView = (meta.players || []).map((_, i) => cnt[i] || 0);
-    }
 
     // 事件 → 特效
     for (const ev of snap.ev || []) {
@@ -3079,7 +3017,6 @@ window.WarFactoryUi = (function () {
     drawMinimap(t);
     drawFactoryHud();
     drawSelectionHud();
-    drawUnitCapWarn();
     drawOverlay();
 
     syncFacPanel();

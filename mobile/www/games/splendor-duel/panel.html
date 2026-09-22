@@ -1,0 +1,123 @@
+<!-- 璀璨宝石·对决 对局面板 -->
+<div class="panel game-panel" id="panel-splendor-duel" hidden>
+  <h2 id="game-title" data-i18n="splendorDuel.title">璀璨宝石·对决</h2>
+  <p id="game-status" class="game-status">—</p>
+
+  <!-- 顶部行动条（吸顶） -->
+  <div class="sd-actionbar" id="sd-actionbar">
+    <div class="sd-ab-head">
+      <span class="sd-turn-badge" id="sd-center-info"></span>
+      <div class="sd-ab-hint" id="sd-mandatory-hint"></div>
+    </div>
+    <div class="sd-ab-actions" id="sd-actions"></div>
+    <div class="sd-ab-foot">
+      <span class="sd-privilege-label" data-i18n="splendorDuel.privilegeLabel">剩余特权</span>
+      <span class="sd-privilege-pool" id="sd-privilege-pool"></span>
+      <div class="sd-ab-opt-btns" id="sd-opt-actions"></div>
+    </div>
+  </div>
+
+  <!-- 牌桌：左 1/4 版图+王室卡，中 1/2 卡牌区，右 1/4 玩家信息 -->
+  <div class="sd-table">
+    <!-- ===== 左 1/4：版图（上）+ 王室卡（下） ===== -->
+    <div class="sd-col sd-col-left">
+      <section class="sd-block sd-board-block">
+        <div class="sd-block-head">
+          <span data-i18n="splendorDuel.board">版图</span>
+          <span class="sd-bag-badge" id="sd-bag-left"></span>
+        </div>
+        <div class="sd-board-grid" id="sd-board-grid"></div>
+      </section>
+
+      <section class="sd-block sd-royalties-block">
+        <div class="sd-block-head"><span data-i18n="splendorDuel.royalties">王室卡牌</span></div>
+        <div class="sd-royalties-list" id="sd-royalties-list"></div>
+      </section>
+    </div>
+
+    <!-- ===== 中 1/2：发展卡金字塔 ===== -->
+    <div class="sd-col sd-col-market">
+      <section class="sd-block sd-market">
+        <div class="sd-block-head"><span data-i18n="splendorDuel.market">发展卡</span></div>
+        <div class="sd-card-pyramid">
+          <div class="sd-tier-row" data-tier="3">
+            <div class="sd-tier-label">III</div>
+            <div class="sd-tier-deck" id="sd-deck-t3"></div>
+            <div class="sd-tier-cards" id="sd-board-t3"></div>
+          </div>
+          <div class="sd-tier-row" data-tier="2">
+            <div class="sd-tier-label">II</div>
+            <div class="sd-tier-deck" id="sd-deck-t2"></div>
+            <div class="sd-tier-cards" id="sd-board-t2"></div>
+          </div>
+          <div class="sd-tier-row" data-tier="1">
+            <div class="sd-tier-label">I</div>
+            <div class="sd-tier-deck" id="sd-deck-t1"></div>
+            <div class="sd-tier-cards" id="sd-board-t1"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ===== 右：玩家信息 ===== -->
+    <div class="sd-col sd-col-players">
+      <aside class="sd-block sd-hud" id="sd-opponent-area">
+        <div class="sd-block-head">
+          <span class="sd-hud-name" id="sd-opp-name"></span>
+          <span class="sd-hud-tag" data-i18n="splendorDuel.opponent">对手</span>
+        </div>
+        <div class="sd-stat-row">
+          <span class="sd-stat" id="sd-opp-prestige"></span>
+          <span class="sd-stat" id="sd-opp-crowns"></span>
+          <span class="sd-stat" id="sd-opp-privileges"></span>
+        </div>
+        <div class="sd-hud-line">
+          <span class="sd-hud-label" data-i18n="splendorDuel.tokens">宝石</span>
+          <div class="sd-hud-tokens" id="sd-opp-tokens"></div>
+        </div>
+        <div class="sd-hud-line">
+          <span class="sd-hud-label" data-i18n="splendorDuel.bonus">红利</span>
+          <div class="sd-hud-bonus" id="sd-opp-bonus"></div>
+        </div>
+        <div class="sd-hud-line">
+          <span class="sd-hud-label" data-i18n="splendorDuel.reserved">预留卡</span>
+          <div class="sd-hud-reserved" id="sd-opp-reserved"></div>
+        </div>
+      </aside>
+
+      <section class="sd-block sd-tray" id="sd-my-area">
+        <div class="sd-block-head">
+          <span class="sd-hud-name" data-i18n="splendorDuel.me">我</span>
+        </div>
+        <div class="sd-stat-row">
+          <span class="sd-stat" id="sd-my-prestige"></span>
+          <span class="sd-stat" id="sd-my-crowns"></span>
+          <span class="sd-stat" id="sd-my-privileges"></span>
+        </div>
+        <div class="sd-tray-line">
+          <span class="sd-hud-label" data-i18n="splendorDuel.myTokens">我的宝石</span>
+          <div class="sd-my-tokens" id="sd-my-tokens"></div>
+        </div>
+        <div class="sd-tray-line">
+          <span class="sd-hud-label" data-i18n="splendorDuel.bonus">红利</span>
+          <div class="sd-my-bonus" id="sd-my-bonus"></div>
+        </div>
+        <div class="sd-tray-line">
+          <span class="sd-hud-label" data-i18n="splendorDuel.myCards">已购卡（同色声望）</span>
+          <div class="sd-my-cards" id="sd-my-cards"></div>
+        </div>
+        <div class="sd-tray-line">
+          <span class="sd-hud-label" data-i18n="splendorDuel.reserved">预留卡</span>
+          <div class="sd-my-reserved" id="sd-my-reserved"></div>
+        </div>
+      </section>
+
+      <section class="sd-block sd-log-block">
+        <div class="sd-block-head">
+          <span data-i18n="splendorDuel.log" data-i18n-attr="title:splendorDuel.logTip" title="按顺序记录双方最近的操作">对局记录</span>
+        </div>
+        <ul id="sd-log" class="game-log"></ul>
+      </section>
+    </div>
+  </div>
+</div>

@@ -406,6 +406,22 @@
           <option value="60">60</option>
         </select>
       </label>
+      <label id="room-match-games-wrap" hidden>
+        <span data-i18n="create.matchGames">连续局数</span>
+        <select id="room-match-games">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5" selected>5</option>
+          <option value="6">6</option>
+          <option value="7">7</option>
+          <option value="8">8</option>
+          <option value="9">9</option>
+          <option value="10">10</option>
+          <option value="11">11</option>
+        </select>
+      </label>
       <label id="room-allow-trade-wrap" class="checkbox" hidden>
         <input id="room-allow-trade" type="checkbox" />
         <span data-i18n="create.allowTrade">允许玩家交易</span>
@@ -611,6 +627,14 @@
     <div class="room-busy-panel panel">
       <div class="room-busy-spinner" aria-hidden="true"></div>
       <p id="room-busy-message" class="room-busy-message" data-i18n-manual>请稍候…</p>
+      <div id="room-busy-progress-wrap" class="room-busy-progress-wrap" hidden>
+        <div class="room-busy-progress-bar" aria-hidden="true">
+          <div id="room-busy-progress-fill" class="room-busy-progress-fill"></div>
+        </div>
+        <p id="room-busy-progress-text" class="room-busy-progress-text muted">0%</p>
+      </div>
+      <div id="room-busy-players-grid" class="room-busy-players-grid" hidden></div>
+      <p id="room-busy-players-status" class="room-busy-players-status muted" hidden></p>
     </div>
   </div>
 

@@ -160,6 +160,121 @@
       },
       "supportsBot": false,
       "supportsHosting": false
+    },
+    {
+      "id": "doudizhu",
+      "label": "斗地主",
+      "minPlayers": 3,
+      "maxPlayers": 3,
+      "modes": [
+        {
+          "id": "standard",
+          "label": "标准模式"
+        }
+      ],
+      "client": {
+        "styles": [
+          "/games/doudizhu/style.css"
+        ],
+        "scripts": [
+          "/games/doudizhu/ui.js"
+        ],
+        "panel": "/games/doudizhu/panel.html"
+      },
+      "supportsBot": false,
+      "supportsHosting": false
+    },
+    {
+      "id": "guandan",
+      "label": "掼蛋",
+      "minPlayers": 4,
+      "maxPlayers": 4,
+      "modes": [
+        {
+          "id": "standard",
+          "label": "标准模式"
+        }
+      ],
+      "client": {
+        "styles": [
+          "/games/guandan/style.css"
+        ],
+        "scripts": [
+          "/games/guandan/ui.js"
+        ],
+        "panel": "/games/guandan/panel.html"
+      },
+      "supportsBot": false,
+      "supportsHosting": false
+    },
+    {
+      "id": "splendor-duel",
+      "label": "璀璨宝石·对决",
+      "minPlayers": 2,
+      "maxPlayers": 2,
+      "modes": [
+        {
+          "id": "standard",
+          "label": "标准模式"
+        }
+      ],
+      "client": {
+        "styles": [
+          "/games/splendor-duel/style.css"
+        ],
+        "scripts": [
+          "/games/splendor-duel/ui.js"
+        ],
+        "panel": "/games/splendor-duel/panel.html"
+      },
+      "supportsBot": false,
+      "supportsHosting": false
+    },
+    {
+      "id": "blaster",
+      "label": "弹射对决",
+      "minPlayers": 2,
+      "maxPlayers": 4,
+      "modes": [
+        {
+          "id": "standard",
+          "label": "标准模式"
+        }
+      ],
+      "client": {
+        "styles": [
+          "/games/blaster/style.css"
+        ],
+        "scripts": [
+          "/games/blaster/ui.js"
+        ],
+        "panel": "/games/blaster/panel.html"
+      },
+      "supportsBot": false,
+      "supportsHosting": false
+    },
+    {
+      "id": "warfactory",
+      "label": "战争工厂",
+      "minPlayers": 2,
+      "maxPlayers": 4,
+      "modes": [
+        {
+          "id": "standard",
+          "label": "标准模式"
+        }
+      ],
+      "client": {
+        "styles": [
+          "/games/warfactory/style.css"
+        ],
+        "scripts": [
+          "/games/warfactory/ui.js"
+        ],
+        "panel": "/games/warfactory/panel.html"
+      },
+      "supportsBot": false,
+      "supportsHosting": false
     }
   ]
 }

@@ -9,7 +9,7 @@ window.LasidaoAssets = (function () {
   const RES = '/games/lasidao/res';
   const PIC = RES + '/picture';
   /** 换图后改这个数字，可绕过浏览器旧缓存（曾 max-age=7d） */
-  const ASSET_VER = '202609012a';
+  const ASSET_VER = '202609021a';
 
   function remoteAssetRoot() {
     try {
@@ -30,82 +30,82 @@ window.LasidaoAssets = (function () {
 
   /** resource + rich → 文件名 */
   const RESOURCE_IMAGE = {
-    'wood:rich': 'dasenlin.png',
-    'wood:poor': 'xiaosenlin.png',
-    'stone:rich': 'dashitou.png',
-    'stone:poor': 'xiaoshitou.png',
-    'food:rich': 'danongtian.png',
-    'food:poor': 'xiaonongtian.png',
-    'iron:poor': 'tiekuang.png',
-    'iron:rich': 'tiekuang.png',
+    'wood:rich': 'dasenlin.jpg',
+    'wood:poor': 'xiaosenlin.jpg',
+    'stone:rich': 'dashitou.jpg',
+    'stone:poor': 'xiaoshitou.jpg',
+    'food:rich': 'danongtian.jpg',
+    'food:poor': 'xiaonongtian.jpg',
+    'iron:poor': 'tiekuang.jpg',
+    'iron:rich': 'tiekuang.jpg',
   };
 
   /** 资源卡面（玩家手牌展示用） */
   const RESOURCE_HAND_IMAGE = {
-    wood: 'ziyuan_mutou.png',
-    stone: 'ziyuan_shitou.png',
-    food: 'ziyuan_xiaomai.png',
-    iron: 'ziyuan_tiekuang.png',
+    wood: 'ziyuan_mutou.jpg',
+    stone: 'ziyuan_shitou.jpg',
+    food: 'ziyuan_xiaomai.jpg',
+    iron: 'ziyuan_tiekuang.jpg',
   };
 
   /** 卡背 */
   const CARD_BACK_IMAGE = {
-    function: 'bankuaikabei_gongneng.png',
-    building: 'bankuaikabei_jianzhu.png',
-    resource: 'bankuaikabei_ziyuan.png',
-    resourceCard: 'ziyuankabei.png',
-    environment: 'bankuaikabei_shijian.png',
+    function: 'bankuaikabei_gongneng.jpg',
+    building: 'bankuaikabei_jianzhu.jpg',
+    resource: 'bankuaikabei_ziyuan.jpg',
+    resourceCard: 'ziyuankabei.jpg',
+    environment: 'bankuaikabei_shijian.jpg',
   };
 
   /** 事件卡面（envType → 文件名） */
   const ENVIRONMENT_IMAGE = {
-    prisonersDilemma: 'shijianka_qiutukunjing.png',
-    barrenHarvest: 'shijianka_keliwushou.png',
-    resistBarbarians: 'shijianka_diyunanman.png',
-    clearSky: 'shijianka_qingkongwanli.png',
-    enterFray: 'shijianka_yishenruju.png',
-    mercenaries: 'shijianka_guyongjun.png',
-    oneMountain: 'shijianka_yishanburongerhu.png',
-    luckyDraw: 'shijianka_manghe.png',
-    fishermanProfit: 'shijianka_yuwengdeli.png',
-    firstCome: 'shijianka_xiandaoxiande.png',
-    welfareMinimum: 'shijianka_dibaohu.png',
-    recall: 'shijianka_zhaohui.png',
-    teleport: 'shijianka_chuansong.png',
-    keepOverflow: 'shijianka_chibuliaodouzhezou.png',
-    weiQiRescueZhao: 'shijianka_weiweijiuzhao.png',
+    prisonersDilemma: 'shijianka_qiutukunjing.jpg',
+    barrenHarvest: 'shijianka_keliwushou.jpg',
+    resistBarbarians: 'shijianka_diyunanman.jpg',
+    clearSky: 'shijianka_qingkongwanli.jpg',
+    enterFray: 'shijianka_yishenruju.jpg',
+    mercenaries: 'shijianka_guyongjun.jpg',
+    oneMountain: 'shijianka_yishanburongerhu.jpg',
+    luckyDraw: 'shijianka_manghe.jpg',
+    fishermanProfit: 'shijianka_yuwengdeli.jpg',
+    firstCome: 'shijianka_xiandaoxiande.jpg',
+    welfareMinimum: 'shijianka_dibaohu.jpg',
+    recall: 'shijianka_zhaohui.jpg',
+    teleport: 'shijianka_chuansong.jpg',
+    keepOverflow: 'shijianka_chibuliaodouzhezou.jpg',
+    weiQiRescueZhao: 'shijianka_weiweijiuzhao.jpg',
   };
 
   /** 功能卡面（funcType → 文件名） */
   const FUNCTION_IMAGE = {
-    harvest: 'gongnengka_fengshou.png',
-    remoteDice: 'gongnengka_yaokongtouzi.png',
-    exile: 'gongnengka_quzhu.png',
-    redraw: 'gongnengka_chongchou.png',
-    banditRaid: 'gongnengka_qiangdaolaixi.png',
-    caravan: 'gongnengka_shangduilailin.png',
-    robbery: 'gongnengka_qiangjie.png',
-    illegalBuild: 'gongnengka_chaiqian.png',
-    enhance: 'gongnengka_qianghua.png',
-    recruit: 'gongnengka_zhengzhao.png',
-    welfareHouse: 'gongnengka_fulifang.png',
-    shelter: 'gongnengka_shouliu.png',
+    harvest: 'gongnengka_fengshou.jpg',
+    remoteDice: 'gongnengka_yaokongtouzi.jpg',
+    exile: 'gongnengka_quzhu.jpg',
+    redraw: 'gongnengka_chongchou.jpg',
+    banditRaid: 'gongnengka_qiangdaolaixi.jpg',
+    caravan: 'gongnengka_shangduilailin.jpg',
+    robbery: 'gongnengka_qiangjie.jpg',
+    illegalBuild: 'gongnengka_chaiqian.jpg',
+    enhance: 'gongnengka_qianghua.jpg',
+    recruit: 'gongnengka_zhengzhao.jpg',
+    welfareHouse: 'gongnengka_fulifang.jpg',
+    shelter: 'gongnengka_shouliu.jpg',
   };
 
   /** 建筑卡面（buildType / resource+tier → 文件名） */
   const BUILDING_IMAGE = {
-    'score2': 'jianzhuka_gongdian.png',
-    'score1': 'jianzhuka_xuetang.png',
-    'exchange': 'jianzhuka_jishi.png',
-    'wishWell': 'jianzhuka_xuyuanjin.png',
-    'wood:rich': 'jianzhuka_mutougongfang.png',
-    'wood:poor': 'jianzhuka_mutougongfang.png',
-    'stone:rich': 'jianzhuka_shitougongfang.png',
-    'stone:poor': 'jianzhuka_shitougongfang.png',
-    'food:rich': 'jianzhuka_xiaomaigongfang.png',
-    'food:poor': 'jianzhuka_xiaomaigongfang.png',
-    'iron:rich': 'jianzhuka_tiekuanggongfang.png',
-    'iron:poor': 'jianzhuka_tiekuanggongfang.png',
+    'score2': 'jianzhuka_gongdian.jpg',
+    'score1': 'jianzhuka_xuetang.jpg',
+    'exchange': 'jianzhuka_jishi.jpg',
+    'wishWell': 'jianzhuka_xuyuanjin.jpg',
+    'wood:rich': 'jianzhuka_mutougongfang.jpg',
+    'wood:poor': 'jianzhuka_mutougongfang.jpg',
+    'stone:rich': 'jianzhuka_shitougongfang.jpg',
+    'stone:poor': 'jianzhuka_shitougongfang.jpg',
+    'food:rich': 'jianzhuka_xiaomaigongfang.jpg',
+    'food:poor': 'jianzhuka_xiaomaigongfang.jpg',
+    'iron:rich': 'jianzhuka_tiekuanggongfang.jpg',
+    'iron:poor': 'jianzhuka_tiekuanggongfang.jpg',
   };
 
   function picUrl(file) {
@@ -149,21 +149,41 @@ window.LasidaoAssets = (function () {
   let _preloadDone = false;
 
   /** 开局预热全部卡面（浏览器 HTTP 缓存 + 内存 decode 缓存）；单图失败/超时不阻断 */
-  function preloadPictures() {
+  function preloadPictures(opts = {}) {
     if (_preloadDone) return Promise.resolve(true);
     if (_preloadPromise) return _preloadPromise;
+
+    const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
     const urls = [...collectAllPictureFiles()].map((f) => picUrl(f));
-    _preloadPromise = Promise.all(urls.map((u) => warmImage(u)))
-      .then(() => {
-        _preloadDone = true;
-        return true;
-      })
-      .catch(() => {
-        // 仍标记完成，避免每次阶段切换反复卡住整局渲染
-        _preloadDone = true;
-        _preloadPromise = null;
-        return false;
-      });
+    const total = urls.length;
+    let done = 0;
+
+    _preloadPromise = (async () => {
+      // 避免缓存命中时瞬间完成：分批加载，每批至少展示一小段时间
+      const BATCH = Math.max(1, Math.min(5, Math.ceil(urls.length / 12)));
+      const MIN_STEP_MS = 60;
+      for (let i = 0; i < urls.length; i += BATCH) {
+        const slice = urls.slice(i, i + BATCH);
+        const t0 = performance.now();
+        await Promise.all(slice.map((u) => warmImage(u)));
+        done += slice.length;
+        if (onProgress) onProgress(total, done);
+        const elapsed = performance.now() - t0;
+        if (elapsed < MIN_STEP_MS) {
+          await new Promise((r) =>
+            setTimeout(r, Math.ceil(MIN_STEP_MS - elapsed))
+          );
+        }
+      }
+      _preloadDone = true;
+      return true;
+    })();
+    _preloadPromise.catch(() => {
+      // 仍标记完成，避免每次阶段切换反复卡住整局渲染
+      _preloadDone = true;
+      _preloadPromise = null;
+      return false;
+    });
     return _preloadPromise;
   }
 

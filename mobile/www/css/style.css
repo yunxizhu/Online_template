@@ -2358,6 +2358,100 @@ body.phase-room .chat-tabs button.is-on {
   line-height: 1.45;
 }
 
+.room-busy-progress-wrap {
+  margin-top: 0.75rem;
+  width: 100%;
+  max-width: 16rem;
+}
+
+.room-busy-progress-bar {
+  height: 0.5rem;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 0.25rem;
+  overflow: hidden;
+}
+
+.room-busy-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent, #6ec4b8);
+  border-radius: 0.25rem;
+  transition: width 0.3s ease;
+}
+
+.room-busy-progress-text {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.room-busy-players-status {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.room-busy-players-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+  width: 100%;
+  max-width: 28rem;
+}
+
+.loading-player-card {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.5rem;
+  padding: 0.6rem;
+  text-align: center;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.loading-player-card.is-me {
+  border-color: var(--accent, #6ec4b8);
+  box-shadow: 0 0 0 1px var(--accent, #6ec4b8) inset;
+}
+
+.loading-player-card.is-ready {
+  border-color: rgba(110, 196, 184, 0.5);
+}
+
+.loading-player-name {
+  margin: 0 0 0.4rem;
+  font-size: 0.82rem;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.loading-player-bar {
+  height: 0.35rem;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 0.2rem;
+  overflow: hidden;
+}
+
+.loading-player-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent, #6ec4b8);
+  border-radius: 0.2rem;
+  transition: width 0.35s ease;
+}
+
+.loading-player-fill.is-done {
+  background: #5cb85c;
+}
+
+.loading-player-pct {
+  margin: 0.25rem 0 0;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.65);
+}
+
 .you {
   color: var(--accent);
 }
