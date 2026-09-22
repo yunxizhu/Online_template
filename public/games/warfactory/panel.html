@@ -1,0 +1,27 @@
+<!-- 战争工厂对局面板（水墨即时战略） -->
+<div class="panel game-panel" id="panel-warfactory" hidden>
+  <h2 id="game-title" data-i18n="warfactory.title">战争工厂</h2>
+  <p id="game-status" class="game-status">—</p>
+  <p id="game-sides" class="muted"></p>
+  <div class="warfactory-wrap">
+    <canvas
+      id="warfactory-canvas"
+      width="1280"
+      height="800"
+      data-i18n-attr="aria-label:warfactory.boardAria"
+      aria-label="战争工厂战场"
+    ></canvas>
+  </div>
+  <div id="warfactory-scores" class="warfactory-scores"></div>
+  <div class="warfactory-legend">
+    <span class="warfactory-legend-title" data-i18n="warfactory.legendTitle">兵种图谱</span>
+    <span class="warfactory-legend-item"><b>锐士</b><em data-i18n="warfactory.unit.warrior">近战突进，攻守兼备</em></span>
+    <span class="warfactory-legend-item"><b>盾卫</b><em data-i18n="warfactory.unit.shield">重甲缓慢，坚不可摧</em></span>
+    <span class="warfactory-legend-item"><b>游侠</b><em data-i18n="warfactory.unit.ranger">远程狙击，薄血长射</em></span>
+    <span class="warfactory-legend-item"><b>轰击</b><em data-i18n="warfactory.unit.burst">范围炮击，落点成墨</em></span>
+    <span class="warfactory-legend-item"><b>燎原</b><em data-i18n="warfactory.unit.burn">引火灼烧，伤上加伤</em></span>
+  </div>
+  <p class="warfactory-help" data-i18n="warfactory.help">
+    左键框选部队 · 右键进攻移动（部队自动迎击）· WASD/方向键移动镜头 · 点击小地图跳转 · F 选取屏内部队 · 占领工厂获兵源，研究所加速进化 · 失去全部工厂即败
+  </p>
+</div>

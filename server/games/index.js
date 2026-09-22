@@ -8,6 +8,8 @@ const catan = require('./catan');
 const doudizhu = require('./doudizhu');
 const guandan = require('./guandan');
 const splendorDuel = require('./splendor-duel');
+const blaster = require('./blaster');
+const warfactory = require('./warfactory');
 
 /** @type {Record<string, object>} 顺序即创建房间下拉默认顺序 */
 const GAMES = {
@@ -19,6 +21,8 @@ const GAMES = {
   [doudizhu.id]: doudizhu,
   [guandan.id]: guandan,
   [splendorDuel.id]: splendorDuel,
+  [blaster.id]: blaster,
+  [warfactory.id]: warfactory,
 };
 
 function gameSupportsBot(game) {

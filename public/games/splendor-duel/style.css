@@ -1,344 +1,746 @@
-#panel-splendor-duel { max-width: 900px; margin: 0 auto; }
+/* 牌桌铺满可用宽度（不再限制 1400px 居中留白） */
+#panel-splendor-duel { max-width: none; width: 100%; margin: 0; }
 
-/* 可选行动区 */
-.sd-optional-area {
-  background: rgba(212,160,23,0.08);
-  border-radius: 8px;
-  padding: 0.5rem;
-  margin: 0.5rem 0;
-  text-align: center;
+/* 宝石配色：--ga 亮面 / --gb 暗面 / --ink 字色 */
+#panel-splendor-duel .emerald  { --ga:#54d492; --gb:#1d8a54; --ink:#fff; }
+#panel-splendor-duel .sapphire { --ga:#63aef2; --gb:#1c5fa8; --ink:#fff; }
+#panel-splendor-duel .ruby     { --ga:#f4796a; --gb:#a32a26; --ink:#fff; }
+#panel-splendor-duel .diamond  { --ga:#ffffff; --gb:#dbe3ec; --ink:#5b6b7b; }
+#panel-splendor-duel .onyx     { --ga:#63757f; --gb:#222d35; --ink:#fff; }
+#panel-splendor-duel .pearl    { --ga:#ffd1e3; --gb:#ff85b3; --ink:#b03060; }
+#panel-splendor-duel .gold     { --ga:#ffe08a; --gb:#c48f16; --ink:#3a2a06; }
+
+/* 通用区块 */
+.sd-block {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.7rem 0.8rem 0.8rem;
 }
 
-.sd-optional-label {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: #d4a017;
-  margin-bottom: 0.3rem;
-}
-
-.sd-privileges-wrap {
-  font-size: 0.75rem;
+.sd-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
   color: var(--muted);
-  margin-bottom: 0.3rem;
+  text-transform: uppercase;
+  margin-bottom: 0.5rem;
 }
 
-.sd-privilege-pool {
-  display: inline-flex;
-  gap: 0.2rem;
-  margin-left: 0.5rem;
+/* ====== 顶部行动条 ====== */
+.sd-actionbar {
+  position: sticky;
+  top: 0;
+  z-index: 12;
+  margin: 0 0 0.75rem;
+  padding: 0.55rem 0.75rem 0.6rem;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(45, 60, 70, 0.98), rgba(36, 48, 56, 0.96));
+  border: 1px solid #43595f;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(6px);
 }
+
+.sd-ab-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  min-height: 1.4rem;
+}
+
+.sd-turn-badge {
+  font-size: 0.85rem;
+  font-weight: 700;
+  padding: 0.15rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(61, 155, 143, 0.16);
+  border: 1px solid rgba(61, 155, 143, 0.5);
+  color: #7fd6c7;
+}
+
+.sd-turn-badge:empty { display: none; }
+
+.sd-ab-hint {
+  font-size: 0.8rem;
+  color: #f0d79a;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.sd-ab-hint:empty { display: none; }
+
+.sd-ab-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.45rem;
+  margin-top: 0.5rem;
+}
+
+.sd-ab-actions:empty { display: none; }
+
+.sd-ab-actions button,
+.sd-ab-opt-btns button {
+  background: linear-gradient(180deg, #47ab9d, #2f8579);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.28);
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+
+.sd-ab-actions button:hover,
+.sd-ab-opt-btns button:hover { filter: brightness(1.12); transform: translateY(-1px); }
+
+.sd-ab-actions button.secondary,
+.sd-ab-opt-btns button.secondary {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  box-shadow: none;
+  font-weight: 500;
+}
+
+.sd-ab-actions button.secondary:hover,
+.sd-ab-opt-btns button.secondary:hover { background: rgba(255, 255, 255, 0.12); }
+
+.sd-ab-foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.45rem;
+  padding-top: 0.45rem;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+}
+
+.sd-privilege-label { font-size: 0.72rem; color: var(--muted); }
+.sd-privilege-pool { display: inline-flex; gap: 0.2rem; }
 
 .sd-privilege-token {
-  width: 1.4rem;
-  height: 1.4rem;
+  width: 1.1rem;
+  height: 1.1rem;
   border-radius: 50%;
-  background: #6c757d;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--border);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
   font-size: 0.6rem;
+  color: transparent;
 }
 
 .sd-privilege-token.active {
-  background: #d4a017;
+  background: radial-gradient(circle at 32% 28%, #fff2c2, #e0a92c 55%, #a9761a);
+  border-color: #f0c868;
+  color: #5a3f08;
+  box-shadow: 0 0 6px rgba(240, 200, 104, 0.45);
 }
 
-.sd-opt-actions {
-  justify-content: center;
-  gap: 0.5rem;
+.sd-ab-opt-btns { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: center; }
+.sd-ab-opt-btns:empty { display: none; }
+.sd-ab-opt-btns button { padding: 0.35rem 0.75rem; font-size: 0.8rem; }
+
+/* ====== 牌桌：左 1/4（版图+王室卡） + 中 1/2（卡牌） + 右 1/4（玩家） ====== */
+.sd-table {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-areas: "left market players";
+  gap: 0.75rem;
+  align-items: stretch;
+  min-height: 26rem;
 }
+
+.sd-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.sd-col-left { grid-area: left; }
+.sd-col-market { grid-area: market; }
+.sd-col-players { grid-area: players; }
+
+/* 左列：版图按列宽（= 屏宽 1/4）撑满，王室卡吃掉剩余高度 */
+.sd-col-left > .sd-board-block { flex: 0 0 auto; }
+.sd-col-left > .sd-royalties-block { flex: 1 1 auto; }
 
 /* ====== 5×5 版图 ====== */
-.sd-board-wrap {
-  margin: 0.5rem 0;
-  text-align: center;
-}
+.sd-board-block { display: flex; flex-direction: column; }
+.sd-board-block .sd-block-head { flex: 0 0 auto; }
+.sd-board-block .sd-board-grid { flex: 1 1 auto; }
 
-.sd-board-label {
-  font-size: 0.8rem;
+.sd-bag-badge {
+  font-size: 0.7rem;
   color: var(--muted);
-  margin-bottom: 0.25rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .sd-board-grid {
-  display: inline-grid;
-  grid-template-columns: repeat(5, 2.6rem);
-  grid-template-rows: repeat(5, 2.6rem);
-  gap: 0.3rem;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.5rem;
+  /* 撑满左列（= 屏宽 1/4），仅用视口高度兜底，避免把页面拉得过长 */
+  width: 100%;
+  max-width: min(100%, 56vh);
+  aspect-ratio: 1;
+  margin: 0 auto;
+  padding: 0.7rem;
+  border-radius: 16px;
+  background:
+    radial-gradient(ellipse at 50% 20%, #33454f 0%, transparent 60%),
+    linear-gradient(160deg, #2a383f, #1e292f);
+  border: 1px solid #3d525b;
+  box-shadow: inset 0 2px 12px rgba(0, 0, 0, 0.4);
 }
 
 .sd-grid-cell {
-  width: 2.6rem;
-  height: 2.6rem;
   border-radius: 50%;
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: #fff;
+  aspect-ratio: 1;
+  font-size: 1.15rem;
+  font-weight: 800;
   display: flex;
   align-items: center;
   justify-content: center;
   user-select: none;
   cursor: default;
-  transition: transform 0.15s, box-shadow 0.15s;
-  border: 2px solid transparent;
+  transition: transform 0.14s ease, box-shadow 0.14s ease, opacity 0.14s ease;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
 }
 
-.sd-grid-cell.is-selectable {
-  cursor: pointer;
-  border-color: #4dabf7;
-  box-shadow: 0 0 0 1px #4dabf7;
-}
-
-.sd-grid-cell.is-selectable:hover {
-  transform: scale(1.1);
-}
-
-.sd-grid-cell.is-selected {
-  border-color: #28a745;
-  box-shadow: 0 0 0 3px #28a745;
-  transform: scale(1.15);
+.sd-grid-cell:not(.empty) {
+  color: var(--ink, #fff);
+  background:
+    radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0) 48%),
+    linear-gradient(158deg, var(--ga), var(--gb));
+  box-shadow: inset 0 -2px 5px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.35);
 }
 
 .sd-grid-cell.empty {
-  background: transparent;
-  border: 2px dashed #ccc;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px dashed rgba(255, 255, 255, 0.16);
 }
 
-.sd-grid-cell.emerald { background: #27ae60; }
-.sd-grid-cell.sapphire { background: #2980b9; }
-.sd-grid-cell.ruby { background: #c0392b; }
-.sd-grid-cell.diamond { background: #bdc3c7; color: #2c3e50; }
-.sd-grid-cell.onyx { background: #2c3e50; }
-.sd-grid-cell.pearl { background: #9b59b6; }
-.sd-grid-cell.gold { background: #f1c40f; color: #2c3e50; }
-
-/* ====== 发展卡区 ====== */
-.sd-card-pyramid {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  margin: 0.5rem 0;
-}
-
-.sd-tier-row { display: flex; align-items: center; gap: 0.4rem; }
-
-.sd-tier-label {
-  width: 1.6rem; height: 1.6rem; border-radius: 50%;
-  background: #6c757d; color: #fff;
-  font-size: 0.75rem; font-weight: 700;
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-}
-
-.sd-tier-deck {
-  width: 3.6rem; height: 5rem; border-radius: 6px;
-  background: repeating-linear-gradient(45deg, #343a40, #343a40 6px, #495057 6px, #495057 12px);
-  display: flex; align-items: center; justify-content: center;
-  color: #fff; font-size: 0.75rem; flex-shrink: 0; cursor: default;
-}
-
-.sd-tier-deck.is-reservable { cursor: pointer; box-shadow: 0 0 0 2px #4dabf7; }
-.sd-tier-deck.is-reservable:hover { opacity: 0.9; }
-
-.sd-tier-cards { display: flex; gap: 0.4rem; flex-wrap: wrap; }
-
-/* 卡牌 */
-.sd-card {
-  width: 7.5rem; min-height: 5rem; border-radius: 6px;
-  background: #fff; border: 1px solid #ccc; padding: 0.4rem;
-  display: flex; flex-direction: column; gap: 0.25rem;
-  font-size: 0.75rem; position: relative;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1); flex-shrink: 0;
-}
-
-.sd-card.is-selectable { cursor: pointer; border-color: #4dabf7; box-shadow: 0 0 0 2px #4dabf7; }
-.sd-card.is-selectable:hover { transform: translateY(-2px); }
-.sd-card.is-selected { box-shadow: 0 0 0 3px #28a745; }
-
-.sd-card-header { display: flex; justify-content: space-between; align-items: center; }
-
-.sd-card-prestige { font-weight: 700; font-size: 1rem; color: #d4a017; }
-.sd-card-crowns { font-size: 0.7rem; color: #c0392b; }
-.sd-card-ability { font-size: 0.65rem; color: #2980b9; }
-
-.sd-card-discount {
-  width: 1.4rem; height: 1.4rem; border-radius: 50%;
-  font-size: 0.65rem; display: flex; align-items: center; justify-content: center;
-  color: #fff; font-weight: 700; text-transform: uppercase;
-}
-
-.sd-card-discount.emerald { background: #27ae60; }
-.sd-card-discount.sapphire { background: #2980b9; }
-.sd-card-discount.ruby { background: #c0392b; }
-.sd-card-discount.diamond { background: #bdc3c7; color: #2c3e50; }
-.sd-card-discount.onyx { background: #2c3e50; }
-
-.sd-card-costs { display: flex; flex-wrap: wrap; gap: 0.15rem; }
-
-.sd-cost-chip {
-  display: inline-flex; align-items: center; gap: 0.1rem;
-  padding: 0.05rem 0.3rem; border-radius: 4px;
-  font-size: 0.7rem; color: #fff; font-weight: 600;
-}
-
-.sd-cost-chip.emerald { background: #27ae60; }
-.sd-cost-chip.sapphire { background: #2980b9; }
-.sd-cost-chip.ruby { background: #c0392b; }
-.sd-cost-chip.diamond { background: #95a5a6; }
-.sd-cost-chip.onyx { background: #2c3e50; }
-.sd-cost-chip.pearl { background: #9b59b6; }
+.sd-grid-cell.is-selectable { cursor: pointer; box-shadow: 0 0 0 2px #4dabf7, inset 0 -2px 5px rgba(0, 0, 0, 0.3); }
+.sd-grid-cell.is-selectable:hover { transform: scale(1.09); }
+.sd-grid-cell.is-selected { box-shadow: 0 0 0 3px #5ddb8f, 0 0 12px rgba(93, 219, 143, 0.5); transform: scale(1.12); }
 
 /* ====== 王室卡 ====== */
-.sd-royalties-area { margin: 0.5rem 0; text-align: center; }
-.sd-royalties-label { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.25rem; }
-.sd-royalties-list { display: flex; justify-content: center; gap: 0.5rem; }
+.sd-royalties-block { display: flex; flex-direction: column; justify-content: center; }
+
+.sd-royalties-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  justify-content: center;
+  align-content: center;
+  gap: 0.45rem;
+  /* 同样撑满左列宽度，与版图对齐 */
+  width: 100%;
+  max-width: 26rem;
+  margin: 0 auto;
+}
 
 .sd-royalty {
-  width: 5.5rem; min-height: 3rem; border-radius: 6px;
-  background: #fef9e7; border: 2px solid #d4a017;
-  padding: 0.3rem; display: flex; flex-direction: column; gap: 0.2rem;
-  font-size: 0.7rem; position: relative;
+  width: 100%;
+  min-height: 3.4rem;
+  border-radius: 8px;
+  background: linear-gradient(160deg, #fff6dd, #eeddae);
+  border: 1px solid #d5b45c;
+  color: #3a2f1a;
+  padding: 0.25rem 0.3rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1rem;
+  font-size: 0.62rem;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4);
+  transition: transform 0.14s ease, box-shadow 0.14s ease;
 }
 
-.sd-royalty.claimed { opacity: 0.55; border-color: #95a5a6; }
+.sd-royalty.claimed { opacity: 0.45; filter: grayscale(0.55); }
+.sd-royalty.is-clickable { cursor: pointer; box-shadow: 0 0 0 2px #ffd76a, 0 0 16px rgba(255, 200, 80, 0.4); }
+.sd-royalty.is-clickable:hover { transform: translateY(-3px); }
 
-.sd-royalty-prestige { font-weight: 700; color: #d4a017; }
-.sd-royalty-ability { font-size: 0.65rem; color: #2980b9; }
-.sd-royalty-claimed { font-size: 0.65rem; color: #27ae60; }
+.sd-royalty-prestige { font-weight: 800; font-size: 0.88rem; color: #9a6b12; }
+.sd-royalty-ability { font-size: 0.6rem; color: #2c5c8f; text-align: center; line-height: 1.25; }
+.sd-royalty-claimed { font-size: 0.7rem; color: #2b7a4b; }
 
-/* ====== 对手区 ====== */
-.sd-opponent-area {
-  background: rgba(0,0,0,0.04); border-radius: 8px;
-  padding: 0.5rem; margin: 0.5rem 0;
+/* ====== 对手面板 ====== */
+.sd-hud { display: flex; flex-direction: column; gap: 0.45rem; }
+
+.sd-hud-tag {
+  font-size: 0.65rem;
+  color: #c9853a;
+  border: 1px solid rgba(201, 133, 58, 0.5);
+  background: rgba(201, 133, 58, 0.12);
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
-.sd-opponent-header {
-  display: flex; justify-content: center; gap: 0.75rem;
-  font-size: 0.85rem; font-weight: 600; margin-bottom: 0.25rem;
+.sd-hud-name { font-size: 0.95rem; font-weight: 700; color: var(--text); text-transform: none; letter-spacing: 0; }
+
+.sd-hud-line, .sd-tray-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   flex-wrap: wrap;
 }
 
-.sd-opponent-tokens, .sd-opponent-reserved, .sd-opponent-bonus {
-  display: flex; justify-content: center; gap: 0.25rem;
-  margin: 0.25rem 0;
+.sd-hud-label {
+  font-size: 0.7rem;
+  color: var(--muted);
+  flex: 0 0 auto;
+  min-width: 3.2rem;
 }
 
-/* 小token */
+.sd-hud-tokens, .sd-hud-bonus, .sd-hud-reserved {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+  min-height: 1.7rem;
+}
+
+/* ====== 状态徽标（带进度）====== */
+.sd-stat-row { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+
+.sd-stat {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 4.6rem;
+  padding: 0.2rem 0.5rem 0.25rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+}
+
+.sd-stat-v { font-size: 0.72rem; font-weight: 600; color: var(--text); white-space: nowrap; }
+
+.sd-stat-bar {
+  display: block;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.sd-stat-bar > i { display: block; height: 100%; border-radius: 2px; background: #5ecfbe; transition: width 0.25s ease; }
+.sd-stat.crowns .sd-stat-bar > i { background: #e0725f; }
+.sd-stat.priv .sd-stat-bar > i { background: #e8c15c; }
+.sd-stat.prestige { border-color: rgba(94, 207, 190, 0.4); }
+.sd-stat.crowns { border-color: rgba(224, 114, 95, 0.4); }
+.sd-stat.priv { border-color: rgba(232, 193, 92, 0.4); }
+
+/* 小宝石标记 */
 .sd-mini-token {
-  width: 1.6rem; height: 1.6rem; border-radius: 50%;
-  font-size: 0.65rem; font-weight: 700; color: #fff;
-  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  font-size: 0.68rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink, #fff);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
+  background:
+    radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0) 48%),
+    linear-gradient(158deg, var(--ga), var(--gb));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 
-.sd-mini-token.emerald { background: #27ae60; }
-.sd-mini-token.sapphire { background: #2980b9; }
-.sd-mini-token.ruby { background: #c0392b; }
-.sd-mini-token.diamond { background: #bdc3c7; color: #2c3e50; }
-.sd-mini-token.onyx { background: #2c3e50; }
-.sd-mini-token.pearl { background: #9b59b6; }
-.sd-mini-token.gold { background: #f1c40f; color: #2c3e50; }
+/* 红利点 */
+.sd-bonus-dot {
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 50%;
+  font-size: 0.62rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink, #fff);
+  background: linear-gradient(158deg, var(--ga), var(--gb));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
 
 /* 预留背面 */
 .sd-reserve-back {
-  width: 3rem; height: 4.2rem; border-radius: 4px;
-  background: #6c757d; display: flex; align-items: center; justify-content: center;
-  color: #fff; font-size: 0.7rem;
+  width: 2.2rem;
+  height: 3.1rem;
+  border-radius: 5px;
+  background: linear-gradient(160deg, #4b5b66, #2b3740);
+  border: 1px solid #5d707b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #cfdae0;
+  font-size: 0.68rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.35);
 }
 
-/* ====== 我的区域 ====== */
-.sd-my-area {
-  margin-top: 0.75rem;
-  background: rgba(0,0,0,0.04); border-radius: 8px;
-  padding: 0.5rem;
+.sd-reserve-slot {
+  width: 2.2rem;
+  height: 3.1rem;
+  border-radius: 5px;
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.03);
 }
 
-.sd-my-header {
-  display: flex; justify-content: center; gap: 1rem;
-  font-size: 1rem; font-weight: 600; margin-bottom: 0.25rem;
-  flex-wrap: wrap;
+/* ====== 发展卡金字塔 ====== */
+/* 市场区吃掉左栏剩余高度，三行均匀铺开，避免底部大片留白 */
+.sd-market { display: flex; flex-direction: column; flex: 1 1 auto; }
+
+.sd-card-pyramid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  justify-content: space-evenly;
 }
 
-.sd-my-bonus { display: flex; justify-content: center; gap: 0.3rem; margin-bottom: 0.4rem; }
-
-.sd-reserved-label, .sd-tokens-label {
-  font-size: 0.75rem; color: var(--muted);
-  margin-bottom: 0.2rem; text-align: center;
+.sd-tier-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  padding: 0.4rem;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-.sd-my-reserved { display: flex; justify-content: center; gap: 0.3rem; margin-bottom: 0.4rem; min-height: 2rem; }
-.sd-my-tokens { display: flex; justify-content: center; gap: 0.4rem; margin-bottom: 0.4rem; min-height: 2.4rem; }
+.sd-tier-row[data-tier="3"] { box-shadow: inset 3px 0 0 #8a5fb8; }
+.sd-tier-row[data-tier="2"] { box-shadow: inset 3px 0 0 #3f76b0; }
+.sd-tier-row[data-tier="1"] { box-shadow: inset 3px 0 0 #4f8f6a; }
 
-.sd-bonus-dot {
-  width: 1.4rem; height: 1.4rem; border-radius: 50%;
-  font-size: 0.6rem; font-weight: 700; color: #fff;
-  display: inline-flex; align-items: center; justify-content: center;
+.sd-tier-label {
+  width: 1.9rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--border);
+  color: #cfdae0;
+  font-size: 0.72rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
-.sd-bonus-dot.emerald { background: #27ae60; }
-.sd-bonus-dot.sapphire { background: #2980b9; }
-.sd-bonus-dot.ruby { background: #c0392b; }
-.sd-bonus-dot.diamond { background: #bdc3c7; color: #2c3e50; }
-.sd-bonus-dot.onyx { background: #2c3e50; }
-
-/* ====== 中间信息 ====== */
-.sd-center-info {
-  text-align: center; font-size: 0.85rem;
-  color: var(--muted); min-height: 1.2rem; margin: 0.25rem 0;
+.sd-tier-deck {
+  width: 4.2rem;
+  min-height: 5.6rem;
+  border-radius: 6px;
+  background: linear-gradient(160deg, #46586a, #2a3641);
+  border: 1px solid #5d707b;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.25), 4px 4px 0 rgba(0, 0, 0, 0.16);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1rem;
+  color: #dbe6ec;
+  font-size: 0.72rem;
+  flex-shrink: 0;
+  cursor: default;
 }
 
-.sd-mandatory-hint {
-  text-align: center; font-size: 0.8rem;
-  color: #d4a017; font-weight: 600; margin-bottom: 0.25rem;
+.sd-tier-deck .sd-deck-n { font-size: 0.95rem; font-weight: 800; }
+.sd-tier-deck.is-reservable { cursor: pointer; box-shadow: 0 0 0 2px #4dabf7, 2px 2px 0 rgba(0, 0, 0, 0.25); }
+.sd-tier-deck.is-reservable:hover { filter: brightness(1.15); }
+.sd-tier-deck.is-empty { opacity: 0.4; }
+
+/* 卡牌行铺满整行宽度：单排等分，既不换行也不留大片空白 */
+.sd-tier-cards {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: space-evenly;
 }
 
-/* ====== 操作 ====== */
-.sd-actions { justify-content: center; gap: 0.5rem; margin-top: 0.4rem; }
-
-.sd-hint {
-  font-size: 0.8rem; color: var(--muted);
-  text-align: center; margin-bottom: 0.25rem; width: 100%;
+.sd-tier-cards > .sd-card {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 5.2rem;
+  max-width: 11.6rem;
 }
 
-#sd-log { max-height: 140px; overflow-y: auto; }
+/* ====== 卡牌 ====== */
+.sd-card {
+  width: 10.4rem;
+  min-height: 6.6rem;
+  border-radius: 10px;
+  padding: 0.45rem 0.5rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.34rem;
+  font-size: 0.8rem;
+  position: relative;
+  flex-shrink: 0;
+  color: #2f2a22;
+  background: linear-gradient(168deg, #fdf8ee 0%, #f3ead8 58%, #e7dcc4 100%);
+  border: 1px solid #cbb894;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  transition: transform 0.14s ease, box-shadow 0.14s ease;
+}
 
-/* ====== 新牌表补充样式 ====== */
-.sd-card.is-clickable { cursor: pointer; }
+.sd-card.tier1 { border-top: 3px solid #4f8f6a; }
+.sd-card.tier2 { border-top: 3px solid #3f76b0; }
+.sd-card.tier3 { border-top: 3px solid #8a5fb8; }
+
+.sd-card.is-selectable { cursor: pointer; box-shadow: 0 0 0 2px #4dabf7, 0 3px 8px rgba(0, 0, 0, 0.4); }
+.sd-card.is-selectable:hover { transform: translateY(-3px); }
+.sd-card.is-selected { box-shadow: 0 0 0 3px #5ddb8f, 0 0 14px rgba(93, 219, 143, 0.45); transform: translateY(-3px); }
+.sd-card.is-affordable { box-shadow: 0 0 0 2px rgba(93, 219, 143, 0.9), 0 3px 8px rgba(0, 0, 0, 0.4); }
+.sd-card.is-dim { opacity: 0.5; filter: saturate(0.6); }
+
+.sd-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.3rem; }
+.sd-card-left { display: flex; align-items: center; gap: 0.25rem; }
+.sd-card-right { display: flex; align-items: center; gap: 0.3rem; }
+
+.sd-card-prestige {
+  font-weight: 800;
+  font-size: 0.92rem;
+  color: #7a5510;
+  background: linear-gradient(180deg, #ffe9a8, #e9c25c);
+  border: 1px solid #c9a13f;
+  border-radius: 999px;
+  padding: 0 0.4rem;
+}
+
+.sd-card-crowns { font-size: 0.8rem; font-weight: 700; color: #a8322a; }
+
+.sd-card-discount {
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  font-size: 0.72rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink, #fff);
+  background: linear-gradient(158deg, var(--ga), var(--gb));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
 .sd-card-discount.associate {
-  background: linear-gradient(135deg, #27ae60 0%, #2980b9 35%, #c0392b 70%, #9b59b6 100%);
-  border: 1px solid #d4a017;
+  background: linear-gradient(135deg, #54d492 0%, #63aef2 34%, #f4796a 68%, #ff85b3 100%);
+  color: #fff;
+  border: 1px solid #b98c1f;
 }
-.sd-card-gold { font-size: 0.9rem; }
 
-.sd-royalty.is-clickable { cursor: pointer; box-shadow: 0 0 0 2px #4dabf7; }
-.sd-royalty.is-clickable:hover { transform: translateY(-2px); }
+.sd-card-gold { font-size: 0.95rem; }
 
-.sd-my-cards-area { margin-bottom: 0.4rem; }
-.sd-cards-label { font-size: 0.75rem; color: var(--muted); text-align: center; margin-bottom: 0.2rem; }
-.sd-my-cards { display: flex; justify-content: center; gap: 0.3rem; flex-wrap: wrap; min-height: 1.6rem; }
+.sd-card-costs { display: flex; flex-wrap: wrap; gap: 0.18rem; margin-top: auto; }
 
-.sd-color-prestige {
-  padding: 0.1rem 0.4rem; border-radius: 4px;
-  font-size: 0.7rem; font-weight: 700; color: #fff;
+.sd-cost-chip {
+  min-width: 1.55rem;
+  height: 1.55rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink, #fff);
+  background: linear-gradient(158deg, var(--ga), var(--gb));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25), inset 0 0 0 1px rgba(255, 255, 255, 0.3);
 }
-.sd-color-prestige.emerald { background: #27ae60; }
-.sd-color-prestige.sapphire { background: #2980b9; }
-.sd-color-prestige.ruby { background: #c0392b; }
-.sd-color-prestige.diamond { background: #95a5a6; color: #2c3e50; }
-.sd-color-prestige.onyx { background: #2c3e50; }
-.sd-color-prestige.pearl { background: #9b59b6; }
+
+.sd-card-ability {
+  font-size: 0.7rem;
+  line-height: 1.25;
+  color: #245a8f;
+  background: #e6eff9;
+  border: 1px solid #c3d8ee;
+  border-radius: 4px;
+  padding: 0.08rem 0.28rem;
+  align-self: flex-start;
+}
+
+/* ====== 我的面板（右栏，窄）====== */
+.sd-tray { display: flex; flex-direction: column; gap: 0.45rem; }
+
+.sd-my-tokens { display: flex; flex-wrap: wrap; gap: 0.28rem; align-items: center; min-height: 2rem; flex: 1 1 auto; }
+.sd-my-bonus { display: flex; flex-wrap: wrap; gap: 0.25rem; align-items: center; min-height: 1.6rem; flex: 1 1 auto; }
+.sd-my-reserved { display: flex; flex-wrap: wrap; gap: 0.28rem; align-items: center; min-height: 3rem; flex: 1 1 auto; }
+.sd-my-cards { display: flex; flex-direction: column; gap: 0.25rem; flex: 1 1 auto; min-height: 1.6rem; }
+
+/* 右栏里的卡牌缩小，三张预留一行放得下（栏宽收窄到 1/4 后留点余量） */
+.sd-tray .sd-card { width: 6.2rem; min-height: 4.6rem; font-size: 0.64rem; padding: 0.28rem 0.32rem 0.32rem; }
+.sd-tray .sd-card-prestige { font-size: 0.72rem; }
+.sd-tray .sd-cost-chip { min-width: 1.1rem; height: 1.1rem; font-size: 0.62rem; }
+.sd-tray .sd-card-discount { width: 1.15rem; height: 1.15rem; font-size: 0.54rem; }
+
+.sd-mini-token.is-pickable { cursor: pointer; }
+.sd-mini-token.is-picked { box-shadow: 0 0 0 2px #5ddb8f, 0 0 10px rgba(93, 219, 143, 0.45); }
+
+/* 同色声望进度 */
+.sd-cp-row { display: flex; align-items: center; gap: 0.4rem; }
+
+.sd-cp-dot {
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: linear-gradient(158deg, var(--ga), var(--gb));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+}
+
+.sd-cp-bar {
+  flex: 1 1 auto;
+  max-width: 9rem;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.sd-cp-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--ga), var(--gb));
+  transition: width 0.25s ease;
+}
+
+.sd-cp-num { font-size: 0.68rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* 行动条内提示 */
+.sd-hint {
+  font-size: 0.8rem;
+  color: var(--muted);
+  width: 100%;
+  text-align: center;
+}
+
+.sd-sel-chip {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #0f2b22;
+  background: #5ddb8f;
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+}
 
 .sd-color-btn { font-weight: 600; }
-.sd-color-btn.emerald { background: #27ae60; color: #fff; }
-.sd-color-btn.sapphire { background: #2980b9; color: #fff; }
-.sd-color-btn.ruby { background: #c0392b; color: #fff; }
-.sd-color-btn.diamond { background: #bdc3c7; color: #2c3e50; }
-.sd-color-btn.onyx { background: #2c3e50; color: #fff; }
-.sd-color-btn.pearl { background: #9b59b6; color: #fff; }
+.sd-color-btn.emerald { background: linear-gradient(158deg, #54d492, #1d8a54); color: #fff; }
+.sd-color-btn.sapphire { background: linear-gradient(158deg, #63aef2, #1c5fa8); color: #fff; }
+.sd-color-btn.ruby { background: linear-gradient(158deg, #f4796a, #a32a26); color: #fff; }
+.sd-color-btn.diamond { background: linear-gradient(158deg, #ffffff, #dbe3ec); color: #5b6b7b; }
+.sd-color-btn.onyx { background: linear-gradient(158deg, #63757f, #222d35); color: #fff; }
+.sd-color-btn.pearl { background: linear-gradient(158deg, #ffd1e3, #ff85b3); color: #b03060; }
+
+/* ====== 对局记录（右栏，吃掉剩余高度）====== */
+.sd-log-block {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 9rem;
+}
+
+.sd-log-block .sd-block-head { flex: 0 0 auto; }
+
+.sd-log-block .game-log {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.sd-log-block .game-log li {
+  padding: 0.15rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.sd-log-block .game-log li:last-child { border-bottom: none; }
 
 /* ====== 响应式 ====== */
+@media (max-width: 1360px) {
+  /* 中等宽度下收一档卡牌，保证中间一行 5 张仍能单排放下 */
+  .sd-tier-cards > .sd-card { min-width: 4.6rem; max-width: 10.6rem; }
+  .sd-card { min-height: 6.1rem; font-size: 0.76rem; }
+  .sd-cost-chip { min-width: 1.4rem; height: 1.4rem; font-size: 0.74rem; }
+  .sd-card-discount { width: 1.45rem; height: 1.45rem; font-size: 0.66rem; }
+  .sd-tier-deck { width: 3.8rem; min-height: 5.1rem; }
+}
+
+@media (max-width: 1240px) {
+  .sd-board-grid { max-width: min(100%, 50vh); }
+  .sd-grid-cell { font-size: 1.05rem; }
+}
+
+@media (max-width: 1040px) {
+  /* 左列与卡牌区并排，玩家面板挪到下方通栏 */
+  .sd-table {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.7fr);
+    grid-template-areas:
+      "left market"
+      "players players";
+  }
+  .sd-tray .sd-card { width: 7.2rem; }
+  .sd-board-grid { max-width: min(100%, 52vh); }
+  .sd-grid-cell { font-size: 1.15rem; }
+  /* 王室卡改一行横排，避免窄列里挤成两列 */
+  .sd-royalties-list {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    max-width: none;
+  }
+}
+
+@media (max-width: 760px) {
+  /* 三块全部纵向堆叠 */
+  .sd-table {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "left" "market" "players";
+  }
+  .sd-board-grid { max-width: min(24rem, 46vh); }
+  /* 窄屏不再等分：卡牌回到固定宽度并允许换行 */
+  .sd-tier-cards { flex-wrap: wrap; justify-content: center; }
+  .sd-tier-cards > .sd-card { flex: 0 0 auto; width: 9rem; }
+}
+
 @media (max-width: 640px) {
-  .sd-card { width: 6.2rem; min-height: 4.2rem; padding: 0.3rem; font-size: 0.7rem; }
-  .sd-tier-deck { width: 2.8rem; height: 4rem; }
-  .sd-board-grid { grid-template-columns: repeat(5, 2.2rem); grid-template-rows: repeat(5, 2.2rem); gap: 0.2rem; }
-  .sd-grid-cell { width: 2.2rem; height: 2.2rem; font-size: 0.75rem; }
+  .sd-card { min-height: 5.6rem; padding: 0.35rem; }
+  .sd-tier-cards > .sd-card { width: 8.2rem; }
+  .sd-tray .sd-card { width: 6.2rem; }
+  .sd-tier-deck { width: 3.4rem; min-height: 4.8rem; }
+  .sd-board-grid { max-width: min(19rem, 44vh); gap: 0.35rem; padding: 0.5rem; }
+  .sd-grid-cell { font-size: 0.92rem; }
+  .sd-royalty { min-height: 2.9rem; }
+  .sd-actionbar { padding: 0.45rem 0.5rem 0.5rem; }
+  .sd-ab-actions button, .sd-ab-opt-btns button { padding: 0.45rem 0.7rem; font-size: 0.82rem; }
+  .sd-stat { min-width: 4rem; }
+  .sd-table { gap: 0.6rem; }
+  .sd-col { gap: 0.6rem; }
 }

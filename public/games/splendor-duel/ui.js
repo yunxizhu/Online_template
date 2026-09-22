@@ -10,10 +10,13 @@ window.SplendorDuelUi = (function () {
   let nameOf = (id) => (id == null ? '—' : String(id));
 
   const COLORS = ['emerald', 'sapphire', 'ruby', 'diamond', 'onyx', 'pearl'];
-  const RES_COLORS = ['emerald', 'sapphire', 'ruby', 'diamond', 'onyx'];
   const GOLD = 'gold';
   const ASSOCIATE = 'associate';
   const BSIZE = 5;
+  const GOAL_PRESTIGE = 20;
+  const GOAL_CROWNS = 10;
+  const GOAL_COLOR = 10;
+  const RESERVE_LIMIT = 3;
   const NAMES = { emerald: '翡翠', sapphire: '蓝宝石', ruby: '红宝石', diamond: '钻石', onyx: '玛瑙', pearl: '珍珠', gold: '金', associate: '合伙人' };
   const ABILITIES = {
     extra_turn: 'splendorDuel.abilityExtraTurn',
@@ -28,6 +31,7 @@ window.SplendorDuelUi = (function () {
     els.privPool = getEl('sd-privilege-pool');
     els.optActions = getEl('sd-opt-actions');
     els.boardGrid = getEl('sd-board-grid');
+    els.bagLeft = getEl('sd-bag-left');
     els.deckT1 = getEl('sd-deck-t1'); els.deckT2 = getEl('sd-deck-t2'); els.deckT3 = getEl('sd-deck-t3');
     els.boardT1 = getEl('sd-board-t1'); els.boardT2 = getEl('sd-board-t2'); els.boardT3 = getEl('sd-board-t3');
     els.royalties = getEl('sd-royalties-list');
@@ -40,11 +44,82 @@ window.SplendorDuelUi = (function () {
     els.actions = getEl('sd-actions'); els.log = getEl('sd-log');
   }
   function clear(el) { if (!el) return; while (el.firstChild) el.removeChild(el.firstChild); }
+
+  /**
+   * 面板里的静态文案（data-i18n / data-i18n-attr）。
+   * 面板是运行时注入的，可能错过全局 i18n 扫描；且语言包缺键时 t() 会原样返回 key。
+   * 这里统一兜底：取不到译文就回落到 HTML 里写的默认文本，绝不把 "splendorDuel.xxx" 显示在界面上。
+   */
+  function applyStaticI18n(t) {
+    if (!els.panel || typeof t !== 'function') return;
+    const nodes = els.panel.querySelectorAll('[data-i18n],[data-i18n-attr]');
+    for (const el of nodes) {
+      const key = el.getAttribute('data-i18n');
+      if (key) {
+        if (el.dataset.i18nFb === undefined) el.dataset.i18nFb = el.textContent || '';
+        const v = t(key);
+        el.textContent = v && v !== key ? v : el.dataset.i18nFb;
+      }
+      const spec = el.getAttribute('data-i18n-attr');
+      if (spec) {
+        for (const part of String(spec).split(',')) {
+          const bits = part.split(':').map((s) => (s || '').trim());
+          if (bits.length < 2 || !bits[0] || !bits[1]) continue;
+          const [attr, aKey] = bits;
+          const fbKey = 'i18nFbAttr' + attr.charAt(0).toUpperCase() + attr.slice(1);
+          if (el.dataset[fbKey] === undefined) el.dataset[fbKey] = el.getAttribute(attr) || '';
+          const av = t(aKey);
+          el.setAttribute(attr, av && av !== aKey ? av : el.dataset[fbKey]);
+        }
+      }
+    }
+  }
   function oppId(game, me) { return game.turnOrder.find((id) => id !== me) || null; }
 
-  function mini(col, n) { const d = document.createElement('div'); d.className = 'sd-mini-token ' + col; d.textContent = (NAMES[col] || col).charAt(0) + n; return d; }
-  function bonusDot(col, n) { const d = document.createElement('div'); d.className = 'sd-bonus-dot ' + col; d.textContent = n; return d; }
-  function reserveBack(n) { const d = document.createElement('div'); d.className = 'sd-reserve-back'; d.textContent = n > 0 ? n : ''; return d; }
+  function mini(col, n) {
+    const d = document.createElement('div');
+    d.className = 'sd-mini-token ' + col;
+    d.textContent = (NAMES[col] || col).charAt(0) + n;
+    d.title = NAMES[col] || col;
+    return d;
+  }
+  function bonusDot(col, n) {
+    const d = document.createElement('div');
+    d.className = 'sd-bonus-dot ' + col;
+    d.textContent = n;
+    // 明确表达「购买该色卡牌的费用减免」（红利数量 = 减免数量）
+    d.title = (NAMES[col] || col) + ' · 费用减免 -' + n;
+    return d;
+  }
+  function reserveBack() {
+    const d = document.createElement('div');
+    d.className = 'sd-reserve-back';
+    d.textContent = '\u{1F0CF}';
+    return d;
+  }
+  function reserveSlot() {
+    const d = document.createElement('div');
+    d.className = 'sd-reserve-slot';
+    return d;
+  }
+
+  function setStat(el, label, cur, max, cls) {
+    if (!el) return;
+    clear(el);
+    el.className = 'sd-stat ' + cls;
+    const v = document.createElement('span');
+    v.className = 'sd-stat-v';
+    v.textContent = label;
+    el.appendChild(v);
+    if (max > 0) {
+      const bar = document.createElement('span');
+      bar.className = 'sd-stat-bar';
+      const i = document.createElement('i');
+      i.style.width = Math.max(0, Math.min(100, Math.round(((cur || 0) / max) * 100))) + '%';
+      bar.appendChild(i);
+      el.appendChild(bar);
+    }
+  }
 
   function abilityText(ability, t) {
     if (!ability) return '';
@@ -52,36 +127,76 @@ window.SplendorDuelUi = (function () {
     return key ? t(key) : ability;
   }
 
+  /* ===== 卡牌 ===== */
   function cardDiv(card, opts = {}) {
     const t = opts.t || ((k) => k);
     const d = document.createElement('div');
-    d.className = 'sd-card';
+    d.className = 'sd-card' + (card.tier ? ' tier' + card.tier : '');
     d.dataset.cardId = card.id;
     if (card.tier) d.dataset.tier = card.tier;
-    const h = document.createElement('div'); h.className = 'sd-card-header';
-    if (card.prestige) { const s = document.createElement('span'); s.className = 'sd-card-prestige'; s.textContent = '+' + card.prestige; h.appendChild(s); }
-    if (card.crowns) { const s = document.createElement('span'); s.className = 'sd-card-crowns'; s.textContent = '\u{1F451}' + card.crowns; h.appendChild(s); }
+
+    const top = document.createElement('div');
+    top.className = 'sd-card-top';
+    const left = document.createElement('div'); left.className = 'sd-card-left';
+    const right = document.createElement('div'); right.className = 'sd-card-right';
+
     if (card.discount === ASSOCIATE) {
       const s = document.createElement('span');
       s.className = 'sd-card-discount associate';
       s.textContent = card.assocColor ? (NAMES[card.assocColor] || card.assocColor).charAt(0) : '\u2605';
       s.title = t('splendorDuel.associateBonus');
-      h.appendChild(s);
+      left.appendChild(s);
     } else if (card.discount) {
-      const s = document.createElement('span'); s.className = 'sd-card-discount ' + card.discount; s.textContent = (NAMES[card.discount] || card.discount).charAt(0); h.appendChild(s);
+      const s = document.createElement('span');
+      s.className = 'sd-card-discount ' + card.discount;
+      s.textContent = (NAMES[card.discount] || card.discount).charAt(0);
+      s.title = NAMES[card.discount] || card.discount;
+      left.appendChild(s);
     } else if (card.isRoyalty !== true) {
-      const s = document.createElement('span'); s.className = 'sd-card-gold'; s.textContent = '\u{1F4B0}'; s.title = t('splendorDuel.goldCard'); h.appendChild(s);
+      const s = document.createElement('span');
+      s.className = 'sd-card-gold';
+      s.textContent = '\u{1F4B0}';
+      s.title = t('splendorDuel.goldCard');
+      left.appendChild(s);
     }
-    d.appendChild(h);
-    if (card.ability) { const a = document.createElement('div'); a.className = 'sd-card-ability'; a.textContent = abilityText(card.ability, t); d.appendChild(a); }
+
+    if (card.prestige) {
+      const s = document.createElement('span');
+      s.className = 'sd-card-prestige';
+      s.textContent = '+' + card.prestige;
+      right.appendChild(s);
+    }
+    if (card.crowns) {
+      const s = document.createElement('span');
+      s.className = 'sd-card-crowns';
+      s.textContent = '\u{1F451}' + card.crowns;
+      right.appendChild(s);
+    }
+    top.appendChild(left); top.appendChild(right);
+    d.appendChild(top);
+
+    if (card.ability) {
+      const a = document.createElement('div');
+      a.className = 'sd-card-ability';
+      a.textContent = abilityText(card.ability, t);
+      d.appendChild(a);
+    }
     if (card.cost && Object.keys(card.cost).length) {
-      const costs = document.createElement('div'); costs.className = 'sd-card-costs';
-      for (const [col, n] of Object.entries(card.cost)) { const chip = document.createElement('span'); chip.className = 'sd-cost-chip ' + col; chip.textContent = (NAMES[col] || col).charAt(0) + n; costs.appendChild(chip); }
+      const costs = document.createElement('div');
+      costs.className = 'sd-card-costs';
+      for (const [col, n] of Object.entries(card.cost)) {
+        const chip = document.createElement('span');
+        chip.className = 'sd-cost-chip ' + col;
+        chip.textContent = n;
+        chip.title = (NAMES[col] || col) + ' ' + n;
+        costs.appendChild(chip);
+      }
       d.appendChild(costs);
     }
+    if (opts.affordable) d.classList.add('is-affordable');
+    if (opts.dim) d.classList.add('is-dim');
     if (opts.selectable) d.classList.add('is-selectable');
     if (opts.selected) d.classList.add('is-selected');
-    if (opts.clickable) d.classList.add('is-clickable');
     if (opts.onClick) d.addEventListener('click', opts.onClick);
     return d;
   }
@@ -92,7 +207,7 @@ window.SplendorDuelUi = (function () {
     d.className = 'sd-royalty' + (roy.claimedBy ? ' claimed' : '');
     const p = document.createElement('div'); p.className = 'sd-royalty-prestige'; p.textContent = '+' + roy.prestige; d.appendChild(p);
     if (roy.ability) { const a = document.createElement('div'); a.className = 'sd-royalty-ability'; a.textContent = abilityText(roy.ability, t); d.appendChild(a); }
-    if (roy.claimedBy) { const c = document.createElement('div'); c.className = 'sd-royalty-claimed'; c.textContent = '\u2713'; d.appendChild(c); }
+    if (roy.claimedBy) { const c = document.createElement('div'); c.className = 'sd-royalty-claimed'; c.textContent = '\u2713 ' + nameOf(roy.claimedBy); d.appendChild(c); }
     if (opts.clickable) d.classList.add('is-clickable');
     if (opts.onClick) d.addEventListener('click', opts.onClick);
     return d;
@@ -113,13 +228,50 @@ window.SplendorDuelUi = (function () {
         const cell = document.createElement('div');
         cell.className = 'sd-grid-cell' + (color ? (' ' + color) : ' empty') + (inSel && clickable ? ' is-selected' : '') + (clickable ? ' is-selectable' : '');
         cell.textContent = color ? (NAMES[color] || color).charAt(0) : '';
+        if (color) cell.title = NAMES[color] || color;
         if (clickable) cell.addEventListener('click', () => _toggleCell(r, c));
         els.boardGrid.appendChild(cell);
       }
     }
   }
 
-  function renderCards(game, isActive, net, t) {
+  function boardHasNonGold(board) {
+    for (let r = 0; r < BSIZE; r++) for (let c = 0; c < BSIZE; c++) { const v = board[r][c]; if (v && v !== GOLD) return true; }
+    return false;
+  }
+  function boardHasGold(board) {
+    for (let r = 0; r < BSIZE; r++) for (let c = 0; c < BSIZE; c++) if (board[r][c] === GOLD) return true;
+    return false;
+  }
+
+  /* 能否买得起（与服务端 computePayment 同口径） */
+  function _canAfford(p, card) {
+    const bonus = p.bonusCounts || {};
+    const tok = p.tokenCounts || {};
+    let goldNeed = 0;
+    for (const col of COLORS) {
+      const need = (card.cost && card.cost[col]) || 0;
+      const deficit = Math.max(0, need - (bonus[col] || 0));
+      const have = tok[col] || 0;
+      const fromTok = Math.min(have, deficit);
+      if (fromTok < deficit) goldNeed += deficit - fromTok;
+    }
+    return goldNeed <= (tok[GOLD] || 0);
+  }
+
+  function _anyAffordable(game, meId) {
+    const p = game.players[meId];
+    if (!p) return false;
+    for (const key of ['tier1', 'tier2', 'tier3']) {
+      for (const card of game.boardCards[key] || []) if (_canAfford(p, card)) return true;
+    }
+    for (const card of p.reserved || []) if (card && card.id && _canAfford(p, card)) return true;
+    return false;
+  }
+
+  function renderCards(game, isActive, meId, net, t) {
+    const p = game.players[meId];
+    const buyMode = isActive && mandatoryMode === 'buy';
     for (const tier of [1, 2, 3]) {
       const key = 'tier' + tier;
       const bEl = getEl('sd-board-t' + tier), dEl = getEl('sd-deck-t' + tier);
@@ -127,22 +279,29 @@ window.SplendorDuelUi = (function () {
       const arr = game.boardCards[key] || [];
       for (let i = 0; i < arr.length; i++) {
         const card = arr[i];
+        const afford = p ? _canAfford(p, card) : false;
         bEl.appendChild(cardDiv(card, {
           t,
+          affordable: buyMode && afford,
+          dim: buyMode && !afford,
           selectable: isActive && (mandatoryMode === 'buy' || mandatoryMode === 'reserve'),
           selected: selectedCardId === card.id,
           onClick: () => {
-            if (mandatoryMode === 'buy') { selectedCardId = card.id; _refreshCardSel(); }
+            if (mandatoryMode === 'buy') { if (!afford) return; selectedCardId = card.id; _forceRefresh(); }
             else if (mandatoryMode === 'reserve') { _doReserve(net, tier, i, false); }
           },
         }));
       }
       const left = game.decksLeft[key] || 0;
-      dEl.textContent = '\u{1F4E6}' + left;
+      const n = document.createElement('span'); n.className = 'sd-deck-n'; n.textContent = left;
+      const lbl = document.createElement('span'); lbl.textContent = left > 0 ? t('splendorDuel.deck') : t('splendorDuel.deckEmpty');
+      dEl.appendChild(n); dEl.appendChild(lbl);
+      dEl.classList.remove('is-reservable', 'is-empty');
+      if (left === 0) dEl.classList.add('is-empty');
       if (left > 0 && isActive && mandatoryMode === 'reserve') {
         dEl.classList.add('is-reservable');
         dEl.onclick = () => _doReserve(net, tier, -1, true);
-      }
+      } else dEl.onclick = null;
     }
   }
 
@@ -177,6 +336,7 @@ window.SplendorDuelUi = (function () {
       info.textContent = t('splendorDuel.privilegeHint', { count: privilegeMode.count });
       els.optActions.appendChild(info);
       const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = t('splendorDuel.confirmPrivilege');
+      btn.disabled = selectedCells.length !== privilegeMode.count;
       btn.onclick = () => {
         if (selectedCells.length !== privilegeMode.count) { alert(t('splendorDuel.selectTokens')); return; }
         net.sendAction('use_privilege', { count: privilegeMode.count, tokens: selectedCells.map(([r, c]) => [r, c]) });
@@ -208,59 +368,77 @@ window.SplendorDuelUi = (function () {
 
   /* ===== 玩家面板 ===== */
   function renderMy(game, meId, isActive, t) {
-    clear(els.myPrestige); clear(els.myCrowns); clear(els.myPrivileges);
     clear(els.myBonus); clear(els.myReserved); clear(els.myTokens); clear(els.myCards);
     const p = game.players[meId]; if (!p) return;
-    els.myPrestige.textContent = t('splendorDuel.prestige', { n: p.prestige });
-    els.myCrowns.textContent = t('splendorDuel.crowns', { n: p.crowns });
-    els.myPrivileges.textContent = t('splendorDuel.privileges', { n: p.privileges });
+    setStat(els.myPrestige, t('splendorDuel.prestige', { n: p.prestige }), p.prestige, GOAL_PRESTIGE, 'prestige');
+    setStat(els.myCrowns, t('splendorDuel.crowns', { n: p.crowns }), p.crowns, GOAL_CROWNS, 'crowns');
+    setStat(els.myPrivileges, t('splendorDuel.privileges', { n: p.privileges }), p.privileges, 3, 'priv');
+
     for (const [col, n] of Object.entries(p.bonusCounts || {})) if (n > 0) els.myBonus.appendChild(bonusDot(col, n));
-    // 已购卡：按红利颜色分组显示同色声望
+
+    // 已购卡：按红利颜色显示同色声望进度
     const cp = p.colorPrestige || {};
     for (const col of COLORS) {
-      if (!cp[col]) continue;
-      const chip = document.createElement('div');
-      chip.className = 'sd-color-prestige ' + col;
-      chip.textContent = (NAMES[col] || col).charAt(0) + ' ' + cp[col] + '/10';
-      els.myCards.appendChild(chip);
+      const v = cp[col] || 0;
+      if (!v) continue;
+      const row = document.createElement('div'); row.className = 'sd-cp-row';
+      const dot = document.createElement('span'); dot.className = 'sd-cp-dot ' + col;
+      const bar = document.createElement('span'); bar.className = 'sd-cp-bar';
+      const i = document.createElement('i');
+      i.style.width = Math.min(100, Math.round((v / GOAL_COLOR) * 100)) + '%';
+      bar.appendChild(i);
+      const num = document.createElement('span'); num.className = 'sd-cp-num'; num.textContent = v + '/' + GOAL_COLOR;
+      row.appendChild(dot); row.appendChild(bar); row.appendChild(num);
+      els.myCards.appendChild(row);
     }
+    if (!els.myCards.childNodes.length) {
+      const none = document.createElement('span'); none.className = 'sd-cp-num'; none.textContent = '—';
+      els.myCards.appendChild(none);
+    }
+
+    // 预留卡（3 个槽位）
     const reserved = p.reserved || [];
-    for (let i = 0; i < reserved.length; i++) {
+    for (let i = 0; i < RESERVE_LIMIT; i++) {
       const rc = reserved[i];
       if (rc && rc.id) {
+        const afford = _canAfford(p, rc);
         els.myReserved.appendChild(cardDiv(rc, {
           t,
+          affordable: isActive && mandatoryMode === 'buy' && afford,
+          dim: isActive && mandatoryMode === 'buy' && !afford,
           selectable: isActive && mandatoryMode === 'buy',
           selected: selectedCardId === rc.id,
-          onClick: () => { if (mandatoryMode === 'buy') { selectedCardId = rc.id; _refreshCardSel(); } },
+          onClick: () => { if (mandatoryMode === 'buy') { if (!afford) return; selectedCardId = rc.id; _forceRefresh(); } },
         }));
-      } else els.myReserved.appendChild(reserveBack(1));
+      } else els.myReserved.appendChild(reserveSlot());
     }
+
+    // 我的宝石
     for (const col of COLORS.concat([GOLD])) {
       const n = p.tokenCounts[col] || 0;
       if (n > 0) {
         const d = mini(col, n);
         if (_isDiscard(game, meId)) {
-          d.style.cursor = 'pointer';
+          d.classList.add('is-pickable');
           d.addEventListener('click', () => _toggleDiscardColor(col));
-          if (discardColors.includes(col)) d.style.boxShadow = '0 0 0 2px #28a745';
+          if (discardColors.includes(col)) d.classList.add('is-picked');
         }
         els.myTokens.appendChild(d);
       }
     }
   }
 
-  function renderOpp(game, oId, net, t) {
-    clear(els.oppName); clear(els.oppPrestige); clear(els.oppCrowns); clear(els.oppPrivileges);
-    clear(els.oppTokens); clear(els.oppReserved); clear(els.oppBonus);
+  function renderOpp(game, oId, t) {
+    clear(els.oppName); clear(els.oppTokens); clear(els.oppReserved); clear(els.oppBonus);
     if (!oId) return;
     els.oppName.textContent = nameOf(oId);
     const p = game.players[oId]; if (!p) return;
-    els.oppPrestige.textContent = t('splendorDuel.prestige', { n: p.prestige });
-    els.oppCrowns.textContent = t('splendorDuel.crowns', { n: p.crowns });
-    els.oppPrivileges.textContent = t('splendorDuel.privileges', { n: p.privileges });
+    setStat(els.oppPrestige, t('splendorDuel.prestige', { n: p.prestige }), p.prestige, GOAL_PRESTIGE, 'prestige');
+    setStat(els.oppCrowns, t('splendorDuel.crowns', { n: p.crowns }), p.crowns, GOAL_CROWNS, 'crowns');
+    setStat(els.oppPrivileges, t('splendorDuel.privileges', { n: p.privileges }), p.privileges, 3, 'priv');
     for (const col of COLORS.concat([GOLD])) { const n = p.tokenCounts[col] || 0; if (n > 0) els.oppTokens.appendChild(mini(col, n)); }
-    for (let i = 0; i < (p.reserved || []).length; i++) els.oppReserved.appendChild(reserveBack(1));
+    for (let i = 0; i < (p.reserved || []).length; i++) els.oppReserved.appendChild(reserveBack());
+    if (!(p.reserved || []).length) els.oppReserved.appendChild(reserveSlot());
     for (const [col, n] of Object.entries(p.bonusCounts || {})) if (n > 0) els.oppBonus.appendChild(bonusDot(col, n));
   }
 
@@ -286,21 +464,9 @@ window.SplendorDuelUi = (function () {
       }
       return true;
     }
-    if (pend.type === 'associate_color') {
+    if (pend.type === 'associate_color' || pend.type === 'steal_gem') {
       const info = document.createElement('div'); info.className = 'sd-hint';
-      info.textContent = t('splendorDuel.pendingAssociateHint');
-      els.actions.appendChild(info);
-      for (const col of pend.options || []) {
-        const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'sd-color-btn ' + col;
-        btn.textContent = NAMES[col] || col;
-        btn.onclick = () => { net.sendAction('resolve', { color: col }); _reset(); };
-        els.actions.appendChild(btn);
-      }
-      return true;
-    }
-    if (pend.type === 'steal_gem') {
-      const info = document.createElement('div'); info.className = 'sd-hint';
-      info.textContent = t('splendorDuel.pendingStealHint');
+      info.textContent = pend.type === 'associate_color' ? t('splendorDuel.pendingAssociateHint') : t('splendorDuel.pendingStealHint');
       els.actions.appendChild(info);
       for (const col of pend.options || []) {
         const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'sd-color-btn ' + col;
@@ -313,7 +479,7 @@ window.SplendorDuelUi = (function () {
     return false;
   }
 
-  /* ===== 行动区 ===== */
+  /* ===== 行动区（顶部行动条）===== */
   function renderActions(game, meId, isActive, t, net) {
     clear(els.actions); clear(els.mandHint);
     if (!isActive) return;
@@ -325,6 +491,7 @@ window.SplendorDuelUi = (function () {
       info.textContent = t('splendorDuel.discardHint', { need: game.discardNeed });
       els.actions.appendChild(info);
       const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = t('splendorDuel.discardConfirm');
+      btn.disabled = discardColors.length < game.discardNeed;
       btn.onclick = () => {
         const discarding = {};
         for (const col of discardColors) discarding[col] = (discarding[col] || 0) + 1;
@@ -337,13 +504,24 @@ window.SplendorDuelUi = (function () {
     if (privilegeMode) return;
     if (!mandatoryMode) {
       els.mandHint.textContent = t('splendorDuel.mandatoryHint');
+      const me = game.players[meId] || {};
+      const canTake = boardHasNonGold(game.board);
+      const canReserve = (me.reserved || []).length < RESERVE_LIMIT
+        && ((game.boardCards.tier1 || []).length + (game.boardCards.tier2 || []).length + (game.boardCards.tier3 || []).length > 0
+          || (game.decksLeft.tier1 || 0) + (game.decksLeft.tier2 || 0) + (game.decksLeft.tier3 || 0) > 0);
+      const canBuy = _anyAffordable(game, meId);
+
       const b1 = document.createElement('button'); b1.type = 'button'; b1.textContent = t('splendorDuel.actionTakeTokens');
+      b1.disabled = !canTake;
       b1.onclick = () => { mandatoryMode = 'take'; selectedCells = []; _forceRefresh(); }; els.actions.appendChild(b1);
       const b2 = document.createElement('button'); b2.type = 'button'; b2.textContent = t('splendorDuel.actionReserve');
+      b2.disabled = !canReserve;
       b2.onclick = () => { mandatoryMode = 'reserve'; selectedCells = []; _forceRefresh(); }; els.actions.appendChild(b2);
       const b3 = document.createElement('button'); b3.type = 'button'; b3.textContent = t('splendorDuel.actionBuyCard');
+      b3.disabled = !canBuy;
       b3.onclick = () => { mandatoryMode = 'buy'; selectedCells = []; _forceRefresh(); }; els.actions.appendChild(b3);
-      if (_noMandatory(game)) {
+
+      if (!canTake && !canReserve && !canBuy) {
         const hint = document.createElement('div'); hint.className = 'sd-hint';
         hint.textContent = t('splendorDuel.cannotAct');
         els.actions.appendChild(hint);
@@ -356,7 +534,11 @@ window.SplendorDuelUi = (function () {
     }
     if (mandatoryMode === 'take') {
       const hint = document.createElement('div'); hint.className = 'sd-hint'; hint.textContent = t('splendorDuel.takeHint'); els.actions.appendChild(hint);
+      const chip = document.createElement('span'); chip.className = 'sd-sel-chip';
+      chip.textContent = t('splendorDuel.selectedCount', { n: selectedCells.length, m: 3 });
+      els.mandHint.appendChild(chip);
       const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = t('splendorDuel.confirmTake');
+      btn.disabled = !_validTake();
       btn.onclick = () => {
         if (!_validTake()) { alert(t('splendorDuel.invalidSelection')); return; }
         net.sendAction('take_tokens', { cells: selectedCells.map(([r, c]) => [r, c]) });
@@ -368,6 +550,7 @@ window.SplendorDuelUi = (function () {
     if (mandatoryMode === 'buy') {
       const hint = document.createElement('div'); hint.className = 'sd-hint'; hint.textContent = t('splendorDuel.buyHint'); els.actions.appendChild(hint);
       const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = t('splendorDuel.confirmBuy');
+      btn.disabled = !selectedCardId;
       btn.onclick = () => {
         if (!selectedCardId) { alert(t('splendorDuel.selectCard')); return; }
         const found = _findCard(game, selectedCardId);
@@ -385,20 +568,8 @@ window.SplendorDuelUi = (function () {
     }
   }
 
-  function _noMandatory(game) {
-    let nonGold = false, gold = false;
-    for (let r = 0; r < BSIZE; r++) {
-      for (let c = 0; c < BSIZE; c++) {
-        const v = game.board[r][c];
-        if (v && v !== GOLD) nonGold = true;
-        if (v === GOLD) gold = true;
-      }
-    }
-    return !nonGold && !gold;
-  }
-
   /* ===== 日志 ===== */
-  function renderLog(game, meId, net, t) {
+  function renderLog(game, meId, t) {
     clear(els.log);
     if (!game.lastAction) return;
     const la = game.lastAction;
@@ -435,6 +606,7 @@ window.SplendorDuelUi = (function () {
       if (!game.winnerId) els.centerInfo.textContent = t('splendorDuel.draw');
       else if (game.winnerId === meId) els.centerInfo.textContent = t('splendorDuel.youWin');
       else els.centerInfo.textContent = t('splendorDuel.ended', { name: nameOf(game.winnerId) });
+      if (game.winCondition === 'stalemate') els.centerInfo.textContent += ' · ' + t('splendorDuel.stalemate');
       return;
     }
     if (game.pending && game.pending.playerId !== meId) {
@@ -444,6 +616,12 @@ window.SplendorDuelUi = (function () {
     if (game.phase === 'discard') { els.centerInfo.textContent = t('splendorDuel.discardPhase'); return; }
     if (game.currentPlayerId === meId) els.centerInfo.textContent = t('splendorDuel.yourTurn');
     else els.centerInfo.textContent = t('splendorDuel.waitNamed', { name: nameOf(game.currentPlayerId) });
+  }
+
+  function renderBag(game, t) {
+    clear(els.bagLeft);
+    if (!els.bagLeft) return;
+    els.bagLeft.textContent = t('splendorDuel.bag', { n: game.bagLeft || 0 });
   }
 
   /* ===== 交互辅助 ===== */
@@ -458,7 +636,6 @@ window.SplendorDuelUi = (function () {
     _forceRefresh();
   }
   function _toggleDiscardColor(col) { const idx = discardColors.indexOf(col); if (idx !== -1) discardColors.splice(idx, 1); else discardColors.push(col); _forceRefresh(); }
-  function _refreshCardSel() { const cards = els.panel.querySelectorAll('.sd-card'); cards.forEach((el) => { if (selectedCardId && el.dataset.cardId === selectedCardId) el.classList.add('is-selected'); else el.classList.remove('is-selected'); }); }
   function _doReserve(net, tier, idx, fromDeck) { if (fromDeck) net.sendAction('reserve_card', { tier, fromDeck: true }); else net.sendAction('reserve_card', { tier, idx }); _reset(); }
   function _findCard(game, cardId) {
     for (const t of [1, 2, 3]) { const key = 'tier' + t; const arr = game.boardCards[key] || []; for (let i = 0; i < arr.length; i++) if (arr[i].id === cardId) return { source: 'board', tier: t, idx: i }; }
@@ -504,6 +681,7 @@ window.SplendorDuelUi = (function () {
           ? net.playerNameById
           : (id) => (id == null ? '—' : String(id));
     if (!els.panel) return;
+    applyStaticI18n(t);
     SplendorDuelUi._lastState = game;
     SplendorDuelUi._lastNet = net;
     SplendorDuelUi._lastMeId = meId;
@@ -514,15 +692,16 @@ window.SplendorDuelUi = (function () {
       (meId === game.currentPlayerId && (game.phase === 'play' || (game.phase === 'discard' && game.discardPlayerId === meId)))
       || pendingMine
     );
+    renderBag(game, t);
     renderOptional(game, isActive, meId, t, net);
     renderBoard(game, isActive);
-    renderCards(game, isActive, net, t);
+    renderCards(game, isActive, meId, net, t);
     renderRoyalties(game, isActive, meId, net, t);
-    renderOpp(game, oppId(game, meId), net, t);
+    renderOpp(game, oppId(game, meId), t);
     renderMy(game, meId, isActive, t);
     renderActions(game, meId, isActive, t, net);
     renderInfo(game, meId, t);
-    renderLog(game, meId, net, t);
+    renderLog(game, meId, t);
   }
 
   return { render, _lastState: null, _lastNet: null, _lastMeId: null, _lastT: null, _lastNameOf: null };

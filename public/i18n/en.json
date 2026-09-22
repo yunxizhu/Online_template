@@ -225,6 +225,7 @@
     "hintSgsXianzhu": "Sanguosha Xianzhu mode: 5/8 players.",
     "hintSgsIdentity": "Sanguosha identity: 5/8 players, lord revealed.",
     "hintRange": "{label}: {min}–{max} players",
+    "hintBlaster": "Blaster: 2–4 players real-time; WASD to move, mouse aim + left click to shoot; bullets bounce off walls forever until they hit someone (including you); 3 HP each; last one standing wins the round; points system (+3 survive, +1 per elimination), 3–11 rounds.",
     "gameOption": "{label} ({min}–{max})"
   },
   "join": {
@@ -318,11 +319,67 @@
     "doudizhu": "Doudizhu",
     "guandan": "Guandan",
     "splendor-duel": "Splendor Duel",
+    "blaster": "Blaster",
+    "warfactory": "War Factory",
     "modes": {
       "identity": "Identity",
       "standard": "Standard",
       "melee": "Free-for-all"
     }
+  },
+  "blaster": {
+    "title": "Blaster",
+    "boardAria": "Blaster arena",
+    "help": "WASD move · mouse aim · hold left click to charge, release to fire · longer charge = faster bullet · max 5 bullets in play · items trigger on touch",
+    "roundOf": "Round {round}/{total} · {extra}",
+    "roundPlaying": "in progress",
+    "roundSettling": "round over, next one starting",
+    "matchOver": "Match over, champion: {name}",
+    "matchDraw": "Match over (draw)",
+    "countdownHint": "WASD move · mouse aim · hold left click to charge",
+    "ammoHud": "Bullets in play {used}/{max}",
+    "itemsTitle": "Map items (instant on touch)",
+    "item": {
+      "heal": "Heal",
+      "power": "Big bullets",
+      "ammo": "Ammo up",
+      "speed": "Swift",
+      "shield": "Shield"
+    },
+    "itemDesc": {
+      "heal": "+1 HP",
+      "power": "fatter bullets for 8s",
+      "ammo": "+2 bullet cap",
+      "speed": "run faster for 6s",
+      "shield": "blocks the next hit"
+    },
+    "survivor": "{name} survived to the end",
+    "survivorBonus": "+3 pts · next round starting",
+    "mutualKill": "Mutual destruction",
+    "mutualKillSub": "No one scores this round",
+    "champion": "{name} wins the match!",
+    "championSub": "See the scoreboard below",
+    "drawTitle": "Draw"
+  },
+  "warfactory": {
+    "title": "War Factory",
+    "boardAria": "War Factory battlefield",
+    "help": "Left-drag to select units · Right-click to attack-move (auto engage) · WASD/arrows pan camera · click minimap to jump · F select on-screen units · Capture factories for production, labs speed evolution · Lose all factories and you are out",
+    "legendTitle": "Unit Codex",
+    "unit": {
+      "warrior": "melee brawler, balanced",
+      "shield": "slow heavy armor",
+      "ranger": "long-range sniper, fragile",
+      "burst": "area shelling",
+      "burn": "ignite and burn over time"
+    },
+    "countdownHint": "Capture factories · labs boost evolution",
+    "playHint": "Left-drag select · right-click attack-move",
+    "countdown": "Deploying in {n}s",
+    "playing": "Battle in progress",
+    "eliminated": "You are out (spectating)",
+    "matchOver": "War ended: {name} unifies the land",
+    "matchDraw": "War ended (mutual destruction)"
   },
   "catan": {
     "title": "Catan",
@@ -498,6 +555,8 @@
     "royalties": "Royalty Cards",
     "nobles": "Nobles",
     "reserved": "Reserved",
+    "log": "Game Log",
+    "logTip": "Recent moves of both players, newest last",
     "myTokens": "My Tokens",
     "myCards": "My Cards",
     "prestige": "Prestige {n}",
@@ -554,7 +613,16 @@
     "cannotAct": "No mandatory action available — replenish or pass",
     "actionPass": "Pass",
     "draw": "Neither player can act — draw",
-    "stalemate": "Neither player can act — decided by prestige/crowns"
+    "stalemate": "Neither player can act — decided by prestige/crowns",
+    "opponent": "Opponent",
+    "me": "You",
+    "tokens": "Gems",
+    "bonus": "Bonuses",
+    "market": "Development cards",
+    "bag": "Bag {n}",
+    "selectedCount": "Selected {n}/{m}",
+    "deck": "Deck",
+    "deckEmpty": "Empty"
   },
   "lasidao": {
     "title": "Kalastan",

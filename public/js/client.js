@@ -299,6 +299,7 @@ window.GameNet = (function () {
       'game:loadingProgress',
       'game:started',
       'game:state',
+      'game:rt',
       'game:pulse',
       'game:play-reveal',
       'game:error',
@@ -1170,6 +1171,11 @@ window.GameNet = (function () {
     ensureSocket().emit('game:setHosted', { hosted: Boolean(hosted) });
   }
 
+  /** 实时对战：高频轻量输入（移动/瞄准/射击），不触发全量状态广播 */
+  function sendRt(payload) {
+    ensureSocket().emit('game:rtInput', payload || {});
+  }
+
   function getLocalOrigin() {
     return localOrigin;
   }
@@ -1324,6 +1330,7 @@ window.GameNet = (function () {
     quitGame,
     sendChat,
     sendAction,
+    sendRt,
     setHosted,
     getLocalOrigin,
     getCurrentUrl,

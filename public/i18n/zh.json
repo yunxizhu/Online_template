@@ -225,6 +225,7 @@
     "hintSgsXianzhu": "三国杀·先主黄巾：5/8 人；先主 5 选 1、其余 3 选 1；先主体力+1（后主不加），可传位；黄巾可感染，人数达存活一半（向上取整）时起义（剩 2 人不起义）。",
     "hintSgsIdentity": "三国杀·标准身份：5/8 人满员开局；主公亮明且 5 选 1，其余角色 3 选 1；主公体力+1。",
     "hintRange": "{label}：{min}–{max} 人",
+    "hintBlaster": "弹射对决：2–4 人实时对战；WASD 移动、鼠标瞄准 + 左键射击；子弹恒速、撞墙无限反弹，命中任意小人（含自己）才消失；每人 3 点生命，场上只剩 1 人时该小人本局获胜；积分制（存活 +3、淘汰 +1），可设 3–11 局。",
     "gameOption": "{label}（{min}–{max}人）"
   },
   "join": {
@@ -318,11 +319,67 @@
     "doudizhu": "斗地主",
     "guandan": "掼蛋",
     "splendor-duel": "璀璨宝石·对决",
+    "blaster": "弹射对决",
+    "warfactory": "战争工厂",
     "modes": {
       "identity": "标准身份",
       "standard": "标准模式",
       "melee": "各自为战"
     }
+  },
+  "blaster": {
+    "title": "弹射对决",
+    "boardAria": "弹射对决战场",
+    "help": "WASD 移动 · 鼠标瞄准 · 按住左键蓄力、松开发射 · 蓄力越久子弹越快 · 同时最多 5 颗子弹 · 踩到道具立即生效",
+    "roundOf": "第 {round}/{total} 局 · {extra}",
+    "roundPlaying": "进行中",
+    "roundSettling": "本局结束，即将开始下一局",
+    "matchOver": "系列赛结束，冠军：{name}",
+    "matchDraw": "系列赛结束（同分平局）",
+    "countdownHint": "WASD 移动 · 鼠标瞄准 · 按住左键蓄力发射",
+    "ammoHud": "场上子弹 {used}/{max}",
+    "itemsTitle": "地图道具（碰到即生效）",
+    "item": {
+      "heal": "回血",
+      "power": "子弹变大",
+      "ammo": "备弹扩容",
+      "speed": "疾风",
+      "shield": "护盾"
+    },
+    "itemDesc": {
+      "heal": "+1 生命",
+      "power": "8 秒内子弹更粗",
+      "ammo": "在场子弹上限 +2",
+      "speed": "6 秒内跑得更快",
+      "shield": "抵挡下一次命中"
+    },
+    "survivor": "{name} 存活到最后",
+    "survivorBonus": "+3 分 · 下一局即将开始",
+    "mutualKill": "同归于尽",
+    "mutualKillSub": "本局无人得分",
+    "champion": "{name} 夺冠！",
+    "championSub": "总积分榜见下方",
+    "drawTitle": "同分，平局"
+  },
+  "warfactory": {
+    "title": "战争工厂",
+    "boardAria": "战争工厂战场",
+    "help": "左键框选部队 · 右键进攻移动（部队自动迎击）· WASD/方向键移动镜头 · 点击小地图跳转 · F 选取屏内部队 · 占领工厂获兵源，研究所加速进化 · 失去全部工厂即败",
+    "legendTitle": "兵种图谱",
+    "unit": {
+      "warrior": "近战突进，攻守兼备",
+      "shield": "重甲缓慢，坚不可摧",
+      "ranger": "远程狙击，薄血长射",
+      "burst": "范围炮击，落点成墨",
+      "burn": "引火灼烧，伤上加伤"
+    },
+    "countdownHint": "抢占工厂 · 研究所可加速进化",
+    "playHint": "左键框选部队 · 右键进攻移动",
+    "countdown": "出征准备 {n} 秒",
+    "playing": "逐鹿中原",
+    "eliminated": "你已出局（可观战）",
+    "matchOver": "战局终结：{name} 平定天下",
+    "matchDraw": "战局终结（同归于尽）"
   },
   "catan": {
     "title": "卡坦岛",
@@ -498,6 +555,8 @@
     "royalties": "王室卡牌",
     "nobles": "贵族",
     "reserved": "预留卡",
+    "log": "对局记录",
+    "logTip": "按顺序记录双方最近的操作",
     "myTokens": "我的宝石",
     "myCards": "已购卡",
     "prestige": "声望 {n}",
@@ -554,7 +613,16 @@
     "cannotAct": "无可用强制行动，可补充版图或跳过",
     "actionPass": "跳过回合",
     "draw": "双方均无法行动，平局",
-    "stalemate": "双方均无法行动，按声望/皇冠判定胜负"
+    "stalemate": "双方均无法行动，按声望/皇冠判定胜负",
+    "opponent": "对手",
+    "me": "我",
+    "tokens": "宝石",
+    "bonus": "红利",
+    "market": "发展卡",
+    "bag": "抽袋 {n}",
+    "selectedCount": "已选 {n}/{m}",
+    "deck": "牌堆",
+    "deckEmpty": "空"
   },
   "lasidao": {
     "title": "卡拉斯坦",

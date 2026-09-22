@@ -895,6 +895,30 @@ function afterPlayingMutation(room, { wasOver = false, wasStatus = null } = {}) 
   scheduleDoudizhuNextHand(room);
 }
 
+/** 实时对战（弹射对决）：服务端权威模拟循环，负责推进物理并广播快照 */
+function startRealtimeLoop(room) {
+  if (!room || !room.game) return;
+  const mod = getGame(room.gameType);
+  if (!mod || typeof mod.startLoop !== 'function') return;
+  mod.startLoop(room, {
+    isAlive: () => rooms.getRoom(room.id) === room,
+    broadcastState: () => emitGameState(room),
+    broadcastRt: (payload) => {
+      try {
+        io.to(room.id).emit('game:rt', payload);
+      } catch (_) {
+        /* ignore */
+      }
+    },
+  });
+}
+
+function stopRealtimeLoop(room) {
+  if (!room) return;
+  const mod = getGame(room.gameType);
+  if (mod && typeof mod.stopLoop === 'function') mod.stopLoop(room.id);
+}
+
 /** 斗地主：本局结束且系列赛未完 → 短暂展示结果后自动开下一局 */
 const _ddzNextHandTimers = new Map();
 function scheduleDoudizhuNextHand(room) {
@@ -2886,6 +2910,7 @@ io.on('connection', (socket) => {
       emitRoomUpdate(result.room);
     }
     emitLobbyUpdate();
+    if (result.dissolved) stopRealtimeLoop(result.room);
     socket.emit('room:left', {
       reason: result.dissolved ? 'dissolved' : 'left',
       roomId: result.leftRoomId || null,
@@ -2929,6 +2954,7 @@ io.on('connection', (socket) => {
       }
     }
     socket.emit('game:quit-ok', {});
+    if (result.dissolved) stopRealtimeLoop(result.room);
     emitLobbyUpdate();
     mqttOnLogin();
     if (result.dissolved) mqttClearRoomOnDissolve();
@@ -3016,6 +3042,24 @@ io.on('connection', (socket) => {
       syncTurnTimer(room, { onTimeout: handleTurnTimeout });
       emitGameStarted(room);
       scheduleLasidaoInitAnnounce(room);
+      startRealtimeLoop(room);
+    }
+  });
+
+  // 实时对战：玩家操作输入（移动/瞄准/射击），高频轻量通道，不触发全量状态广播
+  socket.on('game:rtInput', (data = {}) => {
+    const player = rooms.getPlayer(socket.id);
+    if (!player || !player.roomId) return;
+    const room = rooms.getRoom(player.roomId);
+    if (!room || room.status !== 'playing' || !room.game) return;
+    const mod = getGame(room.gameType);
+    if (!mod || typeof mod.setPlayerInput !== 'function') return;
+    const seat = (room.players || []).find((p) => p && p.id === socket.id);
+    if (seat && seat.isHosted) return;
+    try {
+      mod.setPlayerInput(room.game, socket.id, data);
+    } catch (_) {
+      /* ignore */
     }
   });
 

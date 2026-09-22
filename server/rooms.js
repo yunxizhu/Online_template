@@ -138,6 +138,24 @@ function isTeamSeatRoom(room) {
   );
 }
 
+/** 支持「连续局数」（积分制系列赛）的游戏 */
+const MATCH_GAMES_TYPES = new Set(['doudizhu', 'blaster']);
+const DEFAULT_MATCH_GAMES = 5;
+
+function supportsMatchGames(gameType) {
+  return Boolean(gameType) && MATCH_GAMES_TYPES.has(gameType);
+}
+
+/** 按游戏模块自己的范围裁剪局数；没有 clampMatchGames 时用 1–11 */
+function clampMatchGamesFor(gameType, value, fallback) {
+  const mod = getGame(gameType);
+  const clamp =
+    mod && typeof mod.clampMatchGames === 'function'
+      ? mod.clampMatchGames
+      : (n) => Math.max(1, Math.min(11, Math.floor(Number(n)) || 5));
+  return clamp(value != null ? value : fallback != null ? fallback : DEFAULT_MATCH_GAMES);
+}
+
 function clearTeamSeats(room) {
   for (const p of room.players || []) {
     if (!p) continue;
@@ -262,7 +280,9 @@ function publicRoomView(room) {
     allowTrade: Boolean(room.allowTrade),
     peacefulDev: room.peacefulDev !== false,
     easyStart: room.gameType === 'lasidao' ? room.easyStart !== false : false,
-    matchGames: room.gameType === 'doudizhu' ? Number(room.matchGames) || 5 : null,
+    matchGames: supportsMatchGames(room.gameType)
+      ? Number(room.matchGames) || DEFAULT_MATCH_GAMES
+      : null,
     passiveHosted: Boolean(room.passiveHosted),
     canJoin: waiting && playerCount < room.maxPlayers,
     canSpectate: (waiting || playing) && !over,
@@ -319,7 +339,9 @@ function fullRoomView(room) {
     allowTrade: Boolean(room.allowTrade),
     peacefulDev: room.peacefulDev !== false,
     easyStart: room.gameType === 'lasidao' ? room.easyStart !== false : false,
-    matchGames: room.gameType === 'doudizhu' ? Number(room.matchGames) || 5 : null,
+    matchGames: supportsMatchGames(room.gameType)
+      ? Number(room.matchGames) || DEFAULT_MATCH_GAMES
+      : null,
     passiveHosted: Boolean(room.passiveHosted),
   };
 }
@@ -682,18 +704,10 @@ class RoomManager {
       game: null,
       createdAt: Date.now(),
       playingStartedAt: null,
-      // 斗地主：系列赛局数（1-11，默认 5）
-      matchGames:
-        cfg.type === 'doudizhu'
-          ? (() => {
-              const doudizhu = getGame('doudizhu');
-              const clamp =
-                doudizhu && typeof doudizhu.clampMatchGames === 'function'
-                  ? doudizhu.clampMatchGames
-                  : (n) => Math.max(1, Math.min(11, Math.floor(Number(n)) || 5));
-              return clamp(matchGames != null ? matchGames : 5);
-            })()
-          : null,
+      // 系列赛局数（斗地主 1-11、弹射对决 3-11，默认 5）
+      matchGames: supportsMatchGames(cfg.type)
+        ? clampMatchGamesFor(cfg.type, matchGames, DEFAULT_MATCH_GAMES)
+        : null,
       // 隧道就绪并房主进房前：不进大厅列表、人员仍显示空闲、不广播房间
       pendingLobby: true,
       passiveHosted: Boolean(passiveHost),
@@ -835,14 +849,11 @@ class RoomManager {
     room.gameMode = cfg.modeId;
     room.gameModeLabel = cfg.modeLabel;
     room.turnTimeSec = cfg.turnTimeSec;
-    if (cfg.type === 'doudizhu') {
-      const doudizhu = getGame('doudizhu');
-      const clamp =
-        doudizhu && typeof doudizhu.clampMatchGames === 'function'
-          ? doudizhu.clampMatchGames
-          : (n) => Math.max(1, Math.min(11, Math.floor(Number(n)) || 5));
-      room.matchGames = clamp(
-        matchGames != null ? matchGames : room.matchGames != null ? room.matchGames : 5
+    if (supportsMatchGames(cfg.type)) {
+      room.matchGames = clampMatchGamesFor(
+        cfg.type,
+        matchGames != null ? matchGames : room.matchGames,
+        DEFAULT_MATCH_GAMES
       );
     } else {
       room.matchGames = null;
@@ -1926,6 +1937,9 @@ class RoomManager {
     room.playingStartedAt = Date.now();
     try {
       room.game = game.createGameState(room);
+      if (typeof game.assignRandomWalls === 'function') {
+        game.assignRandomWalls(room.game);
+      }
     } catch (err) {
       room.status = 'waiting';
       room.playingStartedAt = null;

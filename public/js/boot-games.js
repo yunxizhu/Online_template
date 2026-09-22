@@ -156,7 +156,11 @@ window.GameBoot = (function () {
                     ? 'GuandanUi'
                     : id === 'splendor-duel'
                       ? 'SplendorDuelUi'
-                      : null;
+                      : id === 'blaster'
+                        ? 'BlasterUi'
+                        : id === 'warfactory'
+                          ? 'WarFactoryUi'
+                          : null;
     if (needGlobal && !window[needGlobal]) {
       for (const src of scriptUrls) {
         const el = findAssetEl('script', src);

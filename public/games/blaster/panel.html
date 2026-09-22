@@ -1,0 +1,47 @@
+<!-- 弹射对决对局面板 -->
+<div class="panel game-panel" id="panel-blaster" hidden>
+  <h2 id="game-title" data-i18n="blaster.title">弹射对决</h2>
+  <p id="game-status" class="game-status">—</p>
+  <p id="game-sides" class="muted"></p>
+  <div class="blaster-wrap">
+    <canvas
+      id="blaster-canvas"
+      width="1500"
+      height="960"
+      data-i18n-attr="aria-label:blaster.boardAria"
+      aria-label="弹射对决战场"
+    ></canvas>
+  </div>
+  <div id="blaster-scores" class="blaster-scores"></div>
+  <div class="blaster-legend">
+    <span class="blaster-legend-title" data-i18n="blaster.itemsTitle">地图道具（碰到即生效）</span>
+    <span class="blaster-legend-item">
+      <i class="blaster-legend-glyph" style="--c:#34d399">+</i>
+      <b data-i18n="blaster.item.heal">回血</b>
+      <em data-i18n="blaster.itemDesc.heal">+1 生命</em>
+    </span>
+    <span class="blaster-legend-item">
+      <i class="blaster-legend-glyph" style="--c:#a78bfa">◉</i>
+      <b data-i18n="blaster.item.power">子弹变大</b>
+      <em data-i18n="blaster.itemDesc.power">8 秒内子弹更粗</em>
+    </span>
+    <span class="blaster-legend-item">
+      <i class="blaster-legend-glyph" style="--c:#60a5fa">≡</i>
+      <b data-i18n="blaster.item.ammo">备弹扩容</b>
+      <em data-i18n="blaster.itemDesc.ammo">在场子弹上限 +2</em>
+    </span>
+    <span class="blaster-legend-item">
+      <i class="blaster-legend-glyph" style="--c:#fbbf24">»</i>
+      <b data-i18n="blaster.item.speed">疾风</b>
+      <em data-i18n="blaster.itemDesc.speed">6 秒内跑得更快</em>
+    </span>
+    <span class="blaster-legend-item">
+      <i class="blaster-legend-glyph" style="--c:#22d3ee">◆</i>
+      <b data-i18n="blaster.item.shield">护盾</b>
+      <em data-i18n="blaster.itemDesc.shield">抵挡下一次命中</em>
+    </span>
+  </div>
+  <p class="blaster-help" data-i18n="blaster.help">
+    WASD 移动 · 鼠标瞄准 · 按住左键蓄力、松开发射 · 蓄力越久子弹越快 · 同时最多 5 颗子弹
+  </p>
+</div>

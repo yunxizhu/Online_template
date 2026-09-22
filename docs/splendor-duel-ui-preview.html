@@ -1,0 +1,1644 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>璀璨宝石·对决 UI 预览</title>
+
+<style>
+:root{--bg:#1a1f24;--panel:#243038;--text:#e8eef2;--muted:#8fa3b0;--accent:#3d9b8f;--accent-hover:#4cb3a5;--danger:#c45c5c;--border:#334450;}
+[hidden]{display:none !important;}
+*{box-sizing:border-box;}
+body{margin:0;padding:0.75rem 1rem 1.5rem;background:var(--bg);color:var(--text);font-family:system-ui,"Microsoft YaHei",sans-serif;}
+.prev-note{font-size:0.78rem;color:var(--muted);margin-bottom:0.5rem;}
+.prev-bar{display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.6rem;}
+.prev-bar button{background:var(--accent);color:#fff;border:1px solid rgba(255,255,255,.14);border-radius:8px;padding:0.35rem 0.8rem;font-size:0.82rem;cursor:pointer;}
+.prev-bar button.sec{background:rgba(255,255,255,.08);}
+.prev-bar button:hover{filter:brightness(1.12);}
+h2#game-title{font-size:1.1rem;margin:0 0 0.2rem;}
+p.game-status{font-size:0.8rem;color:var(--muted);margin:0 0 0.6rem;}
+</style>
+</head><body>
+<div class="prev-note">UI 预览（真实引擎生成的中局状态，按钮仅演示交互，不会真的发请求）</div>
+<div class="prev-bar">
+  <button type="button" data-act="default">默认视图</button>
+  <button type="button" data-act="take">拿取标记模式</button>
+  <button type="button" data-act="buy">购买卡牌模式</button>
+  <button type="button" class="sec" data-act="reserve">预留卡牌模式</button>
+</div>
+<!-- 璀璨宝石·对决 对局面板 -->
+<div class="panel game-panel" id="panel-splendor-duel" hidden>
+  <h2 id="game-title" data-i18n="splendorDuel.title">璀璨宝石·对决</h2>
+  <p id="game-status" class="game-status">—</p>
+
+  <!-- 顶部行动条（吸顶） -->
+  <div class="sd-actionbar" id="sd-actionbar">
+    <div class="sd-ab-head">
+      <span class="sd-turn-badge" id="sd-center-info"></span>
+      <div class="sd-ab-hint" id="sd-mandatory-hint"></div>
+    </div>
+    <div class="sd-ab-actions" id="sd-actions"></div>
+    <div class="sd-ab-foot">
+      <span class="sd-privilege-label" data-i18n="splendorDuel.privilegeLabel">剩余特权</span>
+      <span class="sd-privilege-pool" id="sd-privilege-pool"></span>
+      <div class="sd-ab-opt-btns" id="sd-opt-actions"></div>
+    </div>
+  </div>
+
+  <!-- 牌桌：左 1/4 版图+王室卡，中 1/2 卡牌区，右 1/4 玩家信息 -->
+  <div class="sd-table">
+    <!-- ===== 左 1/4：版图（上）+ 王室卡（下） ===== -->
+    <div class="sd-col sd-col-left">
+      <section class="sd-block sd-board-block">
+        <div class="sd-block-head">
+          <span data-i18n="splendorDuel.board">版图</span>
+          <span class="sd-bag-badge" id="sd-bag-left"></span>
+        </div>
+        <div class="sd-board-grid" id="sd-board-grid"></div>
+      </section>
+
+      <section class="sd-block sd-royalties-block">
+        <div class="sd-block-head"><span data-i18n="splendorDuel.royalties">王室卡牌</span></div>
+        <div class="sd-royalties-list" id="sd-royalties-list"></div>
+      </section>
+    </div>
+
+    <!-- ===== 中 1/2：发展卡金字塔 ===== -->
+    <div class="sd-col sd-col-market">
+      <section class="sd-block sd-market">
+        <div class="sd-block-head"><span data-i18n="splendorDuel.market">发展卡</span></div>
+        <div class="sd-card-pyramid">
+          <div class="sd-tier-row" data-tier="3">
+            <div class="sd-tier-label">III</div>
+            <div class="sd-tier-deck" id="sd-deck-t3"></div>
+            <div class="sd-tier-cards" id="sd-board-t3"></div>
+          </div>
+          <div class="sd-tier-row" data-tier="2">
+            <div class="sd-tier-label">II</div>
+            <div class="sd-tier-deck" id="sd-deck-t2"></div>
+            <div class="sd-tier-cards" id="sd-board-t2"></div>
+          </div>
+          <div class="sd-tier-row" data-tier="1">
+            <div class="sd-tier-label">I</div>
+            <div class="sd-tier-deck" id="sd-deck-t1"></div>
+            <div class="sd-tier-cards" id="sd-board-t1"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ===== 右：玩家信息 ===== -->
+    <div class="sd-col sd-col-players">
+      <aside class="sd-block sd-hud" id="sd-opponent-area">
+        <div class="sd-block-head">
+          <span class="sd-hud-name" id="sd-opp-name"></span>
+          <span class="sd-hud-tag" data-i18n="splendorDuel.opponent">对手</span>
+        </div>
+        <div class="sd-stat-row">
+          <span class="sd-stat" id="sd-opp-prestige"></span>
+          <span class="sd-stat" id="sd-opp-crowns"></span>
+          <span class="sd-stat" id="sd-opp-privileges"></span>
+        </div>
+        <div class="sd-hud-line">
+          <span class="sd-hud-label" data-i18n="splendorDuel.tokens">宝石</span>
+          <div class="sd-hud-tokens" id="sd-opp-tokens"></div>
+        </div>
+        <div class="sd-hud-line">
+          <span class="sd-hud-label" data-i18n="splendorDuel.bonus">红利</span>
+          <div class="sd-hud-bonus" id="sd-opp-bonus"></div>
+        </div>
+        <div class="sd-hud-line">
+          <span class="sd-hud-label" data-i18n="splendorDuel.reserved">预留卡</span>
+          <div class="sd-hud-reserved" id="sd-opp-reserved"></div>
+        </div>
+      </aside>
+
+      <section class="sd-block sd-tray" id="sd-my-area">
+        <div class="sd-block-head">
+          <span class="sd-hud-name" data-i18n="splendorDuel.me">我</span>
+        </div>
+        <div class="sd-stat-row">
+          <span class="sd-stat" id="sd-my-prestige"></span>
+          <span class="sd-stat" id="sd-my-crowns"></span>
+          <span class="sd-stat" id="sd-my-privileges"></span>
+        </div>
+        <div class="sd-tray-line">
+          <span class="sd-hud-label" data-i18n="splendorDuel.myTokens">我的宝石</span>
+          <div class="sd-my-tokens" id="sd-my-tokens"></div>
+        </div>
+        <div class="sd-tray-line">
+          <span class="sd-hud-label" data-i18n="splendorDuel.bonus">红利</span>
+          <div class="sd-my-bonus" id="sd-my-bonus"></div>
+        </div>
+        <div class="sd-tray-line">
+          <span class="sd-hud-label" data-i18n="splendorDuel.myCards">已购卡（同色声望）</span>
+          <div class="sd-my-cards" id="sd-my-cards"></div>
+        </div>
+        <div class="sd-tray-line">
+          <span class="sd-hud-label" data-i18n="splendorDuel.reserved">预留卡</span>
+          <div class="sd-my-reserved" id="sd-my-reserved"></div>
+        </div>
+      </section>
+
+      <section class="sd-block sd-log-block">
+        <div class="sd-block-head">
+          <span data-i18n="splendorDuel.log" data-i18n-attr="title:splendorDuel.logTip" title="按顺序记录双方最近的操作">对局记录</span>
+        </div>
+        <ul id="sd-log" class="game-log"></ul>
+      </section>
+    </div>
+  </div>
+</div>
+
+<style>
+/* 牌桌铺满可用宽度（不再限制 1400px 居中留白） */
+#panel-splendor-duel { max-width: none; width: 100%; margin: 0; }
+/* 牌桌铺满可用宽度（不再限制 1400px 居中留白） */
+#panel-splendor-duel { max-width: none; width: 100%; margin: 0; }
+
+/* 宝石配色：--ga 亮面 / --gb 暗面 / --ink 字色 */
+#panel-splendor-duel .emerald  { --ga:#54d492; --gb:#1d8a54; --ink:#fff; }
+#panel-splendor-duel .sapphire { --ga:#63aef2; --gb:#1c5fa8; --ink:#fff; }
+#panel-splendor-duel .ruby     { --ga:#f4796a; --gb:#a32a26; --ink:#fff; }
+#panel-splendor-duel .diamond  { --ga:#ffffff; --gb:#dbe3ec; --ink:#5b6b7b; }
+#panel-splendor-duel .onyx     { --ga:#63757f; --gb:#222d35; --ink:#fff; }
+#panel-splendor-duel .pearl    { --ga:#ffd1e3; --gb:#ff85b3; --ink:#b03060; }
+#panel-splendor-duel .gold     { --ga:#ffe08a; --gb:#c48f16; --ink:#3a2a06; }
+
+/* 通用区块 */
+.sd-block {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.7rem 0.8rem 0.8rem;
+}
+
+.sd-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin-bottom: 0.5rem;
+}
+
+/* ====== 顶部行动条 ====== */
+.sd-actionbar {
+  position: sticky;
+  top: 0;
+  z-index: 12;
+  margin: 0 0 0.75rem;
+  padding: 0.55rem 0.75rem 0.6rem;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(45, 60, 70, 0.98), rgba(36, 48, 56, 0.96));
+  border: 1px solid #43595f;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(6px);
+}
+
+.sd-ab-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  min-height: 1.4rem;
+}
+
+.sd-turn-badge {
+  font-size: 0.85rem;
+  font-weight: 700;
+  padding: 0.15rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(61, 155, 143, 0.16);
+  border: 1px solid rgba(61, 155, 143, 0.5);
+  color: #7fd6c7;
+}
+
+.sd-turn-badge:empty { display: none; }
+
+.sd-ab-hint {
+  font-size: 0.8rem;
+  color: #f0d79a;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.sd-ab-hint:empty { display: none; }
+
+.sd-ab-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.45rem;
+  margin-top: 0.5rem;
+}
+
+.sd-ab-actions:empty { display: none; }
+
+.sd-ab-actions button,
+.sd-ab-opt-btns button {
+  background: linear-gradient(180deg, #47ab9d, #2f8579);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.28);
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+
+.sd-ab-actions button:hover,
+.sd-ab-opt-btns button:hover { filter: brightness(1.12); transform: translateY(-1px); }
+
+.sd-ab-actions button.secondary,
+.sd-ab-opt-btns button.secondary {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  box-shadow: none;
+  font-weight: 500;
+}
+
+.sd-ab-actions button.secondary:hover,
+.sd-ab-opt-btns button.secondary:hover { background: rgba(255, 255, 255, 0.12); }
+
+.sd-ab-foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.45rem;
+  padding-top: 0.45rem;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+}
+
+.sd-privilege-label { font-size: 0.72rem; color: var(--muted); }
+.sd-privilege-pool { display: inline-flex; gap: 0.2rem; }
+
+.sd-privilege-token {
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6rem;
+  color: transparent;
+}
+
+.sd-privilege-token.active {
+  background: radial-gradient(circle at 32% 28%, #fff2c2, #e0a92c 55%, #a9761a);
+  border-color: #f0c868;
+  color: #5a3f08;
+  box-shadow: 0 0 6px rgba(240, 200, 104, 0.45);
+}
+
+.sd-ab-opt-btns { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: center; }
+.sd-ab-opt-btns:empty { display: none; }
+.sd-ab-opt-btns button { padding: 0.35rem 0.75rem; font-size: 0.8rem; }
+
+/* ====== 牌桌：左 1/4（版图+王室卡） + 中 1/2（卡牌） + 右 1/4（玩家） ====== */
+.sd-table {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-areas: "left market players";
+  gap: 0.75rem;
+  align-items: stretch;
+  min-height: 26rem;
+}
+
+.sd-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.sd-col-left { grid-area: left; }
+.sd-col-market { grid-area: market; }
+.sd-col-players { grid-area: players; }
+
+/* 左列：版图按列宽（= 屏宽 1/4）撑满，王室卡吃掉剩余高度 */
+.sd-col-left > .sd-board-block { flex: 0 0 auto; }
+.sd-col-left > .sd-royalties-block { flex: 1 1 auto; }
+
+/* ====== 5×5 版图 ====== */
+.sd-board-block { display: flex; flex-direction: column; }
+.sd-board-block .sd-block-head { flex: 0 0 auto; }
+.sd-board-block .sd-board-grid { flex: 1 1 auto; }
+
+.sd-bag-badge {
+  font-size: 0.7rem;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.sd-board-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.5rem;
+  /* 撑满左列（= 屏宽 1/4），仅用视口高度兜底，避免把页面拉得过长 */
+  width: 100%;
+  max-width: min(100%, 56vh);
+  aspect-ratio: 1;
+  margin: 0 auto;
+  padding: 0.7rem;
+  border-radius: 16px;
+  background:
+    radial-gradient(ellipse at 50% 20%, #33454f 0%, transparent 60%),
+    linear-gradient(160deg, #2a383f, #1e292f);
+  border: 1px solid #3d525b;
+  box-shadow: inset 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+
+.sd-grid-cell {
+  border-radius: 50%;
+  aspect-ratio: 1;
+  font-size: 1.15rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  cursor: default;
+  transition: transform 0.14s ease, box-shadow 0.14s ease, opacity 0.14s ease;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+}
+
+.sd-grid-cell:not(.empty) {
+  color: var(--ink, #fff);
+  background:
+    radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0) 48%),
+    linear-gradient(158deg, var(--ga), var(--gb));
+  box-shadow: inset 0 -2px 5px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.35);
+}
+
+.sd-grid-cell.empty {
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+}
+
+.sd-grid-cell.is-selectable { cursor: pointer; box-shadow: 0 0 0 2px #4dabf7, inset 0 -2px 5px rgba(0, 0, 0, 0.3); }
+.sd-grid-cell.is-selectable:hover { transform: scale(1.09); }
+.sd-grid-cell.is-selected { box-shadow: 0 0 0 3px #5ddb8f, 0 0 12px rgba(93, 219, 143, 0.5); transform: scale(1.12); }
+
+/* ====== 王室卡 ====== */
+.sd-royalties-block { display: flex; flex-direction: column; justify-content: center; }
+
+.sd-royalties-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  justify-content: center;
+  align-content: center;
+  gap: 0.45rem;
+  /* 同样撑满左列宽度，与版图对齐 */
+  width: 100%;
+  max-width: 26rem;
+  margin: 0 auto;
+}
+
+.sd-royalty {
+  width: 100%;
+  min-height: 3.4rem;
+  border-radius: 8px;
+  background: linear-gradient(160deg, #fff6dd, #eeddae);
+  border: 1px solid #d5b45c;
+  color: #3a2f1a;
+  padding: 0.25rem 0.3rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1rem;
+  font-size: 0.62rem;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4);
+  transition: transform 0.14s ease, box-shadow 0.14s ease;
+}
+
+.sd-royalty.claimed { opacity: 0.45; filter: grayscale(0.55); }
+.sd-royalty.is-clickable { cursor: pointer; box-shadow: 0 0 0 2px #ffd76a, 0 0 16px rgba(255, 200, 80, 0.4); }
+.sd-royalty.is-clickable:hover { transform: translateY(-3px); }
+
+.sd-royalty-prestige { font-weight: 800; font-size: 0.88rem; color: #9a6b12; }
+.sd-royalty-ability { font-size: 0.6rem; color: #2c5c8f; text-align: center; line-height: 1.25; }
+.sd-royalty-claimed { font-size: 0.7rem; color: #2b7a4b; }
+
+/* ====== 对手面板 ====== */
+.sd-hud { display: flex; flex-direction: column; gap: 0.45rem; }
+
+.sd-hud-tag {
+  font-size: 0.65rem;
+  color: #c9853a;
+  border: 1px solid rgba(201, 133, 58, 0.5);
+  background: rgba(201, 133, 58, 0.12);
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.sd-hud-name { font-size: 0.95rem; font-weight: 700; color: var(--text); text-transform: none; letter-spacing: 0; }
+
+.sd-hud-line, .sd-tray-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.sd-hud-label {
+  font-size: 0.7rem;
+  color: var(--muted);
+  flex: 0 0 auto;
+  min-width: 3.2rem;
+}
+
+.sd-hud-tokens, .sd-hud-bonus, .sd-hud-reserved {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+  min-height: 1.7rem;
+}
+
+/* ====== 状态徽标（带进度）====== */
+.sd-stat-row { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+
+.sd-stat {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 4.6rem;
+  padding: 0.2rem 0.5rem 0.25rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+}
+
+.sd-stat-v { font-size: 0.72rem; font-weight: 600; color: var(--text); white-space: nowrap; }
+
+.sd-stat-bar {
+  display: block;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.sd-stat-bar > i { display: block; height: 100%; border-radius: 2px; background: #5ecfbe; transition: width 0.25s ease; }
+.sd-stat.crowns .sd-stat-bar > i { background: #e0725f; }
+.sd-stat.priv .sd-stat-bar > i { background: #e8c15c; }
+.sd-stat.prestige { border-color: rgba(94, 207, 190, 0.4); }
+.sd-stat.crowns { border-color: rgba(224, 114, 95, 0.4); }
+.sd-stat.priv { border-color: rgba(232, 193, 92, 0.4); }
+
+/* 小宝石标记 */
+.sd-mini-token {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  font-size: 0.68rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink, #fff);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
+  background:
+    radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0) 48%),
+    linear-gradient(158deg, var(--ga), var(--gb));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+/* 红利点 */
+.sd-bonus-dot {
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 50%;
+  font-size: 0.62rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink, #fff);
+  background: linear-gradient(158deg, var(--ga), var(--gb));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
+/* 预留背面 */
+.sd-reserve-back {
+  width: 2.2rem;
+  height: 3.1rem;
+  border-radius: 5px;
+  background: linear-gradient(160deg, #4b5b66, #2b3740);
+  border: 1px solid #5d707b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #cfdae0;
+  font-size: 0.68rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.35);
+}
+
+.sd-reserve-slot {
+  width: 2.2rem;
+  height: 3.1rem;
+  border-radius: 5px;
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* ====== 发展卡金字塔 ====== */
+/* 市场区吃掉左栏剩余高度，三行均匀铺开，避免底部大片留白 */
+.sd-market { display: flex; flex-direction: column; flex: 1 1 auto; }
+
+.sd-card-pyramid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  justify-content: space-evenly;
+}
+
+.sd-tier-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  padding: 0.4rem;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.sd-tier-row[data-tier="3"] { box-shadow: inset 3px 0 0 #8a5fb8; }
+.sd-tier-row[data-tier="2"] { box-shadow: inset 3px 0 0 #3f76b0; }
+.sd-tier-row[data-tier="1"] { box-shadow: inset 3px 0 0 #4f8f6a; }
+
+.sd-tier-label {
+  width: 1.9rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--border);
+  color: #cfdae0;
+  font-size: 0.72rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.sd-tier-deck {
+  width: 4.2rem;
+  min-height: 5.6rem;
+  border-radius: 6px;
+  background: linear-gradient(160deg, #46586a, #2a3641);
+  border: 1px solid #5d707b;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.25), 4px 4px 0 rgba(0, 0, 0, 0.16);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1rem;
+  color: #dbe6ec;
+  font-size: 0.72rem;
+  flex-shrink: 0;
+  cursor: default;
+}
+
+.sd-tier-deck .sd-deck-n { font-size: 0.95rem; font-weight: 800; }
+.sd-tier-deck.is-reservable { cursor: pointer; box-shadow: 0 0 0 2px #4dabf7, 2px 2px 0 rgba(0, 0, 0, 0.25); }
+.sd-tier-deck.is-reservable:hover { filter: brightness(1.15); }
+.sd-tier-deck.is-empty { opacity: 0.4; }
+
+/* 卡牌行铺满整行宽度：单排等分，既不换行也不留大片空白 */
+.sd-tier-cards {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: space-evenly;
+}
+
+.sd-tier-cards > .sd-card {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 5.2rem;
+  max-width: 11.6rem;
+}
+
+/* ====== 卡牌 ====== */
+.sd-card {
+  width: 10.4rem;
+  min-height: 6.6rem;
+  border-radius: 10px;
+  padding: 0.45rem 0.5rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.34rem;
+  font-size: 0.8rem;
+  position: relative;
+  flex-shrink: 0;
+  color: #2f2a22;
+  background: linear-gradient(168deg, #fdf8ee 0%, #f3ead8 58%, #e7dcc4 100%);
+  border: 1px solid #cbb894;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  transition: transform 0.14s ease, box-shadow 0.14s ease;
+}
+
+.sd-card.tier1 { border-top: 3px solid #4f8f6a; }
+.sd-card.tier2 { border-top: 3px solid #3f76b0; }
+.sd-card.tier3 { border-top: 3px solid #8a5fb8; }
+
+.sd-card.is-selectable { cursor: pointer; box-shadow: 0 0 0 2px #4dabf7, 0 3px 8px rgba(0, 0, 0, 0.4); }
+.sd-card.is-selectable:hover { transform: translateY(-3px); }
+.sd-card.is-selected { box-shadow: 0 0 0 3px #5ddb8f, 0 0 14px rgba(93, 219, 143, 0.45); transform: translateY(-3px); }
+.sd-card.is-affordable { box-shadow: 0 0 0 2px rgba(93, 219, 143, 0.9), 0 3px 8px rgba(0, 0, 0, 0.4); }
+.sd-card.is-dim { opacity: 0.5; filter: saturate(0.6); }
+
+.sd-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.3rem; }
+.sd-card-left { display: flex; align-items: center; gap: 0.25rem; }
+.sd-card-right { display: flex; align-items: center; gap: 0.3rem; }
+
+.sd-card-prestige {
+  font-weight: 800;
+  font-size: 0.92rem;
+  color: #7a5510;
+  background: linear-gradient(180deg, #ffe9a8, #e9c25c);
+  border: 1px solid #c9a13f;
+  border-radius: 999px;
+  padding: 0 0.4rem;
+}
+
+.sd-card-crowns { font-size: 0.8rem; font-weight: 700; color: #a8322a; }
+
+.sd-card-discount {
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  font-size: 0.72rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink, #fff);
+  background: linear-gradient(158deg, var(--ga), var(--gb));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
+.sd-card-discount.associate {
+  background: linear-gradient(135deg, #54d492 0%, #63aef2 34%, #f4796a 68%, #ff85b3 100%);
+  color: #fff;
+  border: 1px solid #b98c1f;
+}
+
+.sd-card-gold { font-size: 0.95rem; }
+
+.sd-card-costs { display: flex; flex-wrap: wrap; gap: 0.18rem; margin-top: auto; }
+
+.sd-cost-chip {
+  min-width: 1.55rem;
+  height: 1.55rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink, #fff);
+  background: linear-gradient(158deg, var(--ga), var(--gb));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25), inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+}
+
+.sd-card-ability {
+  font-size: 0.7rem;
+  line-height: 1.25;
+  color: #245a8f;
+  background: #e6eff9;
+  border: 1px solid #c3d8ee;
+  border-radius: 4px;
+  padding: 0.08rem 0.28rem;
+  align-self: flex-start;
+}
+
+/* ====== 我的面板（右栏，窄）====== */
+.sd-tray { display: flex; flex-direction: column; gap: 0.45rem; }
+
+.sd-my-tokens { display: flex; flex-wrap: wrap; gap: 0.28rem; align-items: center; min-height: 2rem; flex: 1 1 auto; }
+.sd-my-bonus { display: flex; flex-wrap: wrap; gap: 0.25rem; align-items: center; min-height: 1.6rem; flex: 1 1 auto; }
+.sd-my-reserved { display: flex; flex-wrap: wrap; gap: 0.28rem; align-items: center; min-height: 3rem; flex: 1 1 auto; }
+.sd-my-cards { display: flex; flex-direction: column; gap: 0.25rem; flex: 1 1 auto; min-height: 1.6rem; }
+
+/* 右栏里的卡牌缩小，三张预留一行放得下（栏宽收窄到 1/4 后留点余量） */
+.sd-tray .sd-card { width: 6.2rem; min-height: 4.6rem; font-size: 0.64rem; padding: 0.28rem 0.32rem 0.32rem; }
+.sd-tray .sd-card-prestige { font-size: 0.72rem; }
+.sd-tray .sd-cost-chip { min-width: 1.1rem; height: 1.1rem; font-size: 0.62rem; }
+.sd-tray .sd-card-discount { width: 1.15rem; height: 1.15rem; font-size: 0.54rem; }
+
+.sd-mini-token.is-pickable { cursor: pointer; }
+.sd-mini-token.is-picked { box-shadow: 0 0 0 2px #5ddb8f, 0 0 10px rgba(93, 219, 143, 0.45); }
+
+/* 同色声望进度 */
+.sd-cp-row { display: flex; align-items: center; gap: 0.4rem; }
+
+.sd-cp-dot {
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: linear-gradient(158deg, var(--ga), var(--gb));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+}
+
+.sd-cp-bar {
+  flex: 1 1 auto;
+  max-width: 9rem;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.sd-cp-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--ga), var(--gb));
+  transition: width 0.25s ease;
+}
+
+.sd-cp-num { font-size: 0.68rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* 行动条内提示 */
+.sd-hint {
+  font-size: 0.8rem;
+  color: var(--muted);
+  width: 100%;
+  text-align: center;
+}
+
+.sd-sel-chip {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #0f2b22;
+  background: #5ddb8f;
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+}
+
+.sd-color-btn { font-weight: 600; }
+.sd-color-btn.emerald { background: linear-gradient(158deg, #54d492, #1d8a54); color: #fff; }
+.sd-color-btn.sapphire { background: linear-gradient(158deg, #63aef2, #1c5fa8); color: #fff; }
+.sd-color-btn.ruby { background: linear-gradient(158deg, #f4796a, #a32a26); color: #fff; }
+.sd-color-btn.diamond { background: linear-gradient(158deg, #ffffff, #dbe3ec); color: #5b6b7b; }
+.sd-color-btn.onyx { background: linear-gradient(158deg, #63757f, #222d35); color: #fff; }
+.sd-color-btn.pearl { background: linear-gradient(158deg, #ffd1e3, #ff85b3); color: #b03060; }
+
+/* ====== 对局记录（右栏，吃掉剩余高度）====== */
+.sd-log-block {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 9rem;
+}
+
+.sd-log-block .sd-block-head { flex: 0 0 auto; }
+
+.sd-log-block .game-log {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.sd-log-block .game-log li {
+  padding: 0.15rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.sd-log-block .game-log li:last-child { border-bottom: none; }
+
+/* ====== 响应式 ====== */
+@media (max-width: 1360px) {
+  /* 中等宽度下收一档卡牌，保证中间一行 5 张仍能单排放下 */
+  .sd-tier-cards > .sd-card { min-width: 4.6rem; max-width: 10.6rem; }
+  .sd-card { min-height: 6.1rem; font-size: 0.76rem; }
+  .sd-cost-chip { min-width: 1.4rem; height: 1.4rem; font-size: 0.74rem; }
+  .sd-card-discount { width: 1.45rem; height: 1.45rem; font-size: 0.66rem; }
+  .sd-tier-deck { width: 3.8rem; min-height: 5.1rem; }
+}
+
+@media (max-width: 1240px) {
+  .sd-board-grid { max-width: min(100%, 50vh); }
+  .sd-grid-cell { font-size: 1.05rem; }
+}
+
+@media (max-width: 1040px) {
+  /* 左列与卡牌区并排，玩家面板挪到下方通栏 */
+  .sd-table {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.7fr);
+    grid-template-areas:
+      "left market"
+      "players players";
+  }
+  .sd-tray .sd-card { width: 7.2rem; }
+  .sd-board-grid { max-width: min(100%, 52vh); }
+  .sd-grid-cell { font-size: 1.15rem; }
+  /* 王室卡改一行横排，避免窄列里挤成两列 */
+  .sd-royalties-list {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    max-width: none;
+  }
+}
+
+@media (max-width: 760px) {
+  /* 三块全部纵向堆叠 */
+  .sd-table {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "left" "market" "players";
+  }
+  .sd-board-grid { max-width: min(24rem, 46vh); }
+  /* 窄屏不再等分：卡牌回到固定宽度并允许换行 */
+  .sd-tier-cards { flex-wrap: wrap; justify-content: center; }
+  .sd-tier-cards > .sd-card { flex: 0 0 auto; width: 9rem; }
+}
+
+@media (max-width: 640px) {
+  .sd-card { min-height: 5.6rem; padding: 0.35rem; }
+  .sd-tier-cards > .sd-card { width: 8.2rem; }
+  .sd-tray .sd-card { width: 6.2rem; }
+  .sd-tier-deck { width: 3.4rem; min-height: 4.8rem; }
+  .sd-board-grid { max-width: min(19rem, 44vh); gap: 0.35rem; padding: 0.5rem; }
+  .sd-grid-cell { font-size: 0.92rem; }
+  .sd-royalty { min-height: 2.9rem; }
+  .sd-actionbar { padding: 0.45rem 0.5rem 0.5rem; }
+  .sd-ab-actions button, .sd-ab-opt-btns button { padding: 0.45rem 0.7rem; font-size: 0.82rem; }
+  .sd-stat { min-width: 4rem; }
+  .sd-table { gap: 0.6rem; }
+  .sd-col { gap: 0.6rem; }
+}
+
+</style>
+<script>'use strict';
+'use strict';
+
+window.SplendorDuelUi = (function () {
+  const els = {};
+  let mandatoryMode = null; // null | 'take' | 'buy' | 'reserve'
+  let privilegeMode = null; // null | {count:1|2|3}
+  let selectedCells = [];
+  let selectedCardId = null;
+  let discardColors = [];
+  let nameOf = (id) => (id == null ? '—' : String(id));
+
+  const COLORS = ['emerald', 'sapphire', 'ruby', 'diamond', 'onyx', 'pearl'];
+  const GOLD = 'gold';
+  const ASSOCIATE = 'associate';
+  const BSIZE = 5;
+  const GOAL_PRESTIGE = 20;
+  const GOAL_CROWNS = 10;
+  const GOAL_COLOR = 10;
+  const RESERVE_LIMIT = 3;
+  const NAMES = { emerald: '翡翠', sapphire: '蓝宝石', ruby: '红宝石', diamond: '钻石', onyx: '玛瑙', pearl: '珍珠', gold: '金', associate: '合伙人' };
+  const ABILITIES = {
+    extra_turn: 'splendorDuel.abilityExtraTurn',
+    take_gem: 'splendorDuel.abilityTakeGem',
+    steal_gem: 'splendorDuel.abilityStealGem',
+    gain_privilege: 'splendorDuel.abilityGainPrivilege',
+  };
+
+  function getEl(id) { return document.getElementById(id); }
+  function initElements() {
+    els.panel = getEl('panel-splendor-duel');
+    els.privPool = getEl('sd-privilege-pool');
+    els.optActions = getEl('sd-opt-actions');
+    els.boardGrid = getEl('sd-board-grid');
+    els.bagLeft = getEl('sd-bag-left');
+    els.deckT1 = getEl('sd-deck-t1'); els.deckT2 = getEl('sd-deck-t2'); els.deckT3 = getEl('sd-deck-t3');
+    els.boardT1 = getEl('sd-board-t1'); els.boardT2 = getEl('sd-board-t2'); els.boardT3 = getEl('sd-board-t3');
+    els.royalties = getEl('sd-royalties-list');
+    els.oppName = getEl('sd-opp-name'); els.oppPrestige = getEl('sd-opp-prestige'); els.oppCrowns = getEl('sd-opp-crowns'); els.oppPrivileges = getEl('sd-opp-privileges');
+    els.oppTokens = getEl('sd-opp-tokens'); els.oppReserved = getEl('sd-opp-reserved'); els.oppBonus = getEl('sd-opp-bonus');
+    els.centerInfo = getEl('sd-center-info'); els.mandHint = getEl('sd-mandatory-hint');
+    els.myPrestige = getEl('sd-my-prestige'); els.myCrowns = getEl('sd-my-crowns'); els.myPrivileges = getEl('sd-my-privileges');
+    els.myBonus = getEl('sd-my-bonus'); els.myReserved = getEl('sd-my-reserved'); els.myTokens = getEl('sd-my-tokens');
+    els.myCards = getEl('sd-my-cards');
+    els.actions = getEl('sd-actions'); els.log = getEl('sd-log');
+  }
+  function clear(el) { if (!el) return; while (el.firstChild) el.removeChild(el.firstChild); }
+
+  /**
+   * 面板里的静态文案（data-i18n / data-i18n-attr）。
+   * 面板是运行时注入的，可能错过全局 i18n 扫描；且语言包缺键时 t() 会原样返回 key。
+   * 这里统一兜底：取不到译文就回落到 HTML 里写的默认文本，绝不把 "splendorDuel.xxx" 显示在界面上。
+   */
+  function applyStaticI18n(t) {
+    if (!els.panel || typeof t !== 'function') return;
+    const nodes = els.panel.querySelectorAll('[data-i18n],[data-i18n-attr]');
+    for (const el of nodes) {
+      const key = el.getAttribute('data-i18n');
+      if (key) {
+        if (el.dataset.i18nFb === undefined) el.dataset.i18nFb = el.textContent || '';
+        const v = t(key);
+        el.textContent = v && v !== key ? v : el.dataset.i18nFb;
+      }
+      const spec = el.getAttribute('data-i18n-attr');
+      if (spec) {
+        for (const part of String(spec).split(',')) {
+          const bits = part.split(':').map((s) => (s || '').trim());
+          if (bits.length < 2 || !bits[0] || !bits[1]) continue;
+          const [attr, aKey] = bits;
+          const fbKey = 'i18nFbAttr' + attr.charAt(0).toUpperCase() + attr.slice(1);
+          if (el.dataset[fbKey] === undefined) el.dataset[fbKey] = el.getAttribute(attr) || '';
+          const av = t(aKey);
+          el.setAttribute(attr, av && av !== aKey ? av : el.dataset[fbKey]);
+        }
+      }
+    }
+  }
+  function oppId(game, me) { return game.turnOrder.find((id) => id !== me) || null; }
+
+  function mini(col, n) {
+    const d = document.createElement('div');
+    d.className = 'sd-mini-token ' + col;
+    d.textContent = (NAMES[col] || col).charAt(0) + n;
+    d.title = NAMES[col] || col;
+    return d;
+  }
+  function bonusDot(col, n) {
+    const d = document.createElement('div');
+    d.className = 'sd-bonus-dot ' + col;
+    d.textContent = n;
+    // 明确表达「购买该色卡牌的费用减免」（红利数量 = 减免数量）
+    d.title = (NAMES[col] || col) + ' · 费用减免 -' + n;
+    return d;
+  }
+  function reserveBack() {
+    const d = document.createElement('div');
+    d.className = 'sd-reserve-back';
+    d.textContent = '\u{1F0CF}';
+    return d;
+  }
+  function reserveSlot() {
+    const d = document.createElement('div');
+    d.className = 'sd-reserve-slot';
+    return d;
+  }
+
+  function setStat(el, label, cur, max, cls) {
+    if (!el) return;
+    clear(el);
+    el.className = 'sd-stat ' + cls;
+    const v = document.createElement('span');
+    v.className = 'sd-stat-v';
+    v.textContent = label;
+    el.appendChild(v);
+    if (max > 0) {
+      const bar = document.createElement('span');
+      bar.className = 'sd-stat-bar';
+      const i = document.createElement('i');
+      i.style.width = Math.max(0, Math.min(100, Math.round(((cur || 0) / max) * 100))) + '%';
+      bar.appendChild(i);
+      el.appendChild(bar);
+    }
+  }
+
+  function abilityText(ability, t) {
+    if (!ability) return '';
+    const key = ABILITIES[ability];
+    return key ? t(key) : ability;
+  }
+
+  /* ===== 卡牌 ===== */
+  function cardDiv(card, opts = {}) {
+    const t = opts.t || ((k) => k);
+    const d = document.createElement('div');
+    d.className = 'sd-card' + (card.tier ? ' tier' + card.tier : '');
+    d.dataset.cardId = card.id;
+    if (card.tier) d.dataset.tier = card.tier;
+
+    const top = document.createElement('div');
+    top.className = 'sd-card-top';
+    const left = document.createElement('div'); left.className = 'sd-card-left';
+    const right = document.createElement('div'); right.className = 'sd-card-right';
+
+    if (card.discount === ASSOCIATE) {
+      const s = document.createElement('span');
+      s.className = 'sd-card-discount associate';
+      s.textContent = card.assocColor ? (NAMES[card.assocColor] || card.assocColor).charAt(0) : '\u2605';
+      s.title = t('splendorDuel.associateBonus');
+      left.appendChild(s);
+    } else if (card.discount) {
+      const s = document.createElement('span');
+      s.className = 'sd-card-discount ' + card.discount;
+      s.textContent = (NAMES[card.discount] || card.discount).charAt(0);
+      s.title = NAMES[card.discount] || card.discount;
+      left.appendChild(s);
+    } else if (card.isRoyalty !== true) {
+      const s = document.createElement('span');
+      s.className = 'sd-card-gold';
+      s.textContent = '\u{1F4B0}';
+      s.title = t('splendorDuel.goldCard');
+      left.appendChild(s);
+    }
+
+    if (card.prestige) {
+      const s = document.createElement('span');
+      s.className = 'sd-card-prestige';
+      s.textContent = '+' + card.prestige;
+      right.appendChild(s);
+    }
+    if (card.crowns) {
+      const s = document.createElement('span');
+      s.className = 'sd-card-crowns';
+      s.textContent = '\u{1F451}' + card.crowns;
+      right.appendChild(s);
+    }
+    top.appendChild(left); top.appendChild(right);
+    d.appendChild(top);
+
+    if (card.ability) {
+      const a = document.createElement('div');
+      a.className = 'sd-card-ability';
+      a.textContent = abilityText(card.ability, t);
+      d.appendChild(a);
+    }
+    if (card.cost && Object.keys(card.cost).length) {
+      const costs = document.createElement('div');
+      costs.className = 'sd-card-costs';
+      for (const [col, n] of Object.entries(card.cost)) {
+        const chip = document.createElement('span');
+        chip.className = 'sd-cost-chip ' + col;
+        chip.textContent = n;
+        chip.title = (NAMES[col] || col) + ' ' + n;
+        costs.appendChild(chip);
+      }
+      d.appendChild(costs);
+    }
+    if (opts.affordable) d.classList.add('is-affordable');
+    if (opts.dim) d.classList.add('is-dim');
+    if (opts.selectable) d.classList.add('is-selectable');
+    if (opts.selected) d.classList.add('is-selected');
+    if (opts.onClick) d.addEventListener('click', opts.onClick);
+    return d;
+  }
+
+  function royaltyDiv(roy, opts = {}) {
+    const t = opts.t || ((k) => k);
+    const d = document.createElement('div');
+    d.className = 'sd-royalty' + (roy.claimedBy ? ' claimed' : '');
+    const p = document.createElement('div'); p.className = 'sd-royalty-prestige'; p.textContent = '+' + roy.prestige; d.appendChild(p);
+    if (roy.ability) { const a = document.createElement('div'); a.className = 'sd-royalty-ability'; a.textContent = abilityText(roy.ability, t); d.appendChild(a); }
+    if (roy.claimedBy) { const c = document.createElement('div'); c.className = 'sd-royalty-claimed'; c.textContent = '\u2713 ' + nameOf(roy.claimedBy); d.appendChild(c); }
+    if (opts.clickable) d.classList.add('is-clickable');
+    if (opts.onClick) d.addEventListener('click', opts.onClick);
+    return d;
+  }
+
+  /* ===== 版图渲染 ===== */
+  function renderBoard(game, isActive) {
+    clear(els.boardGrid);
+    for (let r = 0; r < BSIZE; r++) {
+      for (let c = 0; c < BSIZE; c++) {
+        const color = game.board[r][c];
+        const inSel = selectedCells.some(([sr, sc]) => sr === r && sc === c);
+        let clickable = false;
+        if (isActive && color !== null) {
+          if (privilegeMode) clickable = color !== GOLD;
+          else if (mandatoryMode === 'take') clickable = color !== GOLD; // 拿标记不能拿金
+        }
+        const cell = document.createElement('div');
+        cell.className = 'sd-grid-cell' + (color ? (' ' + color) : ' empty') + (inSel && clickable ? ' is-selected' : '') + (clickable ? ' is-selectable' : '');
+        cell.textContent = color ? (NAMES[color] || color).charAt(0) : '';
+        if (color) cell.title = NAMES[color] || color;
+        if (clickable) cell.addEventListener('click', () => _toggleCell(r, c));
+        els.boardGrid.appendChild(cell);
+      }
+    }
+  }
+
+  function boardHasNonGold(board) {
+    for (let r = 0; r < BSIZE; r++) for (let c = 0; c < BSIZE; c++) { const v = board[r][c]; if (v && v !== GOLD) return true; }
+    return false;
+  }
+  function boardHasGold(board) {
+    for (let r = 0; r < BSIZE; r++) for (let c = 0; c < BSIZE; c++) if (board[r][c] === GOLD) return true;
+    return false;
+  }
+
+  /* 能否买得起（与服务端 computePayment 同口径） */
+  function _canAfford(p, card) {
+    const bonus = p.bonusCounts || {};
+    const tok = p.tokenCounts || {};
+    let goldNeed = 0;
+    for (const col of COLORS) {
+      const need = (card.cost && card.cost[col]) || 0;
+      const deficit = Math.max(0, need - (bonus[col] || 0));
+      const have = tok[col] || 0;
+      const fromTok = Math.min(have, deficit);
+      if (fromTok < deficit) goldNeed += deficit - fromTok;
+    }
+    return goldNeed <= (tok[GOLD] || 0);
+  }
+
+  function _anyAffordable(game, meId) {
+    const p = game.players[meId];
+    if (!p) return false;
+    for (const key of ['tier1', 'tier2', 'tier3']) {
+      for (const card of game.boardCards[key] || []) if (_canAfford(p, card)) return true;
+    }
+    for (const card of p.reserved || []) if (card && card.id && _canAfford(p, card)) return true;
+    return false;
+  }
+
+  function renderCards(game, isActive, meId, net, t) {
+    const p = game.players[meId];
+    const buyMode = isActive && mandatoryMode === 'buy';
+    for (const tier of [1, 2, 3]) {
+      const key = 'tier' + tier;
+      const bEl = getEl('sd-board-t' + tier), dEl = getEl('sd-deck-t' + tier);
+      clear(bEl); clear(dEl);
+      const arr = game.boardCards[key] || [];
+      for (let i = 0; i < arr.length; i++) {
+        const card = arr[i];
+        const afford = p ? _canAfford(p, card) : false;
+        bEl.appendChild(cardDiv(card, {
+          t,
+          affordable: buyMode && afford,
+          dim: buyMode && !afford,
+          selectable: isActive && (mandatoryMode === 'buy' || mandatoryMode === 'reserve'),
+          selected: selectedCardId === card.id,
+          onClick: () => {
+            if (mandatoryMode === 'buy') { if (!afford) return; selectedCardId = card.id; _forceRefresh(); }
+            else if (mandatoryMode === 'reserve') { _doReserve(net, tier, i, false); }
+          },
+        }));
+      }
+      const left = game.decksLeft[key] || 0;
+      const n = document.createElement('span'); n.className = 'sd-deck-n'; n.textContent = left;
+      const lbl = document.createElement('span'); lbl.textContent = left > 0 ? t('splendorDuel.deck') : t('splendorDuel.deckEmpty');
+      dEl.appendChild(n); dEl.appendChild(lbl);
+      dEl.classList.remove('is-reservable', 'is-empty');
+      if (left === 0) dEl.classList.add('is-empty');
+      if (left > 0 && isActive && mandatoryMode === 'reserve') {
+        dEl.classList.add('is-reservable');
+        dEl.onclick = () => _doReserve(net, tier, -1, true);
+      } else dEl.onclick = null;
+    }
+  }
+
+  function renderRoyalties(game, isActive, meId, net, t) {
+    clear(els.royalties);
+    const pend = game.pending;
+    const chooseRoyal = isActive && pend && pend.type === 'royal' && pend.playerId === meId;
+    for (const r of game.royalties || []) {
+      const available = !r.claimedBy;
+      els.royalties.appendChild(royaltyDiv(r, {
+        t,
+        clickable: chooseRoyal && available,
+        onClick: () => { if (chooseRoyal && available) net.sendAction('resolve', { royalId: r.id }); },
+      }));
+    }
+  }
+
+  /* ===== 可选行动 ===== */
+  function renderOptional(game, isActive, meId, t, net) {
+    clear(els.privPool); clear(els.optActions);
+    const me = game.players[meId]; if (!me) return;
+    for (let i = 0; i < 3; i++) {
+      const d = document.createElement('span');
+      d.className = 'sd-privilege-token' + (i < game.availablePrivileges ? ' active' : '');
+      d.textContent = i < game.availablePrivileges ? '\u2605' : '';
+      els.privPool.appendChild(d);
+    }
+    if (!isActive || game.phase !== 'play' || game.pending) return;
+
+    if (privilegeMode) {
+      const info = document.createElement('div'); info.className = 'sd-hint';
+      info.textContent = t('splendorDuel.privilegeHint', { count: privilegeMode.count });
+      els.optActions.appendChild(info);
+      const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = t('splendorDuel.confirmPrivilege');
+      btn.disabled = selectedCells.length !== privilegeMode.count;
+      btn.onclick = () => {
+        if (selectedCells.length !== privilegeMode.count) { alert(t('splendorDuel.selectTokens')); return; }
+        net.sendAction('use_privilege', { count: privilegeMode.count, tokens: selectedCells.map(([r, c]) => [r, c]) });
+        _reset();
+      };
+      els.optActions.appendChild(btn);
+      const c = document.createElement('button'); c.type = 'button'; c.className = 'secondary'; c.textContent = t('common.cancel');
+      c.onclick = () => { privilegeMode = null; selectedCells = []; _forceRefresh(); };
+      els.optActions.appendChild(c);
+      return;
+    }
+
+    if (!game.optPrivilegeDone && me.privileges > 0) {
+      for (let n = 1; n <= Math.min(me.privileges, 3); n++) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = t('splendorDuel.usePrivileges', { n });
+        btn.onclick = () => { privilegeMode = { count: n }; selectedCells = []; _forceRefresh(); };
+        els.optActions.appendChild(btn);
+      }
+    }
+    if (!game.optReplenishDone && game.bagLeft > 0) {
+      const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'secondary';
+      btn.textContent = t('splendorDuel.actionReplenish');
+      btn.onclick = () => { net.sendAction('replenish', {}); _forceRefresh(); };
+      els.optActions.appendChild(btn);
+    }
+  }
+
+  /* ===== 玩家面板 ===== */
+  function renderMy(game, meId, isActive, t) {
+    clear(els.myBonus); clear(els.myReserved); clear(els.myTokens); clear(els.myCards);
+    const p = game.players[meId]; if (!p) return;
+    setStat(els.myPrestige, t('splendorDuel.prestige', { n: p.prestige }), p.prestige, GOAL_PRESTIGE, 'prestige');
+    setStat(els.myCrowns, t('splendorDuel.crowns', { n: p.crowns }), p.crowns, GOAL_CROWNS, 'crowns');
+    setStat(els.myPrivileges, t('splendorDuel.privileges', { n: p.privileges }), p.privileges, 3, 'priv');
+
+    for (const [col, n] of Object.entries(p.bonusCounts || {})) if (n > 0) els.myBonus.appendChild(bonusDot(col, n));
+
+    // 已购卡：按红利颜色显示同色声望进度
+    const cp = p.colorPrestige || {};
+    for (const col of COLORS) {
+      const v = cp[col] || 0;
+      if (!v) continue;
+      const row = document.createElement('div'); row.className = 'sd-cp-row';
+      const dot = document.createElement('span'); dot.className = 'sd-cp-dot ' + col;
+      const bar = document.createElement('span'); bar.className = 'sd-cp-bar';
+      const i = document.createElement('i');
+      i.style.width = Math.min(100, Math.round((v / GOAL_COLOR) * 100)) + '%';
+      bar.appendChild(i);
+      const num = document.createElement('span'); num.className = 'sd-cp-num'; num.textContent = v + '/' + GOAL_COLOR;
+      row.appendChild(dot); row.appendChild(bar); row.appendChild(num);
+      els.myCards.appendChild(row);
+    }
+    if (!els.myCards.childNodes.length) {
+      const none = document.createElement('span'); none.className = 'sd-cp-num'; none.textContent = '—';
+      els.myCards.appendChild(none);
+    }
+
+    // 预留卡（3 个槽位）
+    const reserved = p.reserved || [];
+    for (let i = 0; i < RESERVE_LIMIT; i++) {
+      const rc = reserved[i];
+      if (rc && rc.id) {
+        const afford = _canAfford(p, rc);
+        els.myReserved.appendChild(cardDiv(rc, {
+          t,
+          affordable: isActive && mandatoryMode === 'buy' && afford,
+          dim: isActive && mandatoryMode === 'buy' && !afford,
+          selectable: isActive && mandatoryMode === 'buy',
+          selected: selectedCardId === rc.id,
+          onClick: () => { if (mandatoryMode === 'buy') { if (!afford) return; selectedCardId = rc.id; _forceRefresh(); } },
+        }));
+      } else els.myReserved.appendChild(reserveSlot());
+    }
+
+    // 我的宝石
+    for (const col of COLORS.concat([GOLD])) {
+      const n = p.tokenCounts[col] || 0;
+      if (n > 0) {
+        const d = mini(col, n);
+        if (_isDiscard(game, meId)) {
+          d.classList.add('is-pickable');
+          d.addEventListener('click', () => _toggleDiscardColor(col));
+          if (discardColors.includes(col)) d.classList.add('is-picked');
+        }
+        els.myTokens.appendChild(d);
+      }
+    }
+  }
+
+  function renderOpp(game, oId, t) {
+    clear(els.oppName); clear(els.oppTokens); clear(els.oppReserved); clear(els.oppBonus);
+    if (!oId) return;
+    els.oppName.textContent = nameOf(oId);
+    const p = game.players[oId]; if (!p) return;
+    setStat(els.oppPrestige, t('splendorDuel.prestige', { n: p.prestige }), p.prestige, GOAL_PRESTIGE, 'prestige');
+    setStat(els.oppCrowns, t('splendorDuel.crowns', { n: p.crowns }), p.crowns, GOAL_CROWNS, 'crowns');
+    setStat(els.oppPrivileges, t('splendorDuel.privileges', { n: p.privileges }), p.privileges, 3, 'priv');
+    for (const col of COLORS.concat([GOLD])) { const n = p.tokenCounts[col] || 0; if (n > 0) els.oppTokens.appendChild(mini(col, n)); }
+    for (let i = 0; i < (p.reserved || []).length; i++) els.oppReserved.appendChild(reserveBack());
+    if (!(p.reserved || []).length) els.oppReserved.appendChild(reserveSlot());
+    for (const [col, n] of Object.entries(p.bonusCounts || {})) if (n > 0) els.oppBonus.appendChild(bonusDot(col, n));
+  }
+
+  /* ===== 抉择（皇室卡 / 合伙人颜色 / 夺取宝石）===== */
+  function renderPending(game, meId, t, net) {
+    const pend = game.pending;
+    if (!pend) return false;
+    if (pend.playerId !== meId) {
+      const info = document.createElement('div'); info.className = 'sd-hint';
+      info.textContent = t('splendorDuel.pendingWaiting', { name: nameOf(pend.playerId) });
+      els.actions.appendChild(info);
+      return true;
+    }
+    if (pend.type === 'royal') {
+      const info = document.createElement('div'); info.className = 'sd-hint';
+      info.textContent = t('splendorDuel.pendingRoyalHint', { n: pend.threshold || 3 });
+      els.actions.appendChild(info);
+      for (const r of pend.options || []) {
+        const btn = document.createElement('button'); btn.type = 'button';
+        btn.textContent = '+' + r.prestige + (r.ability ? ' · ' + abilityText(r.ability, t) : '');
+        btn.onclick = () => { net.sendAction('resolve', { royalId: r.id }); _reset(); };
+        els.actions.appendChild(btn);
+      }
+      return true;
+    }
+    if (pend.type === 'associate_color' || pend.type === 'steal_gem') {
+      const info = document.createElement('div'); info.className = 'sd-hint';
+      info.textContent = pend.type === 'associate_color' ? t('splendorDuel.pendingAssociateHint') : t('splendorDuel.pendingStealHint');
+      els.actions.appendChild(info);
+      for (const col of pend.options || []) {
+        const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'sd-color-btn ' + col;
+        btn.textContent = NAMES[col] || col;
+        btn.onclick = () => { net.sendAction('resolve', { color: col }); _reset(); };
+        els.actions.appendChild(btn);
+      }
+      return true;
+    }
+    return false;
+  }
+
+  /* ===== 行动区（顶部行动条）===== */
+  function renderActions(game, meId, isActive, t, net) {
+    clear(els.actions); clear(els.mandHint);
+    if (!isActive) return;
+
+    if (game.pending) { renderPending(game, meId, t, net); return; }
+
+    if (_isDiscard(game, meId)) {
+      const info = document.createElement('div'); info.className = 'sd-hint';
+      info.textContent = t('splendorDuel.discardHint', { need: game.discardNeed });
+      els.actions.appendChild(info);
+      const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = t('splendorDuel.discardConfirm');
+      btn.disabled = discardColors.length < game.discardNeed;
+      btn.onclick = () => {
+        const discarding = {};
+        for (const col of discardColors) discarding[col] = (discarding[col] || 0) + 1;
+        net.sendAction('discard_tokens', { tokens: discarding });
+        _reset();
+      };
+      els.actions.appendChild(btn);
+      return;
+    }
+    if (privilegeMode) return;
+    if (!mandatoryMode) {
+      els.mandHint.textContent = t('splendorDuel.mandatoryHint');
+      const me = game.players[meId] || {};
+      const canTake = boardHasNonGold(game.board);
+      const canReserve = (me.reserved || []).length < RESERVE_LIMIT
+        && ((game.boardCards.tier1 || []).length + (game.boardCards.tier2 || []).length + (game.boardCards.tier3 || []).length > 0
+          || (game.decksLeft.tier1 || 0) + (game.decksLeft.tier2 || 0) + (game.decksLeft.tier3 || 0) > 0);
+      const canBuy = _anyAffordable(game, meId);
+
+      const b1 = document.createElement('button'); b1.type = 'button'; b1.textContent = t('splendorDuel.actionTakeTokens');
+      b1.disabled = !canTake;
+      b1.onclick = () => { mandatoryMode = 'take'; selectedCells = []; _forceRefresh(); }; els.actions.appendChild(b1);
+      const b2 = document.createElement('button'); b2.type = 'button'; b2.textContent = t('splendorDuel.actionReserve');
+      b2.disabled = !canReserve;
+      b2.onclick = () => { mandatoryMode = 'reserve'; selectedCells = []; _forceRefresh(); }; els.actions.appendChild(b2);
+      const b3 = document.createElement('button'); b3.type = 'button'; b3.textContent = t('splendorDuel.actionBuyCard');
+      b3.disabled = !canBuy;
+      b3.onclick = () => { mandatoryMode = 'buy'; selectedCells = []; _forceRefresh(); }; els.actions.appendChild(b3);
+
+      if (!canTake && !canReserve && !canBuy) {
+        const hint = document.createElement('div'); hint.className = 'sd-hint';
+        hint.textContent = t('splendorDuel.cannotAct');
+        els.actions.appendChild(hint);
+        const bp = document.createElement('button'); bp.type = 'button'; bp.className = 'secondary';
+        bp.textContent = t('splendorDuel.actionPass');
+        bp.onclick = () => { net.sendAction('pass', {}); _reset(); };
+        els.actions.appendChild(bp);
+      }
+      return;
+    }
+    if (mandatoryMode === 'take') {
+      const hint = document.createElement('div'); hint.className = 'sd-hint'; hint.textContent = t('splendorDuel.takeHint'); els.actions.appendChild(hint);
+      const chip = document.createElement('span'); chip.className = 'sd-sel-chip';
+      chip.textContent = t('splendorDuel.selectedCount', { n: selectedCells.length, m: 3 });
+      els.mandHint.appendChild(chip);
+      const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = t('splendorDuel.confirmTake');
+      btn.disabled = !_validTake();
+      btn.onclick = () => {
+        if (!_validTake()) { alert(t('splendorDuel.invalidSelection')); return; }
+        net.sendAction('take_tokens', { cells: selectedCells.map(([r, c]) => [r, c]) });
+        _reset();
+      }; els.actions.appendChild(btn);
+      const c = document.createElement('button'); c.type = 'button'; c.className = 'secondary'; c.textContent = t('common.cancel'); c.onclick = () => _reset(); els.actions.appendChild(c);
+      return;
+    }
+    if (mandatoryMode === 'buy') {
+      const hint = document.createElement('div'); hint.className = 'sd-hint'; hint.textContent = t('splendorDuel.buyHint'); els.actions.appendChild(hint);
+      const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = t('splendorDuel.confirmBuy');
+      btn.disabled = !selectedCardId;
+      btn.onclick = () => {
+        if (!selectedCardId) { alert(t('splendorDuel.selectCard')); return; }
+        const found = _findCard(game, selectedCardId);
+        if (!found) { alert(t('splendorDuel.cardNotFound')); return; }
+        if (found.source === 'reserve') net.sendAction('buy_card', { fromReserve: true, reserveIdx: found.reserveIdx });
+        else net.sendAction('buy_card', { tier: found.tier, idx: found.idx });
+        _reset();
+      }; els.actions.appendChild(btn);
+      const c = document.createElement('button'); c.type = 'button'; c.className = 'secondary'; c.textContent = t('common.cancel'); c.onclick = () => _reset(); els.actions.appendChild(c);
+      return;
+    }
+    if (mandatoryMode === 'reserve') {
+      const hint = document.createElement('div'); hint.className = 'sd-hint'; hint.textContent = t('splendorDuel.reserveHint'); els.actions.appendChild(hint);
+      const c = document.createElement('button'); c.type = 'button'; c.className = 'secondary'; c.textContent = t('common.cancel'); c.onclick = () => _reset(); els.actions.appendChild(c);
+    }
+  }
+
+  /* ===== 日志 ===== */
+  function renderLog(game, meId, t) {
+    clear(els.log);
+    if (!game.lastAction) return;
+    const la = game.lastAction;
+    const li = document.createElement('li');
+    const name = nameOf(la.playerId);
+    if (la.type === 'take_tokens') {
+      const cols = (la.colors || []).map((c) => NAMES[c] || c).join('\u3001');
+      li.textContent = t('splendorDuel.logTake', { name, colors: cols });
+    } else if (la.type === 'buy_card') {
+      li.textContent = t('splendorDuel.logBuy', { name, cardId: la.cardId });
+    } else if (la.type === 'reserve_card') {
+      li.textContent = t('splendorDuel.logReserve', { name, cardId: la.cardId });
+    } else if (la.type === 'use_privilege') {
+      li.textContent = t('splendorDuel.logPrivilege', { name, count: la.count });
+    } else if (la.type === 'replenish') {
+      li.textContent = t('splendorDuel.logReplenish', { name });
+    } else if (la.type === 'take_royal') {
+      li.textContent = t('splendorDuel.logRoyal', { name });
+    } else if (la.type === 'steal_gem') {
+      li.textContent = t('splendorDuel.logSteal', { name, color: NAMES[la.color] || la.color });
+    } else if (la.type === 'associate_color') {
+      li.textContent = t('splendorDuel.logAssociate', { name, color: NAMES[la.color] || la.color });
+    } else if (la.type === 'pass') {
+      li.textContent = t('splendorDuel.logPass', { name });
+    } else {
+      li.textContent = name + ': ' + la.type;
+    }
+    els.log.appendChild(li);
+  }
+
+  function renderInfo(game, meId, t) {
+    clear(els.centerInfo);
+    if (game.over) {
+      if (!game.winnerId) els.centerInfo.textContent = t('splendorDuel.draw');
+      else if (game.winnerId === meId) els.centerInfo.textContent = t('splendorDuel.youWin');
+      else els.centerInfo.textContent = t('splendorDuel.ended', { name: nameOf(game.winnerId) });
+      if (game.winCondition === 'stalemate') els.centerInfo.textContent += ' · ' + t('splendorDuel.stalemate');
+      return;
+    }
+    if (game.pending && game.pending.playerId !== meId) {
+      els.centerInfo.textContent = t('splendorDuel.pendingWaiting', { name: nameOf(game.pending.playerId) });
+      return;
+    }
+    if (game.phase === 'discard') { els.centerInfo.textContent = t('splendorDuel.discardPhase'); return; }
+    if (game.currentPlayerId === meId) els.centerInfo.textContent = t('splendorDuel.yourTurn');
+    else els.centerInfo.textContent = t('splendorDuel.waitNamed', { name: nameOf(game.currentPlayerId) });
+  }
+
+  function renderBag(game, t) {
+    clear(els.bagLeft);
+    if (!els.bagLeft) return;
+    els.bagLeft.textContent = t('splendorDuel.bag', { n: game.bagLeft || 0 });
+  }
+
+  /* ===== 交互辅助 ===== */
+  function _toggleCell(r, c) {
+    const idx = selectedCells.findIndex(([sr, sc]) => sr === r && sc === c);
+    if (idx !== -1) { selectedCells.splice(idx, 1); }
+    else {
+      if (privilegeMode && selectedCells.length >= privilegeMode.count) return;
+      if (mandatoryMode === 'take' && selectedCells.length >= 3) return;
+      selectedCells.push([r, c]);
+    }
+    _forceRefresh();
+  }
+  function _toggleDiscardColor(col) { const idx = discardColors.indexOf(col); if (idx !== -1) discardColors.splice(idx, 1); else discardColors.push(col); _forceRefresh(); }
+  function _doReserve(net, tier, idx, fromDeck) { if (fromDeck) net.sendAction('reserve_card', { tier, fromDeck: true }); else net.sendAction('reserve_card', { tier, idx }); _reset(); }
+  function _findCard(game, cardId) {
+    for (const t of [1, 2, 3]) { const key = 'tier' + t; const arr = game.boardCards[key] || []; for (let i = 0; i < arr.length; i++) if (arr[i].id === cardId) return { source: 'board', tier: t, idx: i }; }
+    const me = SplendorDuelUi._lastMeId;
+    if (me && game.players[me]) { const r = game.players[me].reserved || []; for (let i = 0; i < r.length; i++) if (r[i].id === cardId) return { source: 'reserve', tier: r[i].tier, reserveIdx: i }; }
+    return null;
+  }
+  function _validTake() {
+    const c = selectedCells;
+    if (!c || c.length < 1 || c.length > 3) return false;
+    if (c.length === 1) return true;
+    const sameRow = c.every(([r]) => r === c[0][0]);
+    const sameCol = c.every(([, cc]) => cc === c[0][1]);
+    const d1 = c.every(([r, cc]) => r - cc === c[0][0] - c[0][1]);
+    const d2 = c.every(([r, cc]) => r + cc === c[0][0] + c[0][1]);
+    if (!sameRow && !sameCol && !d1 && !d2) return false;
+    const s = c.slice().sort((a, b) => (a[0] !== b[0] ? a[0] - b[0] : a[1] - b[1]));
+    for (let i = 1; i < s.length; i++) { const dr = Math.abs(s[i][0] - s[i - 1][0]); const dc = Math.abs(s[i][1] - s[i - 1][1]); if (dr > 1 || dc > 1) return false; }
+    return true;
+  }
+  function _isDiscard(game, meId) { return game.phase === 'discard' && game.discardPlayerId === meId; }
+  function _reset() { mandatoryMode = null; privilegeMode = null; selectedCells = []; selectedCardId = null; discardColors = []; _forceRefresh(); }
+  function _forceRefresh() {
+    if (SplendorDuelUi._lastState) {
+      render(SplendorDuelUi._lastState, SplendorDuelUi._lastNet, {
+        meId: SplendorDuelUi._lastMeId,
+        t: SplendorDuelUi._lastT,
+        playerNameById: SplendorDuelUi._lastNameOf,
+      });
+    }
+  }
+
+  /* ===== 主入口 ===== */
+  function render(game, net, opts = {}) {
+    if (!game || game.type !== 'splendor-duel') return;
+    initElements();
+    const meId = opts.meId || null;
+    const t = opts.t || ((k) => k);
+    nameOf =
+      typeof opts.playerNameById === 'function'
+        ? opts.playerNameById
+        : net && typeof net.playerNameById === 'function'
+          ? net.playerNameById
+          : (id) => (id == null ? '—' : String(id));
+    if (!els.panel) return;
+    applyStaticI18n(t);
+    SplendorDuelUi._lastState = game;
+    SplendorDuelUi._lastNet = net;
+    SplendorDuelUi._lastMeId = meId;
+    SplendorDuelUi._lastT = t;
+    SplendorDuelUi._lastNameOf = nameOf;
+    const pendingMine = !!game.pending && game.pending.playerId === meId;
+    const isActive = !game.over && (
+      (meId === game.currentPlayerId && (game.phase === 'play' || (game.phase === 'discard' && game.discardPlayerId === meId)))
+      || pendingMine
+    );
+    renderBag(game, t);
+    renderOptional(game, isActive, meId, t, net);
+    renderBoard(game, isActive);
+    renderCards(game, isActive, meId, net, t);
+    renderRoyalties(game, isActive, meId, net, t);
+    renderOpp(game, oppId(game, meId), t);
+    renderMy(game, meId, isActive, t);
+    renderActions(game, meId, isActive, t, net);
+    renderInfo(game, meId, t);
+    renderLog(game, meId, t);
+  }
+
+  return { render, _lastState: null, _lastNet: null, _lastMeId: null, _lastT: null, _lastNameOf: null };
+})();
+
+</script>
+<script>
+var I18N = {"common.cancel":"取消","splendorDuel.title":"璀璨宝石·对决","splendorDuel.board":"版图","splendorDuel.optionalActions":"可选行动","splendorDuel.privilegeLabel":"剩余特权","splendorDuel.royalties":"王室卡牌","splendorDuel.nobles":"贵族","splendorDuel.reserved":"预留卡","splendorDuel.log":"对局记录","splendorDuel.logTip":"按顺序记录双方最近的操作","splendorDuel.myTokens":"我的宝石","splendorDuel.myCards":"已购卡（同色声望）","splendorDuel.prestige":"声望 {n}","splendorDuel.crowns":"皇冠 {n}","splendorDuel.privileges":"特权 {n}","splendorDuel.actionTakeTokens":"拿取标记","splendorDuel.actionBuyCard":"购买卡牌","splendorDuel.actionReserve":"预留卡牌","splendorDuel.actionUsePrivilege":"使用特权（剩 {n}）","splendorDuel.actionReplenish":"补充版图","splendorDuel.usePrivileges":"使用 {n} 个特权","splendorDuel.confirmTake":"确认拿取","splendorDuel.confirmBuy":"确认购买","splendorDuel.confirmReserve":"确认预留","splendorDuel.confirmPrivilege":"确认使用特权","splendorDuel.privilegeHint":"放回特权，从版图上拿 {count} 个宝石/珍珠（不能拿金）","splendorDuel.takeHint":"从 5×5 版图上选 1–3 个相邻标记（水平/垂直/对角线不间断）","splendorDuel.buyHint":"点击场上卡或预留卡选中，然后确认购买","splendorDuel.reserveHint":"点击场上卡或牌堆预留（拿 1 金 token）","splendorDuel.mandatoryHint":"执行一个强制行动","splendorDuel.selectCard":"请先选择一张卡","splendorDuel.cardNotFound":"未找到该卡","splendorDuel.invalidSelection":"请选择相邻的 1–3 个标记","splendorDuel.selectTokens":"请选择正确数量的标记","splendorDuel.discardHint":"手牌超限，需弃 {need} 个标记","splendorDuel.discardConfirm":"确认弃置","splendorDuel.selectDiscard":"请选择要弃置的标记","splendorDuel.discardPhase":"弃标记阶段","splendorDuel.yourTurn":"轮到你了","splendorDuel.waitNamed":"等待 {name}","splendorDuel.youWin":"你赢了！","splendorDuel.ended":"游戏结束，胜者：{name}","splendorDuel.logTake":"{name} 拿取了 {colors}","splendorDuel.logBuy":"{name} 购买了 {cardId}","splendorDuel.logReserve":"{name} 预留了 {cardId}","splendorDuel.logPrivilege":"{name} 使用了 {count} 个特权","splendorDuel.logReplenish":"{name} 补充了版图","splendorDuel.logPass":"{name} 跳过","splendorDuel.logRoyal":"{name} 取得皇室卡","splendorDuel.logSteal":"{name} 从对手处夺取了 {color}","splendorDuel.logAssociate":"{name} 将合伙人卡设为 {color} 红利","splendorDuel.abilityExtraTurn":"额外回合","splendorDuel.abilityTakeGem":"取同色宝石","splendorDuel.abilityStealGem":"夺对手 1 宝石","splendorDuel.abilityGainPrivilege":"获得 1 特权","splendorDuel.associateBonus":"合伙人（5 宝石百搭）","splendorDuel.goldCard":"金卡（无红利）","splendorDuel.pendingRoyalHint":"获得第 {n} 个皇冠：选择 1 张皇室卡","splendorDuel.pendingAssociateHint":"合伙人卡：选择要复制的红利颜色","splendorDuel.pendingStealHint":"从对手处夺取 1 个宝石/珍珠（不能夺金）","splendorDuel.pendingWaiting":"等待 {name} 做出选择…","splendorDuel.colorPrestige":"同色声望","splendorDuel.cannotAct":"无可用强制行动，可补充版图或跳过","splendorDuel.actionPass":"跳过回合","splendorDuel.draw":"双方均无法行动，平局","splendorDuel.stalemate":"双方均无法行动，按声望/皇冠判定胜负","splendorDuel.opponent":"对手","splendorDuel.me":"我","splendorDuel.tokens":"宝石","splendorDuel.bonus":"红利","splendorDuel.market":"发展卡","splendorDuel.bag":"抽袋 {n}","splendorDuel.selectedCount":"已选 {n}/{m}","splendorDuel.deck":"牌堆","splendorDuel.deckEmpty":"空"};
+function t(k, p){ var s = I18N[k] != null ? I18N[k] : k; if (p) { for (var a in p) { s = s.split('{'+a+'}').join(p[a]); } } return s; }
+var STATE = {"type":"splendor-duel","turnOrder":["p0","p1"],"turnIndex":1,"currentPlayerId":"p1","phase":"play","discardPlayerId":null,"discardNeed":0,"optPrivilegeDone":false,"optReplenishDone":false,"extraTurnFlag":false,"board":[["emerald","onyx","onyx","ruby","ruby"],["sapphire","pearl","ruby","sapphire","sapphire"],["emerald","gold","gold","emerald","pearl"],["diamond","diamond","diamond","onyx","emerald"],["diamond","gold","ruby","onyx","sapphire"]],"bagLeft":0,"availablePrivileges":2,"boardCards":{"tier1":[{"id":"l1-08","tier":1,"discount":"sapphire","cost":{"emerald":2,"ruby":2,"pearl":1},"prestige":0,"crowns":0,"ability":"extra_turn"},{"id":"l1-04","tier":1,"discount":"diamond","cost":{"ruby":2,"onyx":2},"prestige":0,"crowns":0,"ability":"take_gem"},{"id":"l1-26","tier":1,"discount":"associate","cost":{"onyx":4,"pearl":1},"prestige":1,"crowns":0,"ability":null},{"id":"l1-19","tier":1,"discount":"onyx","cost":{"emerald":2,"ruby":2},"prestige":0,"crowns":0,"ability":"take_gem"},{"id":"l1-12","tier":1,"discount":"emerald","cost":{"ruby":3},"prestige":0,"crowns":1,"ability":null}],"tier2":[{"id":"l2-14","tier":2,"discount":"onyx","cost":{"diamond":4,"emerald":3},"prestige":1,"crowns":0,"ability":"steal_gem"},{"id":"l2-08","tier":2,"discount":"sapphire","cost":{"emerald":5,"ruby":2},"prestige":1,"crowns":0,"ability":null},{"id":"l2-10","tier":2,"discount":"emerald","cost":{"diamond":3,"ruby":4},"prestige":1,"crowns":0,"ability":"steal_gem"},{"id":"l2-18","tier":2,"discount":"ruby","cost":{"sapphire":3,"onyx":4},"prestige":1,"crowns":0,"ability":"steal_gem"}],"tier3":[{"id":"l3-04","tier":3,"discount":"sapphire","cost":{"diamond":2,"sapphire":6,"emerald":2},"prestige":4,"crowns":0,"ability":null},{"id":"l3-03","tier":3,"discount":"sapphire","cost":{"diamond":3,"emerald":3,"onyx":5,"pearl":1},"prestige":3,"crowns":2,"ability":null},{"id":"l3-13","tier":3,"discount":null,"cost":{"diamond":8},"prestige":6,"crowns":0,"ability":null}]},"decksLeft":{"tier1":25,"tier2":20,"tier3":10},"royalties":[{"id":"royal-01","prestige":2,"ability":"steal_gem","claimedBy":null},{"id":"royal-02","prestige":2,"ability":"extra_turn","claimedBy":null},{"id":"royal-03","prestige":2,"ability":"gain_privilege","claimedBy":null},{"id":"royal-04","prestige":3,"ability":null,"claimedBy":null}],"pending":null,"players":{"p0":{"tokenCounts":{"emerald":3,"sapphire":1,"ruby":0,"diamond":0,"onyx":0,"pearl":0,"gold":1},"reserved":[{"id":"l2-01","tier":2}],"cards":[{"id":"l1-01","tier":1,"discount":"emerald","cost":{"sapphire":1,"emerald":1,"ruby":1,"onyx":1},"prestige":0,"crowns":0,"ability":null},{"id":"l1-06","tier":1,"discount":"sapphire","cost":{"emerald":1,"ruby":1,"onyx":1},"prestige":0,"crowns":0,"ability":null}],"cardCount":2,"bonusCounts":{"emerald":1,"sapphire":1},"colorPrestige":{"emerald":0,"sapphire":0},"prestige":0,"crowns":0,"privileges":1,"royalCount":0},"p1":{"tokenCounts":{"emerald":0,"sapphire":0,"ruby":2,"diamond":0,"onyx":1,"pearl":0,"gold":0},"reserved":[{"id":"l3-13","tier":3}],"cards":[{"id":"l1-21","tier":1,"discount":"ruby","cost":{"diamond":1,"sapphire":1,"emerald":1,"onyx":1},"prestige":0,"crowns":0,"ability":null}],"cardCount":1,"bonusCounts":{"ruby":1},"colorPrestige":{"ruby":0},"prestige":0,"crowns":0,"privileges":0,"royalCount":0}},"lastAction":null,"winnerId":null,"winCondition":null,"over":false,"startedAt":1790061090352};
+var net = { sendAction: function(){}, playerNameById: function(id){ return id === 'p0' ? '玩家一（我）' : '玩家二'; } };
+function renderAll(){
+  SplendorDuelUi.render(STATE, net, { meId: 'p0', t: t, playerNameById: net.playerNameById });
+  document.querySelectorAll('[data-i18n]').forEach(function(el){ if (el.dataset.i18nFb === undefined) el.dataset.i18nFb = el.textContent || ''; var v = t(el.dataset.i18n); el.textContent = (v && v !== el.dataset.i18n) ? v : el.dataset.i18nFb; });
+  var st = document.getElementById('game-status'); if (st) st.textContent = '轮到你了 · 声望 ' + STATE.players.p0.prestige + ' / 皇冠 ' + STATE.players.p0.crowns;
+}
+function btn(text){
+  var list = document.querySelectorAll('#sd-actions button, #sd-opt-actions button');
+  for (var i = 0; i < list.length; i++) { if (!list[i].disabled && list[i].textContent.indexOf(text) >= 0) { list[i].click(); return true; } }
+  return false;
+}
+function cells(n){
+  var list = document.querySelectorAll('#sd-board-grid .sd-grid-cell.is-selectable');
+  for (var i = 0; i < list.length && i < n; i++) list[i].click();
+}
+document.querySelectorAll('.prev-bar button').forEach(function(b){
+  b.addEventListener('click', function(){
+    var act = b.dataset.act;
+    btn('取消');
+    if (act === 'take') { btn('拿取标记'); cells(2); }
+    else if (act === 'buy') { btn('购买卡牌'); var c = document.querySelector('.sd-tier-cards .sd-card.is-affordable'); if (c) c.click(); }
+    else if (act === 'reserve') { btn('预留卡牌'); }
+    else { renderAll(); }
+  });
+});
+renderAll();
+</script>
+</body></html>

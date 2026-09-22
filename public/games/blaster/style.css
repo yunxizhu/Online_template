@@ -1,0 +1,132 @@
+.blaster-wrap {
+  position: relative;
+  width: min(100%, 900px);
+  margin: 0.75rem auto 0.5rem;
+}
+
+#blaster-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 10px;
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  background: #10131a;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.28);
+}
+
+.blaster-scores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  margin: 0.5rem auto 0;
+  width: min(100%, 900px);
+}
+
+.blaster-score-card {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(127, 127, 127, 0.12);
+  border: 1px solid rgba(127, 127, 127, 0.24);
+  font-size: 0.9rem;
+  line-height: 1.2;
+}
+
+.blaster-score-card.is-me {
+  border-color: rgba(59, 130, 246, 0.65);
+  background: rgba(59, 130, 246, 0.14);
+}
+
+.blaster-score-card.is-out {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.blaster-dot {
+  width: 0.66rem;
+  height: 0.66rem;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.blaster-card-name {
+  font-weight: 600;
+}
+
+.blaster-card-score {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+.blaster-card-badge {
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.blaster-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem 0.9rem;
+  width: min(100%, 900px);
+  margin: 0.6rem auto 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: 10px;
+  background: rgba(127, 127, 127, 0.08);
+  border: 1px solid rgba(127, 127, 127, 0.18);
+  font-size: 0.82rem;
+}
+
+.blaster-legend-title {
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.blaster-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+}
+
+.blaster-legend-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 50%;
+  border: 2px solid var(--c);
+  background: rgba(17, 24, 38, 0.9);
+  color: var(--c);
+  font-style: normal;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.blaster-legend-item b {
+  font-weight: 600;
+}
+
+.blaster-legend-item em {
+  font-style: normal;
+  opacity: 0.6;
+}
+
+.blaster-help {
+  margin: 0.5rem auto 0;
+  text-align: center;
+  font-size: 0.82rem;
+  opacity: 0.7;
+}

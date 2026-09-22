@@ -2422,6 +2422,8 @@
     if (type === 'doudizhu') return Boolean(window.DoudizhuUi);
     if (type === 'guandan') return Boolean(window.GuandanUi);
     if (type === 'splendor-duel') return Boolean(window.SplendorDuelUi);
+    if (type === 'blaster') return Boolean(window.BlasterUi);
+    if (type === 'warfactory') return Boolean(window.WarFactoryUi);
     return true;
   }
 
@@ -2495,6 +2497,8 @@
     el.panelDoudizhu = document.getElementById('panel-doudizhu');
     el.panelGuandan = document.getElementById('panel-guandan');
     el.panelSplendorDuel = document.getElementById('panel-splendor-duel');
+    el.panelBlaster = document.getElementById('panel-blaster');
+    el.panelWarFactory = document.getElementById('panel-warfactory');
     // 多游戏 panel 复用了同名 id；不要用全局 getElementById（会命中第一个）
     el.gameTitle = null;
     el.gameStatus = null;
@@ -2507,6 +2511,8 @@
     if (window.CatanUi) window.CatanUi.bindButtons(net);
     if (window.SgsUi) window.SgsUi.bindButtons(net);
     if (window.LasidaoUi) window.LasidaoUi.bindButtons(net);
+    if (window.BlasterUi) window.BlasterUi.bindButtons(net);
+    if (window.WarFactoryUi) window.WarFactoryUi.bindButtons(net);
   }
 
   /** 在当前游戏面板内解析标题/状态节点（避免多 panel 重复 id 串台） */
@@ -3493,6 +3499,10 @@
     lastCreateGameId = g.id;
     if (el.gameModeWrap) el.gameModeWrap.hidden = false;
     if (el.roomMatchGamesWrap) el.roomMatchGamesWrap.hidden = true;
+    if (el.roomMatchGames) {
+      // 各游戏局数下限不同（弹射对决最少 3 局），先解除上一游戏的禁用
+      for (const opt of el.roomMatchGames.options) opt.disabled = false;
+    }
     if (el.gameMode) {
       let cur = el.gameMode.value;
       if (g.id === 'lasidao' && (cur === 'standard' || cur === 'solo')) cur = 'melee';
@@ -3535,6 +3545,20 @@
       if (el.roomEasyStartWrap) el.roomEasyStartWrap.hidden = true;
       if (el.roomConflictDlcWrap) el.roomConflictDlcWrap.hidden = true;
       if (el.roomMatchGamesWrap) el.roomMatchGamesWrap.hidden = false;
+    } else if (g.id === 'blaster') {
+      el.maxPlayersWrap.hidden = false;
+      fillMaxPlayerOptions(g.minPlayers, g.maxPlayers, 2);
+      el.gameHint.textContent = t('create.hintBlaster');
+      if (el.roomAllowTradeWrap) el.roomAllowTradeWrap.hidden = true;
+      if (el.roomEasyStartWrap) el.roomEasyStartWrap.hidden = true;
+      if (el.roomConflictDlcWrap) el.roomConflictDlcWrap.hidden = true;
+      if (el.roomMatchGamesWrap) el.roomMatchGamesWrap.hidden = false;
+      if (el.roomMatchGames) {
+        for (const opt of el.roomMatchGames.options) {
+          opt.disabled = Number(opt.value) < 3;
+        }
+        if (Number(el.roomMatchGames.value) < 3) el.roomMatchGames.value = '5';
+      }
     } else if (g.id === 'guandan') {
       el.maxPlayersWrap.hidden = true;
       fillMaxPlayerOptions(4, 4, 4);
@@ -4855,10 +4879,17 @@
     el.panelGuandan = document.getElementById('panel-guandan') || el.panelGuandan;
     el.panelSplendorDuel =
       document.getElementById('panel-splendor-duel') || el.panelSplendorDuel;
+    el.panelBlaster = document.getElementById('panel-blaster') || el.panelBlaster;
+    el.panelWarFactory =
+      document.getElementById('panel-warfactory') || el.panelWarFactory;
     if (el.panelGomoku) el.panelGomoku.hidden = true;
     if (el.panelDoudizhu) el.panelDoudizhu.hidden = true;
     if (el.panelGuandan) el.panelGuandan.hidden = true;
     if (el.panelSplendorDuel) el.panelSplendorDuel.hidden = true;
+    if (window.BlasterUi) window.BlasterUi.hide();
+    else if (el.panelBlaster) el.panelBlaster.hidden = true;
+    if (window.WarFactoryUi) window.WarFactoryUi.hide();
+    else if (el.panelWarFactory) el.panelWarFactory.hidden = true;
     if (window.IncanUi) window.IncanUi.hide();
     if (window.CatanUi) window.CatanUi.hide();
     if (window.SgsUi) window.SgsUi.hide();
@@ -5446,6 +5477,94 @@
         const ordered = game.turnOrder || [];
         const names = ordered.map(pid => playerNameById(pid) || pid).join(' vs ');
         el.gameSides.textContent = names;
+      }
+    } else if (game.type === 'blaster') {
+      hideAllGamePanels();
+      el.panelBlaster =
+        document.getElementById('panel-blaster') || el.panelBlaster;
+      if (el.panelBlaster) el.panelBlaster.hidden = false;
+      bindActiveGameMeta(el.panelBlaster);
+      if (window.BlasterUi) {
+        window.BlasterUi.render(game, net, {
+          meId: state.me && state.me.id,
+          isSpectator: state.isSpectator,
+          playerNameById,
+          t,
+          title: gameLabelOf(
+            'blaster',
+            (state.room && state.room.gameLabel) || t('blaster.title')
+          ),
+        });
+      }
+      if (el.gameTitle) {
+        el.gameTitle.textContent = gameLabelOf(
+          'blaster',
+          (state.room && state.room.gameLabel) || t('blaster.title')
+        );
+      }
+      if (el.gameStatus) {
+        const total = game.matchGames || 5;
+        const round = game.roundIndex || 1;
+        if (game.over) {
+          el.gameStatus.textContent = game.winnerId
+            ? t('blaster.matchOver', { name: playerNameById(game.winnerId) })
+            : t('blaster.matchDraw');
+        } else if (game.phase === 'roundOver') {
+          el.gameStatus.textContent = t('blaster.roundOf', {
+            round,
+            total,
+            extra: t('blaster.roundSettling'),
+          });
+        } else {
+          el.gameStatus.textContent = t('blaster.roundOf', {
+            round,
+            total,
+            extra: t('blaster.roundPlaying'),
+          });
+        }
+      }
+      if (el.gameSides) {
+        el.gameSides.hidden = true;
+        el.gameSides.textContent = '';
+      }
+    } else if (game.type === 'warfactory') {
+      hideAllGamePanels();
+      el.panelWarFactory =
+        document.getElementById('panel-warfactory') || el.panelWarFactory;
+      if (el.panelWarFactory) el.panelWarFactory.hidden = false;
+      bindActiveGameMeta(el.panelWarFactory);
+      if (window.WarFactoryUi) {
+        window.WarFactoryUi.render(game, net, {
+          meId: state.me && state.me.id,
+          isSpectator: state.isSpectator,
+          playerNameById,
+          t,
+          title: gameLabelOf(
+            'warfactory',
+            (state.room && state.room.gameLabel) || t('warfactory.title')
+          ),
+        });
+      }
+      if (el.gameTitle) {
+        el.gameTitle.textContent = gameLabelOf(
+          'warfactory',
+          (state.room && state.room.gameLabel) || t('warfactory.title')
+        );
+      }
+      if (el.gameStatus) {
+        if (game.over) {
+          el.gameStatus.textContent = game.winnerId
+            ? t('warfactory.matchOver', { name: playerNameById(game.winnerId) })
+            : t('warfactory.matchDraw');
+        } else if (game.phase === 'countdown') {
+          el.gameStatus.textContent = t('warfactory.countdown');
+        } else {
+          el.gameStatus.textContent = t('warfactory.playing');
+        }
+      }
+      if (el.gameSides) {
+        el.gameSides.hidden = true;
+        el.gameSides.textContent = '';
       }
     } else {
       renderGomoku();
@@ -7022,7 +7141,9 @@
       easyStart: Boolean(el.roomEasyStart && el.roomEasyStart.checked),
       peacefulDev: !(el.roomConflictDlc && el.roomConflictDlc.checked),
       matchGames:
-        el.gameType && el.gameType.value === 'doudizhu' && el.roomMatchGames
+        el.gameType &&
+        (el.gameType.value === 'doudizhu' || el.gameType.value === 'blaster') &&
+        el.roomMatchGames
           ? Number(el.roomMatchGames.value) || 5
           : undefined,
     };
