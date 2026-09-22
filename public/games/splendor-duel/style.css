@@ -301,6 +301,40 @@
 
 #sd-log { max-height: 140px; overflow-y: auto; }
 
+/* ====== 新牌表补充样式 ====== */
+.sd-card.is-clickable { cursor: pointer; }
+.sd-card-discount.associate {
+  background: linear-gradient(135deg, #27ae60 0%, #2980b9 35%, #c0392b 70%, #9b59b6 100%);
+  border: 1px solid #d4a017;
+}
+.sd-card-gold { font-size: 0.9rem; }
+
+.sd-royalty.is-clickable { cursor: pointer; box-shadow: 0 0 0 2px #4dabf7; }
+.sd-royalty.is-clickable:hover { transform: translateY(-2px); }
+
+.sd-my-cards-area { margin-bottom: 0.4rem; }
+.sd-cards-label { font-size: 0.75rem; color: var(--muted); text-align: center; margin-bottom: 0.2rem; }
+.sd-my-cards { display: flex; justify-content: center; gap: 0.3rem; flex-wrap: wrap; min-height: 1.6rem; }
+
+.sd-color-prestige {
+  padding: 0.1rem 0.4rem; border-radius: 4px;
+  font-size: 0.7rem; font-weight: 700; color: #fff;
+}
+.sd-color-prestige.emerald { background: #27ae60; }
+.sd-color-prestige.sapphire { background: #2980b9; }
+.sd-color-prestige.ruby { background: #c0392b; }
+.sd-color-prestige.diamond { background: #95a5a6; color: #2c3e50; }
+.sd-color-prestige.onyx { background: #2c3e50; }
+.sd-color-prestige.pearl { background: #9b59b6; }
+
+.sd-color-btn { font-weight: 600; }
+.sd-color-btn.emerald { background: #27ae60; color: #fff; }
+.sd-color-btn.sapphire { background: #2980b9; color: #fff; }
+.sd-color-btn.ruby { background: #c0392b; color: #fff; }
+.sd-color-btn.diamond { background: #bdc3c7; color: #2c3e50; }
+.sd-color-btn.onyx { background: #2c3e50; color: #fff; }
+.sd-color-btn.pearl { background: #9b59b6; color: #fff; }
+
 /* ====== 响应式 ====== */
 @media (max-width: 640px) {
   .sd-card { width: 6.2rem; min-height: 4.2rem; padding: 0.3rem; font-size: 0.7rem; }

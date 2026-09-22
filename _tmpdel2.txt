@@ -1,0 +1,1 @@
+﻿gone _tmp_card.html; gone _tmp_cards.txt; gone _tmp_check.js; gone _tmp_diag.js; gone _tmp_info.txt; gone _tmp_len.txt; gone _tmp_seg.html; gone _tmp_smoke.log; gone _tmp_left.txt; deleted _tmpdel.txt

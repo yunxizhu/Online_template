@@ -1,26 +1,140 @@
 'use strict';
 
 /**
- * Splendor Duel 引擎 —— BGA 规则版
+ * Splendor Duel（璀璨宝石·对决）引擎 —— 官方牌表 1:1 复刻
  *
- * 核心：5×5 版图，回合 = 可选(特权/补充) + 强制(拿标记/买卡/预留)
+ * 牌表：67 张珠宝卡（L1×30 / L2×24 / L3×13）+ 4 张皇室卡
+ * 标记：5 色各 4 + 珍珠 2 + 金 3 = 25 个，开局全部铺满 5×5 版图，抽袋为空
+ * 金字塔：L1 翻 5 张、L2 翻 4 张、L3 翻 3 张
+ * 胜利：声望 ≥20 / 皇冠 ≥10 / 同色卡声望 ≥10
  */
 
 const RESOURCES = ['emerald', 'sapphire', 'ruby', 'diamond', 'onyx'];
 const ALL_COLORS = [...RESOURCES, 'pearl'];
 const GOLD = 'gold';
+const ASSOCIATE = 'associate'; // 5 宝石百搭（Associate）
 const BOARD_SIZE = 5;
 const HAND_LIMIT = 10;
 const RESERVE_LIMIT = 3;
 const PRIVILEGE_MAX = 3;
 const TOTAL_PRIVILEGES = 3;
+const PYRAMID = { 1: 5, 2: 4, 3: 3 };
 
 const WIN_PRESTIGE = 20;
 const WIN_CROWNS = 10;
 const WIN_COLOR_PRESTIGE = 10;
 
+/* 费用简写：W=白(钻石) U=蓝(蓝宝石) G=绿(翡翠) R=红(红宝石) B=黑(玛瑙) P=珍珠 */
+const W = 'diamond';
+const U = 'sapphire';
+const G = 'emerald';
+const R = 'ruby';
+const B = 'onyx';
+const P = 'pearl';
+
 /* ============================================================ */
-/* 辅助函数 */
+/* 官方牌表                                                      */
+/* ============================================================ */
+
+function mk(tier, id, discount, cost, prestige, crowns, ability) {
+  return { id, tier, discount: discount || null, cost, prestige: prestige || 0, crowns: crowns || 0, ability: ability || null };
+}
+
+/* ---- 一级：30 张 ---- */
+const TIER1 = [
+  /* 白（钻石）红利 */
+  mk(1, 'l1-01', W, { [U]: 1, [G]: 1, [R]: 1, [B]: 1 }),
+  mk(1, 'l1-02', W, { [U]: 3 }, 0, 1),
+  mk(1, 'l1-03', W, { [G]: 2, [R]: 2, [P]: 1 }, 0, 0, 'extra_turn'),
+  mk(1, 'l1-04', W, { [R]: 2, [B]: 2 }, 0, 0, 'take_gem'),
+  mk(1, 'l1-05', W, { [G]: 2, [R]: 3 }, 1),
+  /* 蓝（蓝宝石）红利 */
+  mk(1, 'l1-06', U, { [W]: 1, [G]: 1, [R]: 1, [B]: 1 }),
+  mk(1, 'l1-07', U, { [G]: 3 }, 0, 1),
+  mk(1, 'l1-08', U, { [G]: 2, [R]: 2, [P]: 1 }, 0, 0, 'extra_turn'),
+  mk(1, 'l1-09', U, { [W]: 2, [B]: 2 }, 0, 0, 'take_gem'),
+  mk(1, 'l1-10', U, { [R]: 2, [B]: 3 }, 1),
+  /* 绿（翡翠）红利 */
+  mk(1, 'l1-11', G, { [W]: 1, [U]: 1, [R]: 1, [B]: 1 }),
+  mk(1, 'l1-12', G, { [R]: 3 }, 0, 1),
+  mk(1, 'l1-13', G, { [R]: 2, [B]: 2, [P]: 1 }, 0, 0, 'extra_turn'),
+  mk(1, 'l1-14', G, { [W]: 2, [U]: 2 }, 0, 0, 'take_gem'),
+  mk(1, 'l1-15', G, { [W]: 3, [B]: 2 }, 1),
+  /* 黑（玛瑙）红利 */
+  mk(1, 'l1-16', B, { [W]: 1, [U]: 1, [G]: 1, [R]: 1 }),
+  mk(1, 'l1-17', B, { [W]: 3 }, 0, 1),
+  mk(1, 'l1-18', B, { [W]: 2, [U]: 2, [P]: 1 }, 0, 0, 'extra_turn'),
+  mk(1, 'l1-19', B, { [G]: 2, [R]: 2 }, 0, 0, 'take_gem'),
+  mk(1, 'l1-20', B, { [U]: 2, [G]: 3 }, 1),
+  /* 红（红宝石）红利 */
+  mk(1, 'l1-21', R, { [W]: 1, [U]: 1, [G]: 1, [B]: 1 }),
+  mk(1, 'l1-22', R, { [B]: 3 }, 0, 1),
+  mk(1, 'l1-23', R, { [W]: 2, [B]: 2, [P]: 1 }, 0, 0, 'extra_turn'),
+  mk(1, 'l1-24', R, { [U]: 2, [G]: 2 }, 0, 0, 'take_gem'),
+  mk(1, 'l1-25', R, { [W]: 2, [U]: 3 }, 1),
+  /* 合伙人（5 宝石百搭）与金卡 */
+  mk(1, 'l1-26', ASSOCIATE, { [B]: 4, [P]: 1 }, 1),
+  mk(1, 'l1-27', ASSOCIATE, { [W]: 4, [P]: 1 }, 0, 1),
+  mk(1, 'l1-28', null, { [R]: 4, [P]: 1 }, 3), // 金卡：无红利
+  mk(1, 'l1-29', ASSOCIATE, { [U]: 2, [R]: 2, [B]: 1, [P]: 1 }, 1),
+  mk(1, 'l1-30', ASSOCIATE, { [W]: 2, [G]: 2, [B]: 1, [P]: 1 }, 1),
+];
+
+/* ---- 二级：24 张 ---- */
+const TIER2 = [
+  mk(2, 'l2-01', W, { [G]: 2, [R]: 2, [B]: 2, [P]: 1 }, 2, 1),
+  mk(2, 'l2-02', W, { [U]: 4, [R]: 3 }, 1, 0, 'steal_gem'),
+  mk(2, 'l2-03', W, { [W]: 4, [B]: 2, [P]: 1 }, 2, 0, 'gain_privilege'),
+  mk(2, 'l2-04', W, { [U]: 5, [G]: 2 }, 1),
+  mk(2, 'l2-05', U, { [W]: 2, [R]: 2, [B]: 2, [P]: 1 }, 2, 1),
+  mk(2, 'l2-06', U, { [G]: 4, [B]: 3 }, 1, 0, 'steal_gem'),
+  mk(2, 'l2-07', U, { [W]: 2, [U]: 4, [P]: 1 }, 2, 0, 'gain_privilege'),
+  mk(2, 'l2-08', U, { [G]: 5, [R]: 2 }, 1),
+  mk(2, 'l2-09', G, { [W]: 2, [U]: 2, [B]: 2, [P]: 1 }, 2, 1),
+  mk(2, 'l2-10', G, { [W]: 3, [R]: 4 }, 1, 0, 'steal_gem'),
+  mk(2, 'l2-11', G, { [U]: 2, [G]: 4, [P]: 1 }, 2, 0, 'gain_privilege'),
+  mk(2, 'l2-12', G, { [R]: 5, [B]: 2 }, 1),
+  mk(2, 'l2-13', B, { [U]: 2, [G]: 2, [R]: 2, [P]: 1 }, 2, 1),
+  mk(2, 'l2-14', B, { [W]: 4, [G]: 3 }, 1, 0, 'steal_gem'),
+  mk(2, 'l2-15', B, { [R]: 2, [B]: 4, [P]: 1 }, 2, 0, 'gain_privilege'),
+  mk(2, 'l2-16', B, { [W]: 5, [U]: 2 }, 1),
+  mk(2, 'l2-17', R, { [W]: 2, [U]: 2, [G]: 2, [P]: 1 }, 2, 1),
+  mk(2, 'l2-18', R, { [U]: 3, [B]: 4 }, 1, 0, 'steal_gem'),
+  mk(2, 'l2-19', R, { [G]: 2, [R]: 4, [P]: 1 }, 2, 0, 'gain_privilege'),
+  mk(2, 'l2-20', R, { [W]: 2, [B]: 5 }, 1),
+  mk(2, 'l2-21', ASSOCIATE, { [G]: 6, [P]: 1 }, 2),
+  mk(2, 'l2-22', ASSOCIATE, { [G]: 6, [P]: 1 }, 0, 2),
+  mk(2, 'l2-23', ASSOCIATE, { [U]: 6, [P]: 1 }, 0, 2),
+  mk(2, 'l2-24', null, { [U]: 6, [P]: 1 }, 5), // 金卡：无红利
+];
+
+/* ---- 三级：13 张 ---- */
+const TIER3 = [
+  mk(3, 'l3-01', W, { [U]: 3, [R]: 5, [B]: 3, [P]: 1 }, 3, 2),
+  mk(3, 'l3-02', W, { [W]: 6, [U]: 2, [B]: 2 }, 4),
+  mk(3, 'l3-03', U, { [W]: 3, [G]: 3, [B]: 5, [P]: 1 }, 3, 2),
+  mk(3, 'l3-04', U, { [W]: 2, [U]: 6, [G]: 2 }, 4),
+  mk(3, 'l3-05', G, { [W]: 5, [U]: 3, [R]: 3, [P]: 1 }, 3, 2),
+  mk(3, 'l3-06', G, { [U]: 2, [G]: 6, [R]: 2 }, 4),
+  mk(3, 'l3-07', B, { [W]: 3, [G]: 5, [R]: 3, [P]: 1 }, 3, 2),
+  mk(3, 'l3-08', B, { [W]: 2, [R]: 2, [B]: 6 }, 4),
+  mk(3, 'l3-09', R, { [U]: 5, [G]: 3, [B]: 3, [P]: 1 }, 3, 2),
+  mk(3, 'l3-10', R, { [G]: 2, [R]: 6, [B]: 2 }, 4),
+  mk(3, 'l3-11', ASSOCIATE, { [R]: 8 }, 3, 0, 'extra_turn'),
+  mk(3, 'l3-12', ASSOCIATE, { [B]: 8 }, 0, 3),
+  mk(3, 'l3-13', null, { [W]: 8 }, 6), // 金卡：无红利
+];
+
+/* ---- 皇室卡：4 张（3 / 6 皇冠时各取 1 张）---- */
+const ROYALS = [
+  { id: 'royal-01', prestige: 2, ability: 'steal_gem' },
+  { id: 'royal-02', prestige: 2, ability: 'extra_turn' },
+  { id: 'royal-03', prestige: 2, ability: 'gain_privilege' },
+  { id: 'royal-04', prestige: 3, ability: null },
+];
+
+/* ============================================================ */
+/* 辅助函数                                                      */
 /* ============================================================ */
 
 function shuffle(a) {
@@ -32,8 +146,6 @@ function shuffle(a) {
   return arr;
 }
 
-function makeId(tier, idx) { return `t${tier}_${idx}`; }
-
 function emptyTokens() {
   const t = {};
   for (const c of ALL_COLORS) t[c] = 0;
@@ -43,14 +155,28 @@ function emptyTokens() {
 
 function totalTokens(tok) { return Object.values(tok).reduce((s, v) => s + v, 0); }
 
+/** 卡牌的实际红利颜色（合伙人卡取玩家选定的颜色；金卡无红利） */
+function effectiveDiscount(card) {
+  if (!card || !card.discount) return null;
+  if (card.discount === ASSOCIATE) return card.assocColor || null;
+  return card.discount;
+}
+
 function colorCounts(cards) {
   const h = {};
-  for (const c of cards) { if (c.discount) h[c.discount] = (h[c.discount] || 0) + 1; }
+  for (const c of cards) {
+    const d = effectiveDiscount(c);
+    if (d) h[d] = (h[d] || 0) + 1;
+  }
   return h;
 }
 
 function getOpponentId(game, pid) {
-  return game.turnOrder.find((id) => id !== pid);
+  return game.turnOrder.find((id) => id !== pid) || null;
+}
+
+function hasAnyBonus(cards) {
+  return cards.some((c) => c.discount);
 }
 
 /* 5×5 中央开始顺时针螺旋序列 */
@@ -77,199 +203,73 @@ function spiralCells() {
 const SPIRAL = spiralCells();
 
 /* ============================================================ */
-/* 卡牌生成 */
+/* 购买与费用                                                    */
 /* ============================================================ */
 
-function _mkCard(tier, idx, cost, discount, prestige, crowns, ability) {
-  return {
-    id: makeId(tier, idx),
-    tier,
-    cost,
-    discount,
-    prestige: prestige || 0,
-    crowns: crowns || 0,
-    ability: ability || null,
-  };
-}
-
-function buildTier1() {
-  let i = 0;
-  const cards = [
-    /* 2X 系列（5张）】 */
-    _mkCard(1, i++, { emerald: 2 }, 'emerald'),
-    _mkCard(1, i++, { sapphire: 2 }, 'sapphire'),
-    _mkCard(1, i++, { ruby: 2 }, 'ruby'),
-    _mkCard(1, i++, { diamond: 2 }, 'diamond'),
-    _mkCard(1, i++, { onyx: 2 }, 'onyx'),
-    /* 2X+1Y 系列（5张）】 */
-    _mkCard(1, i++, { emerald: 2, sapphire: 1 }, 'emerald'),
-    _mkCard(1, i++, { sapphire: 2, ruby: 1 }, 'sapphire'),
-    _mkCard(1, i++, { ruby: 2, diamond: 1 }, 'ruby'),
-    _mkCard(1, i++, { diamond: 2, onyx: 1 }, 'diamond'),
-    _mkCard(1, i++, { onyx: 2, emerald: 1 }, 'onyx'),
-    /* X+Y+Z 系列，声望1（5张）】 */
-    _mkCard(1, i++, { emerald: 1, sapphire: 1, ruby: 1 }, 'emerald', 1),
-    _mkCard(1, i++, { sapphire: 1, ruby: 1, diamond: 1 }, 'sapphire', 1),
-    _mkCard(1, i++, { ruby: 1, diamond: 1, onyx: 1 }, 'ruby', 1),
-    _mkCard(1, i++, { diamond: 1, onyx: 1, emerald: 1 }, 'diamond', 1),
-    _mkCard(1, i++, { onyx: 1, emerald: 1, sapphire: 1 }, 'onyx', 1),
-    /* 2X+2Y 系列，王冠1（5张）】 */
-    _mkCard(1, i++, { emerald: 2, sapphire: 2 }, 'emerald', 0, 1),
-    _mkCard(1, i++, { sapphire: 2, ruby: 2 }, 'sapphire', 0, 1),
-    _mkCard(1, i++, { ruby: 2, diamond: 2 }, 'ruby', 0, 1),
-    _mkCard(1, i++, { diamond: 2, onyx: 2 }, 'diamond', 0, 1),
-    _mkCard(1, i++, { onyx: 2, emerald: 2 }, 'onyx', 0, 1),
-    /* 能力卡（2张）】 */
-    _mkCard(1, i++, { emerald: 1, sapphire: 1, ruby: 1 }, 'emerald', 0, 0, 'extra_turn'),
-    _mkCard(1, i++, { ruby: 1, diamond: 1, onyx: 1 }, 'ruby', 0, 0, 'take_matching'),
-  ];
-  return shuffle(cards);
-}
-
-function buildTier2() {
-  let i = 0;
-  const cards = [
-    /* 3X+2Y+1Z 系列，声望1、王冠1（5张）】 */
-    _mkCard(2, i++, { emerald: 3, sapphire: 2, ruby: 1 }, 'emerald', 1, 1),
-    _mkCard(2, i++, { sapphire: 3, ruby: 2, diamond: 1 }, 'sapphire', 1, 1),
-    _mkCard(2, i++, { ruby: 3, diamond: 2, onyx: 1 }, 'ruby', 1, 1),
-    _mkCard(2, i++, { diamond: 3, onyx: 2, emerald: 1 }, 'diamond', 1, 1),
-    _mkCard(2, i++, { onyx: 3, emerald: 2, sapphire: 1 }, 'onyx', 1, 1),
-    /* 2X+2Y+2Z 系列，声望2、王冠1（5张）】 */
-    _mkCard(2, i++, { emerald: 2, sapphire: 2, ruby: 2 }, 'emerald', 2, 1),
-    _mkCard(2, i++, { sapphire: 2, ruby: 2, diamond: 2 }, 'sapphire', 2, 1),
-    _mkCard(2, i++, { ruby: 2, diamond: 2, onyx: 2 }, 'ruby', 2, 1),
-    _mkCard(2, i++, { diamond: 2, onyx: 2, emerald: 2 }, 'diamond', 2, 1),
-    _mkCard(2, i++, { onyx: 2, emerald: 2, sapphire: 2 }, 'onyx', 2, 1),
-    /* 2X+2Y+2珍珠 系列，声望2、王冠2（5张）】 */
-    _mkCard(2, i++, { emerald: 2, sapphire: 2, pearl: 2 }, 'diamond', 2, 2),
-    _mkCard(2, i++, { sapphire: 2, ruby: 2, pearl: 2 }, 'onyx', 2, 2),
-    _mkCard(2, i++, { ruby: 2, diamond: 2, pearl: 2 }, 'emerald', 2, 2),
-    _mkCard(2, i++, { diamond: 2, onyx: 2, pearl: 2 }, 'sapphire', 2, 2),
-    _mkCard(2, i++, { onyx: 2, emerald: 2, pearl: 2 }, 'ruby', 2, 2),
-  ];
-  return shuffle(cards);
-}
-
-function buildTier3() {
-  let i = 0;
-  const cards = [
-    /* 3X+2Y+2Z 系列，声望4、王冠2（5张）】 */
-    _mkCard(3, i++, { emerald: 3, sapphire: 2, ruby: 2 }, 'emerald', 4, 2),
-    _mkCard(3, i++, { sapphire: 3, ruby: 2, diamond: 2 }, 'sapphire', 4, 2),
-    _mkCard(3, i++, { ruby: 3, diamond: 2, onyx: 2 }, 'ruby', 4, 2),
-    _mkCard(3, i++, { diamond: 3, onyx: 2, emerald: 2 }, 'diamond', 4, 2),
-    _mkCard(3, i++, { onyx: 3, emerald: 2, sapphire: 2 }, 'onyx', 4, 2),
-    /* 3X+3Y+2Z+1W 系列，声望5、王冠2（5张）】 */
-    _mkCard(3, i++, { emerald: 3, sapphire: 3, ruby: 2, diamond: 1 }, 'emerald', 5, 2),
-    _mkCard(3, i++, { sapphire: 3, ruby: 3, diamond: 2, onyx: 1 }, 'sapphire', 5, 2),
-    _mkCard(3, i++, { ruby: 3, diamond: 3, onyx: 2, emerald: 1 }, 'ruby', 5, 2),
-    _mkCard(3, i++, { diamond: 3, onyx: 3, emerald: 2, sapphire: 1 }, 'diamond', 5, 2),
-    _mkCard(3, i++, { onyx: 3, emerald: 3, sapphire: 2, ruby: 1 }, 'onyx', 5, 2),
-    /* 3X+2Y+2Z+1珍珠 系列，声望5、王冠3（2张）】 */
-    _mkCard(3, i++, { emerald: 3, sapphire: 2, ruby: 2, pearl: 1 }, 'emerald', 5, 3),
-    _mkCard(3, i++, { ruby: 3, diamond: 2, onyx: 2, pearl: 1 }, 'ruby', 5, 3),
-  ];
-  return shuffle(cards);
-}
-
-/* 能力已静态写入牌表，无需随机分配 */
-function assignAbilities(cards) { /* no-op */ }
-
-function buildRoyalties() {
-  const pool = [
-    { id: 'roy0', prestige: 3, ability: 'take_privilege' },
-    { id: 'roy1', prestige: 3, ability: 'steal_token' },
-    { id: 'roy2', prestige: 3, ability: 'take_matching' },
-  ];
-  return shuffle(pool);
-}
-
-/* ============================================================ */
-/* 购买与费用 */
-/* ============================================================ */
-
-function canAffordCard(playerCards, playerTokens, card) {
+function computePayment(playerCards, playerTokens, card) {
   const bonuses = colorCounts(playerCards);
+  const spend = {};
   let goldNeed = 0;
   for (const col of ALL_COLORS) {
     const need = card.cost[col] || 0;
-    const have = (playerTokens[col] || 0) + (bonuses[col] || 0);
-    if (have < need) goldNeed += need - have;
+    const deficit = Math.max(0, need - (bonuses[col] || 0));
+    const have = playerTokens[col] || 0;
+    const fromTokens = Math.min(have, deficit);
+    spend[col] = fromTokens;
+    if (fromTokens < deficit) goldNeed += deficit - fromTokens;
   }
+  return { spend, goldNeed };
+}
+
+function canAffordCard(playerCards, playerTokens, card) {
+  const { goldNeed } = computePayment(playerCards, playerTokens, card);
   return goldNeed <= (playerTokens[GOLD] || 0);
 }
 
-function payForCard(playerCards, playerTokens, bag) {
-  const bonuses = colorCounts(playerCards);
+function payForCard(playerCards, playerTokens, bag, spend, goldNeed) {
   for (const col of ALL_COLORS) {
-    const need = playerTokens._tempCost[col] || 0;
-    const haveTok = playerTokens[col] || 0;
-    const bonus = bonuses[col] || 0;
-    const fromTok = Math.min(haveTok, Math.max(0, need - bonus));
-    if (fromTok > 0) { playerTokens[col] -= fromTok; bag.push(col); }
+    const n = (spend && spend[col]) || 0;
+    if (n > 0) {
+      playerTokens[col] -= n;
+      for (let i = 0; i < n; i++) bag.push(col);
+    }
   }
-  // gold
-  const goldNeed = playerTokens._tempGold || 0;
-  if (goldNeed > 0) { playerTokens[GOLD] -= goldNeed; bag.push(GOLD); }
-  delete playerTokens._tempCost;
-  delete playerTokens._tempGold;
-}
-
-/* 计算某张卡的实际花费（含 discount），同时记录在花费用什么支付 */
-function computePayment(playerCards, playerTokens, card) {
-  const bonuses = colorCounts(playerCards);
-  const tempCost = {};
-  let goldNeed = 0;
-  for (const col of ALL_COLORS) {
-    const need = card.cost[col] || 0;
-    const bonus = bonuses[col] || 0;
-    const deficit = Math.max(0, need - bonus);
-    tempCost[col] = deficit;
-    const haveTok = playerTokens[col] || 0;
-    if (haveTok < deficit) goldNeed += deficit - haveTok;
+  const gold = goldNeed || 0;
+  if (gold > 0) {
+    if ((playerTokens[GOLD] || 0) < gold) return false;
+    playerTokens[GOLD] -= gold;
+    for (let i = 0; i < gold; i++) bag.push(GOLD);
   }
-  return { tempCost, goldNeed };
+  return true;
 }
 
 /* ============================================================ */
-/* 特权 */
+/* 特权                                                          */
 /* ============================================================ */
 
 function gainPrivilege(game, playerId) {
   const p = game.playerData[playerId];
-  if (p.privileges >= PRIVILEGE_MAX) return;
+  if (!p || p.privileges >= PRIVILEGE_MAX) return; // 已有 3 个则无事发生
   if (game.availablePrivileges > 0) {
     game.availablePrivileges--;
     p.privileges++;
-  } else {
-    const opp = getOpponentId(game, playerId);
-    if (opp) {
-      const oppP = game.playerData[opp];
-      if (oppP.privileges > 0) { oppP.privileges--; p.privileges++; }
-    }
+    return;
   }
+  const opp = getOpponentId(game, playerId);
+  const oppP = opp ? game.playerData[opp] : null;
+  if (oppP && oppP.privileges > 0) { oppP.privileges--; p.privileges++; }
 }
 
 /* ============================================================ */
-/* 版图操作 */
+/* 版图操作                                                      */
 /* ============================================================ */
 
 function fillBoardFromBag(game) {
-  // 从中央格开始螺旋填充
-  const emptyCells = [];
-  for (let r = 0; r < BOARD_SIZE; r++) {
-    for (let c = 0; c < BOARD_SIZE; c++) {
-      if (game.board[r][c] === null) emptyCells.push([r, c]);
-    }
-  }
-  if (!emptyCells.length || !game.bag.length) return;
-  // shuffle bag
+  if (!game.bag.length) return;
   game.bag = shuffle(game.bag);
   for (const [r, c] of SPIRAL) {
-    if (game.board[r][c] === null && game.bag.length > 0) {
-      game.board[r][c] = game.bag.shift();
-    }
+    if (game.bag.length === 0) break;
+    if (game.board[r][c] === null) game.board[r][c] = game.bag.shift();
   }
 }
 
@@ -278,11 +278,12 @@ function validateTokenCells(board, cells) {
   for (const [r, c] of cells) {
     if (r < 0 || r >= BOARD_SIZE || c < 0 || c >= BOARD_SIZE) return false;
     if (board[r][c] === null) return false;
+    if (board[r][c] === GOLD) return false; // 拿标记行动不能拿黄金
   }
   if (cells.length === 1) return true;
 
-  const sameRow = cells.every(([r, c]) => r === cells[0][0]);
-  const sameCol = cells.every(([r, c]) => c === cells[0][1]);
+  const sameRow = cells.every(([r]) => r === cells[0][0]);
+  const sameCol = cells.every(([, c]) => c === cells[0][1]);
   const sameDiag1 = cells.every(([r, c]) => r - c === cells[0][0] - cells[0][1]);
   const sameDiag2 = cells.every(([r, c]) => r + c === cells[0][0] + cells[0][1]);
   if (!sameRow && !sameCol && !sameDiag1 && !sameDiag2) return false;
@@ -296,101 +297,122 @@ function validateTokenCells(board, cells) {
   return true;
 }
 
-/* ============================================================ */
-/* 王室卡牌 */
-/* ============================================================ */
+function boardHasNonGold(board) {
+  for (let r = 0; r < BOARD_SIZE; r++) {
+    for (let c = 0; c < BOARD_SIZE; c++) {
+      if (board[r][c] !== null && board[r][c] !== GOLD) return true;
+    }
+  }
+  return false;
+}
 
-function checkRoyaltyTrigger(game, playerId) {
-  const p = game.playerData[playerId];
-  if (!p) return;
-  const thresholds = [3, 6];
-  for (const th of thresholds) {
-    if (p.crowns >= th && !p.royaltyTriggersReceived.includes(th)) {
-      p.royaltyTriggersReceived.push(th);
-      const available = game.royalties.filter((r) => !r.claimedBy);
-      if (available.length > 0) {
-        const roy = available[0];
-        roy.claimedBy = playerId;
-        p.cards.push({ ...roy, isRoyalty: true });
-        p.prestige += roy.prestige;
-        resolveCardAbility(game, playerId, roy);
+function boardHasGold(board) {
+  for (let r = 0; r < BOARD_SIZE; r++) {
+    for (let c = 0; c < BOARD_SIZE; c++) {
+      if (board[r][c] === GOLD) return true;
+    }
+  }
+  return false;
+}
+
+/** 拿走版图上第一个指定颜色的标记（能力「取同色宝石」/「预留拿金」用） */
+function takeTokenOfColor(game, playerId, col) {
+  for (let r = 0; r < BOARD_SIZE; r++) {
+    for (let c = 0; c < BOARD_SIZE; c++) {
+      if (game.board[r][c] === col) {
+        game.board[r][c] = null;
+        game.playerData[playerId].tokens[col] = (game.playerData[playerId].tokens[col] || 0) + 1;
+        return true;
       }
     }
   }
+  return false;
 }
 
 /* ============================================================ */
-/* 卡牌能力结算 */
+/* 卡牌能力                                                      */
 /* ============================================================ */
 
+/**
+ * 立即结算的能力；需要玩家抉择的（steal_gem）返回 'pending' 由调用方入队。
+ * @returns {'done'|'pending'}
+ */
 function resolveCardAbility(game, playerId, card) {
-  if (!card.ability) return;
+  if (!card.ability) return 'done';
   const p = game.playerData[playerId];
-  const opp = getOpponentId(game, playerId);
   switch (card.ability) {
     case 'extra_turn':
       game.extraTurnFlag = true;
-      break;
-    case 'take_matching': {
-      const col = card.discount;
-      if (!col) break;
-      let taken = false;
-      for (let r = 0; r < BOARD_SIZE && !taken; r++) {
-        for (let c = 0; c < BOARD_SIZE && !taken; c++) {
-          if (game.board[r][c] === col) {
-            game.board[r][c] = null;
-            p.tokens[col] = (p.tokens[col] || 0) + 1;
-            taken = true;
-          }
-        }
-      }
-      break;
-    }
-    case 'take_privilege':
+      return 'done';
+    case 'gain_privilege':
       gainPrivilege(game, playerId);
-      break;
-    case 'steal_token': {
-      if (!opp) break;
-      const oppP = game.playerData[opp];
-      const stealable = [];
-      for (const col of ALL_COLORS) {
-        if ((oppP.tokens[col] || 0) > 0) stealable.push(col);
-      }
-      if (stealable.length > 0) {
-        const col = stealable[Math.floor(Math.random() * stealable.length)];
-        oppP.tokens[col]--;
-        p.tokens[col] = (p.tokens[col] || 0) + 1;
-      }
-      break;
+      return 'done';
+    case 'take_gem': {
+      const col = effectiveDiscount(card);
+      if (col) takeTokenOfColor(game, playerId, col);
+      return 'done';
     }
-    default: break;
+    case 'steal_gem': {
+      const opp = getOpponentId(game, playerId);
+      const oppP = opp ? game.playerData[opp] : null;
+      const stealable = oppP ? ALL_COLORS.filter((c) => (oppP.tokens[c] || 0) > 0) : [];
+      if (!stealable.length) return 'done'; // 对手无宝石则忽略
+      game.pending.push({ type: 'steal_gem', playerId, options: stealable });
+      return 'pending';
+    }
+    default:
+      return 'done';
   }
 }
 
+function claimRoyal(game, playerId, royalId) {
+  const roy = (game.royalties || []).find((r) => r.id === royalId && !r.claimedBy);
+  if (!roy) return false;
+  roy.claimedBy = playerId;
+  const p = game.playerData[playerId];
+  p.cards.push({ ...roy, isRoyalty: true, tier: 0 });
+  p.prestige += roy.prestige;
+  resolveCardAbility(game, playerId, roy);
+  return true;
+}
+
 /* ============================================================ */
-/* 胜利条件 */
+/* 胜利条件                                                      */
 /* ============================================================ */
+
+function colorPrestigeMap(cards) {
+  const m = {};
+  for (const c of cards) {
+    if (c.isNoble || c.isRoyalty) continue; // 皇室卡不计入同色声望
+    const col = effectiveDiscount(c);
+    if (col) m[col] = (m[col] || 0) + (c.prestige || 0);
+  }
+  return m;
+}
 
 function checkWin(game, playerId) {
   const p = game.playerData[playerId];
   if (!p) return null;
   if (p.prestige >= WIN_PRESTIGE) return 'prestige';
   if (p.crowns >= WIN_CROWNS) return 'crowns';
-  // 同色卡牌声望≥10
-  const colorPrestige = {};
-  for (const c of p.cards) {
-    if (!c.isNoble && !c.isRoyalty && c.discount) {
-      colorPrestige[c.discount] = (colorPrestige[c.discount] || 0) + (c.prestige || 0);
-    }
-  }
-  for (const sum of Object.values(colorPrestige)) {
+  for (const sum of Object.values(colorPrestigeMap(p.cards))) {
     if (sum >= WIN_COLOR_PRESTIGE) return 'color_prestige';
   }
   return null;
 }
 
-function endTurn(game, actingPlayerId) {
-  // 检查是否需要弃标记
+/* ============================================================ */
+/* 回合结束                                                      */
+/* ============================================================ */
+
+function _resetTurnFlags(game) {
+  game.optPrivilegeDone = false;
+  game.optReplenishDone = false;
+  game.extraTurnFlag = false;
+}
+
+/** 所有抉择处理完毕后才调用：弃牌 → 胜利判定 → 切换/额外回合 */
+function finishTurn(game, actingPlayerId) {
   const p = game.playerData[actingPlayerId];
   const handTotal = totalTokens(p.tokens);
   if (handTotal > HAND_LIMIT) {
@@ -400,7 +422,6 @@ function endTurn(game, actingPlayerId) {
     return { ok: true, state: publicGameState(game, actingPlayerId) };
   }
 
-  // 胜利检查
   const winCond = checkWin(game, actingPlayerId);
   if (winCond) {
     game.over = true;
@@ -410,66 +431,55 @@ function endTurn(game, actingPlayerId) {
     return { ok: true, state: publicGameState(game, actingPlayerId) };
   }
 
-  // 额外回合？
   if (game.extraTurnFlag) {
-    game.extraTurnFlag = false;
     _resetTurnFlags(game);
     game.currentPlayerId = actingPlayerId;
     return { ok: true, state: publicGameState(game, actingPlayerId) };
   }
 
-  // 正常切换
   _resetTurnFlags(game);
   game.turnIndex = (game.turnIndex + 1) % game.turnOrder.length;
   game.currentPlayerId = game.turnOrder[game.turnIndex];
   return { ok: true, state: publicGameState(game, actingPlayerId) };
 }
 
-function _resetTurnFlags(game) {
-  game.optPrivilegeDone = false;
-  game.optReplenishDone = false;
-  game.extraTurnFlag = false;
+/** 强制行动结束后：先处理抉择队列，全部清空才结束回合 */
+function afterMandatory(game, actingPlayerId) {
+  game.optPrivilegeDone = true;
+  game.optReplenishDone = true;
+  if (game.pending.length > 0) return { ok: true, state: publicGameState(game, actingPlayerId) };
+  return finishTurn(game, actingPlayerId);
 }
 
 /* ============================================================ */
-/* 创建游戏状态 */
+/* 创建游戏状态                                                  */
 /* ============================================================ */
-
-function createBoardFromBag(bag) {
-  const board = Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(null));
-  // 从中央格开始按螺旋顺序依次放置 bag 中的 token
-  for (let i = 0; i < SPIRAL.length && i < 25 && bag.length > 0; i++) {
-    const [r, c] = SPIRAL[i];
-    board[r][c] = bag.shift();
-  }
-  return board;
-}
 
 function createGameState(room) {
   const players = room.players.slice(0, 2);
   const turnOrder = players.map((p) => p.id);
 
-  // Token 池
-  const bag = [];
-  for (const col of RESOURCES) for (let i = 0; i < 5; i++) bag.push(col);
-  for (let i = 0; i < 3; i++) bag.push('pearl');
-  for (let i = 0; i < 3; i++) bag.push(GOLD);
-  // 33 个 token，25 放版图，8 留 bag
-  const shuffledBag = shuffle(bag);
-  const board = createBoardFromBag(shuffledBag);
+  // 25 个标记：5 色各 4 + 珍珠 2 + 金 3；开局全部铺满版图，抽袋为空
+  const pool = [];
+  for (const col of RESOURCES) for (let i = 0; i < 4; i++) pool.push(col);
+  for (let i = 0; i < 2; i++) pool.push('pearl');
+  for (let i = 0; i < 3; i++) pool.push(GOLD);
 
-  const decks = { tier1: buildTier1(), tier2: buildTier2(), tier3: buildTier3() };
-  assignAbilities(decks.tier1);
-  assignAbilities(decks.tier2);
-  assignAbilities(decks.tier3);
+  const shuffled = shuffle(pool);
+  const board = Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(null));
+  for (let i = 0; i < SPIRAL.length && shuffled.length > 0; i++) {
+    const [r, c] = SPIRAL[i];
+    board[r][c] = shuffled.shift();
+  }
 
+  const decks = { tier1: shuffle(TIER1), tier2: shuffle(TIER2), tier3: shuffle(TIER3) };
   const boardCards = {
-    tier1: decks.tier1.splice(0, 3),
-    tier2: decks.tier2.splice(0, 3),
-    tier3: decks.tier3.splice(0, 3),
+    tier1: decks.tier1.splice(0, PYRAMID[1]),
+    tier2: decks.tier2.splice(0, PYRAMID[2]),
+    tier3: decks.tier3.splice(0, PYRAMID[3]),
   };
 
-  const royalties = buildRoyalties();
+  const royalties = ROYALS.map((r) => ({ ...r, claimedBy: null }));
 
   const playerData = {};
   for (const pid of turnOrder) {
@@ -484,9 +494,7 @@ function createGameState(room) {
     };
   }
 
-  // 随机先手，对手拿1特权
   const firstIdx = Math.floor(Math.random() * turnOrder.length);
-  const firstPlayer = turnOrder[firstIdx];
   const secondPlayer = turnOrder[(firstIdx + 1) % turnOrder.length];
   playerData[secondPlayer].privileges = 1;
 
@@ -494,19 +502,21 @@ function createGameState(room) {
     type: 'splendor-duel',
     turnOrder,
     turnIndex: firstIdx,
-    currentPlayerId: firstPlayer,
+    currentPlayerId: turnOrder[firstIdx],
     phase: 'play',
     discardPlayerId: null,
     discardNeed: 0,
     optPrivilegeDone: false,
     optReplenishDone: false,
     extraTurnFlag: false,
+    passStreak: 0,
+    pending: [],
     board,
-    bag: shuffledBag,
+    bag: [],
     decks,
     boardCards,
     royalties,
-    availablePrivileges: TOTAL_PRIVILEGES - 1, // 1 已给先手对手
+    availablePrivileges: TOTAL_PRIVILEGES - 1, // 先手对手已拿 1
     playerData,
     lastAction: null,
     winnerId: null,
@@ -517,7 +527,7 @@ function createGameState(room) {
 }
 
 /* ============================================================ */
-/* 操作路由 */
+/* 操作路由                                                      */
 /* ============================================================ */
 
 function applyAction(game, playerId, action) {
@@ -525,19 +535,23 @@ function applyAction(game, playerId, action) {
   const type = action && action.type;
   const payload = action.payload || {};
 
-  // 弃标记阶段
+  // 抉择队列最优先（皇室卡 / 合伙人颜色 / 偷宝石）
+  if (game.pending.length > 0) {
+    const cur = game.pending[0];
+    if (playerId !== cur.playerId) return { ok: false, error: 'Not your turn' };
+    if (type !== 'resolve') return { ok: false, error: 'Pending choice required' };
+    return _resolvePending(game, playerId, cur, payload);
+  }
+
   if (game.phase === 'discard') {
     if (playerId !== game.discardPlayerId) return { ok: false, error: 'Not your turn to discard' };
     if (type !== 'discard_tokens') return { ok: false, error: 'Please discard tokens' };
     return _handleDiscard(game, playerId, payload);
   }
 
-  // 正常回合
   if (playerId !== game.currentPlayerId) return { ok: false, error: 'Not your turn' };
-
   if (game.phase !== 'play') return { ok: false, error: 'Invalid phase' };
 
-  // 可选行动
   if (type === 'use_privilege') {
     if (game.optPrivilegeDone) return { ok: false, error: 'Privilege already used this turn' };
     return _handleUsePrivilege(game, playerId, payload);
@@ -547,7 +561,22 @@ function applyAction(game, playerId, action) {
     return _handleReplenish(game, playerId);
   }
 
-  // 强制行动
+  if (type === 'take_tokens' || type === 'reserve_card' || type === 'buy_card' || type === 'pass') {
+    if (!_canAct(game, playerId)) {
+      // 规则：无法执行任何强制行动时，必须先补充版图（抽袋为空才可跳过）
+      if (game.bag.length > 0) {
+        const r = _forceReplenish(game, playerId);
+        if (r.ok) return r;
+      }
+      if (type !== 'pass') return { ok: false, error: 'No mandatory action available' };
+      game.passStreak += 1;
+      game.lastAction = { type: 'pass', playerId };
+      if (game.passStreak >= 2) return _endStalemate(game);
+      return afterMandatory(game, playerId);
+    }
+    game.passStreak = 0;
+  }
+
   if (type === 'take_tokens') return _handleTakeTokens(game, playerId, payload);
   if (type === 'reserve_card') return _handleReserve(game, playerId, payload);
   if (type === 'buy_card') return _handleBuyCard(game, playerId, payload);
@@ -555,8 +584,77 @@ function applyAction(game, playerId, action) {
   return { ok: false, error: 'Invalid action' };
 }
 
+/** 双方连续无法行动：按声望 → 皇冠 → 卡牌数判定，仍相同则为平局 */
+function _endStalemate(game) {
+  game.over = true;
+  game.phase = 'over';
+  game.winCondition = 'stalemate';
+  const [a, b] = game.turnOrder;
+  const pa = game.playerData[a], pb = game.playerData[b];
+  if (pa.prestige !== pb.prestige) game.winnerId = pa.prestige > pb.prestige ? a : b;
+  else if (pa.crowns !== pb.crowns) game.winnerId = pa.crowns > pb.crowns ? a : b;
+  else if (pa.cards.length !== pb.cards.length) game.winnerId = pa.cards.length > pb.cards.length ? a : b;
+  else game.winnerId = null; // 平局
+  return { ok: true, state: publicGameState(game, a) };
+}
+
+/** 是否还存在可行的强制行动 */
+function _canAct(game, playerId) {
+  if (boardHasNonGold(game.board)) return true;
+  const p = game.playerData[playerId];
+  if (boardHasGold(game.board) && p.reserved.length < RESERVE_LIMIT) return true;
+  for (const key of ['tier1', 'tier2', 'tier3']) {
+    for (const card of game.boardCards[key] || []) {
+      if (canAffordCard(p.cards, p.tokens, card)) return true;
+    }
+  }
+  for (const card of p.reserved || []) {
+    if (canAffordCard(p.cards, p.tokens, card)) return true;
+  }
+  return false;
+}
+
 /* ============================================================ */
-/* 可选：使用特权 */
+/* 抉择结算                                                      */
+/* ============================================================ */
+
+function _resolvePending(game, playerId, pend, payload) {
+  if (pend.type === 'royal') {
+    const royalId = payload.royalId;
+    if (!claimRoyal(game, playerId, royalId)) return { ok: false, error: 'Invalid royal card' };
+    game.lastAction = { type: 'take_royal', playerId, royalId };
+  } else if (pend.type === 'associate_color') {
+    const col = payload.color;
+    const p = game.playerData[playerId];
+    const allowed = Object.keys(colorCounts(p.cards)).filter((c) => c !== ASSOCIATE);
+    if (!RESOURCES.includes(col)) return { ok: false, error: 'Invalid color' };
+    if (!allowed.includes(col)) return { ok: false, error: 'No bonus of that color' };
+    const card = p.cards.find((c) => c.id === pend.cardId);
+    if (!card) return { ok: false, error: 'Card not found' };
+    card.assocColor = col;
+    game.lastAction = { type: 'associate_color', playerId, color: col };
+  } else if (pend.type === 'steal_gem') {
+    const col = payload.color;
+    const opp = getOpponentId(game, playerId);
+    const oppP = opp ? game.playerData[opp] : null;
+    if (!oppP || !ALL_COLORS.includes(col) || (oppP.tokens[col] || 0) <= 0) {
+      return { ok: false, error: 'Invalid steal target' };
+    }
+    oppP.tokens[col]--;
+    game.playerData[playerId].tokens[col] = (game.playerData[playerId].tokens[col] || 0) + 1;
+    game.lastAction = { type: 'steal_gem', playerId, color: col };
+  } else {
+    game.pending.shift();
+    return { ok: false, error: 'Unknown pending' };
+  }
+
+  game.pending.shift();
+  if (game.pending.length > 0) return { ok: true, state: publicGameState(game, playerId) };
+  return finishTurn(game, playerId);
+}
+
+/* ============================================================ */
+/* 可选：使用特权                                                */
 /* ============================================================ */
 
 function _handleUsePrivilege(game, playerId, payload) {
@@ -567,14 +665,12 @@ function _handleUsePrivilege(game, playerId, payload) {
   if (count > p.privileges) return { ok: false, error: 'Not enough privileges' };
   if (tokens.length !== count) return { ok: false, error: `Select ${count} tokens` };
 
-  // 验证每个 token 在版图上且不是金
   for (const [r, c] of tokens) {
     if (r < 0 || r >= BOARD_SIZE || c < 0 || c >= BOARD_SIZE) return { ok: false, error: 'Invalid token position' };
     if (game.board[r][c] === null) return { ok: false, error: 'No token there' };
     if (game.board[r][c] === GOLD) return { ok: false, error: 'Cannot take gold with privilege' };
   }
 
-  // 执行
   p.privileges -= count;
   game.availablePrivileges += count;
   for (const [r, c] of tokens) {
@@ -589,16 +685,23 @@ function _handleUsePrivilege(game, playerId, payload) {
 }
 
 /* ============================================================ */
-/* 可选：补充版图 */
+/* 可选：补充版图                                                */
 /* ============================================================ */
 
 function _handleReplenish(game, playerId) {
+  if (game.bag.length === 0) return { ok: false, error: 'Bag is empty' };
+  const r = _forceReplenish(game, playerId);
+  if (r.ok) game.optReplenishDone = true;
+  return r;
+}
+
+/** 补充版图（不受「本回合已补充」限制，用于规则强制触发） */
+function _forceReplenish(game, playerId) {
   if (game.bag.length === 0) return { ok: false, error: 'Bag is empty' };
 
   fillBoardFromBag(game);
   game.optReplenishDone = true;
 
-  // 对手拿1特权
   const opp = getOpponentId(game, playerId);
   if (opp) gainPrivilege(game, opp);
 
@@ -607,7 +710,7 @@ function _handleReplenish(game, playerId) {
 }
 
 /* ============================================================ */
-/* 强制：拿标记 */
+/* 强制：拿标记                                                  */
 /* ============================================================ */
 
 function _handleTakeTokens(game, playerId, payload) {
@@ -627,38 +730,27 @@ function _handleTakeTokens(game, playerId, payload) {
     if (col === 'pearl') pearlCount++;
   }
 
-  // 统计同色
   const colorFreq = {};
   for (const col of colors) colorFreq[col] = (colorFreq[col] || 0) + 1;
   const maxSame = Math.max(0, ...Object.values(colorFreq));
 
-  // 拿3同色或2珍珠 → 对手拿1特权
   if (maxSame >= 3 || pearlCount >= 2) {
     const opp = getOpponentId(game, playerId);
     if (opp) gainPrivilege(game, opp);
   }
 
   game.lastAction = { type: 'take_tokens', playerId, cells: cells.map(([r, c]) => [r, c]), colors };
-  return _endTurnAfterMandatory(game, playerId);
+  return afterMandatory(game, playerId);
 }
 
 /* ============================================================ */
-/* 强制：预留 */
+/* 强制：预留（拿 1 金）                                          */
 /* ============================================================ */
 
 function _handleReserve(game, playerId, payload) {
   const p = game.playerData[playerId];
   if (p.reserved.length >= RESERVE_LIMIT) return { ok: false, error: 'Reserve limit reached' };
-
-  // 检查版图上是否有金
-  let goldOnBoard = false;
-  for (let r = 0; r < BOARD_SIZE; r++) {
-    for (let c = 0; c < BOARD_SIZE; c++) {
-      if (game.board[r][c] === GOLD) { goldOnBoard = true; break; }
-    }
-    if (goldOnBoard) break;
-  }
-  if (!goldOnBoard) return { ok: false, error: 'No gold token on board' };
+  if (!boardHasGold(game.board)) return { ok: false, error: 'No gold token on board' };
 
   const tier = payload.tier;
   const idx = payload.idx;
@@ -670,33 +762,22 @@ function _handleReserve(game, playerId, payload) {
     if (![1, 2, 3].includes(tier) || !game.decks[key] || game.decks[key].length === 0) return { ok: false, error: 'Deck empty' };
     card = game.decks[key].shift();
   } else {
-    if (![1, 2, 3].includes(tier) || idx < 0 || idx >= (game.boardCards[key] || []).length) return { ok: false, error: 'Invalid card' };
+    if (![1, 2, 3].includes(tier) || !(idx >= 0) || idx >= (game.boardCards[key] || []).length) return { ok: false, error: 'Invalid card' };
     card = game.boardCards[key][idx];
     game.boardCards[key].splice(idx, 1);
     if (game.decks[key].length > 0) game.boardCards[key].push(game.decks[key].shift());
   }
   if (!card) return { ok: false, error: 'Card not found' };
 
-  p.reserved.push(card);
-
-  // 拿1金（从版图上最近的）
-  let goldTaken = false;
-  for (let r = 0; r < BOARD_SIZE && !goldTaken; r++) {
-    for (let c = 0; c < BOARD_SIZE && !goldTaken; c++) {
-      if (game.board[r][c] === GOLD) {
-        game.board[r][c] = null;
-        p.tokens[GOLD] = (p.tokens[GOLD] || 0) + 1;
-        goldTaken = true;
-      }
-    }
-  }
+  p.reserved.push({ ...card });
+  takeTokenOfColor(game, playerId, GOLD);
 
   game.lastAction = { type: 'reserve_card', playerId, cardId: card.id, tier: card.tier };
-  return _endTurnAfterMandatory(game, playerId);
+  return afterMandatory(game, playerId);
 }
 
 /* ============================================================ */
-/* 强制：买卡 */
+/* 强制：买卡                                                    */
 /* ============================================================ */
 
 function _handleBuyCard(game, playerId, payload) {
@@ -715,19 +796,19 @@ function _handleBuyCard(game, playerId, payload) {
     source = 'reserve';
   } else {
     const key = `tier${tier}`;
-    if (![1, 2, 3].includes(tier) || idx < 0 || idx >= (game.boardCards[key] || []).length) return { ok: false, error: 'Invalid card' };
+    if (![1, 2, 3].includes(tier) || !(idx >= 0) || idx >= (game.boardCards[key] || []).length) return { ok: false, error: 'Invalid card' };
     card = game.boardCards[key][idx];
     source = 'board';
   }
 
   if (!card) return { ok: false, error: 'Card not found' };
+  if (card.discount === ASSOCIATE && !hasAnyBonus(p.cards.filter((c) => c.id !== card.id))) {
+    return { ok: false, error: 'Need a card with a bonus first' };
+  }
   if (!canAffordCard(p.cards, p.tokens, card)) return { ok: false, error: 'Cannot afford' };
 
-  // 计算并执行付款
-  const { tempCost, goldNeed } = computePayment(p.cards, p.tokens, card);
-  p._tempCost = tempCost;
-  p._tempGold = goldNeed;
-  payForCard(p.cards, p.tokens, game.bag);
+  const { spend, goldNeed } = computePayment(p.cards, p.tokens, card);
+  if (!payForCard(p.cards, p.tokens, game.bag, spend, goldNeed)) return { ok: false, error: 'Cannot afford' };
 
   if (source === 'board') {
     const key = `tier${tier}`;
@@ -737,32 +818,37 @@ function _handleBuyCard(game, playerId, payload) {
     p.reserved.splice(reserveIdx, 1);
   }
 
-  p.cards.push(card);
+  const bought = { ...card, assocColor: null };
+  p.cards.push(bought);
   p.prestige += card.prestige || 0;
   p.crowns += card.crowns || 0;
 
-  // 王室触发
-  checkRoyaltyTrigger(game, playerId);
+  game.pending = [];
 
-  // 卡牌能力
-  resolveCardAbility(game, playerId, card);
+  // 1) 合伙人卡：选择要复制的红利颜色
+  if (card.discount === ASSOCIATE) {
+    game.pending.push({ type: 'associate_color', playerId, cardId: bought.id });
+  }
+
+  // 2) 皇冠达 3 / 6：取 1 张皇室卡（玩家自选）
+  for (const th of [3, 6]) {
+    if (p.crowns >= th && !p.royaltyTriggersReceived.includes(th)) {
+      p.royaltyTriggersReceived.push(th);
+      if (game.royalties.some((r) => !r.claimedBy)) {
+        game.pending.push({ type: 'royal', playerId, threshold: th });
+      }
+    }
+  }
+
+  // 3) 卡牌能力
+  resolveCardAbility(game, playerId, bought);
 
   game.lastAction = { type: 'buy_card', playerId, cardId: card.id, source, tier: card.tier };
-  return _endTurnAfterMandatory(game, playerId);
+  return afterMandatory(game, playerId);
 }
 
 /* ============================================================ */
-/* 强制行动后处理 */
-/* ============================================================ */
-
-function _endTurnAfterMandatory(game, actingPlayerId) {
-  game.optPrivilegeDone = true;
-  game.optReplenishDone = true;
-  return endTurn(game, actingPlayerId);
-}
-
-/* ============================================================ */
-/* 弃标记 */
+/* 弃标记                                                        */
 /* ============================================================ */
 
 function _handleDiscard(game, playerId, payload) {
@@ -787,32 +873,11 @@ function _handleDiscard(game, playerId, payload) {
   game.phase = 'play';
   game.discardPlayerId = null;
   game.discardNeed = 0;
-
-  // 弃完后检查胜利
-  const winCond = checkWin(game, playerId);
-  if (winCond) {
-    game.over = true;
-    game.phase = 'over';
-    game.winnerId = playerId;
-    game.winCondition = winCond;
-    return { ok: true, state: publicGameState(game, playerId) };
-  }
-
-  if (game.extraTurnFlag) {
-    game.extraTurnFlag = false;
-    _resetTurnFlags(game);
-    game.currentPlayerId = playerId;
-    return { ok: true, state: publicGameState(game, playerId) };
-  }
-
-  _resetTurnFlags(game);
-  game.turnIndex = (game.turnIndex + 1) % game.turnOrder.length;
-  game.currentPlayerId = game.turnOrder[game.turnIndex];
-  return { ok: true, state: publicGameState(game, playerId) };
+  return finishTurn(game, playerId);
 }
 
 /* ============================================================ */
-/* 公共状态 */
+/* 公共状态                                                      */
 /* ============================================================ */
 
 function publicGameState(game, viewerId) {
@@ -823,14 +888,36 @@ function publicGameState(game, viewerId) {
     publicPlayers[pid] = {
       tokenCounts: { ...p.tokens },
       reserved: pid === viewerId ? p.reserved.map((c) => ({ ...c })) : p.reserved.map((c) => ({ id: c.id, tier: c.tier })),
+      cards: p.cards.map((c) => ({ ...c })),
       cardCount: p.cards.filter((c) => !c.isNoble && !c.isRoyalty).length,
       bonusCounts: colorCounts(p.cards),
+      colorPrestige: colorPrestigeMap(p.cards),
       prestige: p.prestige,
       crowns: p.crowns,
       privileges: p.privileges,
-      nobleCount: p.cards.filter((c) => c.isNoble || c.isRoyalty).length,
+      royalCount: p.cards.filter((c) => c.isRoyalty).length,
     };
   }
+
+  const pend = game.pending[0] || null;
+  let pending = null;
+  if (pend) {
+    pending = { type: pend.type, playerId: pend.playerId };
+    if (pend.type === 'royal') {
+      pending.threshold = pend.threshold || 3;
+      pending.options = game.royalties.filter((r) => !r.claimedBy).map((r) => ({ id: r.id, prestige: r.prestige, ability: r.ability }));
+    } else if (pend.type === 'associate_color') {
+      const p = game.playerData[pend.playerId];
+      pending.cardId = pend.cardId;
+      if (pend.playerId === viewerId) {
+        pending.options = Object.keys(colorCounts(p.cards.filter((c) => c.id !== pend.cardId))).filter((c) => c !== ASSOCIATE);
+      }
+    } else if (pend.type === 'steal_gem') {
+      if (pend.playerId === viewerId) pending.options = pend.options.slice();
+      else pending.options = pend.options.length;
+    }
+  }
+
   return {
     type: 'splendor-duel',
     turnOrder: game.turnOrder.slice(),
@@ -841,6 +928,7 @@ function publicGameState(game, viewerId) {
     discardNeed: game.discardNeed,
     optPrivilegeDone: game.optPrivilegeDone,
     optReplenishDone: game.optReplenishDone,
+    extraTurnFlag: game.extraTurnFlag,
     board: game.board.map((row) => row.slice()),
     bagLeft: game.bag ? game.bag.length : 0,
     availablePrivileges: game.availablePrivileges,
@@ -860,6 +948,7 @@ function publicGameState(game, viewerId) {
       ability: r.ability,
       claimedBy: r.claimedBy || null,
     })),
+    pending,
     players: publicPlayers,
     lastAction: game.lastAction ? { ...game.lastAction } : null,
     winnerId: game.winnerId,
@@ -871,6 +960,7 @@ function publicGameState(game, viewerId) {
 
 function getActingPlayerIds(game) {
   if (!game || game.over) return [];
+  if (game.pending.length > 0) return [game.pending[0].playerId];
   if (game.phase === 'discard') return game.discardPlayerId ? [game.discardPlayerId] : [];
   return game.currentPlayerId ? [game.currentPlayerId] : [];
 }
@@ -884,11 +974,23 @@ function onPlayerQuit(game, playerId) {
 }
 
 /* ============================================================ */
-/* 超时处理 */
+/* 超时处理                                                      */
 /* ============================================================ */
 
 function forceTimeout(game, playerId) {
   if (!game || game.over) return { ok: false, error: 'Game over' };
+
+  if (game.pending.length > 0) {
+    const pend = game.pending[0];
+    if (playerId !== pend.playerId) return { ok: false, error: 'Not your turn' };
+    const payload = {};
+    if (pend.type === 'royal') payload.royalId = (game.royalties.find((r) => !r.claimedBy) || {}).id;
+    else if (pend.type === 'associate_color') {
+      const p = game.playerData[playerId];
+      payload.color = Object.keys(colorCounts(p.cards.filter((c) => c.id !== pend.cardId))).filter((c) => c !== ASSOCIATE)[0];
+    } else if (pend.type === 'steal_gem') payload.color = pend.options[0];
+    return _resolvePending(game, playerId, pend, payload);
+  }
 
   if (game.phase === 'discard' && playerId === game.discardPlayerId) {
     const p = game.playerData[playerId];
@@ -907,15 +1009,11 @@ function forceTimeout(game, playerId) {
     game.phase = 'play';
     game.discardPlayerId = null;
     game.discardNeed = 0;
-    _resetTurnFlags(game);
-    game.turnIndex = (game.turnIndex + 1) % game.turnOrder.length;
-    game.currentPlayerId = game.turnOrder[game.turnIndex];
-    return { ok: true, state: publicGameState(game, playerId) };
+    return finishTurn(game, playerId);
   }
 
   if (playerId !== game.currentPlayerId) return { ok: false, error: 'Not your turn' };
 
-  // 超时默认：从版图上拿1个可用的标记
   for (let r = 0; r < BOARD_SIZE; r++) {
     for (let c = 0; c < BOARD_SIZE; c++) {
       if (game.board[r][c] !== null && game.board[r][c] !== GOLD) {
@@ -923,9 +1021,8 @@ function forceTimeout(game, playerId) {
       }
     }
   }
-  // 完全没可拿的，跳过
   game.lastAction = { type: 'pass', playerId };
-  return _endTurnAfterMandatory(game, playerId);
+  return afterMandatory(game, playerId);
 }
 
 module.exports = {
@@ -935,4 +1032,6 @@ module.exports = {
   getActingPlayerIds,
   onPlayerQuit,
   forceTimeout,
+  /* 供冒烟测试/工具使用 */
+  _cards: { TIER1, TIER2, TIER3, ROYALS },
 };

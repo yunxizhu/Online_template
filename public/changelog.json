@@ -2,6 +2,12 @@
   "schema": 1,
   "entries": [
     {
+      "version": "1.2.17",
+      "notes": "更新璀璨宝石对决的卡牌和规则",
+      "notesEn": "",
+      "publishedAt": "2026-09-22T02:07:42.556Z"
+    },
+    {
       "version": "1.2.16",
       "notes": "优化斗地主和掼蛋的ui显示",
       "notesEn": "",
