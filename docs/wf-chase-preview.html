@@ -1,4 +1,11 @@
-'use strict';
+<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><title>追击攻击命令</title>
+<style>
+html,body{margin:0;background:#1b1714;overflow:hidden;}
+#warfactory-canvas{display:block;}
+</style></head><body class="phase-game">
+<div id="game-panels"></div>
+<canvas id="warfactory-canvas" width="960" height="600"></canvas>
+<script>'use strict';
 
 /**
  * 战争工厂（warfactory）客户端：水墨渲染 + RTS 操作。
@@ -5633,4 +5640,258 @@ window.WarFactoryUi = (function () {
     /** 体型系数（docs 下的图谱页按它对预览图缩放，与游戏内一致） */
     scales: { vis: UNIT_VIS_SCALE, body: UNIT_BODY_SCALE },
   };
+})();</script>
+<script><!-- 战争工厂对局面板（水墨即时战略） -->
+<div class="panel game-panel" id="panel-warfactory" hidden>
+  <!--
+    布局：地图铺满整个屏幕（见 style.css 的「地图铺满整屏」一节）。
+    指挥栏浮在地图下沿、规则说明收进右上角的浮层 —— 地图下方不再有任何东西，
+    全屏（F11）之后画面里只有「游戏界面 + 地图」。
+  -->
+  <div class="warfactory-wrap">
+    <canvas
+      id="warfactory-canvas"
+      width="1280"
+      height="800"
+      data-i18n-attr="aria-label:warfactory.boardAria"
+      aria-label="战争工厂战场"
+    ></canvas>
+
+    <!-- 右上角浮层：规则与操作（原来的图例整段搬到这里，默认收起） -->
+    <div class="wf-map-tools">
+      <button
+        type="button"
+        id="wf-help-btn"
+        class="wf-map-btn"
+        aria-expanded="false"
+        aria-controls="wf-help"
+        title="规则与操作"
+        aria-label="规则与操作"
+      >？</button>
+    </div>
+    <div class="wf-help" id="wf-help" role="dialog" aria-label="规则与操作" hidden>
+      <div class="wf-help-head">
+        <span class="wf-help-title">规则与操作</span>
+        <button type="button" class="wf-help-close" id="wf-help-close" aria-label="关闭">×</button>
+      </div>
+      <div class="wf-help-body">
+        <div class="warfactory-legend">
+          <span class="warfactory-legend-title" data-i18n="warfactory.legendTitle">兵种图谱</span>
+          <span class="warfactory-legend-item"><b>锐士</b><em data-i18n="warfactory.unit.warrior">近战突进，攻守兼备</em></span>
+          <span class="warfactory-legend-item"><b>盾卫</b><em data-i18n="warfactory.unit.shield">重甲缓慢，坚不可摧</em></span>
+          <span class="warfactory-legend-item"><b>游侠</b><em data-i18n="warfactory.unit.ranger">远程狙击，薄血长射</em></span>
+          <span class="warfactory-legend-item"><b>轰击</b><em data-i18n="warfactory.unit.burst">范围炮击，落点成墨</em></span>
+          <span class="warfactory-legend-item"><b>燎原</b><em data-i18n="warfactory.unit.burn">持续喷火；二级起落点留下灼烧地形</em></span>
+          <span class="warfactory-legend-item"><b>激光兵</b><em data-i18n="warfactory.unit.laser">锁定越久伤害越高，最高 5 倍</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">地形</span>
+          <span class="warfactory-legend-item"><i class="terr-swatch terr-water"></i><b>水域</b><em>不可通行</em></span>
+          <span class="warfactory-legend-item"><i class="terr-swatch terr-swamp"></i><b>沼泽</b><em>可通行，减速 50%</em></span>
+          <span class="warfactory-legend-item"><i class="terr-swatch terr-mountain"></i><b>山地</b><em>不可通行，且有高度：挡住视线与弹道，山两侧互相看不见、打不到</em></span>
+          <span class="warfactory-legend-item"><i class="terr-swatch terr-plain"></i><b>平原</b><em>一览无余</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">交战</span>
+          <span class="warfactory-legend-item"><b>不追击</b><em>敌人进入攻击范围才开火；跑出范围即停火，部队绝不自己追出去</em></span>
+          <span class="warfactory-legend-item"><b>移动攻击</b><em>行军途中照常开火，边走边打（不必停下）</em></span>
+          <span class="warfactory-legend-item"><b>索敌范围</b><em>= 自身攻击范围，更远的敌人当作看不见</em></span>
+          <span class="warfactory-legend-item"><b>锁定攻击</b><em>选中部队后右键点敌方 / 中立单位或建筑 → 下达追击命令：在射程内就直接打（哪怕旁边有更近的敌人），不在射程内就主动寻路赶上去，目标逃跑也一路追；右键别处（行军）/ 停止 / 目标阵亡才解除。执行中的部队与目标之间会有一条虚线指示</em></span>
+          <span class="warfactory-legend-item"><b>唯一的友伤</b><em>只有燎原的灼烧地形会烧自己人：把火铺在自家部队脚下，掉血的是自己（一级燎原不留火场，所以只有二级起才烧得到自己）</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">战场识别</span>
+          <span class="warfactory-legend-item"><b>归属色</b><em>红 / 蓝 / 黄 / 绿四方阵营色；单位脚下、工厂厂区、总部台基都压同色底盘（60% 透明），一眼看清是谁的</em></span>
+          <span class="warfactory-legend-item"><b>血量</b><em>所有单位默认常显血条（满血也显示），颜色随归属方</em></span>
+          <span class="warfactory-legend-item"><b>选中效果</b><em>被选中的部队脚下多一圈亮色呼吸光环，四周再加四角方框</em></span>
+          <span class="warfactory-legend-item"><b>开火</b><em>开枪时枪口会喷出锯齿状的火星与硝烟，射手同时向后一顿（后坐）；燎原是一道往外泼的长火舌，激光兵是冷白细芒</em></span>
+          <span class="warfactory-legend-item"><b>弹道</b><em>弹丸是沿弹道拖笔的墨滴（不是圆点），每发的笔锋都不一样；炮击弹更粗更沉（燎原不走弹道，是持续的火舌）</em></span>
+          <span class="warfactory-legend-item"><b>命中</b><em>打中哪里就在哪里炸开一团不规则的墨（像水球拍在地上），带一圈飞溅</em></span>
+          <span class="warfactory-legend-item"><b>弹痕</b><em>命中处在地上留一小块墨渍，约 9 秒后淡去——一眼看出这片区域刚被打过</em></span>
+          <span class="warfactory-legend-item"><b>灼烧地形</b><em>燎原的火舌落在哪里，哪里就烧起一片暗红火场（范围很大）；踩在上面的单位持续掉血，<b>不分敌我</b>，火焰一停几秒内自行熄灭。<b>一级燎原不留火场</b>，进化到二级才会烧地，三级火场更大、烧得更久、伤害更高</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">指挥栏</span>
+          <span class="warfactory-legend-item"><b>小地图</b><em>左下；点击或按住拖动即可把镜头跳到该处</em></span>
+          <span class="warfactory-legend-item"><b>单位粗览</b><em>中栏；只列当前选中的部队，没选中时这一栏不显示（想看谁就点谁）</em></span>
+          <span class="warfactory-legend-item"><b>侦察</b><em>他家的部队 / 工厂 / 总部 / 研究所也能左键点开看数据——只读，没有升级与指令按钮；框选永远只圈自己的部队</em></span>
+          <span class="warfactory-legend-item"><b>单位详情</b><em>右栏；点部队看属性，点工厂看产能，点总部看血量与产能升级</em></span>
+          <span class="warfactory-legend-item"><b>F2</b><em>全选我方所有部队（F 只选镜头内）</em></span>
+          <span class="warfactory-legend-item"><b>滚轮</b><em>在战场上滚动滚轮缩放视野；以鼠标所指位置为锚点，拉远看全局、推近看细节</em></span>
+          <span class="warfactory-legend-item"><b>中键平移</b><em>按住鼠标中键在战场上拖动，地图跟着手走（浏览器自带的「中键自动滚动」已屏蔽，中键只用来拖地图）</em></span>
+          <span class="warfactory-legend-item"><b>空格</b><em>镜头立刻回到自家总部（总部没了则回自家工厂；缩放倍率不变）</em></span>
+          <span class="warfactory-legend-item"><b>编队</b><em>Ctrl / Shift + 数字键 0-9：把当前选中的部队编入该编号（没选中则清空该编号）</em></span>
+          <span class="warfactory-legend-item"><b>数字键 0-9</b><em>选中该编队；同一编号连按两下，镜头立刻飞到编队的第一支部队（编队为空则不动）</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">工厂</span>
+          <span class="warfactory-legend-item"><b>固定兵种</b><em>每座工厂开局锁定一种兵，只产这一种</em></span>
+          <span class="warfactory-legend-item"><b>产线</b><em>默认 1 条；花 500 科技点在工厂面板里开辟新产线，最多 3 条并行生产</em></span>
+          <span class="warfactory-legend-item"><b>集结点</b><em>左键点选工厂 → 右键设集结点，此后新兵自动前往（Delete 清除）</em></span>
+          <span class="warfactory-legend-item"><b>进化</b><em>中/高级工厂的面板里有「进化」按钮，让本厂部队立刻进阶一阶</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">科技</span>
+          <span class="warfactory-legend-item"><b>科技点</b><em>左上角显示；只有占领研究所才产出——每座每 3 秒「一次性」+2 点（两座即每 3 秒一次 +4），HUD 进度条走满才跳，一座不占则为 0</em></span>
+          <span class="warfactory-legend-item"><b>进化</b><em>每 500 科技点可让一支部队进阶一阶（不再是经验）</em></span>
+          <span class="warfactory-legend-item"><b>生产加速</b><em>点选总部 → 花 1000 科技点点「加速生产」；每次在当前生产间隔上再减 1/15（复利），最多 20 级</em></span>
+          <span class="warfactory-legend-item"><b>研究所</b><em>初始中立，与工厂一样有血量：打光即由「最后一击者」接管并满血</em></span>
+          <span class="warfactory-legend-item"><b>总部</b><em>每人一座、不可易主；被打光即总部陷落，本人出局</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">出击</span>
+          <span class="warfactory-legend-item"><b>初始部队</b><em>开局没有工厂，只在总部拥有 6 种初级单位各 1 支</em></span>
+          <span class="warfactory-legend-item"><b>总部面板</b><em>左键点选自己的总部 → 右侧详情栏，可加速生产、也可用科技点让亲兵进阶</em></span>
+        </div>
+        <p class="warfactory-help" data-i18n="warfactory.help">
+          部队只打攻击范围内的敌人、不自动追击，但移动中照常开火 · 工厂与研究所有血量：打光即由「最后一击者」接管，易主后恢复满血，中立建筑只有 1/3 血 · 每 500 科技点进化一支部队 · 左键框选部队 · 右键移动 · F 选取镜头内部队 / F2 全选我方部队 · 选中工厂后右键设集结点 · 点工厂花 500 开路产线（最多 3 条）· 点总部花 1000 加速生产（最多 20 级）· WASD/方向键移动镜头 · 点击小地图跳转 · 总部被打爆即出局
+        </p>
+      </div>
+    </div>
+
+    <!-- ============ 底部指挥栏：对局状态 ｜ 小地图 ｜ 单位粗览 ｜ 单位详情 ============ -->
+    <div class="warfactory-cmdbar">
+      <!-- 对局状态（原来在地图上方那行，现在并进指挥栏顶沿，不占地图外的位置） -->
+      <p id="game-status" class="game-status wcb-status">—</p>
+      <!-- 左：小地图 -->
+      <section class="wcb-col wcb-mini">
+        <header class="wcb-head">
+          <span class="wcb-title">小地图</span>
+          <span class="wcb-tip">点击/拖动跳转</span>
+        </header>
+        <canvas
+          id="warfactory-minimap"
+          class="warfactory-minimap"
+          width="300"
+          height="200"
+          aria-label="小地图"
+        ></canvas>
+      </section>
+
+      <!-- 中：单位粗览（只列当前选中的部队；没选中就整段不显示） -->
+      <section class="wcb-col wcb-overview" id="warfactory-ov-sec">
+        <header class="wcb-head">
+          <span class="wcb-title">单位粗览</span>
+          <span class="wcb-count" id="wov-count">—</span>
+        </header>
+        <div class="wov-grid" id="warfactory-overview"></div>
+      </section>
+
+      <!-- 右：单位详情（点单位看属性 / 点工厂看产能与升级 / 点总部看血量与产能升级） -->
+      <section class="wcb-col wcb-detail" id="warfactory-detail-sec">
+        <header class="wcb-head">
+          <span class="wcb-title" id="wdt-title">单位详情</span>
+          <span class="wcb-count" id="wdt-count"></span>
+        </header>
+        <div class="wdt-body">
+          <!-- 未选中任何目标时：只留一行科技点 + 操作提示 -->
+          <div class="warfactory-self" id="warfactory-self">
+            <div class="wsl-line" id="wsl-tech">科 0</div>
+            <div class="wsl-line wsl-dim" id="wsl-hint">左键点选我方单位 / 工厂 / 总部查看详情 · 右键点敌 / 中立目标下达追击命令 · 滚轮缩放 · 中键拖动平移 · 空格回总部</div>
+          </div>
+
+          <!-- 选中工厂 / 总部后：在详情栏内展示（不再浮在战场上） -->
+          <!--
+            两列排布（.wfp-cols）：左＝数据（产能 / 全厂提速），右＝可点的按钮与说明。
+            竖着堆会把右栏顶到要滚动才看得全，拆成两列后一屏装得下。
+          -->
+          <aside id="warfactory-facpanel" class="warfactory-facpanel" hidden>
+            <div class="wfp-head">
+              <span class="wfp-title" id="wfp-title">工厂</span>
+              <button type="button" class="wfp-close" id="wfp-close" aria-label="关闭">×</button>
+            </div>
+            <div class="wfp-row">
+              <span id="wfp-owner">—</span>
+              <span class="wfp-level" id="wfp-level">—</span>
+            </div>
+            <div class="wfp-bar wfp-bar-hp"><i id="wfp-hp-fill"></i></div>
+            <div class="wfp-hp-text" id="wfp-hp-text">—</div>
+
+            <div class="wfp-cols">
+              <!-- 左列：工厂看产能 / 总部看全厂提速 -->
+              <div class="wfp-col">
+                <!-- —— 工厂：产能（产线 / 进度 / 速率） —— -->
+                <div class="wfp-sec-title" id="wfp-prod-sec">产能</div>
+                <div class="wfp-unit" id="wfp-unit">
+                  <span class="wfp-glyph" id="wfp-glyph">兵</span>
+                  <div class="wfp-unit-main">
+                    <div class="wfp-unit-name" id="wfp-unit-name">—</div>
+                    <div class="wfp-unit-desc" id="wfp-unit-desc">—</div>
+                  </div>
+                </div>
+                <div class="wfp-kv" id="wfp-lines">产线 1 / 3</div>
+                <div class="wfp-bar wfp-bar-prod"><i id="wfp-prod-fill"></i></div>
+                <div class="wfp-rate" id="wfp-rate">—</div>
+                <div class="wfp-rally" id="wfp-rally">集结点：未设置</div>
+
+                <!-- —— 总部：生产加速（工厂时隐藏） —— -->
+                <div class="wfp-spd" id="wfp-spd">
+                  <div class="wfp-sec-title" id="wfp-spd-sec">生产加速（全厂提速）</div>
+                  <div class="wfp-kv" id="wfp-spd-lv">0 / 20 级</div>
+                  <div class="wfp-rate" id="wfp-spd-rate">—</div>
+                  <button type="button" class="wfp-evolve wfp-evolve-block" id="wfp-speed">加速生产（1000）</button>
+                </div>
+              </div>
+
+              <!-- 右列：所有能点的按钮都聚在这里 -->
+              <div class="wfp-col">
+                <button type="button" class="wfp-evolve wfp-evolve-block" id="wfp-line">开辟产线（500）</button>
+
+                <!-- —— 进化（工厂 / 总部都有） —— -->
+                <div class="wfp-sec-title" id="wfp-evo-sec">进化</div>
+                <button type="button" class="wfp-evolve wfp-evolve-block" id="wfp-evolve" hidden>进化</button>
+                <div class="wfp-note" id="wfp-note"></div>
+              </div>
+            </div>
+          </aside>
+
+          <!-- 选中部队后：单选看详细属性，多选看编制汇总 -->
+          <!-- 两列：左＝身份与状态（头像 / 血条 / 提示），右＝属性表 -->
+          <aside id="warfactory-unitpanel" class="warfactory-unitpanel" hidden>
+            <div class="wfp-head">
+              <span class="wfp-title" id="wup-title">部队</span>
+              <button type="button" class="wfp-close" id="wup-close" aria-label="关闭">×</button>
+            </div>
+            <div class="wup-cols">
+              <div class="wup-col">
+                <div class="wup-hero">
+                  <span class="wfp-glyph" id="wup-glyph">兵</span>
+                  <div class="wfp-unit-main">
+                    <div class="wfp-unit-name" id="wup-name">—</div>
+                    <div class="wfp-unit-desc" id="wup-desc">—</div>
+                  </div>
+                </div>
+                <div class="wfp-bar wfp-bar-hp wup-hp-bar"><i id="wup-hp-fill"></i></div>
+                <div class="wfp-hp-text" id="wup-hp-text">—</div>
+                <div class="wup-extra" id="wup-extra"></div>
+                <div class="wfp-note" id="wup-note"></div>
+              </div>
+              <div class="wup-col">
+                <div class="wfp-sec-title" id="wup-stats-sec">属性</div>
+                <div class="wup-stats" id="wup-stats">—</div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+</script>
+<script>
+(function(){
+  try {
+    var ui = window.WarFactoryUi;
+    var gp = document.getElementById('game-panels');
+    var shell = document.getElementById('panel-warfactory');
+    if (shell) gp.innerHTML = shell.outerHTML;
+    var state = {"type":"warfactory","world":{"w":4320,"h":2880},"consts":{"factoryR":39,"captureR":79,"captureRate":25,"reclaimRate":45,"produceMs":20000,"playerUnitCap":400,"playerUnitWarn":350,"factoryHp":2000,"neutralHpRatio":0.3333333333333333,"facEvolveCd":4000,"labR":31,"labHp":1200,"hqR":43,"hqHp":3000,"rpPerLab":2,"rpPeriodMs":3000,"evolveRpCost":500,"typeList":["warrior","shield","ranger","burst","burn","laser"],"stats":{"warrior":{"label":"锐士","hp":100,"dmg":11,"range":60,"cd":0.9,"speed":92,"r":9},"shield":{"label":"盾卫","hp":175,"dmg":8,"range":50,"cd":1.1,"speed":66,"r":10},"ranger":{"label":"游侠","hp":65,"dmg":10,"range":200,"cd":1.5,"speed":82,"r":9},"burst":{"label":"轰击","hp":75,"dmg":18,"range":165,"cd":2.1,"speed":58,"r":9,"splash":41},"burn":{"label":"燎原","hp":80,"dmg":6,"range":135,"cd":0.25,"speed":78,"r":9,"burn":true},"laser":{"label":"激光兵","hp":70,"dmg":2.5,"range":175,"cd":0.4,"speed":76,"r":9,"laser":true}},"tierHp":[1,1.7,2.6],"tierDmg":[1,1.55,2.2],"tierRange":[0,15,30],"tierCd":[1,0.88,0.78],"aggroBonus":0,"attackSlack":10,"facLineCost":500,"facMaxLines":3,"prodSpeedCost":1000,"prodSpeedMax":20,"prodSpeedStep":0.06666666666666667,"flameR":52,"fireTiers":[null,[46,3.5,3000],[64,6,5200]],"bulletSplash":18,"laserWindupMs":800,"laserRampMs":4000,"laserMaxMul":5,"colors":["#b03a2e","#2e5e8c","#c9a227","#3f7a52"]},"phase":"playing","phaseEndsAt":0,"players":[{"id":"p0","name":"甲","color":"#b03a2e","kills":0,"losses":0,"evolved":0,"captured":0,"rp":0,"rpRate":0,"rpAccMs":0,"rpPerPeriod":0,"eliminated":false,"left":false},{"id":"p1","name":"乙","color":"#2e5e8c","kills":0,"losses":0,"evolved":0,"captured":0,"rp":0,"rpRate":0,"rpAccMs":0,"rpPerPeriod":0,"eliminated":false,"left":false}],"factories":[],"labs":[],"hqs":[{"id":1,"x":430,"y":120,"owner":0,"hp":3000,"hpMax":3000,"down":false,"ecd":0,"speedLv":0,"prodIntervalMs":20000},{"id":2,"x":3000,"y":120,"owner":1,"hp":3000,"hpMax":3000,"down":false,"ecd":0,"speedLv":0,"prodIntervalMs":20000}],"units":3,"over":false,"winnerId":null,"seq":0,"serverTime":1790160660861,"terrain":{"cell":40,"cols":108,"rows":72,"data":"000000000000004444400004444444000000000000000000000000000044443322222222222222222220000000200222444444444400000000000000004444440004444444000000000000000000000000000044443320000000000222222220000000200222444222444000300000000000004444440004444444400000000000000000000000000044433320000000000222222220000002200222222222444000330000000000000444400004444444440000000000000000000000000044433220000000000222222220000002200222222222444000330000000000000000000000444444444000000000000000000000000044333324444440000222222222222222200222222222424000330000000000000000000000000444444000000000000000000000000033334224444444400222222200222222222220000222422000333000000000044444000000000000000000000000000000000000000033344224444444442222222200222222222220000222222000333300004444444444000000000000000000000000000000000000000033344424444444444222222222222222222222222222220000443333334444444444000000000000000000000000000000000000000033344424444444444222222222223322000000000000000000444433304444444440000000000000000000000000000000000000000333344422222222222222222222223322000000000000000000444440000044444400000000000000000000000000000000000000000333344444233222002222222222222220000000000000000000444440000000000000000000000000000000000000000000000000033333044443333220002222222222222222200000000000000000444400000000000000000000000000000000000444400000000003333330044443333220000000002222222222200000000000000000444000000000000000444444440000000000000444444000000033333300044444333220000000002222222222200000000000000000440000000000000033444444440003000000000444444440000333333000044444433220000000002222222220000000000000000000400000000000000033344444443333300000000440000000333333330000000000042222200000002222222220000000000000000000000000000000000333333334433333300000000040000000333333330000000000040002200000002333322220000000000000000000000000000000000333000033334403000000000440000000333333330000000000040000200000002333322220000000004000000000000000000000003330000033344400000000004440000003300003330000000000040000200000003333222222220000044400000000440000000000000300000033344444444333344440000003000000330000000000040000222222223333222222220000044444400000440000000000000000000333344444444433344440000003000000330000000000040000222222222333222222222000044444444444440000000000000000003333444444444433344440000000000000330000000000000000022222222333220000222000004444444444444000000000000000003333444444444433334444444440000000333000004444400000022222222222200000220000004444444444444444333000000000003333344444444443333333344400000000333000000444400000022222222200000000220000000000044444444444333334000000003333344444444444333000330000000000330000000044400004442223320000000000000000000000044444444444433334000000003333333000044444430000000000000000330000000044440044444323320000000000000000000000044444444444333334000000003333333000000444400000000000000000333000000004444444444322220000000000000000044444444440444440033344000000033333333000000444400000000000000003333300000004444444443332330003330000000000444444444300444400003444000000033333333000000044400000000000000000444300000004444444400333333333444400000000444333443300444300000444000000033333333000000044400000004440000000444430000004444444000033333334444400000000003333333300443300000000000000000000000000000044440000044444000000444433000004444440000033333334444400000000000000333330000330000000000000000000000000000444440000044444400000444433300033444400000333330333444400000000000000033344000333000000000000000000000000000444440000004444400000000443333333330000003333000000004000000000000000033444000333300000000000000000000000000444440000000444400000000000333333300000033330000000000000000000000000033444003333333000000000000000000000000444440000000444440000000000033333300000033300000000000000000000000000333444003333333300000000000000000000000444440000000044440000000000033333300000333300000000000000000000000003333444444333300000000000000000000000003333000003333330000000000044440000000044444000000000000000000000003333333300444333000000000000000000000000003330000003333330000000000044444000000044444000000000000000000000000333333300444330000000000000000000000000033330000003333333000000000004444000000044444000000000000000000000000003333000444330000000000000000400000000333300000033333333344000000004444400000044444000000000000000000000000000333000443330000000000000004444333033333000004444330003334444000004444440000044444000000000000000000000000000033000033333000000000000004444433333330000044444400000334444000000444440000044440000000000000000000000000000003344003333333300000000004444433333330000444444400000034444000000044400000004440000000333333330000000444000003444003344333444000000004444333333333004444444400000003444000000000000000004440000000333333330000000444300004444003444444444000000000033300033233344444444400000003333300000000000000004444000000333333330000000443330044444044444444440000000000000000022223444444444400000000333000000000000000004444000000333333300000000433333444444444440000000000000000000000023323444440044440000000033000000000000000034444440000333333300000000433334444444444440000000000000000000000023322244400004440000000033000000000033000333444444444443333300000000433333444444444440000000000022000000002222222220000004444000000333000000004443333333344444444443333300000000000333444444444444444400000022000002222222222220000004444400000333000000044444444433334444444444333300000000000000000444444444444400000222000022333222222220000000000000000033000000000000044443334444444444333300000000000000000044444444444440000222222222333222222222000040000000000033000000300000044443334444444443333000000000000000000044000004444440000022222222333322222222000040000000000033000000300000044443333444444443330000003000000000000044000000004440000022222222333300000002000040000000000033300003300000044400000000004443330000033300000000000000000000000400000000022223333200000002000040000000000033333333000000044000000000304433330000333000000000000000000000000000000000022223333200000002200040000000000033333333000000040000000003333334433333333000000000000000000000000000000000022222222200000002222240000000000033333333000000044000000003333344444443330000000000000004000000000000000000022222222200000000022334444440000333333000044444444000000000300044444444330000000000000044000000000000000002222222222200000000022333444440003333330000000444444000000000000044444444000000000000000444000000000000000002222222222200000000022333344440033333300000000004444000000000000000000000000000000000004444000000000000000002222222222222222200022333344440333330000000000000000000000000000000000000000000000000044444000000000000000000022222222222222200222332444443333000000000000000000000000000000000000000004444440000044444000000000000000000223322222222222222222222224443333000000000000000000000000000000000000000044444444403334444000000000000000000223322222222222444444444424443330000000000000000000000000000000000000000444444444433333344000022222222222222222222222222222444444444424443330000000000000000000000000000000000000000444444444400003333000222222000022222222222002222222244444444422443330000000000000000000000000000000000000000444440000000000333000224222000022222222222002222222004444444422433330000000000000000000000000444444000000000000000000000000033000424222222222002222222222222222000044444423333440000000000000000000000000444444444000000000000000000000033000444222222222002200000022222222000000000022334440000000000000000000000000044444444400004444000000000000033000444222222222002200000022222222000000000023334440000000000000000000000000004444444400044444400000000000003000444222444222002000000022222222000000000023344440000000000000000000000000000444444400044444400000000000000004444444444222002000000022222222222222222223344440000000000000000000000000000444444400004444400000000000000"}};
+    var snap = {"t":1790160660861,"seq":0,"phase":"playing","until":0,"u":[[13,0,250,330,0.83,2,1,0,65,3,0,1,0,0,0,0,1,14],[14,1,730,330,5.67,1,1,0,175,3,0,2,0,0,0,0,0,0],[15,1,790,440,5.06,0,1,0,100,3,0,3,0,0,0,0,0,0]],"b":[],"f":[],"lb":[],"hq":[[1,0,3000,3000,0,0,0],[2,1,3000,3000,0,0,0]],"rp":[0,0],"rpAcc":[0,0],"uc":[1,2],"r":[],"fr":[],"ev":[]};
+    ui.render(state, { on: function(){}, sendRt: function(){} }, { meId: 'p0', isSpectator: false, title: '战争工厂' });
+    ui.applySnapshot(snap);
+    // F2 = 全选我方部队（不用算镜头坐标），让「部队 → 目标」的虚线指示显示出来
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'F2', key: 'F2', bubbles: true }));
+    document.title = 'OK';
+  } catch (e) { document.title = 'ERR ' + e.message; }
 })();
+</script></body></html>

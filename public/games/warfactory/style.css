@@ -1,5 +1,52 @@
 /* 战争工厂（水墨即时战略）面板样式 */
 
+/*
+ * 指挥栏高度：浮在地图下沿时要参与两处计算 ——
+ * ① ui.js 把画布左下角的 HUD 抬到它上面（其实走的是实测 getBoundingClientRect，这里是兜底）；
+ * ② 聊天窗要抬到它上面（见 public/css/style.css，用 var(--wf-cmdbar-h, 0px) 取值）。
+ * 这个高度直接决定右栏「单位详情」有多少竖直空间：详情栏内的所有内容都要
+ * 一屏放得下（不许滚动）。实测 320px 时右栏正文约 219~228px（随栏头文案略变），
+ * 装得下最高的一屏 —— 工厂面板 ~218px（1280~2560 宽的视口都量过，溢出 0px）。
+ * 改指挥栏里的高度（小地图 200）时记得同步这个数。
+ */
+:root {
+  --wf-cmdbar-h: 320px;
+}
+
+/*
+ * [hidden] 兜底：本文件里大量 .xxx { display: flex/block } 的类选择器
+ * 优先级高于 UA 样式的 [hidden] { display: none }，会把 hidden 属性
+ * 悄悄盖掉（现象：总部面板里冒出「开辟产线」按钮、初级工厂冒出进化按钮）。
+ * 面板内所有 hidden 一律以这条为准。
+ */
+#panel-warfactory [hidden] {
+  display: none !important;
+}
+
+/*
+ * ================= 地图铺满整屏 =================
+ * 面板可见时：地图不再是一个居中的 1280 宽方框，而是铺满整个视口；
+ * 顶部那一行（菜单 / 对局计时）与底部指挥栏改成浮在地图上的图层，
+ * 面板自己的标题 / 副标题让位隐藏 —— 全屏之后画面里只剩「游戏界面 + 地图」。
+ */
+#panel-warfactory:not([hidden]) {
+  height: 100%;
+}
+
+#panel-warfactory:not([hidden]) #game-title,
+#panel-warfactory:not([hidden]) #game-sides {
+  display: none !important;
+}
+
+#panel-warfactory:not([hidden]) .warfactory-wrap {
+  max-width: none;
+  height: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 .warfactory-wrap {
   position: relative;
   width: 100%;
@@ -21,7 +68,126 @@
   touch-action: none;
 }
 
-/* ---- 选中工厂后右侧弹出的工厂面板 ---- */
+/* 铺满整屏时画布跟着容器走：宽高都由视口决定，纵横比不再是约束 */
+#panel-warfactory:not([hidden]) #warfactory-canvas {
+  height: 100%;
+  aspect-ratio: auto;
+}
+
+/* ---- 地图内浮层：右上角「？」规则入口 + 规则面板 ---- */
+.wf-map-tools {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 7;
+  display: flex;
+  gap: 6px;
+}
+
+.wf-map-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid rgba(90, 74, 52, 0.55);
+  border-radius: 6px;
+  background: rgba(246, 239, 221, 0.86);
+  color: #2a2620;
+  font-family: "STKaiti", "KaiTi", "Noto Serif SC", "SimSun", serif;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(60, 48, 30, 0.16);
+}
+
+.wf-map-btn:hover {
+  background: rgba(252, 249, 240, 0.98);
+}
+
+.wf-map-btn[aria-expanded='true'] {
+  border-color: rgba(160, 58, 44, 0.6);
+  background: rgba(160, 58, 44, 0.14);
+  color: #8a2f22;
+}
+
+.wf-help {
+  position: absolute;
+  top: 52px;
+  right: 10px;
+  z-index: 8;
+  width: min(560px, calc(100% - 20px));
+  max-height: min(74vh, 660px);
+  overflow: auto;
+  padding: 0 14px 14px;
+  border: 1px solid rgba(90, 74, 52, 0.6);
+  border-radius: 6px;
+  background: rgba(250, 246, 234, 0.97);
+  box-shadow: 0 8px 28px rgba(60, 48, 30, 0.28);
+  color: #3c342a;
+  text-align: left;
+  font-size: 12px;
+}
+
+.wf-help-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 0 7px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid rgba(90, 74, 52, 0.25);
+  background: rgba(250, 246, 234, 0.97);
+}
+
+.wf-help-title {
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 2px;
+  color: #8a2f22;
+}
+
+.wf-help-close {
+  border: 0;
+  background: transparent;
+  color: #7d6f58;
+  font-size: 19px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.wf-help-close:hover {
+  color: #a03a2c;
+}
+
+.wf-help-body {
+  line-height: 1.75;
+}
+
+/* 规则块在浮层里改成左对齐、无边框（原来是页面下方那一条条横线） */
+.wf-help-body .warfactory-legend {
+  display: block;
+  max-width: none;
+  margin: 10px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.wf-help-body .warfactory-legend-item {
+  display: block;
+  margin: 2px 0;
+}
+
+.wf-help-body .warfactory-help {
+  max-width: none;
+  margin: 12px 0 0;
+  text-align: left;
+}
+
+/* ---- 工厂面板（渲染在底部指挥栏右栏内，见 .wcb-detail 的流式覆盖） ---- */
 .warfactory-facpanel {
   position: absolute;
   top: 12px;
@@ -210,57 +376,363 @@
   color: #6c5f4b;
 }
 
-.warfactory-scores {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: center;
-  margin: 10px auto 6px;
-  max-width: 1280px;
+/* ---- 部队面板（同样渲染在指挥栏右栏内） ---- */
+.warfactory-unitpanel {
+  width: 244px;
 }
 
-.warfactory-score-card {
-  display: inline-flex;
+/* 右栏三块内容互斥：我方概况 / 工厂面板 / 部队面板 */
+.wup-hero {
+  display: flex;
   align-items: center;
+  gap: 9px;
+  margin-bottom: 7px;
+}
+
+/* 属性表：等宽行，标签与数值分列 */
+.wup-stats {
+  white-space: pre-line;
+  line-height: 1.75;
+  font-size: 12px;
+  color: #3c342a;
+  font-variant-numeric: tabular-nums;
+}
+
+.wup-stats b {
+  font-weight: 700;
+  color: #8a2f22;
+}
+
+/* 状态提示行：灼烧 / 锁定倍率 / 蓄能 */
+.wup-extra {
+  margin-top: 7px;
+  padding: 3px 8px;
+  border: 1px solid rgba(47, 111, 122, 0.45);
+  border-radius: 3px;
+  background: rgba(47, 111, 122, 0.1);
+  font-size: 11px;
+  line-height: 1.5;
+  color: #2f6f7a;
+}
+
+.wup-extra:empty {
+  display: none;
+}
+
+.wup-extra.is-none {
+  border-color: rgba(90, 74, 52, 0.3);
+  background: rgba(90, 74, 52, 0.06);
+  color: #7d6f58;
+}
+
+/* 编制汇总（多选）的主标题 */
+.wup-roster {
+  font-weight: 600;
+  color: #3c342a;
+}
+
+/* ============ 底部指挥栏：小地图 ｜ 单位粗览 ｜ 单位详情 ============ */
+
+/*
+ * 三栏固定：小地图（左）｜单位粗览（中）｜单位详情（右）。
+ *
+ * 三栏是**常驻**的 —— 没选中任何目标时中栏显示一句空态提示，而不是把自己收掉。
+ * 收掉中栏会让右栏滑到画面中间去（以前的 .wcb-detail.is-wide 跨列补位），
+ * 而「单位详情」必须永远钉在最右边，所以宁可让中栏空着。
+ *
+ * 右栏宽度随时间视口伸缩：详情栏内部是两列（见 .wfp-cols / .wup-cols），
+ * 太窄了两列会各自换行、反而变高，所以要留够（最低 520px）。
+ */
+.warfactory-cmdbar {
+  display: grid;
+  grid-template-columns: 326px minmax(0, 1fr) clamp(520px, 38vw, 700px);
+  gap: 10px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid rgba(90, 74, 52, 0.5);
+  background: #e4dac1;
+}
+
+/*
+ * 指挥栏浮在地图下沿（不再把地图顶上去）。
+ * 半透明 + 一点模糊，既能挡在读得清，又不至于把地图整个盖死。
+ */
+#panel-warfactory:not([hidden]) .warfactory-cmdbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  height: var(--wf-cmdbar-h);
+  background: rgba(228, 218, 193, 0.94);
+  backdrop-filter: blur(3px);
+}
+
+/* 对局状态：指挥栏顶沿的窄条（原来在地图上方那一行） */
+.wcb-status {
+  grid-column: 1 / -1;
+  margin: 0 0 6px;
+  padding: 0 0 5px;
+  border-bottom: 1px dashed rgba(90, 74, 52, 0.35);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+  color: #5a4c38;
+}
+
+.wcb-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.wcb-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 8px;
-  padding: 5px 12px;
-  border: 1px solid rgba(90, 74, 52, 0.4);
-  border-radius: 4px;
-  background: rgba(250, 246, 234, 0.85);
+  margin-bottom: 5px;
+  padding-bottom: 3px;
+  border-bottom: 1px dashed rgba(90, 74, 52, 0.35);
+  font-size: 12px;
+  color: #5a4c38;
+}
+
+.wcb-title {
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.wcb-tip,
+.wcb-count {
+  font-size: 11px;
+  color: #8a7a5e;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 左：小地图（尺寸与 ui.js 的 MINIMAP_W/H 保持一致） ---- */
+.warfactory-minimap {
+  display: block;
+  width: 300px;
+  height: 200px;
+  border: 1px solid rgba(90, 74, 52, 0.6);
+  border-radius: 3px;
+  background: #f6efdd;
+  cursor: pointer;
+  touch-action: none;
+}
+
+/* ---- 中：单位粗览 ---- */
+.wov-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(58px, 1fr));
+  gap: 5px;
+  align-content: start;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.wov-empty {
+  grid-column: 1 / -1;
+  align-self: center;
+  padding: 26px 0;
+  text-align: center;
+  font-size: 12px;
+  color: #8a7a5e;
+}
+
+/* 只有空态提示时让它垂直居中（平时格子从上往下排） */
+.wov-grid:has(.wov-empty) {
+  align-content: center;
+}
+
+.wov-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 3px 3px;
+  border: 1px solid rgba(90, 74, 52, 0.35);
+  border-radius: 3px;
+  background: rgba(250, 246, 234, 0.7);
+  cursor: pointer;
+  user-select: none;
+}
+
+.wov-tile:hover {
+  border-color: rgba(160, 58, 44, 0.55);
+  background: rgba(252, 249, 240, 0.95);
+}
+
+.wov-tile.is-sel {
+  border-color: rgba(160, 58, 44, 0.85);
+  box-shadow: inset 0 0 0 1px rgba(160, 58, 44, 0.45);
+  background: rgba(252, 244, 236, 0.98);
+}
+
+.wov-glyph {
+  display: block;
+  width: 22px;
+  height: 22px;
+  line-height: 22px;
+  text-align: center;
+  border-radius: 2px;
+  color: #f6efdd;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.wov-tier {
+  font-size: 11px;
+  line-height: 1;
+  color: #5a4c38;
+  letter-spacing: 0.5px;
+}
+
+.wov-hp {
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(90, 74, 52, 0.18);
+  overflow: hidden;
+}
+
+.wov-hp > i {
+  display: block;
+  height: 100%;
+  background: #4a6b3a;
+}
+
+.wov-hp.is-mid > i {
+  background: #8a6b22;
+}
+
+.wov-hp.is-low > i {
+  background: #8a2f22;
+}
+
+/* ---- 右：单位详情 ---- */
+/*
+ * 详情正文撑满整栏（高度由指挥栏高度决定，不再写死 216px）。
+ * overflow-y:auto 只是「极端内容」的兜底 —— 正常情况（任意兵种 / 任意阶 /
+ * 工厂 / 总部 / 研究所 / 侦察他方）都不该出现滚动条，靠两列排布省下竖直空间。
+ */
+.wdt-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+/* 详情栏内的两个面板改为流式排布（原本浮动在战场右上角） */
+.wcb-detail .warfactory-facpanel,
+.wcb-detail .warfactory-unitpanel {
+  position: static;
+  width: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+
+/*
+ * 详情栏内部的**两列**：左＝数据（产能 / 属性）/ 右＝按钮与说明。
+ * 竖着堆一列时工厂面板要 ~350px，两列之后 ~200px，一屏就装下了。
+ */
+.wfp-cols,
+.wup-cols {
+  display: grid;
+  gap: 0 18px;
+  align-items: start;
+}
+
+/* 工厂 / 总部：左列数据（产能 / 全厂提速），右列按钮 */
+.wfp-cols {
+  grid-template-columns: minmax(0, 1.15fr) minmax(190px, 1fr);
+}
+
+/* 部队：左列身份与状态（头像 / 血条 / 提示），右列属性表 —— 属性行最长，
+ * 给右列多一点宽度，免得「灼烧地…停喷后 5.2 秒熄灭」这类长行折行 */
+.wup-cols {
+  grid-template-columns: minmax(140px, 0.5fr) minmax(0, 1fr);
+}
+
+.wfp-col,
+.wup-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* 右列第一个元素（按钮 / 段标题）不需要额外的上间距 */
+.wfp-col > :first-child,
+.wup-col > :first-child {
+  margin-top: 0;
+}
+
+/*
+ * 多选时的「编成汇总」是一堆短行（最多 12 行），两列排一下正好；
+ * 单选时的属性表行更长，不拆列（拆了长行会折行，反而更高）。
+ */
+.wup-stats.is-roster {
+  column-count: 2;
+  column-gap: 20px;
+}
+
+/* 中栏（单位粗览）只在选中部队时出现：没选中整段收起，右栏跨两列补位 */
+.wcb-overview[hidden] {
+  display: none !important;
+}
+
+/* 我方概况：未选中任何目标时显示（只留科技点 + 一行提示，详细数据「点谁看谁」） */
+.warfactory-self {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   font-size: 13px;
   color: #3c342a;
 }
 
-.warfactory-score-card.is-me {
-  border-color: rgba(160, 58, 44, 0.75);
-  box-shadow: inset 0 0 0 1px rgba(160, 58, 44, 0.35);
+.warfactory-self[hidden] {
+  display: none;
 }
 
-.warfactory-score-card.is-out {
-  opacity: 0.45;
-  text-decoration: line-through;
-}
-
-.warfactory-seal {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border-radius: 3px;
-  background: #8a2f22;
-  color: #f6efdd;
-  font-size: 10px;
-  line-height: 14px;
-  text-align: center;
-  font-weight: 700;
-}
-
-.warfactory-card-name {
-  font-weight: 600;
-}
-
-.warfactory-card-stat {
-  color: #6c5f4b;
+/* 键值行：产线 2 / 3、生产加速 3 / 20 级 */
+.wfp-kv {
+  margin-top: 6px;
   font-size: 12px;
+  color: #3c342a;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 产能 / 提速说明行 */
+.wfp-rate {
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #6c5f4b;
+  font-variant-numeric: tabular-nums;
+}
+
+.wfp-spd {
+  margin-top: 4px;
+}
+
+.wfp-spd[hidden] {
+  display: none;
+}
+
+.wsl-line {
+  font-size: 12px;
+  color: #6c5f4b;
+  font-variant-numeric: tabular-nums;
+}
+
+.wsl-dim {
+  color: #8a7a5e;
 }
 
 .warfactory-legend {

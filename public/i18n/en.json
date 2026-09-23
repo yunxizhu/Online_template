@@ -363,14 +363,14 @@
   "warfactory": {
     "title": "War Factory",
     "boardAria": "War Factory battlefield",
-    "help": "Units auto-attack anything in range (factories / labs / HQs included) · Factories and labs have HP: whoever lands the killing blow takes them over at full HP; neutral buildings start at 1/3 HP · Every 500 tech points evolves one unit · Left-drag to select units · Right-click to attack-move · Select a factory then right-click to set a rally point · WASD/arrows pan camera · click minimap to jump · F select on-screen units · Lose your HQ and you are out · Laser: damage ramps the longer it holds one lock (up to 5x); switching targets costs a wind-up",
+    "help": "Units auto-attack anything in range (factories / labs / HQs included) and never chase on their own; select units and right-click an enemy/neutral target to order a pursuit — they will pathfind to it and keep chasing until the target dies or the order is replaced · Factories and labs have HP: whoever lands the killing blow takes them over at full HP; neutral buildings start at 1/3 HP · Every 500 tech points evolves one unit · Left-drag to select units · Right-click to attack-move · Select a factory then right-click to set a rally point · WASD/arrows pan camera · click minimap to jump · F select on-screen units · Lose your HQ and you are out · Laser: damage ramps the longer it holds one lock (up to 5x); switching targets costs a wind-up",
     "legendTitle": "Unit Codex",
     "unit": {
       "warrior": "melee brawler, balanced",
       "shield": "slow heavy armor",
       "ranger": "long-range sniper, fragile",
-      "burst": "area shelling",
-      "burn": "ignite and burn over time",
+      "burst": "arcing lob, fires over ridges",
+      "burn": "sprays flame; leaves burning ground from tier 2 on",
       "laser": "damage ramps while locked, up to 5x"
     },
     "countdownHint": "Seize factories and labs · 500 tech points evolves a unit",

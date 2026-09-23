@@ -1,3 +1,4357 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>战争工厂 · 铺满整屏预览</title>
+<style>
+:root {
+  --bg: #1a1f24;
+  --panel: #243038;
+  --text: #e8eef2;
+  --muted: #8fa3b0;
+  --accent: #3d9b8f;
+  --accent-hover: #4cb3a5;
+  --danger: #c45c5c;
+  --border: #334450;
+  --people-width: 280px;
+  --page-pad: 1.25rem;
+  --room-accent: #c9853a;
+  --room-accent-hover: #dfa04f;
+  --room-panel: #2c241c;
+  --room-border: #6a4e32;
+  --scrollbar-size: 8px;
+  --scrollbar-thumb-alpha: 0.2;
+  --scrollbar-thumb-alpha-active: 0.75;
+  --scrollbar-thumb-rgb: 150, 172, 184;
+  --scrollbar-thumb: rgba(var(--scrollbar-thumb-rgb), var(--scrollbar-thumb-alpha));
+  --scrollbar-thumb-active: rgba(var(--scrollbar-thumb-rgb), var(--scrollbar-thumb-alpha-active));
+}
+
+[hidden] {
+  display: none !important;
+}
+
+* {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 999px;
+  transition: background-color 0.18s ease;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-active);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background:
+    radial-gradient(ellipse at top, #2a3a42 0%, transparent 55%),
+    var(--bg);
+  color: var(--text);
+  transition: background 0.25s ease;
+}
+
+/* 房间等待：暖色背景，与大厅冷青灰区分 */
+body.phase-room {
+  background:
+    radial-gradient(ellipse at 30% 0%, #4a3420 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 20%, #3a2818 0%, transparent 45%),
+    #1c1612;
+}
+
+body.phase-room .app-top-mid h1 {
+  color: #f0c78a;
+}
+
+body.phase-room .app-content {
+  display: flex;
+  flex-direction: column;
+}
+
+body.phase-game {
+  background:
+    radial-gradient(ellipse at top, #243028 0%, transparent 50%),
+    #151a18;
+  overflow-x: hidden;
+}
+
+/* 对局页视口滚动：右侧滚动条始终占位显示（无需滚动时也保留） */
+html:has(body.phase-game) {
+  overflow-x: hidden;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+  scrollbar-color: var(--scrollbar-thumb) rgba(0, 0, 0, 0.18);
+  --scrollbar-thumb-rgb: 118, 168, 148;
+}
+
+html:has(body.phase-game)::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.18);
+}
+
+body.phase-game .app-content,
+body.phase-game #view-game,
+body.phase-game #game-panels {
+  overflow: visible;
+}
+
+/*
+ * 战争工厂：地图铺满整屏。
+ * 面板可见时把整页让给地图 —— 内容区去掉内边距、面板去掉边框与外边距，
+ * 顶栏改成浮在地图上的透明图层（只留菜单入口与对局计时），页面也不再滚动。
+ * 于是按 F11 全屏之后，画面里只剩「游戏界面 + 地图」。
+ */
+body.phase-game:has(#panel-warfactory:not([hidden])) {
+  overflow: hidden;
+}
+
+body.phase-game:has(#panel-warfactory:not([hidden])) .app {
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+body.phase-game:has(#panel-warfactory:not([hidden])) .app-body,
+body.phase-game:has(#panel-warfactory:not([hidden])) .app-content {
+  height: 100%;
+  overflow: hidden;
+}
+
+body.phase-game:has(#panel-warfactory:not([hidden])) .app-content {
+  padding: 0;
+}
+
+body.phase-game:has(#panel-warfactory:not([hidden])) #view-game,
+body.phase-game:has(#panel-warfactory:not([hidden])) #game-panels {
+  height: 100%;
+}
+
+body.phase-game:has(#panel-warfactory:not([hidden])) #panel-warfactory {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+/* 顶栏浮层：自身不吃点击（否则会把地图上的框选吃掉），里头的控件照常可点 */
+body.phase-game:has(#panel-warfactory:not([hidden])) .app-top {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  background: none;
+  pointer-events: none;
+}
+
+body.phase-game:has(#panel-warfactory:not([hidden])) .app-top > * {
+  pointer-events: auto;
+}
+
+/* 只留「菜单入口」与「对局计时」，大厅/房间那一套标题、昵称、观战数一律不显示 */
+body.phase-game:has(#panel-warfactory:not([hidden])) .app-top-mid,
+body.phase-game:has(#panel-warfactory:not([hidden])) #spectators-watch {
+  display: none !important;
+}
+
+/* 菜单按钮与计时器改配水墨纸面：原来的样式是给深色顶栏用的，压在浅色地图上看不清 */
+body.phase-game:has(#panel-warfactory:not([hidden])) .game-menu {
+  margin-top: 0;
+}
+
+body.phase-game:has(#panel-warfactory:not([hidden])) .game-menu-btn {
+  border-color: rgba(90, 74, 52, 0.55);
+  background: rgba(246, 239, 221, 0.86);
+  color: #2a2620;
+  box-shadow: 0 2px 10px rgba(60, 48, 30, 0.16);
+}
+
+body.phase-game:has(#panel-warfactory:not([hidden])) .game-menu-btn:hover,
+body.phase-game:has(#panel-warfactory:not([hidden])) .game-menu-btn[aria-expanded='true'] {
+  background: rgba(252, 249, 240, 0.98);
+}
+
+body.phase-game:has(#panel-warfactory:not([hidden])) .match-clock {
+  margin-top: 0;
+  border-color: rgba(90, 74, 52, 0.45);
+  background: rgba(246, 239, 221, 0.86);
+  color: #3c342a;
+}
+
+body.phase-game:has(#panel-warfactory:not([hidden])) .match-clock-label {
+  color: #7d6f58;
+}
+
+/* 聊天窗抬到指挥栏上面，别把「单位粗览」压住（高度由战争工厂的 --wf-cmdbar-h 给出） */
+body.phase-game:has(#panel-warfactory:not([hidden])) .chat-dock {
+  bottom: calc(var(--wf-cmdbar-h, 0px) + 0.5rem);
+}
+
+.app {
+  width: 100%;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 顶栏：标题 + 昵称同一行 */
+.app-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 1.25rem;
+  padding: 1rem var(--page-pad) 0.75rem;
+  flex-shrink: 0;
+}
+
+.game-menu {
+  position: relative;
+  flex-shrink: 0;
+  margin-top: 0.2rem;
+}
+
+.game-menu[hidden] {
+  display: none !important;
+}
+
+.match-clock {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--text);
+  font-size: 0.9rem;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.match-clock[hidden] {
+  display: none !important;
+}
+
+.match-clock-label {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.match-clock-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+body.phase-room .match-clock {
+  border-color: rgba(201, 133, 58, 0.45);
+  background: rgba(44, 36, 28, 0.85);
+  color: #f0c78a;
+}
+
+body.phase-room .match-clock-label {
+  color: #b8956a;
+}
+
+body.phase-game .match-clock {
+  border-color: rgba(104, 162, 104, 0.4);
+  background: rgba(24, 32, 26, 0.9);
+  color: #c8e0c4;
+}
+
+body.phase-game .match-clock-label {
+  color: #8aaa88;
+}
+
+.game-menu-btn {
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
+
+.game-menu-btn[aria-expanded='true'] {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.game-menu-pop {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  min-width: 12.5rem;
+  padding: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #1c262d;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+  z-index: 50;
+}
+
+.game-menu-pop[hidden] {
+  display: none !important;
+}
+
+.game-menu-pop button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  padding: 0.55rem 0.7rem;
+  border-radius: 6px;
+  font-size: 0.92rem;
+}
+
+.game-menu-pop button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.game-menu-pop button.is-active {
+  background: rgba(255, 255, 255, 0.12);
+  font-weight: 600;
+}
+
+.game-menu-item.has-sub {
+  position: relative;
+}
+
+.game-menu-item.has-sub > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.game-menu-item.has-sub > button::after {
+  content: '›';
+  opacity: 0.7;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.game-menu-sub {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 0.25rem);
+  min-width: 8.5rem;
+  padding: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #1c262d;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+  z-index: 51;
+}
+
+.game-menu-sub[hidden] {
+  display: none !important;
+}
+
+.game-menu-sub button.is-active {
+  background: rgba(255, 255, 255, 0.12);
+  font-weight: 600;
+}
+
+.game-menu-bgm-sub {
+  min-width: 11rem;
+}
+
+.menu-bgm-control {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.55rem;
+  color: var(--text);
+  font-size: 0.88rem;
+  cursor: default;
+}
+
+.menu-bgm-label {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.menu-bgm-control input[type='range'] {
+  flex: 1 1 auto;
+  min-width: 0;
+  accent-color: #7eb8da;
+}
+
+.menu-bgm-value {
+  flex: 0 0 2.5rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.9;
+}
+
+@media (max-width: 640px) {
+  .game-menu-sub {
+    left: 0;
+    top: calc(100% + 0.2rem);
+  }
+}
+
+.left-tag {
+  display: inline-block;
+  margin-left: 0.28rem;
+  padding: 0.02rem 0.32rem;
+  border-radius: 3px;
+  background: #5a3a3a;
+  color: #f0c8c8;
+  font-size: 0.7rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.app-body:has(.lobby-people:not([hidden])) .app-top {
+  padding-right: calc(var(--people-width) + var(--page-pad));
+}
+
+.app-top-mid {
+  flex: 1;
+  min-width: 0;
+}
+
+.app-top-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.app-top-title-row h1 {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 650;
+}
+
+.spectators-watch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.spectators-watch[hidden] {
+  display: none !important;
+}
+
+.hosting-btn {
+  margin: 0;
+  padding: 0.28rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.hosting-btn:hover {
+  border-color: rgba(201, 162, 39, 0.55);
+  background: rgba(201, 162, 39, 0.16);
+}
+
+.hosting-btn.is-active {
+  border-color: rgba(201, 162, 39, 0.7);
+  background: rgba(201, 162, 39, 0.22);
+  color: #f0e2a8;
+}
+
+.hosting-btn[hidden] {
+  display: none !important;
+}
+
+.hosting-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: transparent;
+}
+
+.hosting-overlay[hidden] {
+  display: none !important;
+}
+
+.hosting-overlay-text {
+  font-size: clamp(2.8rem, 9vw, 5rem);
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.4);
+  letter-spacing: 0.18em;
+  user-select: none;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.25);
+}
+
+/* 托管中：禁止对局操作，但可滑动页面与动态日志查看（顶栏托管按钮仍可点） */
+body.is-hosting .app-body {
+  pointer-events: auto;
+}
+
+body.is-hosting .app-body * {
+  pointer-events: none;
+}
+
+body.is-hosting .app-body .game-log,
+body.is-hosting .app-body .game-log *,
+body.is-hosting .app-body .sgs-log-wrap,
+body.is-hosting .app-body .sgs-log-wrap * {
+  pointer-events: auto;
+}
+
+.spectators-btn {
+  margin: 0;
+  padding: 0.28rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.spectators-btn:hover,
+.spectators-btn[aria-expanded='true'] {
+  border-color: rgba(201, 162, 39, 0.55);
+  background: rgba(201, 162, 39, 0.16);
+}
+
+.spectators-btn strong {
+  font-weight: 700;
+  color: #e8d48b;
+}
+
+.spectators-pop {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  left: 0;
+  z-index: 40;
+  min-width: 11rem;
+  max-width: min(18rem, 70vw);
+  max-height: min(16rem, 50vh);
+  overflow: auto;
+  overflow: overlay;
+  padding: 0.55rem 0.65rem 0.65rem;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: #1c242c;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+
+.spectators-pop[hidden] {
+  display: none !important;
+}
+
+.spectators-pop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.spectators-pop-close {
+  width: 1.6rem;
+  height: 1.6rem;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.spectators-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+}
+
+.spectators-list li {
+  padding: 0.28rem 0.4rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.88rem;
+}
+
+.spectators-empty {
+  margin: 0.2rem 0 0;
+  font-size: 0.82rem;
+}
+
+.spectators-empty[hidden] {
+  display: none !important;
+}
+
+.header-nick {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  margin: 0;
+}
+
+.header-nick[hidden] {
+  display: none !important;
+}
+
+/* 默认只显示昵称文字，编辑框不可用 */
+.header-nick:not(.is-editing) .nick-input {
+  display: none !important;
+}
+
+.header-nick.is-editing .nick-display {
+  display: none !important;
+}
+
+.header-nick.is-editing .nick-input {
+  display: block;
+}
+
+.nick-display {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #ffffff;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+}
+
+.nick-base {
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.nick-tag {
+  color: var(--muted);
+  font-weight: 500;
+  margin-left: 0.05em;
+}
+
+.people-list .people-name {
+  font-size: 0.92rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #ffffff;
+}
+
+.people-list .people-name .nick-tag {
+  color: var(--muted);
+}
+
+.people-list .people-client {
+  color: var(--muted);
+  font-size: 0.82em;
+  font-weight: 600;
+  margin-left: 0.2rem;
+  white-space: nowrap;
+}
+
+.nick-input {
+  display: none;
+  width: 8.5rem;
+  margin: 0;
+  padding: 0.25rem 0.45rem;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: #1a242b;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.3rem;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  line-height: 0;
+}
+
+.icon-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--border);
+}
+
+.header-nick.is-editing .icon-btn {
+  display: none;
+}
+
+/* 房间/对局：昵称条紧挨「房间等待中」标题右侧 */
+.header-nick.is-room-nick {
+  margin: 0;
+  margin-left: 0.15rem;
+  padding: 0.12rem 0.35rem 0.12rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.28);
+  flex-shrink: 0;
+}
+
+body.phase-room .header-nick.is-room-nick {
+  border-color: rgba(201, 133, 58, 0.4);
+  background: rgba(44, 36, 28, 0.75);
+}
+
+body.phase-game .header-nick.is-room-nick {
+  border-color: rgba(104, 162, 104, 0.35);
+  background: rgba(24, 32, 26, 0.85);
+}
+
+.header-nick.is-room-nick .icon-btn {
+  width: 1.85rem;
+  height: 1.85rem;
+}
+
+.me-label {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* 主体：内容铺满左侧，人员栏贴页面右缘 */
+.app-body {
+  flex: 1;
+  display: block;
+  min-height: 0;
+}
+
+.app-content {
+  min-width: 0;
+  width: 100%;
+  padding: 0.5rem var(--page-pad) 2rem;
+}
+
+.app-body:has(.lobby-people:not([hidden])) .app-content {
+  padding-right: calc(var(--people-width) + var(--page-pad));
+}
+
+.lobby-people {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--people-width);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin: 0;
+  border-radius: 0;
+  border: none;
+  border-left: 1px solid var(--border);
+  background: rgba(36, 48, 56, 0.96);
+  padding: 1rem 0.95rem 0.75rem;
+  transition: background 0.25s ease, border-color 0.25s ease;
+  --people-aside-pad-x: 0.95rem;
+}
+
+body.phase-room .lobby-people {
+  background: rgba(44, 32, 22, 0.97);
+  border-left-color: var(--room-border);
+  --scrollbar-thumb-rgb: 201, 133, 58;
+}
+
+.lobby-people[hidden] {
+  display: none;
+}
+
+.lobby-people h2 {
+  margin: 0 0 0.65rem;
+  font-size: 1rem;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem;
+}
+
+.people-header {
+  align-items: center !important;
+}
+.people-header .icon-btn {
+  padding: 2px 4px;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+.people-header .icon-btn:hover {
+  opacity: 1;
+}
+
+.people-count {
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.people-list {
+  list-style: none;
+  margin: 0 calc(-1 * var(--people-aside-pad-x)) 0 0;
+  padding: 0 var(--people-aside-pad-x) 0 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+  scrollbar-color: var(--scrollbar-thumb) rgba(0, 0, 0, 0.18);
+}
+
+/* 右侧人员栏滚动条：始终显示轨道，不因内容不足而隐藏 */
+.lobby-people .people-list::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+}
+
+.lobby-people .people-list::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 999px;
+}
+
+.people-list li {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.2rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.people-list li:last-child {
+  border-bottom: none;
+}
+
+.people-list .people-row-main {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.people-list .people-name {
+  font-size: 0.92rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.people-list .people-row-meta,
+.people-list .people-status {
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.1rem 1.2rem;
+  margin-bottom: 1rem;
+}
+
+.panel-narrow {
+  max-width: 360px;
+}
+
+.panel h2 {
+  margin: 1rem 0 0.6rem;
+  font-size: 1.05rem;
+}
+
+.panel h2:first-child {
+  margin-top: 0;
+}
+
+.lobby-toolbar .lobby-toolbar-actions {
+  margin-top: 0;
+}
+
+.lobby-mqtt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  margin: 0.35rem 0 0;
+}
+
+.lobby-mqtt-row #peers-label {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.lobby-mqtt-row #btn-mqtt-broker {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.mqtt-broker-hint {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+}
+
+.mqtt-broker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.mqtt-broker-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid rgba(120, 140, 160, 0.28);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.mqtt-broker-list li.is-active {
+  border-color: rgba(80, 160, 200, 0.55);
+  background: rgba(60, 130, 170, 0.12);
+}
+
+.mqtt-broker-list .mqtt-broker-name {
+  font-weight: 600;
+}
+
+.mqtt-broker-list .mqtt-broker-meta {
+  font-size: 0.85rem;
+  opacity: 0.75;
+}
+
+.mqtt-broker-list button {
+  flex-shrink: 0;
+}
+
+.lobby-refresh-hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.8rem;
+}
+
+.lobby-rooms h2 {
+  margin-top: 0;
+}
+
+.panel-head {
+  justify-content: space-between;
+  margin: 0 0 0.6rem;
+}
+
+.panel-head h2 {
+  margin: 0;
+}
+
+.panel-head .icon-btn {
+  font-size: 1.25rem;
+  width: 2rem;
+  height: 2rem;
+  color: var(--muted);
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.modal[hidden] {
+  display: none;
+}
+
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 12, 16, 0.72);
+}
+
+.modal-dialog {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 420px);
+  max-height: min(90vh, 640px);
+  overflow: auto;
+  overflow: overlay;
+  margin: 0;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+}
+
+.update-version {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.update-notes {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.update-meta {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+}
+
+.update-progress-wrap {
+  margin: 0.75rem 0 0.25rem;
+}
+
+.update-progress-bar {
+  height: 0.5rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.update-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent, #3d9a6a);
+  transition: width 0.2s ease;
+}
+
+.update-progress-text {
+  margin: 0.4rem 0 0;
+  font-size: 0.85rem;
+}
+
+.update-checking {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.85rem;
+  padding: 1.25rem 0.5rem 1rem;
+  text-align: center;
+}
+
+.update-checking[hidden],
+.update-result[hidden] {
+  display: none;
+}
+
+.update-check-spinner {
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 3px solid rgba(255, 255, 255, 0.14);
+  border-top-color: var(--accent, #6ec4b8);
+  border-radius: 50%;
+  animation: room-busy-spin 0.85s linear infinite;
+}
+
+.update-checking-text {
+  margin: 0;
+  color: var(--muted, #a8b0b8);
+}
+
+/* 强制升级弹窗须盖过被动锁屏，且可点击 */
+#host-update-modal {
+  z-index: 2700;
+}
+
+.changelog-dialog {
+  max-width: min(28rem, 92vw);
+  max-height: min(80vh, 36rem);
+  display: flex;
+  flex-direction: column;
+}
+
+.changelog-list {
+  flex: 1 1 auto;
+  overflow: auto;
+  margin: 0.25rem 0 0.75rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: min(52vh, 24rem);
+}
+
+.changelog-item {
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.changelog-item-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.changelog-item-ver {
+  margin: 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.changelog-item-date {
+  margin: 0;
+  font-size: 0.8rem;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.changelog-item-notes {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.45;
+  font-size: 0.92rem;
+}
+
+.changelog-empty {
+  margin: 0.5rem 0 1rem;
+}
+
+label {
+  display: block;
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+label.inline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+input[type="text"],
+select {
+  display: block;
+  width: 100%;
+  margin-top: 0.35rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #1a242b;
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0.75rem 0;
+}
+
+.row input[type="text"] {
+  flex: 1;
+  min-width: 120px;
+  margin-top: 0;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  border-radius: 6px;
+  padding: 0.55rem 0.9rem;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.95rem;
+}
+
+button:hover {
+  background: var(--accent-hover);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+button.secondary {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+button.secondary:hover {
+  border-color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.room-list,
+.member-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.room-list li,
+.member-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.room-list-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.22rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.room-list-head {
+  line-height: 1.35;
+}
+
+.room-list-players {
+  font-size: 0.88rem;
+  color: var(--muted);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.room-list-where {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.room-list li:last-child,
+.member-list li:last-child {
+  border-bottom: none;
+}
+
+.room-list li.is-full button:disabled {
+  background: #3a4a55;
+}
+
+.room-list-code {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.08rem 0.42rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  color: #ffe2a8;
+  background: rgba(20, 14, 10, 0.55);
+  border: 1px dashed rgba(240, 199, 138, 0.35);
+  border-radius: 4px;
+  vertical-align: middle;
+}
+
+.member-list li.is-left {
+  opacity: 0.62;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.host-occupied-hint {
+  margin: 0.75rem 0 0;
+  color: #b42318;
+  font-weight: 600;
+}
+
+.tunnel-wait-hint {
+  margin: 0 0 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+}
+
+.badge {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 4px;
+  background: #3a4a55;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.lock-badge {
+  background: #4a3a2a;
+  color: #e2c4a0;
+}
+
+/* —— 房间等待页（与大厅明显区分） —— */
+.room-shell {
+  max-width: 1680px;
+  margin: 0 auto;
+}
+
+.view-room {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: calc(100vh - 6rem);
+  padding-top: 1rem;
+}
+.view-room .room-shell {
+  margin-top: calc((100vh - 6rem) * 1 / 5);
+  margin-bottom: auto;
+}
+
+.room-banner {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.35rem 0 0;
+  padding: 0.2rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid rgba(201, 133, 58, 0.45);
+  background: linear-gradient(90deg, rgba(201, 133, 58, 0.22), rgba(80, 50, 24, 0.35));
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.room-banner[hidden] {
+  display: none !important;
+}
+
+.room-banner .badge {
+  margin-left: 0;
+}
+
+.room-banner-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: var(--room-accent);
+  color: #1a120a;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.room-banner-hint {
+  color: #e8d2b0;
+  font-size: 0.82rem;
+}
+
+.room-banner-game {
+  color: #cbb89a;
+  font-size: 0.82rem;
+}
+
+.room-panel {
+  background:
+    linear-gradient(165deg, rgba(72, 48, 28, 0.55) 0%, transparent 42%),
+    var(--room-panel);
+  border: 1px solid var(--room-border);
+  box-shadow:
+    0 0 0 1px rgba(240, 199, 138, 0.06),
+    0 12px 32px rgba(0, 0, 0, 0.35);
+  padding: 3.2rem 4rem 3.6rem;
+  min-width: 32rem;
+}
+
+.room-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  text-align: center;
+}
+
+.room-eyebrow {
+  margin: 0 0 0.2rem;
+  font-size: 0.75rem;
+  color: #c4a078;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
+.room-panel h2 {
+  margin: 0;
+  font-size: 1.35rem;
+  color: #f6e2c0;
+  text-align: center;
+}
+
+.room-code-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.45rem 0.7rem;
+  border-radius: 8px;
+  background: rgba(20, 14, 10, 0.55);
+  border: 1px dashed rgba(240, 199, 138, 0.45);
+  min-width: 6.5rem;
+}
+
+.room-code-label {
+  font-size: 0.72rem;
+  color: #c4a078;
+}
+
+.room-code-value {
+  font-size: 1.35rem;
+  letter-spacing: 0.12em;
+  color: #ffe2a8;
+  font-variant-numeric: tabular-nums;
+}
+
+.room-members-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.92rem;
+  color: #e8d2b0;
+  font-weight: 650;
+  text-align: center;
+}
+
+.room-observer-section {
+  margin-top: 0.75rem;
+}
+
+.room-observers-title {
+  color: #9eb6c2;
+}
+
+.room-panel .observer-list {
+  border-color: rgba(90, 120, 140, 0.45);
+  background: rgba(12, 18, 24, 0.35);
+}
+
+.room-panel .observer-list li {
+  border-bottom-color: rgba(90, 120, 140, 0.35);
+}
+
+.room-player-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.55rem;
+  margin-bottom: 0.35rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 8px;
+  background: rgba(16, 12, 8, 0.35);
+  border: 1px solid rgba(106, 78, 50, 0.55);
+}
+
+.room-player-grid.is-teams {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.7rem;
+  padding: 0.55rem;
+}
+
+.room-team {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.45rem 0.5rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid rgba(106, 78, 50, 0.45);
+  background: rgba(20, 14, 10, 0.35);
+}
+
+.room-team-a {
+  border-color: rgba(70, 140, 200, 0.55);
+  background: rgba(30, 50, 80, 0.25);
+}
+
+.room-team-b {
+  border-color: rgba(200, 90, 70, 0.55);
+  background: rgba(70, 30, 24, 0.25);
+}
+
+.room-team-title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: rgba(230, 210, 180, 0.9);
+}
+
+.room-team-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.room-player-slot.is-team-movable {
+  cursor: grab;
+}
+
+.room-player-slot.is-seat-selected {
+  outline: 2px solid rgba(240, 200, 90, 0.85);
+  outline-offset: 1px;
+}
+
+.room-player-slot.is-drag-over {
+  border-color: rgba(240, 200, 90, 0.8);
+  background: rgba(80, 60, 20, 0.45);
+}
+
+.room-player-slot {
+  position: relative;
+  overflow: visible;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 6px;
+  background: rgba(30, 22, 14, 0.55);
+  border: 1px solid rgba(106, 78, 50, 0.45);
+  min-height: 2.4rem;
+}
+
+.room-player-slot.is-empty {
+  background: rgba(16, 12, 8, 0.25);
+  border-style: dashed;
+  border-color: rgba(106, 78, 50, 0.35);
+  color: rgba(200, 180, 150, 0.45);
+  justify-content: center;
+}
+
+.room-player-slot.is-left {
+  opacity: 0.65;
+}
+
+.room-player-slot .slot-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.room-player-slot .btn-add-bot,
+.room-player-slot .btn-remove-bot {
+  font-size: 0.68rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid rgba(180, 150, 100, 0.4);
+  background: rgba(80, 60, 30, 0.45);
+  color: #e0c890;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+.room-player-slot .btn-add-bot:hover,
+.room-player-slot .btn-remove-bot:hover {
+  background: rgba(100, 80, 40, 0.6);
+  border-color: rgba(220, 190, 130, 0.55);
+}
+
+.room-player-slot .btn-remove-bot {
+  border-color: rgba(180, 90, 70, 0.4);
+  background: rgba(80, 30, 20, 0.4);
+  color: #d8a090;
+}
+
+.room-player-slot .btn-remove-bot:hover {
+  background: rgba(110, 40, 30, 0.55);
+  border-color: rgba(210, 110, 90, 0.55);
+}
+
+.room-player-slot.is-bot .room-slot-nick {
+  color: #c8e0f0;
+}
+
+.room-player-slot.is-bot .room-slot-status {
+  color: #90b8d0;
+}
+
+.room-slot-nick {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-slot-status {
+  font-size: 0.78rem;
+  flex-shrink: 0;
+}
+
+.room-slot-empty {
+  font-size: 0.85rem;
+  letter-spacing: 0.05em;
+}
+
+.room-observer-panel {
+  background:
+    linear-gradient(165deg, rgba(40, 55, 65, 0.45) 0%, transparent 42%),
+    rgba(18, 26, 30, 0.75);
+  border: 1px solid rgba(90, 120, 140, 0.45);
+  box-shadow:
+    0 0 0 1px rgba(120, 170, 200, 0.06),
+    0 12px 32px rgba(0, 0, 0, 0.35);
+  padding: 1.2rem 1.6rem 1.4rem;
+  margin-top: 0.75rem;
+}
+
+.room-panel .member-list {
+  margin-bottom: 0.35rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 8px;
+  background: rgba(16, 12, 8, 0.35);
+  border: 1px solid rgba(106, 78, 50, 0.55);
+  overflow: visible;
+}
+
+.room-panel .member-list li {
+  position: relative;
+  border-bottom-color: rgba(106, 78, 50, 0.55);
+  overflow: visible;
+}
+
+.room-chat-bubble {
+  position: absolute;
+  left: calc(100% + 0.55rem);
+  top: 50%;
+  width: max-content;
+  min-width: 7.5rem;
+  max-width: min(70vw, 20rem);
+  padding: 0.38rem 0.55rem;
+  border-radius: 10px;
+  border: 1px solid var(--accent);
+  background: rgba(26, 36, 42, 0.97);
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  white-space: normal;
+  word-break: break-word;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
+  z-index: 8;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-50%) scale(0.96);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.room-chat-bubble.is-in {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
+}
+
+.room-chat-bubble::after {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-width: 6px 6px 6px 0;
+  border-style: solid;
+  border-color: transparent var(--accent) transparent transparent;
+}
+
+body.phase-room .room-chat-bubble {
+  border-color: var(--room-accent);
+  background: rgba(36, 28, 20, 0.98);
+}
+
+body.phase-room .room-chat-bubble::after {
+  border-right-color: var(--room-accent);
+}
+
+.game-chat-fly {
+  position: fixed;
+  right: -18rem;
+  width: fit-content;
+  max-width: min(94vw, 64rem);
+  padding: 0.57rem 1.08rem;
+  border-radius: 1.15rem;
+  background: rgba(26, 36, 42, 0.92);
+  border: 1.5px solid rgba(61, 155, 143, 0.55);
+  color: var(--text);
+  font-size: 1.35rem;
+  line-height: 1.35;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  overflow: visible;
+  box-sizing: border-box;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+  z-index: 40;
+  animation: game-chat-fly 8s linear forwards;
+}
+
+body.phase-game .game-chat-fly {
+  background: rgba(24, 28, 22, 0.94);
+  border-color: rgba(104, 162, 104, 0.55);
+}
+
+@keyframes game-chat-fly {
+  from {
+    transform: translateX(0);
+    opacity: 0.96;
+  }
+  to {
+    transform: translateX(calc(-100vw - 100% - 3rem));
+    opacity: 0.96;
+  }
+}
+
+.room-actions {
+  margin-top: 0.9rem;
+  justify-content: center;
+}
+
+body.phase-room .room-panel button:not(.secondary) {
+  background: var(--room-accent);
+  color: #1a120a;
+  font-weight: 650;
+}
+
+body.phase-room .room-panel button:not(.secondary):hover {
+  background: var(--room-accent-hover);
+}
+
+#room-start-hint {
+  text-align: center;
+}
+
+.btn-leave-room {
+  border-color: rgba(196, 92, 92, 0.55) !important;
+  color: #e8a0a0 !important;
+}
+
+.btn-leave-room:hover {
+  background: rgba(196, 92, 92, 0.15) !important;
+  border-color: rgba(196, 92, 92, 0.85) !important;
+}
+
+.people-status.is-locked {
+  color: #e2c4a0;
+}
+
+.people-list li.is-offline {
+  opacity: 0.45;
+}
+.people-list li.is-offline .people-name {
+  color: var(--muted);
+}
+.people-list li.is-offline .people-status,
+.people-list li.is-offline .people-row-meta {
+  color: #9e9e9e;
+}
+
+.chat-dock {
+  position: fixed;
+  left: 50%;
+  bottom: 1rem;
+  width: min(420px, calc(100vw - var(--page-pad) * 2));
+  z-index: 25;
+  opacity: 0.5;
+  transform: translateX(-50%);
+  transition: opacity 0.2s ease;
+}
+
+/* 对局中：聊天窗浮于牌桌之上，仍低于弹窗 */
+body.phase-game .chat-dock {
+  z-index: 45;
+  bottom: 0.55rem;
+  width: min(360px, calc(100vw - var(--page-pad) * 2 - 8rem));
+  pointer-events: none;
+}
+
+body.phase-game .chat-dock .chat-panel {
+  pointer-events: auto;
+}
+
+.chat-dock.is-custom-pos {
+  transform: none;
+}
+
+.chat-dock.is-active {
+  opacity: 1;
+}
+
+.chat-dock[hidden] {
+  display: none !important;
+}
+
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  height: 280px;
+  overflow: hidden;
+  margin: 0;
+  padding: 0.65rem 0.75rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(36, 48, 56, 0.96);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(8px);
+  transition:
+    height 0.24s ease,
+    padding 0.24s ease,
+    background 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    backdrop-filter 0.2s ease;
+}
+
+.chat-dock.is-active .chat-panel {
+  height: 360px;
+}
+
+body.phase-room .chat-panel {
+  background: rgba(44, 32, 22, 0.97);
+  border-color: var(--room-border);
+}
+
+.chat-dock:not(.is-active) .chat-panel {
+  background: rgba(24, 30, 35, 0.68);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(4px);
+}
+
+body.phase-room .chat-dock:not(.is-active) .chat-panel {
+  background: rgba(30, 24, 19, 0.68);
+  border-color: rgba(201, 133, 58, 0.2);
+}
+
+.chat-dock:not(.is-active) .chat-head,
+.chat-dock:not(.is-active) .chat-log li,
+.chat-dock:not(.is-active) .chat-form input,
+.chat-dock:not(.is-active) .chat-tabs button {
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+.chat-dock:not(.is-active) .chat-head-title,
+.chat-dock:not(.is-active) .chat-from,
+.chat-dock:not(.is-active) .chat-text,
+.chat-dock:not(.is-active) .chat-form input,
+.chat-dock:not(.is-active) .chat-form button {
+  color: rgba(232, 238, 242, 0.62);
+}
+
+.chat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0 0 0.45rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border);
+  cursor: move;
+  user-select: none;
+}
+
+.chat-head-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.chat-head-channel {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.08rem 0.42rem;
+  border-radius: 999px;
+  background: rgba(61, 155, 143, 0.2);
+  border: 1px solid rgba(61, 155, 143, 0.45);
+  color: #d5f0ea;
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.chat-head-channel.is-room {
+  background: rgba(201, 133, 58, 0.18);
+  border-color: rgba(201, 133, 58, 0.5);
+  color: #f0d2a4;
+}
+
+.chat-head-unread {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: rgba(196, 92, 92, 0.9);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.chat-head-unread[hidden],
+.chat-unread[hidden] {
+  display: none !important;
+}
+
+.chat-collapsed-preview {
+  margin: 0 0 0.2rem;
+  color: rgba(232, 238, 242, 0.76);
+  font-size: 0.76rem;
+  line-height: 1.35;
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition:
+    max-height 0.22s ease,
+    opacity 0.18s ease,
+    transform 0.22s ease,
+    margin 0.22s ease;
+}
+
+.chat-collapsed-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-tabs {
+  display: flex;
+  gap: 0.3rem;
+  margin-bottom: 0.45rem;
+  flex-shrink: 0;
+}
+
+.chat-tabs.is-solo {
+  display: none;
+}
+
+.chat-tabs button {
+  flex: 0 0 auto;
+  padding: 0.28rem 0.45rem;
+  font-size: 0.72rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 6px;
+}
+
+.chat-tabs button.is-on {
+  background: rgba(61, 155, 143, 0.2);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.chat-tabs button:disabled {
+  opacity: 0.4;
+}
+
+.chat-unread {
+  display: inline-block;
+  min-width: 1.1rem;
+  padding: 0 0.25rem;
+  margin-left: 0.1rem;
+  border-radius: 8px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.65rem;
+  line-height: 1.2;
+  vertical-align: middle;
+}
+
+.chat-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1 1 auto;
+  min-height: 80px;
+  overflow: auto;
+  overflow: overlay;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.chat-log li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  padding: 0.28rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.chat-log li.is-mine .chat-text {
+  color: #d5f0ea;
+}
+
+.chat-log li.chat-empty {
+  display: block;
+  border: none;
+  color: var(--muted);
+  font-size: 0.78rem;
+  padding: 0.45rem 0;
+}
+
+.chat-dot {
+  flex-shrink: 0;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-top: 0.4rem;
+  border-radius: 50%;
+}
+
+.chat-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.chat-from {
+  display: block;
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-from .nick-base {
+  color: #ffffff;
+}
+
+.chat-from .nick-tag {
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
+.chat-text {
+  display: block;
+  word-break: break-word;
+  color: var(--text);
+}
+
+.chat-form {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+
+.chat-form input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0.35rem 0.45rem;
+  font-size: 0.82rem;
+}
+
+.chat-form button {
+  padding: 0.35rem 0.55rem;
+  font-size: 0.78rem;
+}
+
+.chat-dock:not(.is-active) .chat-panel {
+  height: 128px;
+  padding-bottom: 0.6rem;
+}
+
+.chat-dock:not(.is-active) .chat-collapsed-preview {
+  max-height: 4.2rem;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.chat-dock:not(.is-active) .chat-tabs,
+.chat-dock:not(.is-active) .chat-log,
+.chat-dock:not(.is-active) .chat-form {
+  opacity: 0;
+  max-height: 0;
+  min-height: 0;
+  overflow: hidden;
+  pointer-events: none;
+  flex: 0 0 auto;
+  margin: 0 !important;
+  padding-top: 0;
+  padding-bottom: 0;
+  transform: translateY(-6px);
+  transition:
+    opacity 0.16s ease,
+    max-height 0.24s ease,
+    transform 0.24s ease,
+    margin 0.24s ease;
+}
+
+.chat-dock.is-active .chat-tabs,
+.chat-dock.is-active .chat-log,
+.chat-dock.is-active .chat-form {
+  opacity: 1;
+  max-height: 1000px;
+  pointer-events: auto;
+  transform: translateY(0);
+  transition:
+    opacity 0.2s ease 0.04s,
+    max-height 0.26s ease,
+    transform 0.26s ease,
+    margin 0.26s ease;
+}
+
+.chat-dock.is-active .chat-collapsed-preview {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-4px);
+  margin-bottom: 0;
+}
+
+.chat-dock.is-active .chat-head .chat-tabs {
+  margin-bottom: 0;
+}
+
+body.phase-room .chat-tabs button.is-on {
+  background: rgba(201, 133, 58, 0.22);
+  border-color: var(--room-accent);
+}
+
+.ctx-menu {
+  position: fixed;
+  z-index: 1100;
+  min-width: 10rem;
+  padding: 0.3rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+}
+
+.ctx-menu[hidden] {
+  display: none;
+}
+
+.ctx-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.9rem;
+}
+
+.ctx-menu button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ctx-menu button:disabled:hover {
+  background: transparent;
+}
+
+.ctx-hint {
+  margin: 0.35rem 0.35rem 0.2rem;
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.people-list li {
+  cursor: context-menu;
+}
+
+.invite-message {
+  margin: 0 0 1rem;
+  line-height: 1.45;
+}
+
+.toast-slot {
+  position: fixed;
+  left: 1rem;
+  bottom: 1rem;
+  z-index: 9999;
+  height: auto;
+  width: auto;
+  max-width: 18rem;
+  margin: 0;
+  pointer-events: none;
+}
+
+.toast {
+  position: relative;
+  inset: auto;
+  box-sizing: border-box;
+  margin: 0;
+  background: #3a2a2a;
+  border: 1px solid var(--danger);
+  color: #f0c8c8;
+  padding: 0.45rem 0.8rem;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  font-size: 0.9rem;
+  line-height: 1.35;
+  pointer-events: auto;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.toast-slot.is-spectator-notice {
+  max-width: 54rem;
+  overflow: visible;
+}
+
+.toast.is-spectator-notice {
+  padding: 1.35rem 2.4rem;
+  border-radius: 18px;
+  border-width: 3px;
+  font-size: 1.8rem;
+  line-height: 1.35;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
+  transform: translateY(-120%);
+  opacity: 0;
+}
+
+.toast.is-spectator-notice.is-entering {
+  animation: toast-spectator-in 1s ease forwards;
+}
+
+.toast.is-spectator-notice.is-leaving {
+  animation: toast-spectator-out 1s ease forwards;
+}
+
+@keyframes toast-spectator-in {
+  from {
+    transform: translateY(-120%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes toast-spectator-out {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-120%);
+    opacity: 0;
+  }
+}
+
+.toast[hidden] {
+  display: none !important;
+}
+
+/* 邀请弹窗：左下角 */
+.invite-toast-slot {
+  position: fixed;
+  left: 1rem;
+  bottom: 1rem;
+  z-index: 9998;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.5rem;
+  pointer-events: none;
+  align-items: flex-start;
+  max-width: 24rem;
+}
+
+.invite-toast {
+  position: relative;
+  box-sizing: border-box;
+  margin: 0;
+  background: #2a3828;
+  border: 1px solid #6aa050;
+  color: #d8e8cc;
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  pointer-events: auto;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 18rem;
+}
+
+.invite-toast-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.invite-toast-body {
+  flex: 1 1 auto;
+  text-align: center;
+  white-space: pre-line;
+  word-break: break-word;
+}
+
+.invite-toast-close {
+  flex: 0 0 auto;
+  width: 1.6rem;
+  height: 1.6rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  color: #a8c89a;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: -0.2rem;
+  margin-right: -0.3rem;
+}
+
+.invite-toast-close:hover {
+  background: rgba(106, 160, 80, 0.2);
+  color: #d8e8cc;
+}
+
+.invite-toast-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+.invite-toast-actions button {
+  flex: 1 1 auto;
+  min-width: 4rem;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.85rem;
+  border-radius: 6px;
+}
+
+.invite-toast-actions .invite-toast-accept {
+  background: #6aa050;
+  color: #15200f;
+  border: 1px solid #6aa050;
+}
+
+.invite-toast-actions .invite-toast-accept:hover {
+  background: #7db860;
+  border-color: #7db860;
+}
+
+.invite-toast-actions .invite-toast-reject {
+  background: transparent;
+  color: #c8dcc0;
+  border: 1px solid rgba(106, 160, 80, 0.45);
+}
+
+.invite-toast-actions .invite-toast-reject:hover {
+  background: rgba(106, 160, 80, 0.15);
+}
+
+.invite-toast-block {
+  width: 100%;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.75rem;
+  color: #9ab88e;
+  background: transparent;
+  border: 1px dashed rgba(106, 160, 80, 0.35);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.invite-toast-block:hover {
+  background: rgba(106, 160, 80, 0.12);
+  border-color: rgba(106, 160, 80, 0.55);
+}
+
+.invite-toast.is-blocked {
+  opacity: 0.6;
+}
+
+.room-busy-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 12, 16, 0.72);
+  padding: 1rem;
+}
+
+.room-busy-overlay[hidden] {
+  display: none !important;
+}
+
+.room-busy-panel {
+  min-width: 12rem;
+  text-align: center;
+  padding: 1.25rem 1.5rem;
+}
+
+.room-busy-spinner {
+  width: 2.5rem;
+  height: 2.5rem;
+  margin: 0 auto 0.85rem;
+  border: 3px solid rgba(255, 255, 255, 0.14);
+  border-top-color: var(--accent, #6ec4b8);
+  border-radius: 50%;
+  animation: room-busy-spin 0.85s linear infinite;
+}
+
+@keyframes room-busy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.room-busy-message {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.45;
+}
+
+.room-busy-progress-wrap {
+  margin-top: 0.75rem;
+  width: 100%;
+  max-width: 16rem;
+}
+
+.room-busy-progress-bar {
+  height: 0.5rem;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 0.25rem;
+  overflow: hidden;
+}
+
+.room-busy-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent, #6ec4b8);
+  border-radius: 0.25rem;
+  transition: width 0.3s ease;
+}
+
+.room-busy-progress-text {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.room-busy-players-status {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.room-busy-players-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+  width: 100%;
+  max-width: 28rem;
+}
+
+.loading-player-card {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.5rem;
+  padding: 0.6rem;
+  text-align: center;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.loading-player-card.is-me {
+  border-color: var(--accent, #6ec4b8);
+  box-shadow: 0 0 0 1px var(--accent, #6ec4b8) inset;
+}
+
+.loading-player-card.is-ready {
+  border-color: rgba(110, 196, 184, 0.5);
+}
+
+.loading-player-name {
+  margin: 0 0 0.4rem;
+  font-size: 0.82rem;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.loading-player-bar {
+  height: 0.35rem;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 0.2rem;
+  overflow: hidden;
+}
+
+.loading-player-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent, #6ec4b8);
+  border-radius: 0.2rem;
+  transition: width 0.35s ease;
+}
+
+.loading-player-fill.is-done {
+  background: #5cb85c;
+}
+
+.loading-player-pct {
+  margin: 0.25rem 0 0;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.you {
+  color: var(--accent);
+}
+
+.game-badge {
+  margin-left: 0;
+  margin-right: 0.25rem;
+  background: #2f5a52;
+  color: #b6e2d8;
+}
+
+.game-panel {
+  text-align: center;
+}
+
+.game-status {
+  font-size: 1.05rem;
+  margin: 0.35rem 0 0.5rem;
+}
+
+.turn-timer {
+  text-align: center;
+  margin: 0 auto 0.65rem;
+  padding: 0.35rem 0.85rem;
+  max-width: 14rem;
+  font-size: 0.95rem;
+  color: #3a2a14;
+  background: linear-gradient(180deg, #f3e0b8, #e4c98a);
+  border: 1px solid #c9a45a;
+  border-radius: 6px;
+}
+
+.turn-timer strong {
+  font-variant-numeric: tabular-nums;
+  font-size: 1.15rem;
+  margin-left: 0.2rem;
+}
+
+.turn-timer.is-urgent {
+  color: #5a1515;
+  background: linear-gradient(180deg, #f5cfc8, #e8a090);
+  border-color: #c07060;
+}
+
+.game-sub {
+  margin: 1rem 0 0.4rem;
+  font-size: 0.95rem;
+}
+
+.game-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 160px;
+  overflow: auto;
+  overflow: overlay;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.game-log li {
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.game-log li:last-child {
+  border-bottom: none;
+}
+
+@media (max-width: 720px) {
+  :root {
+    --people-width: 100%;
+  }
+
+  .lobby-people {
+    position: static;
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    --people-aside-pad-x: 0;
+  }
+
+  .people-list {
+    margin-right: 0;
+    padding-right: 0;
+  }
+
+  .app-body:has(.lobby-people:not([hidden])) .app-content,
+  .app-body:has(.lobby-people:not([hidden])) .app-top {
+    padding-right: var(--page-pad);
+  }
+
+  .chat-dock {
+    left: 0.65rem;
+    bottom: 0.65rem;
+    width: min(300px, calc(100vw - 1.3rem));
+  }
+
+  .chat-panel {
+    height: 240px;
+  }
+
+  .view-room {
+    min-height: 0;
+    padding-top: 0.5rem;
+  }
+
+  .view-room .room-shell {
+    margin-top: 0;
+    margin-bottom: 0;
+    width: 100%;
+  }
+
+  .room-panel {
+    min-width: 0;
+    width: 100%;
+    padding: 1.2rem 1.1rem 1.4rem;
+  }
+
+  .room-banner {
+    white-space: normal;
+  }
+
+  .room-actions {
+    justify-content: stretch;
+  }
+
+  .room-actions button {
+    flex: 1 1 calc(50% - 0.5rem);
+    min-height: 2.45rem;
+  }
+}
+
+.lobby-playing-title {
+  margin-top: 1.1rem;
+}
+
+.passive-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.65rem 0 0;
+  font-size: 0.88rem;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* display:flex 会盖掉原生 [hidden]，加入端必须彻底藏起被动开关 */
+#passive-toggle-wrap[hidden],
+body.is-guest-client #passive-toggle-wrap {
+  display: none !important;
+}
+
+.passive-toggle input {
+  width: auto;
+  margin: 0;
+}
+
+.ctx-menu {
+  position: fixed;
+  z-index: 2500;
+  min-width: 10rem;
+  padding: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(28, 36, 42, 0.98);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+}
+
+.ctx-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 0;
+  border: none;
+  background: transparent;
+  padding: 0.55rem 0.65rem;
+  border-radius: 6px;
+}
+
+.ctx-menu button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.ctx-menu button:disabled {
+  opacity: 0.45;
+}
+
+.ctx-menu .ctx-hint {
+  margin: 0.25rem 0.4rem 0.35rem;
+  font-size: 0.8rem;
+}
+
+body.is-passive-locked .app,
+body.is-passive-locked .chat-dock,
+body.is-passive-locked .ctx-menu,
+body.is-passive-locked .modal:not(#host-update-modal) {
+  pointer-events: none !important;
+  filter: grayscale(0.55) brightness(0.55);
+  transition: filter 0.2s ease;
+}
+
+body.is-passive-locked #host-update-modal {
+  pointer-events: auto !important;
+  filter: none !important;
+}
+
+body.is-passive-locked .game-menu,
+body.is-passive-locked .game-menu-panel {
+  pointer-events: none !important;
+  filter: grayscale(0.55) brightness(0.55);
+}
+
+.passive-lock-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgba(6, 10, 14, 0.55);
+  pointer-events: auto;
+}
+
+.passive-lock-overlay[hidden] {
+  display: none !important;
+}
+
+.passive-lock-panel {
+  width: min(26rem, 100%);
+  text-align: center;
+  padding: 1.75rem 1.5rem 1.5rem;
+  border: 1px solid var(--border);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+
+.passive-lock-title {
+  margin: 0 0 0.65rem;
+  font-size: 1.55rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.passive-lock-desc {
+  margin: 0 0 1.35rem;
+  line-height: 1.55;
+  font-size: 0.95rem;
+}
+
+.passive-lock-panel #btn-exit-passive {
+  min-width: 10rem;
+  font-size: 1rem;
+  padding: 0.7rem 1.2rem;
+}
+
+.passive-lock-panel #btn-exit-passive:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.passive-share-url {
+  margin: -0.35rem 0 1rem;
+  text-align: left;
+  width: 100%;
+}
+
+.passive-share-label {
+  display: block;
+  font-size: 0.82rem;
+  opacity: 0.85;
+  margin-bottom: 0.35rem;
+}
+
+.passive-share-row {
+  display: flex;
+  gap: 0.45rem;
+  align-items: stretch;
+}
+
+.passive-share-row input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.82rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.28);
+  color: inherit;
+}
+
+.passive-share-row button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.room-tunnel-share {
+  margin: 0 auto 1rem;
+  text-align: left;
+  width: 100%;
+  max-width: 28rem;
+}
+
+.room-tunnel-label {
+  display: block;
+  font-size: 0.82rem;
+  opacity: 0.85;
+  margin-bottom: 0.35rem;
+  color: #e8d4b0;
+}
+
+.room-tunnel-row {
+  display: flex;
+  gap: 0.45rem;
+  align-items: stretch;
+}
+
+.room-tunnel-row input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.82rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid rgba(240, 199, 138, 0.28);
+  background: rgba(20, 14, 10, 0.55);
+  color: inherit;
+}
+
+.room-tunnel-row button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.room-tunnel-hint {
+  margin: 0.4rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+</style>
+<style>
+/* 战争工厂（水墨即时战略）面板样式 */
+
+/*
+ * 指挥栏高度：浮在地图下沿时要参与两处计算 ——
+ * ① ui.js 把画布左下角的 HUD 抬到它上面（其实走的是实测 getBoundingClientRect，这里是兜底）；
+ * ② 聊天窗要抬到它上面（见 public/css/style.css，用 var(--wf-cmdbar-h, 0px) 取值）。
+ * 这个高度直接决定右栏「单位详情」有多少竖直空间：详情栏内的所有内容都要
+ * 一屏放得下（不许滚动）。实测 320px 时右栏正文约 219~228px（随栏头文案略变），
+ * 装得下最高的一屏 —— 工厂面板 ~218px（1280~2560 宽的视口都量过，溢出 0px）。
+ * 改指挥栏里的高度（小地图 200）时记得同步这个数。
+ */
+:root {
+  --wf-cmdbar-h: 320px;
+}
+
+/*
+ * [hidden] 兜底：本文件里大量 .xxx { display: flex/block } 的类选择器
+ * 优先级高于 UA 样式的 [hidden] { display: none }，会把 hidden 属性
+ * 悄悄盖掉（现象：总部面板里冒出「开辟产线」按钮、初级工厂冒出进化按钮）。
+ * 面板内所有 hidden 一律以这条为准。
+ */
+#panel-warfactory [hidden] {
+  display: none !important;
+}
+
+/*
+ * ================= 地图铺满整屏 =================
+ * 面板可见时：地图不再是一个居中的 1280 宽方框，而是铺满整个视口；
+ * 顶部那一行（菜单 / 对局计时）与底部指挥栏改成浮在地图上的图层，
+ * 面板自己的标题 / 副标题让位隐藏 —— 全屏之后画面里只剩「游戏界面 + 地图」。
+ */
+#panel-warfactory:not([hidden]) {
+  height: 100%;
+}
+
+#panel-warfactory:not([hidden]) #game-title,
+#panel-warfactory:not([hidden]) #game-sides {
+  display: none !important;
+}
+
+#panel-warfactory:not([hidden]) .warfactory-wrap {
+  max-width: none;
+  height: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.warfactory-wrap {
+  position: relative;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  border: 1px solid rgba(90, 74, 52, 0.55);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #ece3cd;
+  box-shadow: 0 2px 14px rgba(60, 48, 30, 0.18);
+}
+
+#warfactory-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1280 / 800;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+/* 铺满整屏时画布跟着容器走：宽高都由视口决定，纵横比不再是约束 */
+#panel-warfactory:not([hidden]) #warfactory-canvas {
+  height: 100%;
+  aspect-ratio: auto;
+}
+
+/* ---- 地图内浮层：右上角「？」规则入口 + 规则面板 ---- */
+.wf-map-tools {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 7;
+  display: flex;
+  gap: 6px;
+}
+
+.wf-map-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid rgba(90, 74, 52, 0.55);
+  border-radius: 6px;
+  background: rgba(246, 239, 221, 0.86);
+  color: #2a2620;
+  font-family: "STKaiti", "KaiTi", "Noto Serif SC", "SimSun", serif;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(60, 48, 30, 0.16);
+}
+
+.wf-map-btn:hover {
+  background: rgba(252, 249, 240, 0.98);
+}
+
+.wf-map-btn[aria-expanded='true'] {
+  border-color: rgba(160, 58, 44, 0.6);
+  background: rgba(160, 58, 44, 0.14);
+  color: #8a2f22;
+}
+
+.wf-help {
+  position: absolute;
+  top: 52px;
+  right: 10px;
+  z-index: 8;
+  width: min(560px, calc(100% - 20px));
+  max-height: min(74vh, 660px);
+  overflow: auto;
+  padding: 0 14px 14px;
+  border: 1px solid rgba(90, 74, 52, 0.6);
+  border-radius: 6px;
+  background: rgba(250, 246, 234, 0.97);
+  box-shadow: 0 8px 28px rgba(60, 48, 30, 0.28);
+  color: #3c342a;
+  text-align: left;
+  font-size: 12px;
+}
+
+.wf-help-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 0 7px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid rgba(90, 74, 52, 0.25);
+  background: rgba(250, 246, 234, 0.97);
+}
+
+.wf-help-title {
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 2px;
+  color: #8a2f22;
+}
+
+.wf-help-close {
+  border: 0;
+  background: transparent;
+  color: #7d6f58;
+  font-size: 19px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.wf-help-close:hover {
+  color: #a03a2c;
+}
+
+.wf-help-body {
+  line-height: 1.75;
+}
+
+/* 规则块在浮层里改成左对齐、无边框（原来是页面下方那一条条横线） */
+.wf-help-body .warfactory-legend {
+  display: block;
+  max-width: none;
+  margin: 10px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.wf-help-body .warfactory-legend-item {
+  display: block;
+  margin: 2px 0;
+}
+
+.wf-help-body .warfactory-help {
+  max-width: none;
+  margin: 12px 0 0;
+  text-align: left;
+}
+
+/* ---- 工厂面板（渲染在底部指挥栏右栏内，见 .wcb-detail 的流式覆盖） ---- */
+.warfactory-facpanel {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 6;
+  width: 236px;
+  padding: 10px 12px 12px;
+  border: 1px solid rgba(90, 74, 52, 0.6);
+  border-radius: 6px;
+  background: rgba(250, 246, 234, 0.96);
+  box-shadow: 0 4px 18px rgba(60, 48, 30, 0.22);
+  font-size: 13px;
+  color: #3c342a;
+}
+
+.wfp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.wfp-title {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.wfp-close {
+  border: none;
+  background: transparent;
+  color: #7d6f58;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.wfp-close:hover {
+  color: #a03a2c;
+}
+
+.wfp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #6c5f4b;
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+
+.wfp-level {
+  padding: 1px 7px;
+  border-radius: 3px;
+  background: rgba(90, 74, 52, 0.12);
+  font-weight: 600;
+}
+
+.wfp-bar {
+  position: relative;
+  height: 7px;
+  border: 1px solid rgba(90, 74, 52, 0.35);
+  border-radius: 3px;
+  background: rgba(236, 227, 205, 0.9);
+  overflow: hidden;
+}
+
+.wfp-bar > i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: #5f8a4a;
+  transition: width 0.12s linear;
+}
+
+.wfp-bar-hp > i {
+  background: #5f8a4a;
+}
+
+.wfp-bar-hp.is-mid > i {
+  background: #c8871f;
+}
+
+.wfp-bar-hp.is-low > i {
+  background: #a03a2c;
+}
+
+.wfp-bar-prod > i {
+  background: #4d6f8a;
+}
+
+.wfp-hp-text {
+  margin-top: 3px;
+  font-size: 11px;
+  color: #7d6f58;
+}
+
+.wfp-sec-title {
+  margin: 10px 0 5px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #5a4a34;
+  border-bottom: 1px solid rgba(90, 74, 52, 0.25);
+  padding-bottom: 3px;
+}
+
+.wfp-unit {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.wfp-glyph {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  background: #8a2f22;
+  color: #f6efdd;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 32px;
+  text-align: center;
+}
+
+.wfp-unit-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.wfp-unit-name {
+  font-weight: 600;
+}
+
+.wfp-unit-desc {
+  font-size: 11px;
+  color: #7d6f58;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wfp-evolve {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border: 1px solid rgba(160, 58, 44, 0.7);
+  border-radius: 4px;
+  background: rgba(160, 58, 44, 0.1);
+  color: #8a2f22;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* 独占一行的进化按钮（总部面板 / 工厂面板通用） */
+.wfp-evolve-block {
+  display: block;
+  width: 100%;
+  margin-top: 9px;
+  padding: 6px 9px;
+}
+
+.wfp-evolve:hover:not(:disabled) {
+  background: rgba(160, 58, 44, 0.2);
+}
+
+.wfp-evolve:disabled {
+  border-color: rgba(90, 74, 52, 0.35);
+  background: rgba(90, 74, 52, 0.08);
+  color: #9b8f7c;
+  cursor: default;
+}
+
+.wfp-note {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #7d6f58;
+  line-height: 1.5;
+}
+
+.wfp-rally {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(90, 74, 52, 0.25);
+  font-size: 11px;
+  color: #6c5f4b;
+}
+
+/* ---- 部队面板（同样渲染在指挥栏右栏内） ---- */
+.warfactory-unitpanel {
+  width: 244px;
+}
+
+/* 右栏三块内容互斥：我方概况 / 工厂面板 / 部队面板 */
+.wup-hero {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 7px;
+}
+
+/* 属性表：等宽行，标签与数值分列 */
+.wup-stats {
+  white-space: pre-line;
+  line-height: 1.75;
+  font-size: 12px;
+  color: #3c342a;
+  font-variant-numeric: tabular-nums;
+}
+
+.wup-stats b {
+  font-weight: 700;
+  color: #8a2f22;
+}
+
+/* 状态提示行：灼烧 / 锁定倍率 / 蓄能 */
+.wup-extra {
+  margin-top: 7px;
+  padding: 3px 8px;
+  border: 1px solid rgba(47, 111, 122, 0.45);
+  border-radius: 3px;
+  background: rgba(47, 111, 122, 0.1);
+  font-size: 11px;
+  line-height: 1.5;
+  color: #2f6f7a;
+}
+
+.wup-extra:empty {
+  display: none;
+}
+
+.wup-extra.is-none {
+  border-color: rgba(90, 74, 52, 0.3);
+  background: rgba(90, 74, 52, 0.06);
+  color: #7d6f58;
+}
+
+/* 编制汇总（多选）的主标题 */
+.wup-roster {
+  font-weight: 600;
+  color: #3c342a;
+}
+
+/* ============ 底部指挥栏：小地图 ｜ 单位粗览 ｜ 单位详情 ============ */
+
+/*
+ * 三栏固定：小地图（左）｜单位粗览（中）｜单位详情（右）。
+ *
+ * 三栏是**常驻**的 —— 没选中任何目标时中栏显示一句空态提示，而不是把自己收掉。
+ * 收掉中栏会让右栏滑到画面中间去（以前的 .wcb-detail.is-wide 跨列补位），
+ * 而「单位详情」必须永远钉在最右边，所以宁可让中栏空着。
+ *
+ * 右栏宽度随时间视口伸缩：详情栏内部是两列（见 .wfp-cols / .wup-cols），
+ * 太窄了两列会各自换行、反而变高，所以要留够（最低 520px）。
+ */
+.warfactory-cmdbar {
+  display: grid;
+  grid-template-columns: 326px minmax(0, 1fr) clamp(520px, 38vw, 700px);
+  gap: 10px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid rgba(90, 74, 52, 0.5);
+  background: #e4dac1;
+}
+
+/*
+ * 指挥栏浮在地图下沿（不再把地图顶上去）。
+ * 半透明 + 一点模糊，既能挡在读得清，又不至于把地图整个盖死。
+ */
+#panel-warfactory:not([hidden]) .warfactory-cmdbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  height: var(--wf-cmdbar-h);
+  background: rgba(228, 218, 193, 0.94);
+  backdrop-filter: blur(3px);
+}
+
+/* 对局状态：指挥栏顶沿的窄条（原来在地图上方那一行） */
+.wcb-status {
+  grid-column: 1 / -1;
+  margin: 0 0 6px;
+  padding: 0 0 5px;
+  border-bottom: 1px dashed rgba(90, 74, 52, 0.35);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+  color: #5a4c38;
+}
+
+.wcb-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.wcb-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 5px;
+  padding-bottom: 3px;
+  border-bottom: 1px dashed rgba(90, 74, 52, 0.35);
+  font-size: 12px;
+  color: #5a4c38;
+}
+
+.wcb-title {
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.wcb-tip,
+.wcb-count {
+  font-size: 11px;
+  color: #8a7a5e;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 左：小地图（尺寸与 ui.js 的 MINIMAP_W/H 保持一致） ---- */
+.warfactory-minimap {
+  display: block;
+  width: 300px;
+  height: 200px;
+  border: 1px solid rgba(90, 74, 52, 0.6);
+  border-radius: 3px;
+  background: #f6efdd;
+  cursor: pointer;
+  touch-action: none;
+}
+
+/* ---- 中：单位粗览 ---- */
+.wov-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(58px, 1fr));
+  gap: 5px;
+  align-content: start;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.wov-empty {
+  grid-column: 1 / -1;
+  align-self: center;
+  padding: 26px 0;
+  text-align: center;
+  font-size: 12px;
+  color: #8a7a5e;
+}
+
+/* 只有空态提示时让它垂直居中（平时格子从上往下排） */
+.wov-grid:has(.wov-empty) {
+  align-content: center;
+}
+
+.wov-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 3px 3px;
+  border: 1px solid rgba(90, 74, 52, 0.35);
+  border-radius: 3px;
+  background: rgba(250, 246, 234, 0.7);
+  cursor: pointer;
+  user-select: none;
+}
+
+.wov-tile:hover {
+  border-color: rgba(160, 58, 44, 0.55);
+  background: rgba(252, 249, 240, 0.95);
+}
+
+.wov-tile.is-sel {
+  border-color: rgba(160, 58, 44, 0.85);
+  box-shadow: inset 0 0 0 1px rgba(160, 58, 44, 0.45);
+  background: rgba(252, 244, 236, 0.98);
+}
+
+.wov-glyph {
+  display: block;
+  width: 22px;
+  height: 22px;
+  line-height: 22px;
+  text-align: center;
+  border-radius: 2px;
+  color: #f6efdd;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.wov-tier {
+  font-size: 11px;
+  line-height: 1;
+  color: #5a4c38;
+  letter-spacing: 0.5px;
+}
+
+.wov-hp {
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(90, 74, 52, 0.18);
+  overflow: hidden;
+}
+
+.wov-hp > i {
+  display: block;
+  height: 100%;
+  background: #4a6b3a;
+}
+
+.wov-hp.is-mid > i {
+  background: #8a6b22;
+}
+
+.wov-hp.is-low > i {
+  background: #8a2f22;
+}
+
+/* ---- 右：单位详情 ---- */
+/*
+ * 详情正文撑满整栏（高度由指挥栏高度决定，不再写死 216px）。
+ * overflow-y:auto 只是「极端内容」的兜底 —— 正常情况（任意兵种 / 任意阶 /
+ * 工厂 / 总部 / 研究所 / 侦察他方）都不该出现滚动条，靠两列排布省下竖直空间。
+ */
+.wdt-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+/* 详情栏内的两个面板改为流式排布（原本浮动在战场右上角） */
+.wcb-detail .warfactory-facpanel,
+.wcb-detail .warfactory-unitpanel {
+  position: static;
+  width: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+
+/*
+ * 详情栏内部的**两列**：左＝数据（产能 / 属性）/ 右＝按钮与说明。
+ * 竖着堆一列时工厂面板要 ~350px，两列之后 ~200px，一屏就装下了。
+ */
+.wfp-cols,
+.wup-cols {
+  display: grid;
+  gap: 0 18px;
+  align-items: start;
+}
+
+/* 工厂 / 总部：左列数据（产能 / 全厂提速），右列按钮 */
+.wfp-cols {
+  grid-template-columns: minmax(0, 1.15fr) minmax(190px, 1fr);
+}
+
+/* 部队：左列身份与状态（头像 / 血条 / 提示），右列属性表 —— 属性行最长，
+ * 给右列多一点宽度，免得「灼烧地…停喷后 5.2 秒熄灭」这类长行折行 */
+.wup-cols {
+  grid-template-columns: minmax(140px, 0.5fr) minmax(0, 1fr);
+}
+
+.wfp-col,
+.wup-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* 右列第一个元素（按钮 / 段标题）不需要额外的上间距 */
+.wfp-col > :first-child,
+.wup-col > :first-child {
+  margin-top: 0;
+}
+
+/*
+ * 多选时的「编成汇总」是一堆短行（最多 12 行），两列排一下正好；
+ * 单选时的属性表行更长，不拆列（拆了长行会折行，反而更高）。
+ */
+.wup-stats.is-roster {
+  column-count: 2;
+  column-gap: 20px;
+}
+
+/* 中栏（单位粗览）只在选中部队时出现：没选中整段收起，右栏跨两列补位 */
+.wcb-overview[hidden] {
+  display: none !important;
+}
+
+/* 我方概况：未选中任何目标时显示（只留科技点 + 一行提示，详细数据「点谁看谁」） */
+.warfactory-self {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: #3c342a;
+}
+
+.warfactory-self[hidden] {
+  display: none;
+}
+
+/* 键值行：产线 2 / 3、生产加速 3 / 20 级 */
+.wfp-kv {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #3c342a;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 产能 / 提速说明行 */
+.wfp-rate {
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #6c5f4b;
+  font-variant-numeric: tabular-nums;
+}
+
+.wfp-spd {
+  margin-top: 4px;
+}
+
+.wfp-spd[hidden] {
+  display: none;
+}
+
+.wsl-line {
+  font-size: 12px;
+  color: #6c5f4b;
+  font-variant-numeric: tabular-nums;
+}
+
+.wsl-dim {
+  color: #8a7a5e;
+}
+
+.warfactory-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  align-items: baseline;
+  justify-content: center;
+  max-width: 1280px;
+  margin: 4px auto;
+  padding: 6px 10px;
+  border-top: 1px dashed rgba(90, 74, 52, 0.35);
+  border-bottom: 1px dashed rgba(90, 74, 52, 0.35);
+  font-size: 12px;
+  color: #5a4c38;
+}
+
+.warfactory-legend-title {
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #8a2f22;
+}
+
+.warfactory-legend-item {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.warfactory-legend-item b {
+  font-weight: 700;
+  color: #3c342a;
+}
+
+.warfactory-legend-item em {
+  font-style: normal;
+  color: #7d6f58;
+}
+
+/* 地形图例色块 */
+.warfactory-terrain-legend {
+  margin-top: 2px;
+}
+.terr-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  margin-right: 2px;
+  vertical-align: -1px;
+  border: 1px solid rgba(90, 74, 52, 0.35);
+}
+.terr-water { background: rgba(74, 96, 112, 0.75); }
+.terr-swamp { background: rgba(104, 104, 72, 0.6); }
+.terr-mountain { background: rgba(72, 68, 62, 0.7); }
+.terr-plain { background: rgba(246, 239, 221, 0.9); }
+
+.warfactory-help {
+  text-align: center;
+  font-size: 12px;
+  color: #7d6f58;
+  margin: 6px auto 14px;
+  max-width: 1280px;
+}
+
+</style>
+</head>
+<body>
+
+  <main class="app">
+    <header class="app-top">
+      <div class="game-menu" id="game-menu">
+        <button
+          type="button"
+          id="btn-game-menu"
+          class="icon-btn game-menu-btn"
+          data-i18n-attr="title:menu.title,aria-label:menu.title"
+          title="菜单"
+          aria-label="菜单"
+          aria-expanded="false"
+          aria-haspopup="true"
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path fill="currentColor" d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z"/>
+          </svg>
+        </button>
+        <div class="game-menu-pop" id="game-menu-pop" hidden role="menu">
+          <div class="game-menu-item has-sub" id="menu-lang-item">
+            <button
+              type="button"
+              id="btn-menu-lang"
+              role="menuitem"
+              aria-haspopup="true"
+              aria-expanded="false"
+              data-i18n="lang.switch"
+            >
+              语言切换
+            </button>
+            <div class="game-menu-sub" id="menu-lang-sub" hidden role="menu">
+              <button type="button" role="menuitem" data-lang="zh" data-i18n="lang.zh">中文</button>
+              <button type="button" role="menuitem" data-lang="en" data-i18n="lang.en">English</button>
+            </div>
+          </div>
+          <div class="game-menu-item has-sub" id="menu-bgm-item">
+            <button
+              type="button"
+              id="btn-menu-bgm"
+              role="menuitem"
+              aria-haspopup="true"
+              aria-expanded="false"
+              data-i18n="menu.bgmVolume"
+            >
+              BGM 音量
+            </button>
+            <div class="game-menu-sub game-menu-bgm-sub" id="menu-bgm-sub" hidden role="group">
+              <label class="menu-bgm-control" for="menu-bgm-range">
+                <span class="menu-bgm-label" data-i18n="menu.bgmVolumeLabel">音量</span>
+                <input
+                  type="range"
+                  id="menu-bgm-range"
+                  min="0"
+                  max="100"
+                  step="5"
+                  value="10"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                />
+                <span class="menu-bgm-value" id="menu-bgm-value" aria-live="polite">10%</span>
+              </label>
+            </div>
+          </div>
+          <button type="button" id="btn-menu-game-rules" role="menuitem" hidden data-i18n="lasidao.rules.btn">
+            游戏规则
+          </button>
+          <button type="button" id="btn-menu-invite-block" role="menuitem" data-i18n="invite.blockAllMenu">
+            不接受房间邀请
+          </button>
+          <button type="button" id="btn-menu-changelog" role="menuitem" data-i18n="update.changelogMenu">
+            更新公告
+          </button>
+          <button type="button" id="btn-menu-check-update" role="menuitem" data-i18n="update.checkMenu">
+            检查更新
+          </button>
+          <button type="button" id="btn-quit-game" role="menuitem" hidden data-i18n="menu.quitGame">
+            退出游戏并返回大厅
+          </button>
+        </div>
+      </div>
+      <div id="match-clock" class="match-clock" hidden aria-live="polite">
+        <span class="match-clock-label" data-i18n="game.matchTime">对局</span>
+        <strong id="match-clock-time" class="match-clock-time">00:00</strong>
+      </div>
+      <div class="app-top-mid">
+        <div class="app-top-title-row">
+          <h1 id="app-phase-title" data-i18n="app.title">联机大厅</h1>
+          <div class="spectators-watch" id="spectators-watch" hidden>
+            <button
+              type="button"
+              id="btn-spectators"
+              class="spectators-btn"
+              aria-haspopup="true"
+              aria-expanded="false"
+              aria-controls="spectators-pop"
+            >
+              <span data-i18n="room.spectatorsBtn">观战玩家</span>：<strong id="spectators-count">0</strong>
+            </button>
+            <div
+              id="spectators-pop"
+              class="spectators-pop"
+              hidden
+              role="dialog"
+              aria-labelledby="spectators-pop-title"
+            >
+              <div class="spectators-pop-head">
+                <strong id="spectators-pop-title" data-i18n="room.spectatorsTitle">观战玩家</strong>
+                <button
+                  type="button"
+                  id="btn-spectators-close"
+                  class="icon-btn spectators-pop-close"
+                  data-i18n-attr="aria-label:room.spectatorsClose"
+                  aria-label="关闭"
+                >
+                  ×
+                </button>
+              </div>
+              <ul id="spectators-list" class="spectators-list"></ul>
+              <p id="spectators-empty" class="muted spectators-empty" data-i18n="room.spectatorsEmpty">
+                暂无观战玩家
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            id="btn-hosting"
+            class="hosting-btn"
+            hidden
+            data-i18n="game.hosting"
+          >
+            托管
+          </button>
+          <div class="header-nick" id="header-nick" hidden>
+            <span id="nick-display" class="nick-display" data-i18n="app.playerDefault">玩家</span>
+            <input
+              id="player-name-edit"
+              class="nick-input"
+              type="text"
+              maxlength="16"
+              hidden
+              autocomplete="off"
+              data-i18n-attr="aria-label:app.editNickAria"
+              aria-label="编辑昵称"
+            />
+            <button
+              type="button"
+              id="btn-edit-name"
+              class="icon-btn"
+              data-i18n-attr="title:app.editNick,aria-label:app.editNick"
+              title="修改昵称"
+              aria-label="修改昵称"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zm2.92 2.83H5v-.92l9.06-9.06.92.92L5.92 20.08zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div id="room-banner" class="room-banner" hidden>
+          <span class="room-banner-hint" data-i18n="room.waiting">等待开局</span>
+          <span id="room-game-label" class="room-banner-game">—</span>
+          <span id="room-password-badge" class="badge" hidden data-i18n="room.password">密码</span>
+        </div>
+        <p id="me-label" class="me-label" data-i18n="app.disconnected">未连接</p>
+      </div>
+    </header>
+
+    <div
+      id="hosting-overlay"
+      class="hosting-overlay"
+      hidden
+      aria-hidden="true"
+    >
+      <span class="hosting-overlay-text" data-i18n="game.hostingActive">托管中</span>
+    </div>
+
+    <div class="app-body">
+      <div class="app-content">
+        <div class="toast-slot" aria-live="polite">
+          <p id="toast" class="toast" hidden></p>
+        </div>
+
+        <div class="invite-toast-slot" id="invite-toast-slot" aria-live="polite"></div>
+
+        <!-- 大厅 -->
+        <section id="view-lobby" class="view">
+          <div class="panel panel-narrow" id="lobby-gate">
+            <label>
+              <span data-i18n="lobby.nick">昵称</span>
+              <input id="player-name" type="text" maxlength="16" data-i18n-attr="placeholder:lobby.nickPlaceholder" placeholder="输入昵称" />
+            </label>
+            <button id="btn-enter-lobby" type="button" data-i18n="lobby.enter">进入大厅</button>
+            <p id="host-occupied-hint" class="muted host-occupied-hint" hidden data-i18n="toast.hostOccupied">本机已被占用</p>
+            <p id="tunnel-gate-hint" class="muted tunnel-gate-hint" hidden data-i18n="lobby.tunnelGateHint">输入昵称后将直接进入房间（换隧道也会记住）</p>
+          </div>
+
+          <div id="lobby-main" hidden>
+            <p id="tunnel-wait-hint" class="muted tunnel-wait-hint" hidden data-i18n="lobby.tunnelWait">等待房主创建房间…创建后可在下方加入</p>
+            <div class="panel lobby-toolbar">
+              <div class="row lobby-toolbar-actions">
+                <button id="btn-toggle-create" type="button" data-i18n="lobby.createRoom">创建房间</button>
+                <button id="btn-toggle-join" type="button" class="secondary" data-i18n="lobby.joinByCode">房间码加入</button>
+              </div>
+              <label class="passive-toggle" id="passive-toggle-wrap">
+                <input id="chk-passive-mode" type="checkbox" />
+                <span>被动模式（分享隧道地址，他人可操控本机开房/观战/聊天）</span>
+              </label>
+              <div class="lobby-mqtt-row">
+                <p id="peers-label" class="muted" data-i18n="lobby.peersSearching">广播：搜索中…</p>
+                <button id="btn-mqtt-broker" type="button" class="secondary" hidden data-i18n-attr="title:lobby.mqttSwitchHint">服务器：—</button>
+              </div>
+              <p id="lobby-refresh-hint" class="muted lobby-refresh-hint" data-i18n="lobby.refreshHint">大厅列表每 3 秒自动刷新</p>
+            </div>
+
+            <div class="panel lobby-rooms">
+              <h2>空闲房间</h2>
+              <ul id="room-list" class="room-list"></ul>
+              <p id="room-list-empty" class="muted" data-i18n="lobby.noPublicRooms">暂无空闲房间</p>
+            </div>
+            <div class="panel lobby-rooms">
+              <h2>对局中</h2>
+              <ul id="room-list-playing" class="room-list"></ul>
+              <p id="room-list-playing-empty" class="muted">暂无进行中的房间</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- 房间 -->
+        <section id="view-room" class="view view-room" hidden>
+          <div class="room-shell">
+            <div class="panel room-panel">
+              <div class="room-panel-head">
+                <div>
+                  <p class="room-eyebrow" data-i18n="room.nameEyebrow">房间名</p>
+                  <h2 id="room-title" data-i18n="room.title">房间</h2>
+                </div>
+                <div class="room-code-block" data-i18n-attr="title:room.code" title="房间码">
+                  <span class="room-code-label" data-i18n="room.code">房间码</span>
+                  <strong id="room-code" class="room-code-value">—</strong>
+                </div>
+              </div>
+              <div id="room-tunnel-share" class="room-tunnel-share" hidden>
+                <label class="room-tunnel-label" for="room-tunnel-url-input" data-i18n="room.tunnelLink">隧道链接</label>
+                <div class="room-tunnel-row">
+                  <input
+                    id="room-tunnel-url-input"
+                    type="text"
+                    readonly
+                    spellcheck="false"
+                    autocomplete="off"
+                  />
+                  <button id="btn-copy-room-tunnel" type="button" class="secondary" data-i18n="room.copyTunnel">复制</button>
+                </div>
+                <p class="muted room-tunnel-hint" data-i18n="room.tunnelHint">发给他人后，对方打开即可加入本房间</p>
+              </div>
+              <h3 class="room-members-title" data-i18n="room.members">房间成员</h3>
+              <div id="member-list" class="room-player-grid"></div>
+              <div class="row room-actions">
+                <button id="btn-start" type="button" hidden data-i18n="room.start">开始游戏</button>
+                <button id="btn-edit-room" type="button" class="secondary" hidden data-i18n="room.edit">修改房间</button>
+                <button id="btn-invite-lobby" type="button" class="secondary" hidden data-i18n="room.inviteLobby">广播至大厅</button>
+                <button id="btn-leave" type="button" class="secondary btn-leave-room" data-i18n="room.leave">离开房间</button>
+              </div>
+              <p class="muted" id="room-start-hint" data-i18n="room.startHint">人齐后，房主可直接开始游戏。</p>
+            </div>
+            <div id="observer-section" class="panel room-observer-panel" hidden>
+              <h3 class="room-members-title room-observers-title">观战席</h3>
+              <ul id="observer-list" class="member-list observer-list"></ul>
+            </div>
+          </div>
+        </section>
+
+        <!-- 对局：各游戏面板由 boot-games 按清单挂载到 #game-panels -->
+        <section id="view-game" class="view" hidden>
+          <div id="turn-timer" class="turn-timer" hidden aria-live="polite">
+            <span data-i18n="game.thinkTime">思考时间</span> <strong id="turn-timer-sec">—</strong>
+          </div>
+          <div id="game-panels"></div>
+        </section>
+      </div>
+
+      <aside class="lobby-people" id="lobby-people-aside" hidden data-i18n-attr="aria-label:lobby.people" aria-label="大厅人员">
+        <h2 class="people-header">
+          <span>
+            <span id="lobby-people-title" data-i18n="lobby.people">大厅人员</span>
+            <span id="lobby-people-count" class="muted people-count"></span>
+          </span>
+          <button id="btn-refresh-doc" type="button" class="icon-btn" data-i18n-attr="title:lobby.refreshPeople,aria-label:lobby.refreshPeople" title="刷新大厅状态" aria-label="刷新大厅状态">
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+              <path fill="currentColor" d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 0 0-8 8 8 8 0 0 0 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18a6 6 0 0 1-6-6 6 6 0 0 1 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+            </svg>
+          </button>
+        </h2>
+        <ul id="lobby-people-list" class="people-list"></ul>
+        <p id="lobby-people-empty" class="muted" data-i18n="lobby.peopleEmpty">暂无在线玩家</p>
+      </aside>
+    </div>
+  </main>
+
+  <aside class="chat-dock" id="chat-dock" hidden data-i18n-attr="aria-label:chat.roomAria" aria-label="聊天室">
+    <div class="chat-panel" id="chat-panel">
+      <header class="chat-head" id="chat-drag-handle">
+        <span class="chat-head-title">
+          <span class="chat-head-channel" id="chat-head-channel" data-i18n="chat.channelAll">所有人</span>
+          <span data-i18n="chat.title">聊天室</span> <span class="chat-head-unread" id="chat-head-unread" hidden data-i18n="chat.newMessage">新消息</span>
+        </span>
+        <div class="chat-tabs" role="tablist">
+          <button type="button" id="chat-tab-all" class="is-on" data-chat-tab="all" role="tab">
+            <span data-i18n="chat.channelAllShort">所有人</span> <span class="chat-unread" id="chat-unread-all" hidden></span>
+          </button>
+          <button type="button" id="chat-tab-room" data-chat-tab="room" role="tab" hidden>
+            <span data-i18n="chat.channelRoomShort">房间</span> <span class="chat-unread" id="chat-unread-room" hidden></span>
+          </button>
+        </div>
+      </header>
+      <div class="chat-collapsed-preview" id="chat-collapsed-preview" data-i18n="chat.empty">还没有人发言</div>
+      <ul id="chat-log" class="chat-log" aria-live="polite"></ul>
+      <form id="chat-form" class="chat-form">
+        <input
+          id="chat-input"
+          type="text"
+          maxlength="120"
+          autocomplete="off"
+          data-i18n-attr="placeholder:chat.placeholder,aria-label:chat.inputAria"
+          placeholder="输入消息…"
+          aria-label="聊天内容"
+        />
+        <button type="submit" data-i18n="chat.send">发送</button>
+      </form>
+    </div>
+  </aside>
+
+  <div class="modal" id="create-room-modal" hidden>
+    <div class="modal-backdrop" data-close="create"></div>
+    <div class="modal-dialog panel" role="dialog" aria-labelledby="create-room-title">
+      <div class="row panel-head">
+        <h2 id="create-room-title" data-i18n="create.title">创建房间</h2>
+        <button id="btn-close-create" type="button" class="icon-btn" data-i18n-attr="title:create.close,aria-label:create.close" title="关闭" aria-label="关闭">×</button>
+      </div>
+      <label>
+        <span data-i18n="create.game">游戏</span>
+        <select id="game-type">
+          <option value="lasidao" selected data-i18n="games.lasidao">卡拉斯坦</option>
+        </select>
+      </label>
+      <label id="game-mode-wrap" hidden>
+        <span data-i18n="create.mode">模式</span>
+        <select id="game-mode">
+          <option value="identity" data-i18n="games.modes.identity">标准身份</option>
+        </select>
+      </label>
+      <label id="max-players-wrap">
+        <span data-i18n="create.maxPlayers">人数上限</span>
+        <select id="room-max">
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+          <option value="6" selected>6</option>
+          <option value="7">7</option>
+          <option value="8">8</option>
+        </select>
+      </label>
+      <label>
+        <span data-i18n="create.roomName">房间名</span>
+        <input id="room-name" type="text" maxlength="24" data-i18n-attr="placeholder:create.roomNamePlaceholder" placeholder="可选" />
+      </label>
+      <label>
+        <span data-i18n="create.turnTime">回合思考时间</span>
+        <select id="room-turn-time">
+          <option value="0" selected data-i18n="create.turnUnlimited">不限</option>
+          <option value="10">10</option>
+          <option value="15">15</option>
+          <option value="20">20</option>
+          <option value="30">30</option>
+          <option value="60">60</option>
+        </select>
+      </label>
+      <label id="room-match-games-wrap" hidden>
+        <span data-i18n="create.matchGames">连续局数</span>
+        <select id="room-match-games">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5" selected>5</option>
+          <option value="6">6</option>
+          <option value="7">7</option>
+          <option value="8">8</option>
+          <option value="9">9</option>
+          <option value="10">10</option>
+          <option value="11">11</option>
+        </select>
+      </label>
+      <label id="room-allow-trade-wrap" class="checkbox" hidden>
+        <input id="room-allow-trade" type="checkbox" />
+        <span data-i18n="create.allowTrade">允许玩家交易</span>
+      </label>
+      <label id="room-easy-start-wrap" class="checkbox" hidden>
+        <input id="room-easy-start" type="checkbox" checked />
+        <span data-i18n="create.easyStart">轻松启动</span>
+      </label>
+      <label id="room-conflict-dlc-wrap" class="checkbox" hidden>
+        <input id="room-conflict-dlc" type="checkbox" />
+        <span data-i18n="create.conflictDlc">是否冲突DLC</span>
+      </label>
+      <label class="checkbox">
+        <input id="room-has-password" type="checkbox" />
+        <span data-i18n="create.hasPassword">密码房间</span>
+      </label>
+      <label id="room-password-wrap" hidden>
+        <span data-i18n="create.password">房间密码</span>
+        <input
+          id="room-password"
+          type="text"
+          maxlength="32"
+          autocomplete="off"
+          data-i18n-attr="placeholder:create.passwordPlaceholder"
+          placeholder="可为空"
+        />
+      </label>
+      <p id="game-hint" class="muted" data-i18n="create.hintDefault">选择游戏后查看人数要求。</p>
+      <button id="btn-create-room" type="button" data-i18n="create.confirm">确认创建</button>
+    </div>
+  </div>
+
+  <div class="modal" id="join-code-modal" hidden>
+    <div class="modal-backdrop" data-close="join"></div>
+    <div class="modal-dialog panel" role="dialog" aria-labelledby="join-code-title">
+      <div class="row panel-head">
+        <h2 id="join-code-title" data-i18n="join.title">房间码加入</h2>
+        <button id="btn-close-join" type="button" class="icon-btn" data-i18n-attr="title:create.close,aria-label:create.close" title="关闭" aria-label="关闭">×</button>
+      </div>
+      <label>
+        <span data-i18n="join.code">房间码</span>
+        <input id="join-code" type="text" maxlength="8" data-i18n-attr="placeholder:join.codePlaceholder" placeholder="输入房间码" />
+      </label>
+      <label>
+        <span data-i18n="join.password">房间密码</span>
+        <input
+          id="join-password"
+          type="text"
+          maxlength="32"
+          autocomplete="off"
+          data-i18n-attr="placeholder:join.passwordPlaceholder"
+          placeholder="无密码可留空"
+        />
+      </label>
+      <button id="btn-join-code" type="button" data-i18n="join.confirm">加入</button>
+    </div>
+  </div>
+
+  <div class="modal" id="mqtt-broker-modal" hidden>
+    <div class="modal-backdrop" data-close="mqtt-broker"></div>
+    <div class="modal-dialog panel panel-narrow" role="dialog" aria-labelledby="mqtt-broker-title">
+      <div class="row panel-head">
+        <h2 id="mqtt-broker-title" data-i18n="lobby.mqttPickTitle">选择广播服务器</h2>
+        <button
+          id="btn-close-mqtt-broker"
+          type="button"
+          class="icon-btn"
+          data-close="mqtt-broker"
+          data-i18n-attr="title:create.close,aria-label:create.close"
+          title="关闭"
+          aria-label="关闭"
+        >×</button>
+      </div>
+      <p class="muted mqtt-broker-hint" data-i18n="lobby.mqttPickHint">请选择要连接的服务器；切换时会先探测是否可用。</p>
+      <ul id="mqtt-broker-list" class="mqtt-broker-list" role="listbox"></ul>
+    </div>
+  </div>
+
+  <div class="modal" id="rejoin-modal" hidden>
+    <div class="modal-backdrop"></div>
+    <div class="modal-dialog panel" role="dialog" aria-labelledby="rejoin-title" aria-modal="true">
+      <div class="row panel-head">
+        <h2 id="rejoin-title" data-i18n="rejoin.title">发现未结束对局</h2>
+      </div>
+      <p id="rejoin-message" class="invite-message" data-i18n="rejoin.message">检测到你有可恢复的房间，是否重新加入？</p>
+      <div class="row">
+        <button id="btn-accept-rejoin" type="button" data-i18n="rejoin.accept">重新加入</button>
+        <button id="btn-decline-rejoin" type="button" class="secondary" data-i18n="rejoin.decline">留在大厅</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="tunnel-reopen-modal" hidden>
+    <div class="modal-backdrop"></div>
+    <div class="modal-dialog panel" role="dialog" aria-labelledby="tunnel-reopen-title" aria-modal="true">
+      <div class="row panel-head">
+        <h2 id="tunnel-reopen-title" data-i18n="tunnelReopen.title">房间状态错误</h2>
+      </div>
+      <p id="tunnel-reopen-message" class="invite-message" data-i18n="tunnelReopen.message">房间状态错误，是否重开？</p>
+      <div class="row">
+        <button id="btn-tunnel-reopen-yes" type="button" data-i18n="tunnelReopen.yes">是</button>
+        <button id="btn-tunnel-reopen-no" type="button" class="secondary" data-i18n="tunnelReopen.no">否</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="room-transfer-modal" hidden>
+    <div class="modal-backdrop"></div>
+    <div class="modal-dialog panel" role="dialog" aria-labelledby="room-transfer-title" aria-modal="true">
+      <div class="row panel-head">
+        <h2 id="room-transfer-title" data-i18n="roomTransfer.title">房间已转移</h2>
+      </div>
+      <p id="room-transfer-message" class="invite-message" data-i18n="roomTransfer.message">房间已转移，是否跳转到新房间？</p>
+      <div class="row">
+        <button id="btn-room-transfer-yes" type="button" data-i18n="roomTransfer.yes">是</button>
+        <button id="btn-room-transfer-no" type="button" class="secondary" data-i18n="roomTransfer.no">否</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="changelog-modal" hidden>
+    <div class="modal-backdrop" id="changelog-backdrop"></div>
+    <div class="modal-dialog panel changelog-dialog" role="dialog" aria-labelledby="changelog-title" aria-modal="true">
+      <div class="modal-header">
+        <h2 id="changelog-title" data-i18n="update.changelogTitle">更新公告</h2>
+      </div>
+      <div id="changelog-list" class="changelog-list" role="list"></div>
+      <p id="changelog-empty" class="muted changelog-empty" hidden data-i18n="update.changelogEmpty">暂无更新说明</p>
+      <div class="row">
+        <button id="btn-changelog-close" type="button" data-i18n="update.changelogClose">知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="host-update-modal" hidden>
+    <div class="modal-backdrop" id="host-update-backdrop"></div>
+    <div class="modal-dialog panel" role="dialog" aria-labelledby="host-update-title" aria-modal="true">
+      <div class="row panel-head">
+        <h2 id="host-update-title" data-i18n="update.title">发现主机更新</h2>
+      </div>
+      <div id="host-update-checking" class="update-checking" hidden>
+        <div class="update-check-spinner" aria-hidden="true"></div>
+        <p id="host-update-checking-text" class="update-checking-text" data-i18n="update.checking">正在检查更新…</p>
+      </div>
+      <div id="host-update-result" class="update-result">
+        <p id="host-update-version" class="update-version"></p>
+        <p id="host-update-notes" class="invite-message update-notes"></p>
+        <p id="host-update-meta" class="muted update-meta"></p>
+        <p id="host-update-force-hint" class="muted update-meta" hidden data-i18n="update.forceHint">此更新不可取消，将自动开始升级并重启</p>
+      </div>
+      <div id="host-update-progress-wrap" class="update-progress-wrap" hidden>
+        <div class="update-progress-bar" aria-hidden="true">
+          <div id="host-update-progress-fill" class="update-progress-fill"></div>
+        </div>
+        <p id="host-update-progress-text" class="muted update-progress-text"></p>
+      </div>
+      <div class="row" id="host-update-actions">
+        <button id="btn-host-update-apply" type="button" data-i18n="update.apply">更新</button>
+        <button id="btn-host-update-later" type="button" class="secondary" data-i18n="update.cancel">取消</button>
+        <button id="btn-host-update-ok" type="button" class="secondary" hidden data-i18n="update.ok">知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 添加电脑弹窗 -->
+  <div class="modal" id="add-bot-modal" hidden>
+    <div class="modal-backdrop" data-close="add-bot"></div>
+    <div class="modal-dialog panel" role="dialog" aria-labelledby="add-bot-title" aria-modal="true">
+      <div class="row panel-head">
+        <h2 id="add-bot-title" data-i18n="bot.addTitle">添加电脑</h2>
+        <button id="btn-close-add-bot" type="button" class="icon-btn" data-close="add-bot" data-i18n-attr="title:create.close,aria-label:create.close" title="关闭" aria-label="关闭">×</button>
+      </div>
+      <p class="muted" id="add-bot-seat-label" data-i18n="bot.seatLabel">座位 —</p>
+      <label>
+        <span data-i18n="bot.difficulty">难度</span>
+        <select id="bot-difficulty">
+          <option value="easy" data-i18n="bot.easy">简易</option>
+          <option value="normal" data-i18n="bot.normal">普通</option>
+          <option value="hard" selected data-i18n="bot.hard">困难</option>
+          <option value="hardplus" data-i18n="bot.hardplus" data-diff-extra="gomoku">困难Plus</option>
+          <option value="hell" data-i18n="bot.hell" data-diff-extra="gomoku">地狱</option>
+        </select>
+      </label>
+      <button id="btn-confirm-add-bot" type="button" data-i18n="bot.confirmAdd">确认添加</button>
+    </div>
+  </div>
+
+  <div id="people-ctx" class="ctx-menu" hidden>
+    <button type="button" data-action="join-their-room" data-i18n="lobby.joinTheirRoom">加入其房间</button>
+    <button type="button" data-action="control-host" data-i18n="lobby.controlPassiveHost">控制该主机</button>
+    <button type="button" data-action="create-on-host">在此开房</button>
+    <button type="button" data-action="copy-control-url" data-i18n="lobby.copyControlTunnel">复制控制地址</button>
+    <p class="ctx-hint muted" id="people-ctx-hint" hidden></p>
+  </div>
+
+  <div id="room-ctx" class="ctx-menu" hidden>
+    <button type="button" data-action="room-join">加入房间</button>
+    <button type="button" data-action="room-spectate">观战</button>
+    <p class="ctx-hint muted" id="room-ctx-hint" hidden></p>
+  </div>
+
+  <div id="room-busy-overlay" class="room-busy-overlay" hidden aria-live="polite" aria-busy="true">
+    <div class="room-busy-panel panel">
+      <div class="room-busy-spinner" aria-hidden="true"></div>
+      <p id="room-busy-message" class="room-busy-message" data-i18n-manual>请稍候…</p>
+      <div id="room-busy-progress-wrap" class="room-busy-progress-wrap" hidden>
+        <div class="room-busy-progress-bar" aria-hidden="true">
+          <div id="room-busy-progress-fill" class="room-busy-progress-fill"></div>
+        </div>
+        <p id="room-busy-progress-text" class="room-busy-progress-text muted">0%</p>
+      </div>
+      <div id="room-busy-players-grid" class="room-busy-players-grid" hidden></div>
+      <p id="room-busy-players-status" class="room-busy-players-status muted" hidden></p>
+    </div>
+  </div>
+
+  <div
+    id="passive-lock-overlay"
+    class="passive-lock-overlay"
+    hidden
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="passive-lock-title"
+  >
+    <div class="passive-lock-panel panel">
+      <p id="passive-lock-title" class="passive-lock-title">处于被动模式中</p>
+      <p class="passive-lock-desc muted" id="passive-lock-desc">
+        无人值守：分享隧道地址后，他人可操控本机开房、观战与聊天；本机保持锁定。结束后仍留在被动模式。
+      </p>
+      <div id="passive-share-url" class="passive-share-url" hidden>
+        <label class="passive-share-label" for="passive-share-url-input">隧道地址（可分享）</label>
+        <div class="passive-share-row">
+          <input
+            id="passive-share-url-input"
+            type="text"
+            readonly
+            spellcheck="false"
+            autocomplete="off"
+          />
+          <button id="btn-copy-passive-url" type="button" class="secondary">复制</button>
+        </div>
+      </div>
+      <button id="btn-exit-passive" type="button">退出被动模式</button>
+    </div>
+  </div>
+  
+
+  
+  
+  
+  
+  
+  
+
+<script>window.__WF__ = {"state":{"type":"warfactory","world":{"w":4320,"h":2880},"consts":{"factoryR":39,"captureR":79,"captureRate":25,"reclaimRate":45,"produceMs":20000,"playerUnitCap":400,"playerUnitWarn":350,"factoryHp":2000,"neutralHpRatio":0.3333333333333333,"facEvolveCd":4000,"labR":31,"labHp":1200,"hqR":43,"hqHp":3000,"rpPerLab":2,"rpPeriodMs":3000,"evolveRpCost":500,"typeList":["warrior","shield","ranger","burst","burn","laser"],"stats":{"warrior":{"label":"锐士","hp":100,"dmg":11,"range":60,"cd":0.9,"speed":92,"r":9},"shield":{"label":"盾卫","hp":175,"dmg":8,"range":50,"cd":1.1,"speed":66,"r":10},"ranger":{"label":"游侠","hp":65,"dmg":10,"range":200,"cd":1.5,"speed":82,"r":9},"burst":{"label":"轰击","hp":75,"dmg":18,"range":165,"cd":2.1,"speed":58,"r":9,"splash":41},"burn":{"label":"燎原","hp":80,"dmg":6,"range":135,"cd":0.25,"speed":78,"r":9,"burn":true},"laser":{"label":"激光兵","hp":70,"dmg":2.5,"range":175,"cd":0.4,"speed":76,"r":9,"laser":true}},"tierHp":[1,1.7,2.6],"tierDmg":[1,1.55,2.2],"tierRange":[0,15,30],"tierCd":[1,0.88,0.78],"aggroBonus":0,"attackSlack":10,"facLineCost":500,"facMaxLines":3,"prodSpeedCost":1000,"prodSpeedMax":20,"prodSpeedStep":0.06666666666666667,"flameR":52,"fireTiers":[null,[46,3.5,3000],[64,6,5200]],"laserWindupMs":800,"laserRampMs":4000,"laserMaxMul":5,"colors":["#b03a2e","#2e5e8c","#c9a227","#3f7a52"]},"phase":"playing","phaseEndsAt":0,"players":[{"id":"p0","name":"墨客","color":"#b03a2e","kills":8,"losses":3,"evolved":2,"captured":4,"rp":620,"rpRate":1.3333333333333333,"rpAccMs":1500,"rpPerPeriod":4,"eliminated":false,"left":false},{"id":"p1","name":"砚台","color":"#2e5e8c","kills":4,"losses":6,"evolved":0,"captured":0,"rp":0,"rpRate":0.6666666666666666,"rpAccMs":0,"rpPerPeriod":2,"eliminated":false,"left":false}],"factories":[{"id":1,"x":1008,"y":1440,"level":3,"owner":0,"capBy":-1,"capProg":0,"prodProg":0.42,"lines":3,"home":false,"hp":2000,"hpMax":2000,"pt":"shield","ecd":0,"rx":1128,"ry":1530},{"id":2,"x":3312,"y":1440,"level":1,"owner":0,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"burst","ecd":0,"rx":null,"ry":null},{"id":3,"x":1764,"y":2124,"level":1,"owner":1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"burn","ecd":0,"rx":null,"ry":null},{"id":4,"x":2556,"y":756,"level":1,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"burn","ecd":0,"rx":null,"ry":null},{"id":5,"x":1764,"y":756,"level":2,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"laser","ecd":0,"rx":null,"ry":null},{"id":6,"x":2556,"y":2124,"level":2,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"laser","ecd":0,"rx":null,"ry":null},{"id":7,"x":2160,"y":1440,"level":3,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"ranger","ecd":0,"rx":null,"ry":null}],"labs":[{"id":1,"x":1260,"y":630,"owner":0,"hp":400,"hpMax":1200},{"id":2,"x":3060,"y":630,"owner":0,"hp":400,"hpMax":1200},{"id":3,"x":1260,"y":2250,"owner":1,"hp":400,"hpMax":1200},{"id":4,"x":3060,"y":2250,"owner":-1,"hp":400,"hpMax":1200}],"hqs":[{"id":1,"x":360,"y":1440,"owner":0,"hp":2400,"hpMax":3000,"down":false,"ecd":0,"speedLv":3,"prodIntervalMs":16261},{"id":2,"x":3960,"y":1440,"owner":1,"hp":930,"hpMax":3000,"down":false,"ecd":0,"speedLv":0,"prodIntervalMs":20000}],"units":16,"over":false,"winnerId":null,"seq":0,"serverTime":1790153185551,"terrain":{"cell":40,"cols":108,"rows":72,"data":"000000000000000000000000000000333333000022000000000000002200000000000000000000000000000000000000000000000000000000000000000000000000000000333333000022000000000000002000000000000000000000000000000000000000000000000000000000000000000000000000000000000033300022000000000000002000000000000000222000000000000000000000000000000000000000003000000000000000000000000003322222222222222222222200000000000000002200000000000000000000000000000000000000033300000000000000000000000003322022222233233322002222200000000000022200000000000000000000000000000000000000033333000000000000000000000000022022222233333332002222222222222222222200000000000000000000000000000000440000333333000000000000000000000000020022222233333332002222222200022000222222220000000000000000000000000000444433333333000000000000000000000000020000000223333332222222200000022000002000220000000000000000000000000000444443333333300033444444000000000222220000000223333330002222200000022000002000020000000000000000000000000000444443333333333334444444000000002222220000002223333330000222200000022200002000022222222222220000000000000000444222333344443334444444000000000002222000000223333300000222222222222200002000000002002200220000000000000000332222223444444333444444000000000000220000000222222222222222200000200200002000000000000000020000000000000000333333323444444300000444400000000003320000000222020000002220000000200200000000004000000000222000000000000000333333322444444000000044440000000003333000000220000000044420000000222222200330004400000000002000000000000000333443320444440000000044400000000003333300000220000000444440000000000222303330004440000000000000000000000000444444220044400000000000000000000003333330000000000000444444000000000244333330004440000000000000000000000000244444222000000000000000000000000000033330000000000000044444000000000444433330004444000000000000000000000000224220022000000000000000000000000000003330000000000000000044000000044444433330004444000000000000000000000000222220022000000000000000000000300000000320033330000000000000000000044444330000004000000000000000000000000000220000020000000033000000000003330000000330033333000000000000000000044443300000000000000000000000000000000000220000022000033333330000000003300000002220033333300000000000000000044400000000000000000000000000000000440000220000022003333333330000000033330000002220033333300000000000000000000000000000000000000000000000000004444000220000022444433333300000000003333000002332233333000000000000000000000000000000000000000000000000000004444000220000022444443333000000000003333300002332200000000000000000000000000000000000000000000000000000333334444000222220022444443000000000000003333330022222200000000000444000000000000000000000000000000000000000333333440000000220022244440000000000000003333222222000000000000004444000000000000000000000000000000000000000033333300004000020022224400000000000000000333223320000000000000004440000000000000000000000003330000000000000033333000044000022222220000000000000000000000223320000000000000004440000000000000000000000033333000000000000003330000444000222222220000000000000000000000222220000000000000004440000000000000000000000333333000000000000000000000444222222222222222222222000000000000033330000000000000004440000000000000000000000333333000000000000000000000444222222222222200000022000000000000333333000033000000000440000000000000000000003333333300000000000000000004444000022220002000000002000000000033333333300333300000000444000000000000000000033300033330000000000000000004444000020000000000200002000000000333300033333344000000000000000000000000000044443300003333000000000000000004400000020000000022222222000000033333000003344444000000000000000000000000000444443000000333000000000000000004000000020000000000000222000000333330000000444444000000000000044400000000004444443000000333300000000000000044000000020000000000000222000000333330000000444444000000000000044440000000044444443000000033330000000000000044000000440000000000000033330000000344444440000000044440000000000000444444000000033333000000222000000000000020000000440000000000000003333000000344444400000000004440000000000000444444000000033333000000222000000000000020000000400000000000000000333000000344444000000000000000000000000000444443300000333330000000222222220000000020000004400000000000000000333300003344440000000000000000000000000000443333330003333000000000200002000000000020000444400000000000000000033330003330000000000000000000444000000003333003333333330000000000200000000200022220000444400000000000000000003333333300000000000000000000044000000000330000333333000000000000220000002222222222222444000000000000000000000333333000000000000000000000044400000000000000033330000000000000222222222222222222222444000000000000000000000333333000000000000000000000044400000000000000022222000000000000000000000022222222000444000033300000000000000333330000000000000000000000044400000000000000023322000000000000000000000022222220000440000333330000000000000033300000000000000000000000044400000000000000023322333000000000000000004422220020000400003333330000000000000000000000000000000000000000444400000000000000222222333300000000000000044442220022000000044333333000000000000000000000000000000000000000444000000000002222220033333300000000000000344444220022222000444433333000000000000000000000000000000000000000000000000000002233200003333300000000000333344444220000022000444400000000000000000000000000000000000000000000000000000333332233200000333300000000003333334444220000022000444400000000000000000000000000000000000000000000000000003333330022200000033330000000033333333300220000022000044000000000000000000000000000000004440000000000000000003333330022200000003300000000033333330000220000022000000000000000000000000000000000003344440000000000000000000333330033000000033300000000000330000000020000022000000000000000000000000000400000033444440000000000000000000033330023000000003000000000000000000000220022222000000000000000000000000444400033334444440000000440000000000000000033300000000000000000000000000000220022422000000000000000000000000444400033334444000000000444440000000000000033330000000000000000000000000000222444442000000000000000000000000044400033333442000000000444444000000000000033333300000000000000000000004440022444444000000000000000000000000044400033303222000000000044444000000022000003333300000000004440000000044444023344333000000000000000200000000004400033002222222000000024440000000022000000333300000000044440000000444444223333333000000000000000222000000000400000000002002000000022200000020222000000023300000000004444000003444444323333333000000000000000020000000000000000200002002000002222222222222222000000022000000000000444444333444444322222233000000000000000022002200200000000200002222222222222000003333322000000222200000000000444444433344443333222444000000000000000022222222222220000200002220000002222000033333322200000022222200000000444444433333333333344444000000000000000000000000000020000200000220000002222200033333322000000022222000000000444444330003333333344444000000000000000000000000000022000200000220000002222222233333322000000020000000000000000000000000333333334444000000000000000000000000000022222222000220002222222200233333332222220020000000000000000000000000333333000044000000000000000000000000000000002222222222222222222200233333332222220220000000000000000000000000333330000000000000000000000000000000000000002220000000000002222200223332332222220223300000000000000000000000003330000000000000000000000000000000000000002200000000000000002222222222222222222223300000000000000000000000000300000000000000000000000000000000000000000222000000000000000200000000000000220003330000000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000220000333333000000000000000000000000000000000000000000000000000000000000000000000000000000002200000000000000220000333333000000000000000000000000000000"}},"snap":{"t":1790153185551,"seq":0,"phase":"playing","until":0,"u":[[13,0,270,1550,0.95,0,1,0,70,1,0,1,0,0,0,0],[14,0,330,1550,4.06,0,3,1,70,1,0,2,0,0,0,0],[15,0,390,1550,0.11,1,2,2,122,1,0,3,0,0,0,0],[16,0,450,1550,2.1,1,3,1,122,1,0,4,0,0,0,0],[17,0,270,1608,0.31,2,2,1,46,1,0,5,0,0,0,0],[18,0,330,1608,0.98,3,1,0,53,1,0,6,0,0,0,0],[19,0,390,1608,3.25,3,3,2,53,1,0,7,0,0,0,0],[20,0,450,1608,0.29,4,2,1,56,1,0,8,0,0,0,0],[21,0,270,1666,4.17,5,3,1,49,1,0,9,0,0,100,0],[22,0,330,1666,4.28,5,1,0,49,1,0,10,0,0,100,0],[23,0,390,1666,0.72,2,1,0,46,1,0,11,0,0,0,0],[24,0,450,1666,3.35,0,2,2,70,1,0,12,0,0,0,0],[25,1,648.3,1378.3,6.21,2,1,0,65,1,0,13,0,0,0,0],[26,1,666,1360,2.61,1,1,0,175,1,0,14,0,0,0,0],[27,1,712,1290,0.28,2,1,0,65,1,0,15,0,0,0,0],[28,1,758,1260,3.54,1,1,0,175,1,0,16,0,0,0,0]],"b":[],"f":[[1,0,0,-1,0.42,0,2000,0,3],[2,0,0,-1,0,0,2000,0,1],[3,1,0,-1,0,0,2000,0,1],[4,-1,0,-1,0,0,2000,0,1],[5,-1,0,-1,0,0,2000,0,1],[6,-1,0,-1,0,0,2000,0,1],[7,-1,0,-1,0,0,2000,0,1]],"lb":[[1,0,400,1200],[2,0,400,1200],[3,1,400,1200],[4,-1,400,1200]],"hq":[[1,0,2400,3000,0,0,3],[2,1,930,3000,0,0,0]],"rp":[620,0],"rpAcc":[1500,0],"uc":[12,4],"r":[[1,1128,1530]],"fr":[],"ev":[]}};</script>
+<script>window.__WF_PANEL__ = "<!-- 战争工厂对局面板（水墨即时战略） -->\n<div class=\"panel game-panel\" id=\"panel-warfactory\" hidden>\n  <!--\n    布局：地图铺满整个屏幕（见 style.css 的「地图铺满整屏」一节）。\n    指挥栏浮在地图下沿、规则说明收进右上角的浮层 —— 地图下方不再有任何东西，\n    全屏（F11）之后画面里只有「游戏界面 + 地图」。\n  -->\n  <div class=\"warfactory-wrap\">\n    <canvas\n      id=\"warfactory-canvas\"\n      width=\"1280\"\n      height=\"800\"\n      data-i18n-attr=\"aria-label:warfactory.boardAria\"\n      aria-label=\"战争工厂战场\"\n    ></canvas>\n\n    <!-- 右上角浮层：规则与操作（原来的图例整段搬到这里，默认收起） -->\n    <div class=\"wf-map-tools\">\n      <button\n        type=\"button\"\n        id=\"wf-help-btn\"\n        class=\"wf-map-btn\"\n        aria-expanded=\"false\"\n        aria-controls=\"wf-help\"\n        title=\"规则与操作\"\n        aria-label=\"规则与操作\"\n      >？</button>\n    </div>\n    <div class=\"wf-help\" id=\"wf-help\" role=\"dialog\" aria-label=\"规则与操作\" hidden>\n      <div class=\"wf-help-head\">\n        <span class=\"wf-help-title\">规则与操作</span>\n        <button type=\"button\" class=\"wf-help-close\" id=\"wf-help-close\" aria-label=\"关闭\">×</button>\n      </div>\n      <div class=\"wf-help-body\">\n        <div class=\"warfactory-legend\">\n          <span class=\"warfactory-legend-title\" data-i18n=\"warfactory.legendTitle\">兵种图谱</span>\n          <span class=\"warfactory-legend-item\"><b>锐士</b><em data-i18n=\"warfactory.unit.warrior\">近战突进，攻守兼备</em></span>\n          <span class=\"warfactory-legend-item\"><b>盾卫</b><em data-i18n=\"warfactory.unit.shield\">重甲缓慢，坚不可摧</em></span>\n          <span class=\"warfactory-legend-item\"><b>游侠</b><em data-i18n=\"warfactory.unit.ranger\">远程狙击，薄血长射</em></span>\n          <span class=\"warfactory-legend-item\"><b>轰击</b><em data-i18n=\"warfactory.unit.burst\">范围炮击，落点成墨</em></span>\n          <span class=\"warfactory-legend-item\"><b>燎原</b><em data-i18n=\"warfactory.unit.burn\">持续喷火；二级起落点留下灼烧地形</em></span>\n          <span class=\"warfactory-legend-item\"><b>激光兵</b><em data-i18n=\"warfactory.unit.laser\">锁定越久伤害越高，最高 5 倍</em></span>\n        </div>\n        <div class=\"warfactory-legend warfactory-terrain-legend\">\n          <span class=\"warfactory-legend-title\">地形</span>\n          <span class=\"warfactory-legend-item\"><i class=\"terr-swatch terr-water\"></i><b>水域</b><em>不可通行</em></span>\n          <span class=\"warfactory-legend-item\"><i class=\"terr-swatch terr-swamp\"></i><b>沼泽</b><em>可通行，减速 50%</em></span>\n          <span class=\"warfactory-legend-item\"><i class=\"terr-swatch terr-mountain\"></i><b>山地</b><em>不可通行，且有高度：挡住视线与弹道，山两侧互相看不见、打不到</em></span>\n          <span class=\"warfactory-legend-item\"><i class=\"terr-swatch terr-plain\"></i><b>平原</b><em>一览无余</em></span>\n        </div>\n        <div class=\"warfactory-legend warfactory-terrain-legend\">\n          <span class=\"warfactory-legend-title\">交战</span>\n          <span class=\"warfactory-legend-item\"><b>不追击</b><em>敌人进入攻击范围才开火；跑出范围即停火，部队绝不自己追出去</em></span>\n          <span class=\"warfactory-legend-item\"><b>移动攻击</b><em>行军途中照常开火，边走边打（不必停下）</em></span>\n          <span class=\"warfactory-legend-item\"><b>索敌范围</b><em>= 自身攻击范围，更远的敌人当作看不见</em></span>\n          <span class=\"warfactory-legend-item\"><b>唯一的友伤</b><em>只有燎原的灼烧地形会烧自己人：把火铺在自家部队脚下，掉血的是自己（一级燎原不留火场，所以只有二级起才烧得到自己）</em></span>\n        </div>\n        <div class=\"warfactory-legend warfactory-terrain-legend\">\n          <span class=\"warfactory-legend-title\">战场识别</span>\n          <span class=\"warfactory-legend-item\"><b>归属色</b><em>红 / 蓝 / 黄 / 绿四方阵营色；单位脚下、工厂厂区、总部台基都压同色底盘（60% 透明），一眼看清是谁的</em></span>\n          <span class=\"warfactory-legend-item\"><b>血量</b><em>所有单位默认常显血条（满血也显示），颜色随归属方</em></span>\n          <span class=\"warfactory-legend-item\"><b>选中效果</b><em>被选中的部队脚下多一圈亮色呼吸光环，四周再加四角方框</em></span>\n          <span class=\"warfactory-legend-item\"><b>开火</b><em>开枪时枪口会喷出锯齿状的火星与硝烟，射手同时向后一顿（后坐）；燎原是一道往外泼的长火舌，激光兵是冷白细芒</em></span>\n          <span class=\"warfactory-legend-item\"><b>弹道</b><em>弹丸是沿弹道拖笔的墨滴（不是圆点），每发的笔锋都不一样；炮击弹更粗更沉（燎原不走弹道，是持续的火舌）</em></span>\n          <span class=\"warfactory-legend-item\"><b>命中</b><em>打中哪里就在哪里炸开一团不规则的墨（像水球拍在地上），带一圈飞溅</em></span>\n          <span class=\"warfactory-legend-item\"><b>弹痕</b><em>命中处在地上留一小块墨渍，约 9 秒后淡去——一眼看出这片区域刚被打过</em></span>\n          <span class=\"warfactory-legend-item\"><b>灼烧地形</b><em>燎原的火舌落在哪里，哪里就烧起一片暗红火场（范围很大）；踩在上面的单位持续掉血，<b>不分敌我</b>，火焰一停几秒内自行熄灭。<b>一级燎原不留火场</b>，进化到二级才会烧地，三级火场更大、烧得更久、伤害更高</em></span>\n        </div>\n        <div class=\"warfactory-legend warfactory-terrain-legend\">\n          <span class=\"warfactory-legend-title\">指挥栏</span>\n          <span class=\"warfactory-legend-item\"><b>小地图</b><em>左下；点击或按住拖动即可把镜头跳到该处</em></span>\n          <span class=\"warfactory-legend-item\"><b>单位粗览</b><em>中栏；只列当前选中的部队，没选中时这一栏不显示（想看谁就点谁）</em></span>\n          <span class=\"warfactory-legend-item\"><b>侦察</b><em>他家的部队 / 工厂 / 总部 / 研究所也能左键点开看数据——只读，没有升级与指令按钮；框选永远只圈自己的部队</em></span>\n          <span class=\"warfactory-legend-item\"><b>单位详情</b><em>右栏；点部队看属性，点工厂看产能，点总部看血量与产能升级</em></span>\n          <span class=\"warfactory-legend-item\"><b>F2</b><em>全选我方所有部队（F 只选镜头内）</em></span>\n          <span class=\"warfactory-legend-item\"><b>滚轮</b><em>在战场上滚动滚轮缩放视野；以鼠标所指位置为锚点，拉远看全局、推近看细节</em></span>\n          <span class=\"warfactory-legend-item\"><b>中键平移</b><em>按住鼠标中键在战场上拖动，地图跟着手走（浏览器自带的「中键自动滚动」已屏蔽，中键只用来拖地图）</em></span>\n          <span class=\"warfactory-legend-item\"><b>空格</b><em>镜头立刻回到自家总部（总部没了则回自家工厂；缩放倍率不变）</em></span>\n          <span class=\"warfactory-legend-item\"><b>编队</b><em>Ctrl / Shift + 数字键 0-9：把当前选中的部队编入该编号（没选中则清空该编号）</em></span>\n          <span class=\"warfactory-legend-item\"><b>数字键 0-9</b><em>选中该编队；同一编号连按两下，镜头立刻飞到编队的第一支部队（编队为空则不动）</em></span>\n        </div>\n        <div class=\"warfactory-legend warfactory-terrain-legend\">\n          <span class=\"warfactory-legend-title\">工厂</span>\n          <span class=\"warfactory-legend-item\"><b>固定兵种</b><em>每座工厂开局锁定一种兵，只产这一种</em></span>\n          <span class=\"warfactory-legend-item\"><b>产线</b><em>默认 1 条；花 500 科技点在工厂面板里开辟新产线，最多 3 条并行生产</em></span>\n          <span class=\"warfactory-legend-item\"><b>集结点</b><em>左键点选工厂 → 右键设集结点，此后新兵自动前往（Delete 清除）</em></span>\n          <span class=\"warfactory-legend-item\"><b>进化</b><em>中/高级工厂的面板里有「进化」按钮，让本厂部队立刻进阶一阶</em></span>\n        </div>\n        <div class=\"warfactory-legend warfactory-terrain-legend\">\n          <span class=\"warfactory-legend-title\">科技</span>\n          <span class=\"warfactory-legend-item\"><b>科技点</b><em>左上角显示；只有占领研究所才产出——每座每 3 秒「一次性」+2 点（两座即每 3 秒一次 +4），HUD 进度条走满才跳，一座不占则为 0</em></span>\n          <span class=\"warfactory-legend-item\"><b>进化</b><em>每 500 科技点可让一支部队进阶一阶（不再是经验）</em></span>\n          <span class=\"warfactory-legend-item\"><b>生产加速</b><em>点选总部 → 花 1000 科技点点「加速生产」；每次在当前生产间隔上再减 1/15（复利），最多 20 级</em></span>\n          <span class=\"warfactory-legend-item\"><b>研究所</b><em>初始中立，与工厂一样有血量：打光即由「最后一击者」接管并满血</em></span>\n          <span class=\"warfactory-legend-item\"><b>总部</b><em>每人一座、不可易主；被打光即总部陷落，本人出局</em></span>\n        </div>\n        <div class=\"warfactory-legend warfactory-terrain-legend\">\n          <span class=\"warfactory-legend-title\">出击</span>\n          <span class=\"warfactory-legend-item\"><b>初始部队</b><em>开局没有工厂，只在总部拥有 6 种初级单位各 1 支</em></span>\n          <span class=\"warfactory-legend-item\"><b>总部面板</b><em>左键点选自己的总部 → 右侧详情栏，可加速生产、也可用科技点让亲兵进阶</em></span>\n        </div>\n        <p class=\"warfactory-help\" data-i18n=\"warfactory.help\">\n          部队只打攻击范围内的敌人、不自动追击，但移动中照常开火 · 工厂与研究所有血量：打光即由「最后一击者」接管，易主后恢复满血，中立建筑只有 1/3 血 · 每 500 科技点进化一支部队 · 左键框选部队 · 右键移动 · F 选取镜头内部队 / F2 全选我方部队 · 选中工厂后右键设集结点 · 点工厂花 500 开路产线（最多 3 条）· 点总部花 1000 加速生产（最多 20 级）· WASD/方向键移动镜头 · 点击小地图跳转 · 总部被打爆即出局\n        </p>\n      </div>\n    </div>\n\n    <!-- ============ 底部指挥栏：对局状态 ｜ 小地图 ｜ 单位粗览 ｜ 单位详情 ============ -->\n    <div class=\"warfactory-cmdbar\">\n      <!-- 对局状态（原来在地图上方那行，现在并进指挥栏顶沿，不占地图外的位置） -->\n      <p id=\"game-status\" class=\"game-status wcb-status\">—</p>\n      <!-- 左：小地图 -->\n      <section class=\"wcb-col wcb-mini\">\n        <header class=\"wcb-head\">\n          <span class=\"wcb-title\">小地图</span>\n          <span class=\"wcb-tip\">点击/拖动跳转</span>\n        </header>\n        <canvas\n          id=\"warfactory-minimap\"\n          class=\"warfactory-minimap\"\n          width=\"300\"\n          height=\"200\"\n          aria-label=\"小地图\"\n        ></canvas>\n      </section>\n\n      <!-- 中：单位粗览（只列当前选中的部队；没选中就整段不显示） -->\n      <section class=\"wcb-col wcb-overview\" id=\"warfactory-ov-sec\">\n        <header class=\"wcb-head\">\n          <span class=\"wcb-title\">单位粗览</span>\n          <span class=\"wcb-count\" id=\"wov-count\">—</span>\n        </header>\n        <div class=\"wov-grid\" id=\"warfactory-overview\"></div>\n      </section>\n\n      <!-- 右：单位详情（点单位看属性 / 点工厂看产能与升级 / 点总部看血量与产能升级） -->\n      <section class=\"wcb-col wcb-detail\" id=\"warfactory-detail-sec\">\n        <header class=\"wcb-head\">\n          <span class=\"wcb-title\" id=\"wdt-title\">单位详情</span>\n          <span class=\"wcb-count\" id=\"wdt-count\"></span>\n        </header>\n        <div class=\"wdt-body\">\n          <!-- 未选中任何目标时：只留一行科技点 + 操作提示 -->\n          <div class=\"warfactory-self\" id=\"warfactory-self\">\n            <div class=\"wsl-line\" id=\"wsl-tech\">科 0</div>\n            <div class=\"wsl-line wsl-dim\" id=\"wsl-hint\">左键点选我方单位 / 工厂 / 总部查看详情 · 滚轮缩放 · 中键拖动平移 · 空格回总部</div>\n          </div>\n\n          <!-- 选中工厂 / 总部后：在详情栏内展示（不再浮在战场上） -->\n          <!--\n            两列排布（.wfp-cols）：左＝数据（产能 / 全厂提速），右＝可点的按钮与说明。\n            竖着堆会把右栏顶到要滚动才看得全，拆成两列后一屏装得下。\n          -->\n          <aside id=\"warfactory-facpanel\" class=\"warfactory-facpanel\" hidden>\n            <div class=\"wfp-head\">\n              <span class=\"wfp-title\" id=\"wfp-title\">工厂</span>\n              <button type=\"button\" class=\"wfp-close\" id=\"wfp-close\" aria-label=\"关闭\">×</button>\n            </div>\n            <div class=\"wfp-row\">\n              <span id=\"wfp-owner\">—</span>\n              <span class=\"wfp-level\" id=\"wfp-level\">—</span>\n            </div>\n            <div class=\"wfp-bar wfp-bar-hp\"><i id=\"wfp-hp-fill\"></i></div>\n            <div class=\"wfp-hp-text\" id=\"wfp-hp-text\">—</div>\n\n            <div class=\"wfp-cols\">\n              <!-- 左列：工厂看产能 / 总部看全厂提速 -->\n              <div class=\"wfp-col\">\n                <!-- —— 工厂：产能（产线 / 进度 / 速率） —— -->\n                <div class=\"wfp-sec-title\" id=\"wfp-prod-sec\">产能</div>\n                <div class=\"wfp-unit\" id=\"wfp-unit\">\n                  <span class=\"wfp-glyph\" id=\"wfp-glyph\">兵</span>\n                  <div class=\"wfp-unit-main\">\n                    <div class=\"wfp-unit-name\" id=\"wfp-unit-name\">—</div>\n                    <div class=\"wfp-unit-desc\" id=\"wfp-unit-desc\">—</div>\n                  </div>\n                </div>\n                <div class=\"wfp-kv\" id=\"wfp-lines\">产线 1 / 3</div>\n                <div class=\"wfp-bar wfp-bar-prod\"><i id=\"wfp-prod-fill\"></i></div>\n                <div class=\"wfp-rate\" id=\"wfp-rate\">—</div>\n                <div class=\"wfp-rally\" id=\"wfp-rally\">集结点：未设置</div>\n\n                <!-- —— 总部：生产加速（工厂时隐藏） —— -->\n                <div class=\"wfp-spd\" id=\"wfp-spd\">\n                  <div class=\"wfp-sec-title\" id=\"wfp-spd-sec\">生产加速（全厂提速）</div>\n                  <div class=\"wfp-kv\" id=\"wfp-spd-lv\">0 / 20 级</div>\n                  <div class=\"wfp-rate\" id=\"wfp-spd-rate\">—</div>\n                  <button type=\"button\" class=\"wfp-evolve wfp-evolve-block\" id=\"wfp-speed\">加速生产（1000）</button>\n                </div>\n              </div>\n\n              <!-- 右列：所有能点的按钮都聚在这里 -->\n              <div class=\"wfp-col\">\n                <button type=\"button\" class=\"wfp-evolve wfp-evolve-block\" id=\"wfp-line\">开辟产线（500）</button>\n\n                <!-- —— 进化（工厂 / 总部都有） —— -->\n                <div class=\"wfp-sec-title\" id=\"wfp-evo-sec\">进化</div>\n                <button type=\"button\" class=\"wfp-evolve wfp-evolve-block\" id=\"wfp-evolve\" hidden>进化</button>\n                <div class=\"wfp-note\" id=\"wfp-note\"></div>\n              </div>\n            </div>\n          </aside>\n\n          <!-- 选中部队后：单选看详细属性，多选看编制汇总 -->\n          <!-- 两列：左＝身份与状态（头像 / 血条 / 提示），右＝属性表 -->\n          <aside id=\"warfactory-unitpanel\" class=\"warfactory-unitpanel\" hidden>\n            <div class=\"wfp-head\">\n              <span class=\"wfp-title\" id=\"wup-title\">部队</span>\n              <button type=\"button\" class=\"wfp-close\" id=\"wup-close\" aria-label=\"关闭\">×</button>\n            </div>\n            <div class=\"wup-cols\">\n              <div class=\"wup-col\">\n                <div class=\"wup-hero\">\n                  <span class=\"wfp-glyph\" id=\"wup-glyph\">兵</span>\n                  <div class=\"wfp-unit-main\">\n                    <div class=\"wfp-unit-name\" id=\"wup-name\">—</div>\n                    <div class=\"wfp-unit-desc\" id=\"wup-desc\">—</div>\n                  </div>\n                </div>\n                <div class=\"wfp-bar wfp-bar-hp wup-hp-bar\"><i id=\"wup-hp-fill\"></i></div>\n                <div class=\"wfp-hp-text\" id=\"wup-hp-text\">—</div>\n                <div class=\"wup-extra\" id=\"wup-extra\"></div>\n                <div class=\"wfp-note\" id=\"wup-note\"></div>\n              </div>\n              <div class=\"wup-col\">\n                <div class=\"wfp-sec-title\" id=\"wup-stats-sec\">属性</div>\n                <div class=\"wup-stats\" id=\"wup-stats\">—</div>\n              </div>\n            </div>\n          </aside>\n        </div>\n      </section>\n    </div>\n  </div>\n</div>\n";</script>
+<script>
 'use strict';
 
 /**
@@ -178,7 +4532,6 @@ window.WarFactoryUi = (function () {
   const MARK_INK_ALPHA = 0.28;
   const MARK_TINT_ALPHA = 0.17;
   const moveMarkers = [];
-  const attackMarkers = []; // 右键锁定攻击目标的落点提示
   const rallyFx = []; // 设置集结点时的落点特效
   /**
    * 灼烧地形（燎原喷出的火场）：服务端权威，每帧从快照 `fr` 整段替换。
@@ -204,7 +4557,7 @@ window.WarFactoryUi = (function () {
     warrior: '近战突进，攻守兼备',
     shield: '重甲缓慢，坚不可摧',
     ranger: '远程狙击，薄血长射',
-    burst: '曲射抛投，越山轰击',
+    burst: '范围炮击，落点成墨',
     burn: '持续喷火；二级起落点留下灼烧地形',
     laser: '锁定越久伤害越高，最高 5 倍',
   };
@@ -1963,30 +6316,6 @@ window.WarFactoryUi = (function () {
   }
 
   /**
-   * 解析「目标类别编号 + id」对应的世界坐标与半径（坐标全部从本地视图取）。
-   * 激光/燎原的锁定指示和「追击攻击命令」的常驻指示共用这一套解析。
-   */
-  function targetInfoOf(kind, id) {
-    if (kind === 1) {
-      const t = units.get(id);
-      return t ? { x: t.x, y: t.y, r: 22 } : null;
-    }
-    if (kind === 2) {
-      const f = factoriesView.find((x) => x.id === id);
-      return f ? { x: f.x, y: f.y, r: factoryRadius() } : null;
-    }
-    if (kind === 3) {
-      const l = labsView.find((x) => x.id === id);
-      return l ? { x: l.x, y: l.y, r: labR() } : null;
-    }
-    if (kind === 4) {
-      const h = hqView.find((x) => x.id === id);
-      return h ? { x: h.x, y: h.y, r: hqR() } : null;
-    }
-    return null;
-  }
-
-  /**
    * 激光兵光束：完全由服务端的「锁定状态」驱动。
    *  - 前摇中（lw > 0）：虚线瞄准 + 枪口蓄能光点 + 目标处收拢的锁定环（尚不造成伤害）
    *  - 已锁定（lw = 0）：枪口到目标的持续光束，粗细与亮度随倍率（1 → 5 倍）增强
@@ -2135,48 +6464,8 @@ window.WarFactoryUi = (function () {
     const c = ctx;
     if (!lastSnap || !lastSnap.b) return;
     for (const b of lastSnap.b) {
-      const z = b[7] || 0;
-      const arc = b[8] || 0;
-      // 抛射弹（轰击）：抬高本体 + 地面阴影 + 落点虚线圈，呈现越山抛物线观感
-      if (arc && z > 0.5) {
-        drawArcShell(c, b[0], b[1], z, playerColor(b[2]), b[4] || 1, b[5] || 0, (b[6] || 0) * 97 + 3);
-      } else {
-        drawBulletBody(c, b[0], b[1], playerColor(b[2]), b[3], b[4] || 1, b[5] || 0, (b[6] || 0) * 97 + 3);
-      }
+      drawBulletBody(c, b[0], b[1], playerColor(b[2]), b[3], b[4] || 1, b[5] || 0, (b[6] || 0) * 97 + 3);
     }
-  }
-
-  /**
-   * 抛射弹（轰击 burst）的画法：弹体被「抬」到离地 z 像素的高度，
-   * 地面上画一团圆而淡的阴影（越高越大越淡）提示落点，再套一圈虚线把「将落在此处」标出来。
-   * 这样即便它正飞越一道山脉，玩家也能一眼看出这是一发曲射炮、会落在哪。
-   */
-  function drawArcShell(c, x, y, z, col, dx, dy, seed) {
-    const rot = Math.atan2(dy, dx);
-    // ① 地面阴影：越高越大、越淡
-    const lift = clamp(z / 150, 0, 1);
-    c.fillStyle = hexAlpha(INK, 0.16 + 0.14 * (1 - lift));
-    c.beginPath();
-    c.ellipse(x, y, 5 + lift * 5, 3 + lift * 2.5, 0, 0, TAU);
-    c.fill();
-    // ② 落点虚线圈：提示这是抛射物、会落在这里（而非当前飞行位置）
-    c.strokeStyle = hexAlpha(col, 0.4);
-    c.lineWidth = 1.2;
-    c.setLineDash([3, 4]);
-    c.beginPath();
-    c.arc(x, y, 8.5, 0, TAU);
-    c.stroke();
-    c.setLineDash([]);
-    // ③ 抬升的弹体 + 抛射拖尾（拖尾略向上飘，强化「飞在天上」的感觉）
-    inkTrail(c, x, y - z, dx, dy, 24, 4, 0.4, INK);
-    inkBlobPath(c, x, y - z, 5.2, seed, { lobes: 8, jitter: 0.55, sx: 1.5, rot });
-    c.fillStyle = hexAlpha(INK, 0.9);
-    c.fill();
-    c.strokeStyle = hexAlpha(col, 0.4);
-    c.lineWidth = 1.2;
-    c.beginPath();
-    c.arc(x, y - z, 8, 0, TAU);
-    c.stroke();
   }
 
   /** 单发弹丸的画法（抽出来是为了 docs 下的特效图谱页能一格一格核对形状） */
@@ -2452,85 +6741,7 @@ window.WarFactoryUi = (function () {
       c.lineTo(m.x, m.y + 6);
       c.stroke();
     }
-    // 右键锁定攻击目标标记（红圈 + 内准星，与移动标记区分）
-    for (let i = attackMarkers.length - 1; i >= 0; i--) {
-      const m = attackMarkers[i];
-      const age = (t - m.born) / m.ttl;
-      if (age >= 1) {
-        attackMarkers.splice(i, 1);
-        continue;
-      }
-      const a = 1 - age;
-      c.strokeStyle = 'rgba(232,86,64,' + (0.9 * a).toFixed(3) + ')';
-      c.lineWidth = 2.6;
-      c.beginPath();
-      c.arc(m.x, m.y, 18 * (1 - age * 0.4), 0, TAU);
-      c.stroke();
-      c.beginPath();
-      for (let k = 0; k < 4; k++) {
-        const ang = (k / 4) * TAU;
-        c.moveTo(m.x + Math.cos(ang) * 12, m.y + Math.sin(ang) * 12);
-        c.lineTo(m.x + Math.cos(ang) * 18, m.y + Math.sin(ang) * 18);
-      }
-      c.stroke();
-    }
-    // 追击攻击命令的**常驻**指示（区别于上面 950ms 的点击反馈）：
-    // 命令只要还活着就一直画 —— 目标身上一圈缓慢转动的虚线锁定环 + 四角准星，
-    // 执行命令且被选中的部队还会拉一条虚线到目标，随时看得出「谁在追谁」。
-    // 右键别处 / 停止 / 目标阵亡后服务端不再下发命令 → 指示自动消失。
-    if (myPlayerIndex() >= 0) {
-      const ordered = new Map(); // key `kind:id` → { kind, id, chasers: [] }
-      for (const u of units.values()) {
-        if (!u.ok || u.oi !== myPlayerIndex()) continue;
-        const key = u.ok + ':' + u.od;
-        let it = ordered.get(key);
-        if (!it) {
-          it = { kind: u.ok, id: u.od, chasers: [] };
-          ordered.set(key, it);
-        }
-        it.chasers.push(u);
-      }
-      const spin = (t / 620) % 1;
-      for (const it of ordered.values()) {
-        const tp = targetInfoOf(it.kind, it.id);
-        if (!tp) continue;
-        // 被选中的执行部队 → 目标：细虚线（追击途中一眼看出目标在哪）
-        c.save();
-        c.setLineDash([5, 7]);
-        c.lineWidth = 1.7;
-        c.strokeStyle = 'rgba(216,64,44,0.5)';
-        c.beginPath();
-        for (const u of it.chasers) {
-          if (!selection.has(u.id)) continue;
-          c.moveTo(u.x, u.y);
-          c.lineTo(tp.x, tp.y);
-        }
-        c.stroke();
-        c.restore();
-        // 目标身上的锁定环：虚线随时间转动 + 四角准星
-        const rr = tp.r + 13;
-        c.save();
-        c.translate(tp.x, tp.y);
-        c.rotate(spin * TAU);
-        c.setLineDash([7, 6]);
-        c.lineWidth = 2;
-        c.strokeStyle = 'rgba(232,86,64,0.62)';
-        c.beginPath();
-        c.arc(0, 0, rr, 0, TAU);
-        c.stroke();
-        c.setLineDash([]);
-        c.lineWidth = 2.4;
-        c.beginPath();
-        for (let k = 0; k < 4; k++) {
-          const ang = (k / 4) * TAU + Math.PI / 4;
-          c.moveTo(Math.cos(ang) * (rr - 5), Math.sin(ang) * (rr - 5));
-          c.lineTo(Math.cos(ang) * (rr + 4), Math.sin(ang) * (rr + 4));
-        }
-        c.stroke();
-        c.restore();
-      }
-    }
-
+    // 集结点落点特效（扩散旗圈）
     for (let i = rallyFx.length - 1; i >= 0; i--) {
       const m = rallyFx[i];
       const age = (t - m.born) / m.ttl;
@@ -3468,7 +7679,7 @@ window.WarFactoryUi = (function () {
     warrior: '近战：贴上去缠斗，血量与伤害均衡。',
     shield: '重甲：血量最厚、推进最慢，适合顶在前面吃伤害。',
     ranger: '远程狙击：射程最远、血量最低，别让它贴身。',
-    burst: '曲射抛投：弹道越过山脉落到落点，范围全体受伤，专治扎堆的敌人（可隔山轰击）。',
+    burst: '范围炮击：落点范围内全体受伤，专治扎堆的敌人。',
     burn: '喷火：持续喷吐火焰、大范围灼烧（一级不留火场；二级起落点留下火场，三级火场更大、烧得更久、伤害更高）。',
     laser: '激光：锁定同一目标越久伤害越高（最高 5 倍），换目标要重新蓄能。',
     default: '自动攻击射程内的一切敌人（单位 / 工厂 / 研究所 / 总部）。',
@@ -3988,10 +8199,6 @@ window.WarFactoryUi = (function () {
       u.li = row[13] || 0; // 锁定目标 id
       u.lm = row[14] || 100; // 当前伤害倍率 ×100（100 = 1 倍）
       u.lw = row[15] || 0; // 前摇剩余毫秒（>0 = 蓄能中，尚未开火）
-      // 追击攻击命令（玩家右键指定）：0 = 没有命令。命令只要还在（哪怕正在赶路、还没进射程）
-      // 就一直下发，客户端据此在目标处常驻一个锁定指示 —— 命令一解除，指示随之消失。
-      u.ok = row[16] || 0; // 命令目标类别：0 无 / 1 单位 / 2 工厂 / 3 研究所 / 4 总部
-      u.od = row[17] || 0; // 命令目标 id
     }
     for (const id of [...units.keys()]) {
       if (!seen.has(id)) {
@@ -4560,13 +8767,8 @@ window.WarFactoryUi = (function () {
       boxSel.y1 = pos.y;
       evt.preventDefault();
     } else if (evt.button === 2) {
-      // 右键分流（指令越具体越优先）：
-      //   ① 选中了部队、且点中敌 / 中立单位或建筑 → 锁定攻击目标；
-      //   ② 选中了本方工厂、点的是空地 → 设集结点；
-      //   ③ 其余 → 指挥选中部队移动。
-      if (selection.size > 0 && issueAttackOn(pos.x, pos.y)) {
-        // 已锁定攻击目标，无需其他处理
-      } else if (selFacId) issueRally(pos.x, pos.y);
+      // 选中了本方工厂 → 右键设集结点；否则 → 指挥选中部队移动
+      if (selFacId) issueRally(pos.x, pos.y);
       else issueMove(pos.x, pos.y);
       evt.preventDefault();
     }
@@ -4721,58 +8923,6 @@ window.WarFactoryUi = (function () {
     if (typeof net !== 'undefined' && net && typeof net.sendRt === 'function') {
       net.sendRt({ cmd: 'move', x: Math.round(wx), y: Math.round(wy), ids });
       moveMarkers.push({ x: wx, y: wy, born: now, ttl: 850 });
-    }
-  }
-
-  /**
-   * 右键锁定攻击目标：玩家选中我方部队后，右键点中「敌 / 中立」单位或建筑，
-   * 把该目标设为这些部队的手动攻击目标（服务端在攻击范围内优先打它，否则自动）。
-   * 命中的是非己方目标才返回 true（由 onMouseDown 据此决定是否改走移动指令）。
-   */
-  function issueAttackOn(wx, wy) {
-    if (isSpectator || selection.size === 0) return false;
-    const mine = myPlayerIndex();
-    if (mine < 0) return false;
-    // 1) 点中的敌方 / 中立单位（任意归属，但非己方）
-    const hitU = unitAt(wx, wy, null);
-    if (hitU && hitU.oi !== mine) {
-      sendAttack('u', hitU.id, wx, wy);
-      return true;
-    }
-    // 2) 点中的敌方 / 中立建筑（工厂 / 研究所 / 总部，含被占领后 owner===-1 的中立）
-    const foeF = factoriesView.find(
-      (x) => x.owner !== mine && Math.hypot(x.x - wx, x.y - wy) < 70
-    );
-    if (foeF) {
-      sendAttack('f', foeF.id, wx, wy);
-      return true;
-    }
-    const foeL = labsView.find(
-      (x) => x.owner !== mine && Math.hypot(x.x - wx, x.y - wy) < labR() + 18
-    );
-    if (foeL) {
-      sendAttack('l', foeL.id, wx, wy);
-      return true;
-    }
-    const foeH = hqView.find(
-      (x) => !x.down && x.owner !== mine && Math.hypot(x.x - wx, x.y - wy) < hqR() + 18
-    );
-    if (foeH) {
-      sendAttack('h', foeH.id, wx, wy);
-      return true;
-    }
-    return false;
-  }
-
-  function sendAttack(kind, id, wx, wy) {
-    const now = Date.now();
-    if (now - lastCmdAt < 110) return;
-    lastCmdAt = now;
-    const ids = [...selection].slice(0, 80);
-    if (typeof net !== 'undefined' && net && typeof net.sendRt === 'function') {
-      net.sendRt({ cmd: 'attack', kind, id, ids });
-      attackMarkers.push({ x: wx, y: wy, born: now, ttl: 950 });
-      pushHudHint('已下达追击命令 · 右键别处取消');
     }
   }
 
@@ -5499,7 +9649,6 @@ window.WarFactoryUi = (function () {
       effects.length = 0;
       groundMarks.length = 0;
       moveMarkers.length = 0;
-      attackMarkers.length = 0;
       rallyFx.length = 0;
       selection.clear();
       selFacId = 0;
@@ -5634,3 +9783,216 @@ window.WarFactoryUi = (function () {
     scales: { vis: UNIT_VIS_SCALE, body: UNIT_BODY_SCALE },
   };
 })();
+</script>
+<script>
+
+(function () {
+  function fail(msg) { document.title = 'PREVIEW-ERROR ' + msg; }
+  window.onerror = function (m) { fail(m); };
+  try {
+    document.body.classList.add('phase-game');
+    var d = window.__WF__;
+
+    // ---- 拦 2D 上下文的 setTransform，记下最后一帧的世界变换（世界坐标 → 屏幕坐标）----
+    // 只认「对角 + 平移非零」的变换：世界变换是 (k,0,0,k,-cam.x*k,-cam.y*k)，
+    // 而 HUD / 小地图的重置是 (dpr,0,0,dpr,0,0)——平移为零，不能拿来覆盖 cam。
+    var cam = null;
+    var rawGet = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (kind) {
+      var c = rawGet.apply(this, arguments);
+      if (kind === '2d' && c && !c.__wfProbe) {
+        c.__wfProbe = 1;
+        var raw = c.setTransform.bind(c);
+        c.setTransform = function (a, b, cc, dd, e, f) {
+          if (a === dd && b === 0 && cc === 0 && a > 0.2 && (e !== 0 || f !== 0)) {
+            cam = { k: a, x: -e / a, y: -f / a };
+          }
+          return raw(a, b, cc, dd, e, f);
+        };
+      }
+      return c;
+    };
+
+    // —— 把页面切到「对局中」这一态：游戏视图亮起、其余视图收掉 ——
+    var hide = function (id) { var el = document.getElementById(id); if (el) el.hidden = true; };
+    var show = function (id) { var el = document.getElementById(id); if (el) el.hidden = false; };
+    hide('view-lobby'); hide('view-room'); hide('lobby-people-aside');
+    hide('lobby-gate'); hide('lobby-main');
+    show('view-game');
+
+    // 顶部栏：菜单按钮 + 对局计时。中间那段标题（app-top-mid）与观战按钮故意「亮着」，
+    // 因为 CSS 就是靠 phase-game:has(#panel-warfactory) 把它们压掉的 —— 亮着才测得出那条规则。
+    show('match-clock');
+    var t = document.getElementById('match-clock-time'); if (t) t.textContent = '12:34';
+    show('spectators-watch');
+    show('header-nick');
+    var nd = document.getElementById('nick-display'); if (nd) nd.textContent = '墨客';
+
+    // 聊天窗也亮起来：检查它有没有被抬到指挥栏上面（否则会压住「单位粗览」）
+    show('chat-dock');
+    var log = document.getElementById('chat-log');
+    if (log) {
+      ['开局，先占研究所。', '对面的盾卫好硬…'].forEach(function (txt) {
+        var li = document.createElement('li');
+        li.className = 'chat-line';
+        li.textContent = txt;
+        log.appendChild(li);
+      });
+    }
+
+    // —— 挂载战争工厂面板（真身是 boot-games 干的活）——
+    var gp = document.getElementById('game-panels');
+    gp.innerHTML = window.__WF_PANEL__;
+    document.getElementById('panel-warfactory').hidden = false;
+
+    // —— 喂一局真数据，让 HUD / 指挥栏 / 小地图都画上东西 ——
+    var net = { on: function () {}, sendRt: function () {} };
+    window.WarFactoryUi.render(d.state, net, { meId: 'p0', isSpectator: false, title: '战争工厂' });
+    window.WarFactoryUi.applySnapshot(d.snap);
+
+    var qs = String(location.search || '');
+    if (qs.indexOf('help=1') >= 0) {
+      var btn = document.getElementById('wf-help-btn');
+      if (btn) btn.click();
+    }
+
+    // ---- 点选一个目标，让右栏「单位详情」真的填上内容 ----
+    // 先把镜头甩到目标上（点小地图），再点主战场 —— 免得目标落在视口外。
+    function mmFocus(wx, wy) {
+      var mm = document.getElementById('warfactory-minimap');
+      var w = d.state.world.w;
+      var h = d.state.world.h;
+      var r = mm.getBoundingClientRect();
+      var ev = function (type) {
+        mm.dispatchEvent(new MouseEvent(type, {
+          bubbles: true, button: 0, clientX: r.left + (wx / w) * r.width, clientY: r.top + (wy / h) * r.height,
+        }));
+      };
+      ev('mousedown');
+      ev('mouseup');
+    }
+    function clickWorld(wx, wy) {
+      if (!cam) return false;
+      var cv = document.getElementById('warfactory-canvas');
+      var r = cv.getBoundingClientRect();
+      var x = r.left + (wx - cam.x) * cam.k;
+      var y = r.top + (wy - cam.y) * cam.k;
+      ['mousedown', 'mouseup'].forEach(function (type) {
+        cv.dispatchEvent(new MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: y }));
+      });
+      return true;
+    }
+    var pick = (qs.match(/pick=(\w+)/) || [])[1] || '';
+    var utype = (qs.match(/utype=(\w+)/) || [])[1] || 'burn';
+    var UTYPE_IX = { warrior: 0, shield: 1, ranger: 2, burst: 3, burn: 4, laser: 5 };
+    var pendingPick = null;
+    if (pick === 'fac' || pick === 'hq') {
+      var src = pick === 'fac' ? d.state.factories : d.state.hqs;
+      var tgt = (src || []).filter(function (q) { return q.owner === 0; })[0];
+      if (tgt) { mmFocus(tgt.x, tgt.y); pendingPick = { x: tgt.x, y: tgt.y }; }
+    } else if (pick === 'unit') {
+      var rows = d.snap.u || [];
+      var want = UTYPE_IX[utype] == null ? 4 : UTYPE_IX[utype];
+      var hit = null;
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i][1] === 0 && rows[i][5] === want) { hit = rows[i]; break; }
+      }
+      if (!hit) for (var j = 0; j < rows.length; j++) { if (rows[j][1] === 0) { hit = rows[j]; break; } }
+      if (hit) { mmFocus(hit[2], hit[3]); pendingPick = { x: hit[2], y: hit[3] }; }
+    }
+
+    var n = 0;
+    (function paint() {
+      window.WarFactoryUi.applySnapshot(d.snap);
+      n++;
+      // 第 2 帧才点：那时 cam 已经被渲染帧填好了
+      if (n === 2 && pendingPick) { clickWorld(pendingPick.x, pendingPick.y); }
+      if (n < 5) { requestAnimationFrame(paint); return; }
+
+      // 把布局读数写成页面上的小徽标，截图里就能直接读，不用 dump-dom
+      var cv = document.getElementById('warfactory-canvas');
+      var rc = cv.getBoundingClientRect();
+      var cb = document.querySelector('.warfactory-cmdbar');
+      var rb = cb ? cb.getBoundingClientRect() : { top: 0, bottom: 0, height: 0, left: 0, right: 0, width: 0 };
+      var mid = document.querySelector('.app-top-mid');
+      var spec = document.getElementById('spectators-watch');
+      var chat = document.getElementById('chat-dock');
+      var rchat = chat ? chat.getBoundingClientRect() : null;
+      var vis = function (el) {
+        if (!el) return 'none';
+        var s = getComputedStyle(el);
+        if (s.display === 'none') return 'none';
+        var r = el.getBoundingClientRect();
+        return Math.round(r.width) + 'x' + Math.round(r.height);
+      };
+      var help = document.getElementById('wf-help');
+      // 右栏「单位详情」的布局读数：溢出量 = scrollHeight - clientHeight，
+      // 只要 > 0 就说明「得滚动才看得全」，正是要修的东西。
+      var det = document.getElementById('warfactory-detail-sec');
+      var rd = det ? det.getBoundingClientRect() : { left: 0, right: 0, width: 0 };
+      var body = document.querySelector('.wdt-body');
+      var facp = document.getElementById('warfactory-facpanel');
+      var unp = document.getElementById('warfactory-unitpanel');
+      var shot = function (el) {
+        if (!el || el.hidden) return 'hidden';
+        return Math.round(el.getBoundingClientRect().height) + 'px';
+      };
+      var ovf = function (el) {
+        if (!el) return -1;
+        return el.scrollHeight - el.clientHeight;
+      };
+      var ovSec = document.getElementById('warfactory-ov-sec');
+      var probe = document.getElementById('wfp-fs-probe');
+      if (!probe) {
+        probe = document.createElement('div');
+        probe.id = 'wfp-fs-probe';
+        probe.style.cssText =
+          'position:fixed;left:8px;bottom:8px;z-index:99999;max-width:560px;' +
+          'background:#111;color:#0f0;font:12px/1.45 monospace;padding:6px 9px;border-radius:4px;white-space:pre-wrap;';
+        document.body.appendChild(probe);
+      }
+      // ?probe=0：截图时把这块读数徽标藏起来（真实页面本来就没有它）
+      probe.style.display = qs.indexOf('probe=0') >= 0 ? 'none' : '';
+      probe.textContent =
+        'viewport=' + innerWidth + 'x' + innerHeight +
+        '\ncanvas=' + Math.round(rc.width) + 'x' + Math.round(rc.height) +
+        ' @(' + Math.round(rc.left) + ',' + Math.round(rc.top) + ')  rem=' +
+        (innerWidth - Math.round(rc.right)) + ',' + (innerHeight - Math.round(rc.bottom)) +
+        '\ncmdbar=' + vis(cb) + ' @y' + Math.round(rb.top) + '→' + Math.round(rb.bottom) +
+        '\napp-top-mid=' + vis(mid) + '  spectators=' + vis(spec) +
+        '\nmatch-clock=' + vis(document.getElementById('match-clock')) +
+        '  menu-btn=' + vis(document.getElementById('btn-game-menu')) +
+        '\nhelp=' + (help && !help.hidden ? 'open ' + vis(help) : 'closed') +
+        '\nchat-dock=' + vis(chat) + (rchat ? ' bottom→' + Math.round(innerHeight - rchat.bottom) : '') +
+        '\n-- 右栏详情 --' +
+        '\ndetail x' + Math.round(rd.left) + '→' + Math.round(rd.right) + ' w' + Math.round(rd.width) +
+        '  ovsec=' + (ovSec && !ovSec.hidden ? 'shown' : 'hidden') +
+        '  wide=' + (det && det.classList.contains('is-wide') ? 'Y' : 'N') +
+        '\nwdt-body h' + (body ? body.clientHeight : -1) + '  溢出 ' + ovf(body) + 'px' +
+        '\nfacpanel=' + shot(facp) + '  unitpanel=' + shot(unp) +
+        '  (内容 ' + (facp && !facp.hidden ? facp.scrollHeight : unp && !unp.hidden ? unp.scrollHeight : 0) + 'px)';
+      document.title = 'ready-flat';
+
+      // ?dump=1：把右栏里每个子元素的高度逐个打出来（设计「不滚动」布局时用的量具）
+      if (qs.indexOf('dump=1') >= 0) {
+        var box = facp && !facp.hidden ? facp : unp;
+        var rows2 = '';
+        if (box) {
+          for (var ci = 0; ci < box.children.length; ci++) {
+            var ch = box.children[ci];
+            if (getComputedStyle(ch).display === 'none') continue;
+            rows2 += '\n  ' + (ch.id || ch.className) + ' h' + Math.round(ch.getBoundingClientRect().height);
+          }
+        }
+        var gr = document.getElementById('warfactory-overview');
+        rows2 += '\n  [ov-grid] h' + (gr ? Math.round(gr.getBoundingClientRect().height) : -1) +
+          ' scroll' + (gr ? gr.scrollHeight : -1) + ' client' + (gr ? gr.clientHeight : -1);
+        probe.textContent += '\n-- dump --' + rows2;
+      }
+    })();
+  } catch (err) { fail((err && err.message) || err); }
+})();
+
+</script>
+</body>
+</html>

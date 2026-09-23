@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>战争工厂 · 特效图谱（炸开形状 · 开火相位 · 地面弹痕）</title>
+<style>
+  :root {
+    --paper: #ece3cd;
+    --paper-deep: #e3d8bd;
+    --ink: #2a2620;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 32px 60px;
+    background: var(--paper);
+    color: var(--ink);
+    font: 14px/1.7 "STKaiti", "KaiTi", "Noto Serif SC", "SimSun", serif;
+  }
+  h1 { margin: 0 0 6px; font-size: 24px; letter-spacing: 2px; }
+  h2 { margin: 34px 0 10px; font-size: 18px; letter-spacing: 1px; }
+  h3 { margin: 22px 0 8px; font-size: 15px; letter-spacing: 1px; font-weight: 400; }
+  .sub { color: rgba(42, 38, 32, 0.62); font-size: 13px; margin-bottom: 4px; max-width: 980px; }
+  .rule { border: 0; border-top: 1px solid rgba(42, 38, 32, 0.18); margin: 26px 0; }
+  table { border-collapse: collapse; }
+  th, td { padding: 6px 12px; text-align: center; vertical-align: middle; }
+  thead th { font-weight: 400; color: rgba(42, 38, 32, 0.6); font-size: 12px; }
+  tbody th { text-align: left; width: 168px; font-weight: 400; }
+  tbody th b { font-size: 16px; letter-spacing: 1px; }
+  tbody th em { display: block; font-style: normal; font-size: 12px; color: rgba(42, 38, 32, 0.55); }
+  td canvas { display: block; background: var(--paper-deep); border: 1px solid rgba(42, 38, 32, 0.14); }
+  .metric { font-size: 11px; color: rgba(42, 38, 32, 0.52); margin-top: 3px; }
+  .metric b { font-weight: 400; }
+  .legend { font-size: 12px; color: rgba(42, 38, 32, 0.68); max-width: 980px; }
+  .legend li { margin: 2px 0; }
+  code { background: rgba(42, 38, 32, 0.07); padding: 1px 5px; }
+  .cmp { display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-start; }
+  .cmp-card { border: 1px solid rgba(42, 38, 32, 0.18); padding: 12px 16px; background: rgba(255, 255, 255, 0.28); }
+  .cmp-card h4 { margin: 0 0 8px; font-size: 14px; font-weight: 400; }
+  .pass { color: #2f6b3a; }
+  .fail { color: #9c3b2c; }
+  .verdict { font-size: 15px; margin-top: 6px; }
+  .verdict-row { font-size: 13px; margin: 3px 0; }
+</style>
+</head>
+<body>
+  <h1>战争工厂 · 特效图谱</h1>
+  <div class="sub">
+    直接用游戏里的作画代码（<code>public/games/warfactory/ui.js</code> → <code>previewFx</code>）逐格绘制，未另抄一份造型。
+    特效本身只有 170~560ms，无头截图很难卡到正在燃烧的那一帧，所以这里把<b>相位</b>也开成参数：
+    同一个特效在 <code>age = 0 / 0.3 / 0.7</code> 三档并排摆出来，
+    形状对不对、开火有没有「先张后收」一眼可辨。
+  </div>
+  <div class="sub">
+    每格下方的读数来自「把这一格真的画到离屏画布、再从中心沿 36 个方向打射线求边界半径」：
+    <b>边界半径种数越多说明轮廓越不规则</b>，正圆只会给出 1~2 种。
+  </div>
+
+  <h2>一、弹道：没有一处「规规矩矩的圆」</h2>
+  <div class="legend">
+    普通弹丸 = 归属色墨晕（底）+ 沿弹道拉长的墨滴（上）+ 身后三级收细的拖笔；
+    炮击弹 = 粗墨块 + 长拖尾 + 虚线影；燃烧弹 = 朱砂火星 + 飘忽火尾；近战 = 一道沿真实攻击方向的短挥痕。
+    同一弹种换一个个体种子，轮廓就该明显不重样。
+  </div>
+  <div id="bullets" style="margin-top:14px"></div>
+
+  <hr class="rule">
+
+  <h2>二、开火：枪口焰要先张后收</h2>
+  <div class="legend">
+    <ul>
+      <li>① <b>硝烟</b>：往枪口反方向回卷的墨烟，炮击最浓；</li>
+      <li>② <b>星芒</b>：以朝向为中心、长短不一的锯齿尖刺（不是一圈等长的光斑）；</li>
+      <li>③ <b>焰芯</b>：外热内亮的双层墨团，激光是冷白芯。</li>
+      <li>节奏：<code>age=0</code> 焰还没张开（亮度 0）→ <code>age≈0.3</code> 冲到最亮最张 → <code>age=0.7</code> 已经收回去大半。</li>
+    </ul>
+  </div>
+  <div id="muzzle" style="margin-top:14px"></div>
+
+  <hr class="rule">
+
+  <h2>三、命中：像水球拍在地上炸开</h2>
+  <div class="legend">
+    主体一团不规则墨先铺开，外围飞溅<b>沿命中方向甩成扇面</b>（不是四周等量均匀撒点），越远越小越淡。
+    归属色内芯固定 30% 不透明度 —— 不与「弹痕」那档混同。
+  </div>
+  <div id="splat" style="margin-top:14px"></div>
+
+  <h2>四、炮击落点与地面弹痕</h2>
+  <div class="legend">
+    落点是墨花炸开 + 甩出去的泥点；弹痕是贴地的一小团墨渍 + 3 点固定飞溅（位置由种子决定，不逐帧乱跳），
+    寿命 9 秒、后段淡得更快，避免整图糊成一片灰。
+  </div>
+  <div id="boom" style="margin-top:14px"></div>
+
+  <hr class="rule">
+
+  <h2>四·五、燎原：火舌落地（在落点铺开灼烧地形的那一下）</h2>
+  <div class="legend">
+    与「墨花炸开」刻意区分：没有飞溅的墨点，而是<b>向上翻卷的火焰</b> ——
+    底下一圈焦痕，再往上窜几丛高低不一、左右摇摆的火苗（外红 → 内橙 → 白芯），随 age 越烧越淡。
+    火场本体由快照持续下发（火焰一停，几秒内跟着熄灭），这里只核对「刚点着」的爆发感与淡出节奏。
+  </div>
+  <div id="flame" style="margin-top:14px"></div>
+
+  <hr class="rule">
+
+  <h2>五、判定：不规则 ≠ 正圆</h2>
+  <div class="cmp" id="verdict" style="margin-top:12px"></div>
+
+  <script src="../public/games/warfactory/ui.js"></script>
+  <script>
+    (function () {
+      var Ui = window.WarFactoryUi;
+      if (!Ui || typeof Ui.previewFx !== 'function') {
+        document.body.insertAdjacentHTML('beforeend', '<p class="fail">未能加载 ui.js（previewFx 不存在）。</p>');
+        return;
+      }
+
+      var INK = '#2a2620';
+      var OWNER = '#b03a2e';   // 玩家配色（与游戏内一号位一致）
+      var RIVAL = '#2e5e8c';   // 对手配色
+      var TAU = Math.PI * 2;
+      var DPR = Math.min(2, window.devicePixelRatio || 1);
+      var CELL = 132;
+
+      /* ---------- 画一格 ---------- */
+      function cell(kind, opts) {
+        var cv = document.createElement('canvas');
+        cv.width = CELL * DPR;
+        cv.height = CELL * DPR;
+        cv.style.width = CELL + 'px';
+        cv.style.height = CELL + 'px';
+        var c = cv.getContext('2d');
+        c.scale(DPR, DPR);
+        c.save();
+        c.translate(CELL / 2, CELL / 2);
+        var o = {};
+        for (var k in opts) o[k] = opts[k];
+        if (o.x === undefined) o.x = 0;
+        if (o.y === undefined) o.y = 0;
+        Ui.previewFx(c, kind, o);
+        c.restore();
+        return cv;
+      }
+
+      /* ---------- 量不规则度：从中心沿 36 个方向打射线求边界半径 ---------- */
+      function boundarySpread(cv) {
+        var w = cv.width;
+        var d = cv.getContext('2d').getImageData(0, 0, w, w).data;
+        var seen = {};
+        var rs = [];
+        var cx = w / 2;
+        var cy = w / 2;
+        for (var i = 0; i < 36; i++) {
+          var a = (i / 36) * TAU;
+          var dx = Math.cos(a);
+          var dy = Math.sin(a);
+          var last = 0;
+          for (var t = 0; t < w / 2; t += 0.5) {
+            var px = Math.round(cx + dx * t);
+            var py = Math.round(cy + dy * t);
+            if (px < 0 || py < 0 || px >= w || py >= w) break;
+            if (d[(py * w + px) * 4 + 3] > 12) last = t;
+          }
+          // 折算回 CSS 像素、按 0.5px 分桶：取样步长本身就有不到半像素的误差，
+          // 不错桶的话一个「真的正圆」也会被算成几十种半径，读数就没意义了
+          var rc = last / DPR;
+          rs.push(rc);
+          seen[Math.round(rc * 2) / 2] = 1;
+        }
+        return {
+          kinds: Object.keys(seen).length,
+          min: Math.min.apply(null, rs),
+          max: Math.max.apply(null, rs),
+        };
+      }
+
+      /* 正圆基准：同一个量法、同一块画布上画一个真的圆，看它能给出几种半径 */
+      function circleCell(r) {
+        var cv = document.createElement('canvas');
+        cv.width = CELL * DPR;
+        cv.height = CELL * DPR;
+        cv.style.width = CELL + 'px';
+        cv.style.height = CELL + 'px';
+        var c = cv.getContext('2d');
+        c.scale(DPR, DPR);
+        c.fillStyle = INK;
+        c.beginPath();
+        c.arc(CELL / 2, CELL / 2, r, 0, TAU);
+        c.fill();
+        return cv;
+      }
+
+      function metricLine(sp) {
+        var span = (sp.max - sp.min).toFixed(1);
+        return '<div class="metric">轮廓半径 <b>' + sp.kinds + '</b> 种 · 由 ' + sp.min.toFixed(1) +
+          ' 到 ' + sp.max.toFixed(1) + 'px（跨度 ' + span + 'px）</div>';
+      }
+
+      /* 量「实色墨量」：数 alpha 高于阈值的像素数。
+       * 火焰淡出是「变透明」而不是「变小」——轮廓半径到 age=0.75 也几乎不缩，
+       * 所以「烧淡大半」得靠实色像素数来量，不能靠边界半径。 */
+      function inkCount(cv, thr) {
+        var w = cv.width;
+        var d = cv.getContext('2d').getImageData(0, 0, w, w).data;
+        var n = 0;
+        for (var i = 3; i < d.length; i += 4) if (d[i] > thr) n++;
+        return n;
+      }
+
+      function rowHead(label, note) {
+        var h = document.createElement('th');
+        h.innerHTML = '<b>' + label + '</b><em>' + note + '</em>';
+        return h;
+      }
+
+      /* ================= 一、弹道 ================= */
+      (function () {
+        var host = document.getElementById('bullets');
+        var KINDS = [
+          ['bullet', '普通弹丸', 0, '墨晕 + 拉长墨滴 + 拖笔'],
+          ['shell', '炮击弹', 2, '粗墨块 + 长拖尾 + 虚线影'],
+          ['fire', '燃烧弹', 3, '朱砂火星 + 飘忽火尾'],
+          ['melee', '近战挥击', 1, '沿攻击方向的弧线短墨痕'],
+        ];
+        var SEEDS = [0.12, 0.41, 0.78];
+        var tbl = document.createElement('table');
+        var thead = document.createElement('thead');
+        var tr = document.createElement('tr');
+        tr.appendChild(document.createElement('th'));
+        for (var s = 0; s < SEEDS.length; s++) {
+          var th = document.createElement('th');
+          th.textContent = '个体种子 ' + SEEDS[s].toFixed(2);
+          tr.appendChild(th);
+        }
+        tr.appendChild((function () { var x = document.createElement('th'); x.textContent = '轮廓读数'; return x; })());
+        thead.appendChild(tr);
+        tbl.appendChild(thead);
+        var tb = document.createElement('tbody');
+        for (var i = 0; i < KINDS.length; i++) {
+          var row = document.createElement('tr');
+          row.appendChild(rowHead(KINDS[i][1], KINDS[i][3]));
+          var spread = null;
+          for (var j = 0; j < SEEDS.length; j++) {
+            var td = document.createElement('td');
+            var cv = cell(KINDS[i][0], { a: 0, seed: SEEDS[j], col: OWNER, k: KINDS[i][2] });
+            td.appendChild(cv);
+            spread = boundarySpread(cv);
+            row.appendChild(td);
+          }
+          var mt = document.createElement('td');
+          mt.innerHTML = metricLine(spread);
+          row.appendChild(mt);
+          tb.appendChild(row);
+        }
+        tbl.appendChild(tb);
+        host.appendChild(tbl);
+
+        // 对照组：一个真的圆，用同一把尺量，看点差能有多大
+        var cv = circleCell(6);
+        var box = document.createElement('div');
+        box.className = 'cmp-card';
+        box.innerHTML = '<h4>对照：正圆（半径 6px）</h4>';
+        box.appendChild(cv);
+        box.insertAdjacentHTML('beforeend', metricLine(boundarySpread(cv)));
+        host.appendChild(box);
+      })();
+
+      /* ================= 二、枪口焰 ================= */
+      (function () {
+        var host = document.getElementById('muzzle');
+        var KINDS = [
+          ['0', '普通枪 · 短火花', 0],
+          ['1', '近战 · 短焰', 1],
+          ['2', '炮击 · 最猛', 2],
+          ['3', '燎原 · 长火舌', 3],
+          ['4', '激光 · 冷白细芒', 4],
+        ];
+        var AGES = [0, 0.3, 0.7];
+        var tbl = document.createElement('table');
+        var thead = document.createElement('thead');
+        var tr = document.createElement('tr');
+        tr.appendChild(document.createElement('th'));
+        for (var s = 0; s < AGES.length; s++) {
+          var th = document.createElement('th');
+          th.textContent = 'age = ' + AGES[s];
+          tr.appendChild(th);
+        }
+        thead.appendChild(tr);
+        tbl.appendChild(thead);
+        var tb = document.createElement('tbody');
+        for (var i = 0; i < KINDS.length; i++) {
+          var row = document.createElement('tr');
+          var h = document.createElement('th');
+          h.innerHTML = '<b>' + KINDS[i][1] + '</b><em>弹种编号 k = ' + KINDS[i][0] + '</em>';
+          row.appendChild(h);
+          var spread = null;
+          for (var j = 0; j < AGES.length; j++) {
+            var td = document.createElement('td');
+            var cv = cell('muzzle', { a: 0, age: AGES[j], k: KINDS[i][2], r: 16, seed: 0.37, col: OWNER });
+            td.appendChild(cv);
+            spread = boundarySpread(cv);
+            row.appendChild(td);
+          }
+          var mt = document.createElement('td');
+          mt.innerHTML = metricLine(spread);
+          row.appendChild(mt);
+          tb.appendChild(row);
+        }
+        tbl.appendChild(tb);
+        host.appendChild(tbl);
+      })();
+
+      /* ================= 三、命中炸开 ================= */
+      (function () {
+        var host = document.getElementById('splat');
+        var KINDS = [
+          ['普通命中', 0, OWNER],
+          ['炮击命中', 2, OWNER],
+          ['敌方命中（归属色不同）', 0, RIVAL],
+        ];
+        var AGES = [0.05, 0.3, 0.7];
+        var tbl = document.createElement('table');
+        var thead = document.createElement('thead');
+        var tr = document.createElement('tr');
+        tr.appendChild(document.createElement('th'));
+        for (var s = 0; s < AGES.length; s++) {
+          var th = document.createElement('th');
+          th.textContent = 'age = ' + AGES[s];
+          tr.appendChild(th);
+        }
+        thead.appendChild(tr);
+        tbl.appendChild(thead);
+        var tb = document.createElement('tbody');
+        for (var i = 0; i < KINDS.length; i++) {
+          var row = document.createElement('tr');
+          var h = document.createElement('th');
+          h.innerHTML = '<b>' + KINDS[i][0] + '</b><em>沿命中方向甩扇面</em>';
+          row.appendChild(h);
+          var spread = null;
+          for (var j = 0; j < AGES.length; j++) {
+            var td = document.createElement('td');
+            var cv = cell('splat', { a: -0.5, age: AGES[j], k: KINDS[i][1], r: 16, seed: 0.55, col: KINDS[i][2] });
+            td.appendChild(cv);
+            spread = boundarySpread(cv);
+            row.appendChild(td);
+          }
+          var mt = document.createElement('td');
+          mt.innerHTML = metricLine(spread);
+          row.appendChild(mt);
+          tb.appendChild(row);
+        }
+        tbl.appendChild(tb);
+        host.appendChild(tbl);
+      })();
+
+      /* ================= 四、落点与弹痕 ================= */
+      (function () {
+        var host = document.getElementById('boom');
+        host.appendChild(boomTable());
+        host.appendChild(markTable());
+
+        function boomTable() {
+          var wrap = document.createElement('div');
+          wrap.innerHTML = '<h3>炮击落点（boom）· 半径 r = 22</h3>';
+          var tbl = document.createElement('table');
+          var tr = document.createElement('tr');
+          tr.appendChild(document.createElement('th'));
+          var AGES = [0.05, 0.3, 0.7];
+          for (var s = 0; s < AGES.length; s++) {
+            var th = document.createElement('th');
+            th.textContent = 'age = ' + AGES[s];
+            tr.appendChild(th);
+          }
+          tbl.appendChild(tr);
+          var row = document.createElement('tr');
+          var h = document.createElement('th');
+          h.innerHTML = '<b>墨花炸开</b><em>外圈泥点随相位甩远</em>';
+          row.appendChild(h);
+          var spread = null;
+          for (var j = 0; j < AGES.length; j++) {
+            var td = document.createElement('td');
+            var cv = cell('boom', { age: AGES[j], r: 22, seed: 0.29 });
+            td.appendChild(cv);
+            spread = boundarySpread(cv);
+            row.appendChild(td);
+          }
+          var mt = document.createElement('td');
+          mt.innerHTML = metricLine(spread);
+          row.appendChild(mt);
+          tbl.appendChild(row);
+          wrap.appendChild(tbl);
+          return wrap;
+        }
+
+        function markTable() {
+          var wrap = document.createElement('div');
+          wrap.innerHTML = '<h3 style="margin-top:26px">地面弹痕（mark）· 寿命 9 秒</h3>' +
+            '<div class="sub">越往后越淡：后段走二次曲线，0.35 之后掉得明显快，不然一场仗下来整张图会糊成一片灰。</div>';
+          var tbl = document.createElement('table');
+          var tr = document.createElement('tr');
+          tr.appendChild(document.createElement('th'));
+          var AGES = [0.02, 0.35, 0.75];
+          for (var s = 0; s < AGES.length; s++) {
+            var th = document.createElement('th');
+            th.textContent = 'age = ' + AGES[s];
+            tr.appendChild(th);
+          }
+          tbl.appendChild(tr);
+          var KINDS = [['普通弹痕', 5], ['炮击弹痕', 7.5]];
+          for (var i = 0; i < KINDS.length; i++) {
+            var row = document.createElement('tr');
+            row.appendChild(rowHead(KINDS[i][0], '半径 ' + KINDS[i][1] + 'px'));
+            var spread = null;
+            for (var j = 0; j < AGES.length; j++) {
+              var td = document.createElement('td');
+              var cv = cell('mark', { age: AGES[j], r: KINDS[i][1], seed: 0.63, col: OWNER });
+              td.appendChild(cv);
+              // 读数取刚落下的那一格：后两格本来就在淡出（0.35 之后 alpha 只剩两三成），
+              // 拿它们量轮廓就只剩「快没了」这一个读数，说明不了形状
+              if (spread === null) spread = boundarySpread(cv);
+              row.appendChild(td);
+            }
+            var mt = document.createElement('td');
+            mt.innerHTML = metricLine(spread);
+            row.appendChild(mt);
+            tbl.appendChild(row);
+          }
+          wrap.appendChild(tbl);
+          return wrap;
+        }
+      })();
+
+      /* ================= 四·五、燎原：火舌落地 ================= */
+      (function () {
+        var host = document.getElementById('flame');
+        var AGES = [0.05, 0.35, 0.75];
+        var SIZES = [['燎原 1 阶', 46], ['燎原 3 阶', 46]];
+        var tbl = document.createElement('table');
+        var thead = document.createElement('thead');
+        var tr = document.createElement('tr');
+        tr.appendChild(document.createElement('th'));
+        for (var s = 0; s < AGES.length; s++) {
+          var th = document.createElement('th');
+          th.textContent = 'age = ' + AGES[s];
+          tr.appendChild(th);
+        }
+        thead.appendChild(tr);
+        tbl.appendChild(thead);
+        var tb = document.createElement('tbody');
+        for (var i = 0; i < SIZES.length; i++) {
+          var row = document.createElement('tr');
+          var h = document.createElement('th');
+          h.innerHTML = '<b>' + SIZES[i][0] + '</b><em>火场半径 r = ' + SIZES[i][1] + '</em>';
+          row.appendChild(h);
+          var spread = null;
+          for (var j = 0; j < AGES.length; j++) {
+            var td = document.createElement('td');
+            var cv = cell('flame', { age: AGES[j], r: SIZES[i][1], seed: 0.29 + i * 0.4, col: OWNER });
+            td.appendChild(cv);
+            if (spread === null) spread = boundarySpread(cv);
+            row.appendChild(td);
+          }
+          var mt = document.createElement('td');
+          mt.innerHTML = metricLine(spread);
+          row.appendChild(mt);
+          tb.appendChild(row);
+        }
+        tbl.appendChild(tb);
+        host.appendChild(tbl);
+      })();
+
+      /* ================= 五、判定 ================= */
+      (function () {
+        var host = document.getElementById('verdict');
+        var rows = [];
+
+        function add(label, spread, circle, ok) {
+          rows.push({ label: label, spread: spread, circle: circle, ok: ok });
+        }
+
+        // 圆的判据：轮廓半径种数要比「同径正圆」多出至少 3 种。
+        // 不能用「2 倍」——小尺寸（5px 上下）的正圆在 36 向射线 + 0.5px 分桶下
+        // 本身就能给出 5~6 种，2 倍门槛对最小的弹丸永远过不去，读数反而失真。
+        function wobblierThan(spread, circle) {
+          return spread.kinds > circle.kinds + 2;
+        }
+
+        var bulletSpread = boundarySpread(cell('bullet', { a: 0, seed: 0.41, col: OWNER, k: 0 }));
+        var bulletCircle = boundarySpread(circleCell(5.4));
+        add('普通弹丸（墨滴长约 5.4px）', bulletSpread, bulletCircle, wobblierThan(bulletSpread, bulletCircle));
+
+        var muzzle0 = boundarySpread(cell('muzzle', { a: 0, age: 0, k: 0, r: 16, seed: 0.37, col: OWNER }));
+        var muzzleMid = boundarySpread(cell('muzzle', { a: 0, age: 0.3, k: 0, r: 16, seed: 0.37, col: OWNER }));
+        var muzzleLate = boundarySpread(cell('muzzle', { a: 0, age: 0.7, k: 0, r: 16, seed: 0.37, col: OWNER }));
+        add('枪口焰 age=0 还没张开（最大半径应最小）', muzzle0, null, muzzle0.max < muzzleMid.max);
+        add('枪口焰 age=0.3 冲到最张（最大半径应最大）', muzzleMid, null, muzzleMid.max > muzzleLate.max);
+        add('枪口焰 age=0.7 已收回大半', muzzleLate, null, muzzleLate.max < muzzleMid.max * 0.9);
+
+        var splatSpread = boundarySpread(cell('splat', { a: -0.5, age: 0.3, k: 0, r: 16, seed: 0.55, col: OWNER }));
+        var splatCircle = boundarySpread(circleCell(12));
+        add('命中炸开（同期墨团半径约 12px）', splatSpread, splatCircle, wobblierThan(splatSpread, splatCircle));
+
+        var boomSpread = boundarySpread(cell('boom', { age: 0.3, r: 22, seed: 0.29 }));
+        var boomCircle = boundarySpread(circleCell(22));
+        add('炮击落点（同期墨花半径约 22px）', boomSpread, boomCircle, wobblierThan(boomSpread, boomCircle));
+
+        var markSpread = boundarySpread(cell('mark', { age: 0.02, r: 5, seed: 0.63, col: OWNER }));
+        var markCircle = boundarySpread(circleCell(5));
+        add('地面弹痕', markSpread, markCircle, wobblierThan(markSpread, markCircle));
+
+        // 燎原火舌落地：age=0.05（刚点着，最旺）必须比 age=0.75（快烧完）明显更宽
+        var flame0 = boundarySpread(cell('flame', { age: 0.05, r: 46, seed: 0.29, col: OWNER }));
+        var flameLate = boundarySpread(cell('flame', { age: 0.75, r: 46, seed: 0.29, col: OWNER }));
+        var flameCircle = boundarySpread(circleCell(20));
+        add('火舌落地（同期焰团半径约 20px）', flame0, flameCircle, wobblierThan(flame0, flameCircle));
+        // 淡出量的是「实色墨量」而非轮廓：火焰是变透明，边界半径几乎不缩
+        var flameInk0 = inkCount(cell('flame', { age: 0.05, r: 46, seed: 0.29, col: OWNER }), 60);
+        var flameInkLate = inkCount(cell('flame', { age: 0.75, r: 46, seed: 0.29, col: OWNER }), 60);
+        add(
+          '火舌 age=0.75 已烧淡大半（实色墨量应收掉一大半）',
+          flameLate,
+          null,
+          flameInkLate < flameInk0 * 0.5
+        );
+
+        var html = '<div class="cmp-card"><h4>轮廓不规则度</h4>';
+        var allPass = true;
+        for (var i = 0; i < rows.length; i++) {
+          var r = rows[i];
+          if (!r.ok) allPass = false;
+          html += '<div class="verdict-row ' + (r.ok ? 'pass' : 'fail') + '">' +
+            (r.ok ? '✓' : '✗') + ' ' + r.label +
+            ' —— 墨团 <b>' + r.spread.kinds + '</b> 种';
+          if (r.circle) html += '，同径正圆只有 <b>' + r.circle.kinds + '</b> 种';
+          else html += '（最大半径 ' + r.spread.max.toFixed(1) + 'px）';
+          html += '</div>';
+        }
+        html += '<div class="verdict ' + (allPass ? 'pass' : 'fail') + '">' +
+          (allPass ? '✓ 全部符合：都是不规则墨团，且开火是先张后收' : '✗ 有项目不符') + '</div></div>';
+        host.innerHTML = html;
+      })();
+    })();
+  </script>
+</body>
+</html>

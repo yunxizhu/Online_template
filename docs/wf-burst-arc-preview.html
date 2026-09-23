@@ -1,4 +1,9 @@
-'use strict';
+<!DOCTYPE html><html lang=zh><head><meta charset=utf-8><title>burst-arc</title>
+<style>html,body{margin:0;background:#1b1714;}#warfactory-canvas{display:block;width:960px;height:600px;background:#1b1714;}</style>
+</head><body class=phase-game>
+<div id=game-panels></div>
+<canvas id=warfactory-canvas width=960 height=600></canvas>
+<script>'use strict';
 
 /**
  * 战争工厂（warfactory）客户端：水墨渲染 + RTS 操作。
@@ -178,7 +183,6 @@ window.WarFactoryUi = (function () {
   const MARK_INK_ALPHA = 0.28;
   const MARK_TINT_ALPHA = 0.17;
   const moveMarkers = [];
-  const attackMarkers = []; // 右键锁定攻击目标的落点提示
   const rallyFx = []; // 设置集结点时的落点特效
   /**
    * 灼烧地形（燎原喷出的火场）：服务端权威，每帧从快照 `fr` 整段替换。
@@ -1963,30 +1967,6 @@ window.WarFactoryUi = (function () {
   }
 
   /**
-   * 解析「目标类别编号 + id」对应的世界坐标与半径（坐标全部从本地视图取）。
-   * 激光/燎原的锁定指示和「追击攻击命令」的常驻指示共用这一套解析。
-   */
-  function targetInfoOf(kind, id) {
-    if (kind === 1) {
-      const t = units.get(id);
-      return t ? { x: t.x, y: t.y, r: 22 } : null;
-    }
-    if (kind === 2) {
-      const f = factoriesView.find((x) => x.id === id);
-      return f ? { x: f.x, y: f.y, r: factoryRadius() } : null;
-    }
-    if (kind === 3) {
-      const l = labsView.find((x) => x.id === id);
-      return l ? { x: l.x, y: l.y, r: labR() } : null;
-    }
-    if (kind === 4) {
-      const h = hqView.find((x) => x.id === id);
-      return h ? { x: h.x, y: h.y, r: hqR() } : null;
-    }
-    return null;
-  }
-
-  /**
    * 激光兵光束：完全由服务端的「锁定状态」驱动。
    *  - 前摇中（lw > 0）：虚线瞄准 + 枪口蓄能光点 + 目标处收拢的锁定环（尚不造成伤害）
    *  - 已锁定（lw = 0）：枪口到目标的持续光束，粗细与亮度随倍率（1 → 5 倍）增强
@@ -2452,85 +2432,7 @@ window.WarFactoryUi = (function () {
       c.lineTo(m.x, m.y + 6);
       c.stroke();
     }
-    // 右键锁定攻击目标标记（红圈 + 内准星，与移动标记区分）
-    for (let i = attackMarkers.length - 1; i >= 0; i--) {
-      const m = attackMarkers[i];
-      const age = (t - m.born) / m.ttl;
-      if (age >= 1) {
-        attackMarkers.splice(i, 1);
-        continue;
-      }
-      const a = 1 - age;
-      c.strokeStyle = 'rgba(232,86,64,' + (0.9 * a).toFixed(3) + ')';
-      c.lineWidth = 2.6;
-      c.beginPath();
-      c.arc(m.x, m.y, 18 * (1 - age * 0.4), 0, TAU);
-      c.stroke();
-      c.beginPath();
-      for (let k = 0; k < 4; k++) {
-        const ang = (k / 4) * TAU;
-        c.moveTo(m.x + Math.cos(ang) * 12, m.y + Math.sin(ang) * 12);
-        c.lineTo(m.x + Math.cos(ang) * 18, m.y + Math.sin(ang) * 18);
-      }
-      c.stroke();
-    }
-    // 追击攻击命令的**常驻**指示（区别于上面 950ms 的点击反馈）：
-    // 命令只要还活着就一直画 —— 目标身上一圈缓慢转动的虚线锁定环 + 四角准星，
-    // 执行命令且被选中的部队还会拉一条虚线到目标，随时看得出「谁在追谁」。
-    // 右键别处 / 停止 / 目标阵亡后服务端不再下发命令 → 指示自动消失。
-    if (myPlayerIndex() >= 0) {
-      const ordered = new Map(); // key `kind:id` → { kind, id, chasers: [] }
-      for (const u of units.values()) {
-        if (!u.ok || u.oi !== myPlayerIndex()) continue;
-        const key = u.ok + ':' + u.od;
-        let it = ordered.get(key);
-        if (!it) {
-          it = { kind: u.ok, id: u.od, chasers: [] };
-          ordered.set(key, it);
-        }
-        it.chasers.push(u);
-      }
-      const spin = (t / 620) % 1;
-      for (const it of ordered.values()) {
-        const tp = targetInfoOf(it.kind, it.id);
-        if (!tp) continue;
-        // 被选中的执行部队 → 目标：细虚线（追击途中一眼看出目标在哪）
-        c.save();
-        c.setLineDash([5, 7]);
-        c.lineWidth = 1.7;
-        c.strokeStyle = 'rgba(216,64,44,0.5)';
-        c.beginPath();
-        for (const u of it.chasers) {
-          if (!selection.has(u.id)) continue;
-          c.moveTo(u.x, u.y);
-          c.lineTo(tp.x, tp.y);
-        }
-        c.stroke();
-        c.restore();
-        // 目标身上的锁定环：虚线随时间转动 + 四角准星
-        const rr = tp.r + 13;
-        c.save();
-        c.translate(tp.x, tp.y);
-        c.rotate(spin * TAU);
-        c.setLineDash([7, 6]);
-        c.lineWidth = 2;
-        c.strokeStyle = 'rgba(232,86,64,0.62)';
-        c.beginPath();
-        c.arc(0, 0, rr, 0, TAU);
-        c.stroke();
-        c.setLineDash([]);
-        c.lineWidth = 2.4;
-        c.beginPath();
-        for (let k = 0; k < 4; k++) {
-          const ang = (k / 4) * TAU + Math.PI / 4;
-          c.moveTo(Math.cos(ang) * (rr - 5), Math.sin(ang) * (rr - 5));
-          c.lineTo(Math.cos(ang) * (rr + 4), Math.sin(ang) * (rr + 4));
-        }
-        c.stroke();
-        c.restore();
-      }
-    }
-
+    // 集结点落点特效（扩散旗圈）
     for (let i = rallyFx.length - 1; i >= 0; i--) {
       const m = rallyFx[i];
       const age = (t - m.born) / m.ttl;
@@ -3988,10 +3890,6 @@ window.WarFactoryUi = (function () {
       u.li = row[13] || 0; // 锁定目标 id
       u.lm = row[14] || 100; // 当前伤害倍率 ×100（100 = 1 倍）
       u.lw = row[15] || 0; // 前摇剩余毫秒（>0 = 蓄能中，尚未开火）
-      // 追击攻击命令（玩家右键指定）：0 = 没有命令。命令只要还在（哪怕正在赶路、还没进射程）
-      // 就一直下发，客户端据此在目标处常驻一个锁定指示 —— 命令一解除，指示随之消失。
-      u.ok = row[16] || 0; // 命令目标类别：0 无 / 1 单位 / 2 工厂 / 3 研究所 / 4 总部
-      u.od = row[17] || 0; // 命令目标 id
     }
     for (const id of [...units.keys()]) {
       if (!seen.has(id)) {
@@ -4560,13 +4458,8 @@ window.WarFactoryUi = (function () {
       boxSel.y1 = pos.y;
       evt.preventDefault();
     } else if (evt.button === 2) {
-      // 右键分流（指令越具体越优先）：
-      //   ① 选中了部队、且点中敌 / 中立单位或建筑 → 锁定攻击目标；
-      //   ② 选中了本方工厂、点的是空地 → 设集结点；
-      //   ③ 其余 → 指挥选中部队移动。
-      if (selection.size > 0 && issueAttackOn(pos.x, pos.y)) {
-        // 已锁定攻击目标，无需其他处理
-      } else if (selFacId) issueRally(pos.x, pos.y);
+      // 选中了本方工厂 → 右键设集结点；否则 → 指挥选中部队移动
+      if (selFacId) issueRally(pos.x, pos.y);
       else issueMove(pos.x, pos.y);
       evt.preventDefault();
     }
@@ -4721,58 +4614,6 @@ window.WarFactoryUi = (function () {
     if (typeof net !== 'undefined' && net && typeof net.sendRt === 'function') {
       net.sendRt({ cmd: 'move', x: Math.round(wx), y: Math.round(wy), ids });
       moveMarkers.push({ x: wx, y: wy, born: now, ttl: 850 });
-    }
-  }
-
-  /**
-   * 右键锁定攻击目标：玩家选中我方部队后，右键点中「敌 / 中立」单位或建筑，
-   * 把该目标设为这些部队的手动攻击目标（服务端在攻击范围内优先打它，否则自动）。
-   * 命中的是非己方目标才返回 true（由 onMouseDown 据此决定是否改走移动指令）。
-   */
-  function issueAttackOn(wx, wy) {
-    if (isSpectator || selection.size === 0) return false;
-    const mine = myPlayerIndex();
-    if (mine < 0) return false;
-    // 1) 点中的敌方 / 中立单位（任意归属，但非己方）
-    const hitU = unitAt(wx, wy, null);
-    if (hitU && hitU.oi !== mine) {
-      sendAttack('u', hitU.id, wx, wy);
-      return true;
-    }
-    // 2) 点中的敌方 / 中立建筑（工厂 / 研究所 / 总部，含被占领后 owner===-1 的中立）
-    const foeF = factoriesView.find(
-      (x) => x.owner !== mine && Math.hypot(x.x - wx, x.y - wy) < 70
-    );
-    if (foeF) {
-      sendAttack('f', foeF.id, wx, wy);
-      return true;
-    }
-    const foeL = labsView.find(
-      (x) => x.owner !== mine && Math.hypot(x.x - wx, x.y - wy) < labR() + 18
-    );
-    if (foeL) {
-      sendAttack('l', foeL.id, wx, wy);
-      return true;
-    }
-    const foeH = hqView.find(
-      (x) => !x.down && x.owner !== mine && Math.hypot(x.x - wx, x.y - wy) < hqR() + 18
-    );
-    if (foeH) {
-      sendAttack('h', foeH.id, wx, wy);
-      return true;
-    }
-    return false;
-  }
-
-  function sendAttack(kind, id, wx, wy) {
-    const now = Date.now();
-    if (now - lastCmdAt < 110) return;
-    lastCmdAt = now;
-    const ids = [...selection].slice(0, 80);
-    if (typeof net !== 'undefined' && net && typeof net.sendRt === 'function') {
-      net.sendRt({ cmd: 'attack', kind, id, ids });
-      attackMarkers.push({ x: wx, y: wy, born: now, ttl: 950 });
-      pushHudHint('已下达追击命令 · 右键别处取消');
     }
   }
 
@@ -5499,7 +5340,6 @@ window.WarFactoryUi = (function () {
       effects.length = 0;
       groundMarks.length = 0;
       moveMarkers.length = 0;
-      attackMarkers.length = 0;
       rallyFx.length = 0;
       selection.clear();
       selFacId = 0;
@@ -5633,4 +5473,259 @@ window.WarFactoryUi = (function () {
     /** 体型系数（docs 下的图谱页按它对预览图缩放，与游戏内一致） */
     scales: { vis: UNIT_VIS_SCALE, body: UNIT_BODY_SCALE },
   };
+})();</script>
+<script><!-- 战争工厂对局面板（水墨即时战略） -->
+<div class="panel game-panel" id="panel-warfactory" hidden>
+  <!--
+    布局：地图铺满整个屏幕（见 style.css 的「地图铺满整屏」一节）。
+    指挥栏浮在地图下沿、规则说明收进右上角的浮层 —— 地图下方不再有任何东西，
+    全屏（F11）之后画面里只有「游戏界面 + 地图」。
+  -->
+  <div class="warfactory-wrap">
+    <canvas
+      id="warfactory-canvas"
+      width="1280"
+      height="800"
+      data-i18n-attr="aria-label:warfactory.boardAria"
+      aria-label="战争工厂战场"
+    ></canvas>
+
+    <!-- 右上角浮层：规则与操作（原来的图例整段搬到这里，默认收起） -->
+    <div class="wf-map-tools">
+      <button
+        type="button"
+        id="wf-help-btn"
+        class="wf-map-btn"
+        aria-expanded="false"
+        aria-controls="wf-help"
+        title="规则与操作"
+        aria-label="规则与操作"
+      >？</button>
+    </div>
+    <div class="wf-help" id="wf-help" role="dialog" aria-label="规则与操作" hidden>
+      <div class="wf-help-head">
+        <span class="wf-help-title">规则与操作</span>
+        <button type="button" class="wf-help-close" id="wf-help-close" aria-label="关闭">×</button>
+      </div>
+      <div class="wf-help-body">
+        <div class="warfactory-legend">
+          <span class="warfactory-legend-title" data-i18n="warfactory.legendTitle">兵种图谱</span>
+          <span class="warfactory-legend-item"><b>锐士</b><em data-i18n="warfactory.unit.warrior">近战突进，攻守兼备</em></span>
+          <span class="warfactory-legend-item"><b>盾卫</b><em data-i18n="warfactory.unit.shield">重甲缓慢，坚不可摧</em></span>
+          <span class="warfactory-legend-item"><b>游侠</b><em data-i18n="warfactory.unit.ranger">远程狙击，薄血长射</em></span>
+          <span class="warfactory-legend-item"><b>轰击</b><em data-i18n="warfactory.unit.burst">范围炮击，落点成墨</em></span>
+          <span class="warfactory-legend-item"><b>燎原</b><em data-i18n="warfactory.unit.burn">持续喷火；二级起落点留下灼烧地形</em></span>
+          <span class="warfactory-legend-item"><b>激光兵</b><em data-i18n="warfactory.unit.laser">锁定越久伤害越高，最高 5 倍</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">地形</span>
+          <span class="warfactory-legend-item"><i class="terr-swatch terr-water"></i><b>水域</b><em>不可通行</em></span>
+          <span class="warfactory-legend-item"><i class="terr-swatch terr-swamp"></i><b>沼泽</b><em>可通行，减速 50%</em></span>
+          <span class="warfactory-legend-item"><i class="terr-swatch terr-mountain"></i><b>山地</b><em>不可通行，且有高度：挡住视线与弹道，山两侧互相看不见、打不到</em></span>
+          <span class="warfactory-legend-item"><i class="terr-swatch terr-plain"></i><b>平原</b><em>一览无余</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">交战</span>
+          <span class="warfactory-legend-item"><b>不追击</b><em>敌人进入攻击范围才开火；跑出范围即停火，部队绝不自己追出去</em></span>
+          <span class="warfactory-legend-item"><b>移动攻击</b><em>行军途中照常开火，边走边打（不必停下）</em></span>
+          <span class="warfactory-legend-item"><b>索敌范围</b><em>= 自身攻击范围，更远的敌人当作看不见</em></span>
+          <span class="warfactory-legend-item"><b>唯一的友伤</b><em>只有燎原的灼烧地形会烧自己人：把火铺在自家部队脚下，掉血的是自己（一级燎原不留火场，所以只有二级起才烧得到自己）</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">战场识别</span>
+          <span class="warfactory-legend-item"><b>归属色</b><em>红 / 蓝 / 黄 / 绿四方阵营色；单位脚下、工厂厂区、总部台基都压同色底盘（60% 透明），一眼看清是谁的</em></span>
+          <span class="warfactory-legend-item"><b>血量</b><em>所有单位默认常显血条（满血也显示），颜色随归属方</em></span>
+          <span class="warfactory-legend-item"><b>选中效果</b><em>被选中的部队脚下多一圈亮色呼吸光环，四周再加四角方框</em></span>
+          <span class="warfactory-legend-item"><b>开火</b><em>开枪时枪口会喷出锯齿状的火星与硝烟，射手同时向后一顿（后坐）；燎原是一道往外泼的长火舌，激光兵是冷白细芒</em></span>
+          <span class="warfactory-legend-item"><b>弹道</b><em>弹丸是沿弹道拖笔的墨滴（不是圆点），每发的笔锋都不一样；炮击弹更粗更沉（燎原不走弹道，是持续的火舌）</em></span>
+          <span class="warfactory-legend-item"><b>命中</b><em>打中哪里就在哪里炸开一团不规则的墨（像水球拍在地上），带一圈飞溅</em></span>
+          <span class="warfactory-legend-item"><b>弹痕</b><em>命中处在地上留一小块墨渍，约 9 秒后淡去——一眼看出这片区域刚被打过</em></span>
+          <span class="warfactory-legend-item"><b>灼烧地形</b><em>燎原的火舌落在哪里，哪里就烧起一片暗红火场（范围很大）；踩在上面的单位持续掉血，<b>不分敌我</b>，火焰一停几秒内自行熄灭。<b>一级燎原不留火场</b>，进化到二级才会烧地，三级火场更大、烧得更久、伤害更高</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">指挥栏</span>
+          <span class="warfactory-legend-item"><b>小地图</b><em>左下；点击或按住拖动即可把镜头跳到该处</em></span>
+          <span class="warfactory-legend-item"><b>单位粗览</b><em>中栏；只列当前选中的部队，没选中时这一栏不显示（想看谁就点谁）</em></span>
+          <span class="warfactory-legend-item"><b>侦察</b><em>他家的部队 / 工厂 / 总部 / 研究所也能左键点开看数据——只读，没有升级与指令按钮；框选永远只圈自己的部队</em></span>
+          <span class="warfactory-legend-item"><b>单位详情</b><em>右栏；点部队看属性，点工厂看产能，点总部看血量与产能升级</em></span>
+          <span class="warfactory-legend-item"><b>F2</b><em>全选我方所有部队（F 只选镜头内）</em></span>
+          <span class="warfactory-legend-item"><b>滚轮</b><em>在战场上滚动滚轮缩放视野；以鼠标所指位置为锚点，拉远看全局、推近看细节</em></span>
+          <span class="warfactory-legend-item"><b>中键平移</b><em>按住鼠标中键在战场上拖动，地图跟着手走（浏览器自带的「中键自动滚动」已屏蔽，中键只用来拖地图）</em></span>
+          <span class="warfactory-legend-item"><b>空格</b><em>镜头立刻回到自家总部（总部没了则回自家工厂；缩放倍率不变）</em></span>
+          <span class="warfactory-legend-item"><b>编队</b><em>Ctrl / Shift + 数字键 0-9：把当前选中的部队编入该编号（没选中则清空该编号）</em></span>
+          <span class="warfactory-legend-item"><b>数字键 0-9</b><em>选中该编队；同一编号连按两下，镜头立刻飞到编队的第一支部队（编队为空则不动）</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">工厂</span>
+          <span class="warfactory-legend-item"><b>固定兵种</b><em>每座工厂开局锁定一种兵，只产这一种</em></span>
+          <span class="warfactory-legend-item"><b>产线</b><em>默认 1 条；花 500 科技点在工厂面板里开辟新产线，最多 3 条并行生产</em></span>
+          <span class="warfactory-legend-item"><b>集结点</b><em>左键点选工厂 → 右键设集结点，此后新兵自动前往（Delete 清除）</em></span>
+          <span class="warfactory-legend-item"><b>进化</b><em>中/高级工厂的面板里有「进化」按钮，让本厂部队立刻进阶一阶</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">科技</span>
+          <span class="warfactory-legend-item"><b>科技点</b><em>左上角显示；只有占领研究所才产出——每座每 3 秒「一次性」+2 点（两座即每 3 秒一次 +4），HUD 进度条走满才跳，一座不占则为 0</em></span>
+          <span class="warfactory-legend-item"><b>进化</b><em>每 500 科技点可让一支部队进阶一阶（不再是经验）</em></span>
+          <span class="warfactory-legend-item"><b>生产加速</b><em>点选总部 → 花 1000 科技点点「加速生产」；每次在当前生产间隔上再减 1/15（复利），最多 20 级</em></span>
+          <span class="warfactory-legend-item"><b>研究所</b><em>初始中立，与工厂一样有血量：打光即由「最后一击者」接管并满血</em></span>
+          <span class="warfactory-legend-item"><b>总部</b><em>每人一座、不可易主；被打光即总部陷落，本人出局</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">出击</span>
+          <span class="warfactory-legend-item"><b>初始部队</b><em>开局没有工厂，只在总部拥有 6 种初级单位各 1 支</em></span>
+          <span class="warfactory-legend-item"><b>总部面板</b><em>左键点选自己的总部 → 右侧详情栏，可加速生产、也可用科技点让亲兵进阶</em></span>
+        </div>
+        <p class="warfactory-help" data-i18n="warfactory.help">
+          部队只打攻击范围内的敌人、不自动追击，但移动中照常开火 · 工厂与研究所有血量：打光即由「最后一击者」接管，易主后恢复满血，中立建筑只有 1/3 血 · 每 500 科技点进化一支部队 · 左键框选部队 · 右键移动 · F 选取镜头内部队 / F2 全选我方部队 · 选中工厂后右键设集结点 · 点工厂花 500 开路产线（最多 3 条）· 点总部花 1000 加速生产（最多 20 级）· WASD/方向键移动镜头 · 点击小地图跳转 · 总部被打爆即出局
+        </p>
+      </div>
+    </div>
+
+    <!-- ============ 底部指挥栏：对局状态 ｜ 小地图 ｜ 单位粗览 ｜ 单位详情 ============ -->
+    <div class="warfactory-cmdbar">
+      <!-- 对局状态（原来在地图上方那行，现在并进指挥栏顶沿，不占地图外的位置） -->
+      <p id="game-status" class="game-status wcb-status">—</p>
+      <!-- 左：小地图 -->
+      <section class="wcb-col wcb-mini">
+        <header class="wcb-head">
+          <span class="wcb-title">小地图</span>
+          <span class="wcb-tip">点击/拖动跳转</span>
+        </header>
+        <canvas
+          id="warfactory-minimap"
+          class="warfactory-minimap"
+          width="300"
+          height="200"
+          aria-label="小地图"
+        ></canvas>
+      </section>
+
+      <!-- 中：单位粗览（只列当前选中的部队；没选中就整段不显示） -->
+      <section class="wcb-col wcb-overview" id="warfactory-ov-sec">
+        <header class="wcb-head">
+          <span class="wcb-title">单位粗览</span>
+          <span class="wcb-count" id="wov-count">—</span>
+        </header>
+        <div class="wov-grid" id="warfactory-overview"></div>
+      </section>
+
+      <!-- 右：单位详情（点单位看属性 / 点工厂看产能与升级 / 点总部看血量与产能升级） -->
+      <section class="wcb-col wcb-detail" id="warfactory-detail-sec">
+        <header class="wcb-head">
+          <span class="wcb-title" id="wdt-title">单位详情</span>
+          <span class="wcb-count" id="wdt-count"></span>
+        </header>
+        <div class="wdt-body">
+          <!-- 未选中任何目标时：只留一行科技点 + 操作提示 -->
+          <div class="warfactory-self" id="warfactory-self">
+            <div class="wsl-line" id="wsl-tech">科 0</div>
+            <div class="wsl-line wsl-dim" id="wsl-hint">左键点选我方单位 / 工厂 / 总部查看详情 · 滚轮缩放 · 中键拖动平移 · 空格回总部</div>
+          </div>
+
+          <!-- 选中工厂 / 总部后：在详情栏内展示（不再浮在战场上） -->
+          <!--
+            两列排布（.wfp-cols）：左＝数据（产能 / 全厂提速），右＝可点的按钮与说明。
+            竖着堆会把右栏顶到要滚动才看得全，拆成两列后一屏装得下。
+          -->
+          <aside id="warfactory-facpanel" class="warfactory-facpanel" hidden>
+            <div class="wfp-head">
+              <span class="wfp-title" id="wfp-title">工厂</span>
+              <button type="button" class="wfp-close" id="wfp-close" aria-label="关闭">×</button>
+            </div>
+            <div class="wfp-row">
+              <span id="wfp-owner">—</span>
+              <span class="wfp-level" id="wfp-level">—</span>
+            </div>
+            <div class="wfp-bar wfp-bar-hp"><i id="wfp-hp-fill"></i></div>
+            <div class="wfp-hp-text" id="wfp-hp-text">—</div>
+
+            <div class="wfp-cols">
+              <!-- 左列：工厂看产能 / 总部看全厂提速 -->
+              <div class="wfp-col">
+                <!-- —— 工厂：产能（产线 / 进度 / 速率） —— -->
+                <div class="wfp-sec-title" id="wfp-prod-sec">产能</div>
+                <div class="wfp-unit" id="wfp-unit">
+                  <span class="wfp-glyph" id="wfp-glyph">兵</span>
+                  <div class="wfp-unit-main">
+                    <div class="wfp-unit-name" id="wfp-unit-name">—</div>
+                    <div class="wfp-unit-desc" id="wfp-unit-desc">—</div>
+                  </div>
+                </div>
+                <div class="wfp-kv" id="wfp-lines">产线 1 / 3</div>
+                <div class="wfp-bar wfp-bar-prod"><i id="wfp-prod-fill"></i></div>
+                <div class="wfp-rate" id="wfp-rate">—</div>
+                <div class="wfp-rally" id="wfp-rally">集结点：未设置</div>
+
+                <!-- —— 总部：生产加速（工厂时隐藏） —— -->
+                <div class="wfp-spd" id="wfp-spd">
+                  <div class="wfp-sec-title" id="wfp-spd-sec">生产加速（全厂提速）</div>
+                  <div class="wfp-kv" id="wfp-spd-lv">0 / 20 级</div>
+                  <div class="wfp-rate" id="wfp-spd-rate">—</div>
+                  <button type="button" class="wfp-evolve wfp-evolve-block" id="wfp-speed">加速生产（1000）</button>
+                </div>
+              </div>
+
+              <!-- 右列：所有能点的按钮都聚在这里 -->
+              <div class="wfp-col">
+                <button type="button" class="wfp-evolve wfp-evolve-block" id="wfp-line">开辟产线（500）</button>
+
+                <!-- —— 进化（工厂 / 总部都有） —— -->
+                <div class="wfp-sec-title" id="wfp-evo-sec">进化</div>
+                <button type="button" class="wfp-evolve wfp-evolve-block" id="wfp-evolve" hidden>进化</button>
+                <div class="wfp-note" id="wfp-note"></div>
+              </div>
+            </div>
+          </aside>
+
+          <!-- 选中部队后：单选看详细属性，多选看编制汇总 -->
+          <!-- 两列：左＝身份与状态（头像 / 血条 / 提示），右＝属性表 -->
+          <aside id="warfactory-unitpanel" class="warfactory-unitpanel" hidden>
+            <div class="wfp-head">
+              <span class="wfp-title" id="wup-title">部队</span>
+              <button type="button" class="wfp-close" id="wup-close" aria-label="关闭">×</button>
+            </div>
+            <div class="wup-cols">
+              <div class="wup-col">
+                <div class="wup-hero">
+                  <span class="wfp-glyph" id="wup-glyph">兵</span>
+                  <div class="wfp-unit-main">
+                    <div class="wfp-unit-name" id="wup-name">—</div>
+                    <div class="wfp-unit-desc" id="wup-desc">—</div>
+                  </div>
+                </div>
+                <div class="wfp-bar wfp-bar-hp wup-hp-bar"><i id="wup-hp-fill"></i></div>
+                <div class="wfp-hp-text" id="wup-hp-text">—</div>
+                <div class="wup-extra" id="wup-extra"></div>
+                <div class="wfp-note" id="wup-note"></div>
+              </div>
+              <div class="wup-col">
+                <div class="wfp-sec-title" id="wup-stats-sec">属性</div>
+                <div class="wup-stats" id="wup-stats">—</div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+</script>
+<script>
+(function(){
+ try{
+  var cv=document.getElementById('warfactory-canvas');
+  var ui=window.WarFactoryUi;
+  var state={ world:{w:800,h:500}, players:[{id:'p0',name:'甲'},{id:'p1',name:'乙'}], meId:'p0' };
+  ui.render(state,{on:function(){},sendRt:function(){}},{meId:'p0',isSpectator:false,title:'战争工厂'});
+  // 轰击兵在左，敌人在右，中间一道山脊；抛射弹正飞在半空（z=120）
+  var snap={ t:Date.now(), seq:1, phase:'playing', until:0,
+    u:[ [1,0,150,250,0,3,1,0,100,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],
+        [2,1,650,250,0,0,1,0,100,0,0,0,1,0,0,0,0,0,0,0,0,0,0] ],
+    b:[ [400,250,0,2,1,0,0.42,120,1] ],
+    f:[], l:[], h:[], ev:[ {t:'shot',x:150,y:250,a:0,k:2,oi:0,uid:1,r:9} ], fr:[] };
+  ui.applySnapshot(snap);
+  ui.renderFrame(0.016);
+  document.title='OK';
+ }catch(e){ document.title='ERR '+e.message; }
 })();
+</script></body></html>

@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>战争工厂 · 兵种图谱（阶数装饰对照）</title>
+<style>
+  :root {
+    --paper: #ece3cd;
+    --paper-deep: #e3d8bd;
+    --ink: #2a2620;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 32px 60px;
+    background: var(--paper);
+    color: var(--ink);
+    font: 14px/1.7 "STKaiti", "KaiTi", "Noto Serif SC", "SimSun", serif;
+  }
+  h1 { margin: 0 0 6px; font-size: 24px; letter-spacing: 2px; }
+  h2 { margin: 36px 0 12px; font-size: 18px; letter-spacing: 1px; }
+  .sub { color: rgba(42, 38, 32, 0.62); font-size: 13px; margin-bottom: 4px; }
+  .rule { border: 0; border-top: 1px solid rgba(42, 38, 32, 0.18); margin: 22px 0; }
+  table { border-collapse: collapse; }
+  th, td { padding: 6px 10px; text-align: center; vertical-align: middle; }
+  thead th { font-weight: 400; color: rgba(42, 38, 32, 0.6); font-size: 12px; }
+  tbody th { text-align: left; width: 190px; font-weight: 400; }
+  tbody th b { font-size: 16px; letter-spacing: 1px; }
+  tbody th em { display: block; font-style: normal; font-size: 12px; color: rgba(42, 38, 32, 0.55); }
+  td canvas { display: block; background: var(--paper-deep); border: 1px solid rgba(42, 38, 32, 0.14); }
+  .metric { font-size: 11px; color: rgba(42, 38, 32, 0.5); margin-top: 3px; }
+  .legend { font-size: 12px; color: rgba(42, 38, 32, 0.66); max-width: 900px; }
+  .legend li { margin: 2px 0; }
+  .cmp { display: flex; gap: 26px; align-items: flex-start; flex-wrap: wrap; }
+  .cmp-card { border: 1px solid rgba(42, 38, 32, 0.18); padding: 14px 18px; background: rgba(255, 255, 255, 0.28); }
+  .verdict { font-size: 15px; }
+  .pass { color: #2f6b3a; }
+  .fail { color: #9c3b2c; }
+  code { background: rgba(42, 38, 32, 0.07); padding: 1px 5px; }
+</style>
+</head>
+<body>
+  <h1>战争工厂 · 兵种图谱</h1>
+  <div class="sub">
+    直接用游戏里的作画代码（<code>public/games/warfactory/ui.js</code> → <code>previewUnitBody</code>）逐格绘制，未另抄一份造型。
+    每格下方的尺寸是「把这一格真的画到画布上、再扫像素求包围盒」量出来的。
+  </div>
+
+  <h2>一、各兵种 × 各阶（攻势 A / 守势 B）</h2>
+  <div class="legend">
+    规则：<b>内部花纹</b>与<b>外部挂件</b>都随阶数增加 —— 初级 0 道；中级 1 道花纹 + 左右各 1 枚穗子；高级 2 道花纹 + 左右各 2 枚穗子 + 一条阶层饰带。
+  </div>
+  <div id="grid" style="margin-top:14px"></div>
+
+  <hr class="rule">
+
+  <h2>二、锐士体型 ≥ 盾卫的一半</h2>
+  <div class="sub">同一横排、同一缩放画出来直接比。虚线是「盾卫尺寸的一半」的基准线。</div>
+  <div class="cmp" id="cmp" style="margin-top:12px"></div>
+
+  <script src="../public/games/warfactory/ui.js"></script>
+  <script>
+    (function () {
+      var Ui = window.WarFactoryUi;
+      if (!Ui || typeof Ui.previewUnitBody !== 'function') {
+        document.body.insertAdjacentHTML('beforeend', '<p class="fail">未能加载 ui.js（previewUnitBody 不存在）。</p>');
+        return;
+      }
+
+      var TYPES = [
+        ['warrior', '锐士', '近战突进，攻守兼备'],
+        ['shield', '盾卫', '重甲缓慢，坚不可摧'],
+        ['ranger', '游侠', '远程狙击，薄血长射'],
+        ['burst', '轰击', '范围炮击，落点成墨'],
+        ['burn', '燎原', '引火灼烧，伤上加伤'],
+        ['laser', '激光兵', '锁定越久伤害越高，最高 5 倍'],
+      ];
+      var COLS = [
+        [1, '', '初'],
+        [2, 'A', '中 · 攻'],
+        [2, 'B', '中 · 守'],
+        [3, 'A', '高 · 攻'],
+        [3, 'B', '高 · 守'],
+      ];
+      var OWNER = '#b03a2e'; // 玩家配色（花纹与挂件用归属色）
+      var CELL = 176;
+      var DPR = Math.min(2, window.devicePixelRatio || 1);
+
+      function scaleOf(type) {
+        var vis = (Ui.scales && Ui.scales.vis) || 1;
+        var body = (Ui.scales && Ui.scales.body && Ui.scales.body[type]) || 1;
+        return vis * body;
+      }
+
+      // ---- 真实量尺寸：画到离屏画布，扫 alpha 求包围盒 ----
+      var mcv = document.createElement('canvas');
+      var mctx = mcv.getContext('2d');
+      var MSIZE = 420;
+      function measure(type, tier, branch, s) {
+        mcv.width = MSIZE;
+        mcv.height = MSIZE;
+        mctx.setTransform(1, 0, 0, 1, 0, 0);
+        mctx.clearRect(0, 0, MSIZE, MSIZE);
+        mctx.save();
+        mctx.translate(MSIZE / 2, MSIZE / 2);
+        Ui.previewUnitBody(mctx, type, tier, branch, OWNER, s);
+        mctx.restore();
+        var d = mctx.getImageData(0, 0, MSIZE, MSIZE).data;
+        var x0 = MSIZE, y0 = MSIZE, x1 = -1, y1 = -1;
+        for (var y = 0; y < MSIZE; y++) {
+          for (var x = 0; x < MSIZE; x++) {
+            if (d[(y * MSIZE + x) * 4 + 3] > 8) {
+              if (x < x0) x0 = x;
+              if (x > x1) x1 = x;
+              if (y < y0) y0 = y;
+              if (y > y1) y1 = y;
+            }
+          }
+        }
+        if (x1 < 0) return null;
+        return { w: x1 - x0 + 1, h: y1 - y0 + 1, cx: (x0 + x1) / 2 - MSIZE / 2, cy: (y0 + y1) / 2 - MSIZE / 2 };
+      }
+
+      function paper(ctx, w, h) {
+        ctx.save();
+        ctx.fillStyle = '#e3d8bd';
+        ctx.fillRect(0, 0, w, h);
+        ctx.strokeStyle = 'rgba(42,38,32,0.07)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(w / 2, 0);
+        ctx.lineTo(w / 2, h);
+        ctx.moveTo(0, h / 2);
+        ctx.lineTo(w, h / 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function drawVariant(canvas, type, tier, branch, s, showBox) {
+        var m = measure(type, tier, branch, s);
+        var ctx = canvas.getContext('2d');
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        ctx.clearRect(0, 0, CELL, CELL);
+        paper(ctx, CELL, CELL);
+        if (!m) return null;
+        ctx.save();
+        ctx.translate(CELL / 2 - m.cx, CELL / 2 - m.cy);
+        Ui.previewUnitBody(ctx, type, tier, branch, OWNER, s);
+        ctx.restore();
+        if (showBox) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(42,38,32,0.32)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([4, 3]);
+          ctx.strokeRect(CELL / 2 - m.w / 2, CELL / 2 - m.h / 2, m.w, m.h);
+          ctx.setLineDash([]);
+          ctx.restore();
+        }
+        return m;
+      }
+
+      function makeCanvas(w, h) {
+        var cv = document.createElement('canvas');
+        cv.width = Math.round(w * DPR);
+        cv.height = Math.round(h * DPR);
+        cv.style.width = w + 'px';
+        cv.style.height = h + 'px';
+        return cv;
+      }
+
+      // ---- 一、网格 ----
+      var table = document.createElement('table');
+      var thead = document.createElement('thead');
+      var trh = document.createElement('tr');
+      trh.appendChild(document.createElement('th'));
+      COLS.forEach(function (c) {
+        var th = document.createElement('th');
+        th.textContent = c[2];
+        trh.appendChild(th);
+      });
+      thead.appendChild(trh);
+      table.appendChild(thead);
+
+      var tbody = document.createElement('tbody');
+      TYPES.forEach(function (t) {
+        var type = t[0];
+        var s = scaleOf(type);
+        var tr = document.createElement('tr');
+        var th = document.createElement('th');
+        th.innerHTML = '<b>' + t[1] + '</b><em>' + t[2] + '</em><em>体型系数 ×' + s.toFixed(2) + '</em>';
+        tr.appendChild(th);
+        COLS.forEach(function (col) {
+          var td = document.createElement('td');
+          var cv = makeCanvas(CELL, CELL);
+          var m = drawVariant(cv, type, col[0], col[1], s, true);
+          td.appendChild(cv);
+          var cap = document.createElement('div');
+          cap.className = 'metric';
+          cap.textContent = m ? Math.round(m.w) + ' × ' + Math.round(m.h) + ' px' : '—';
+          td.appendChild(cap);
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      document.getElementById('grid').appendChild(table);
+
+      // ---- 二、锐士 vs 盾卫 ----
+      var pairs = [
+        [1, '', '初级'],
+        [3, 'A', '高级 · 攻'],
+      ];
+      var host = document.getElementById('cmp');
+      pairs.forEach(function (p) {
+        var tier = p[0];
+        var branch = p[1];
+        var ws = scaleOf('warrior');
+        var gs = scaleOf('shield');
+        var wm = measure('warrior', tier, branch, ws);
+        var gm = measure('shield', tier, branch, gs);
+        if (!wm || !gm) return;
+
+        var W = 460;
+        var H = 260;
+        var cv = makeCanvas(W, H);
+        var ctx = cv.getContext('2d');
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        paper(ctx, W, H);
+
+        // 两支部队并排，共用同一缩放、以中心线对齐
+        var gap = 70;
+        var gapPx = (gm.w + wm.w) / 2 + gap;
+        var midY = H / 2;
+        ctx.save();
+        ctx.translate(W / 2 - gapPx / 2 - gm.cx, midY - gm.cy);
+        Ui.previewUnitBody(ctx, 'shield', tier, branch, OWNER, gs);
+        ctx.restore();
+        ctx.save();
+        ctx.translate(W / 2 + gapPx / 2 - wm.cx, midY - wm.cy);
+        Ui.previewUnitBody(ctx, 'warrior', tier, branch, OWNER, ws);
+        ctx.restore();
+
+        // 基准线：盾卫尺寸的一半
+        var hw = gm.w / 2;
+        var hh = gm.h / 2;
+        var cx0 = W / 2 - gapPx / 2;
+        ctx.save();
+        ctx.strokeStyle = 'rgba(47,107,58,0.75)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([5, 4]);
+        ctx.strokeRect(cx0 - hw / 2, midY - hh / 2, hw, hh);
+        ctx.restore();
+
+        ctx.save();
+        ctx.fillStyle = 'rgba(42,38,32,0.7)';
+        ctx.font = '12px "STKaiti","KaiTi",serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('盾卫 ' + p[2], cx0, H - 26);
+        ctx.fillText('锐士 ' + p[2] + '（绿框 = 盾卫的一半）', W / 2 + gapPx / 2, H - 26);
+        ctx.restore();
+
+        var rw = wm.w / gm.w;
+        var rh = wm.h / gm.h;
+        var pass = rw >= 0.5 && rh >= 0.5;
+
+        var card = document.createElement('div');
+        card.className = 'cmp-card';
+        card.appendChild(cv);
+        var txt = document.createElement('div');
+        txt.className = 'verdict ' + (pass ? 'pass' : 'fail');
+        txt.innerHTML =
+          p[2] +
+          '：宽 <b>' + (rw * 100).toFixed(0) + '%</b>、高 <b>' + (rh * 100).toFixed(0) + '%</b>' +
+          '（盾卫 ' + Math.round(gm.w) + '×' + Math.round(gm.h) + '，锐士 ' + Math.round(wm.w) + '×' + Math.round(wm.h) + '）' +
+          (pass ? ' ✓ 达标' : ' ✗ 不足一半');
+        card.appendChild(txt);
+        host.appendChild(card);
+      });
+    })();
+  </script>
+</body>
+</html>

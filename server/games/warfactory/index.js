@@ -12,7 +12,9 @@
  * - 单位靠战斗攒经验自动进化（初级→中级→高级），研究所归属方的经验获取 ×1.5。
  * - 单位五种：锐士（近战突进）、盾卫（重甲坦克）、游侠（远程狙击）、
  *   轰击（范围炮击）、燎原（燃烧灼烧）；进化时随机定型 A 攻势 / B 守势。
- * - 操作：框选己方部队 → 右键下达「进攻移动」；单位空闲时自动迎击圈内敌人。
+ * - 操作：框选己方部队 → 右键下达「移动/进攻移动」。
+ *   单位**不会自动追击**：只有敌人进入攻击范围才开火，敌人跑出范围即停火（不追）。
+ *   行军途中照常开火（移动攻击），所以不追击也能边走边打。
  * - 玩家失去全部工厂即出局，最后存活者获胜。
  *
  * 服务端权威模拟：固定 10Hz 步进，快照走轻量 game:rt 通道；
@@ -44,6 +46,17 @@ const NEUTRAL_HP_RATIO = 1 / 3;
 // 手动进化冷却（毫秒）：非初级工厂每间隔这么久才能手动进阶一支本厂部队
 const FAC_EVOLVE_CD = 4000;
 
+// ---- 工厂产线升级 / 总部产能升级 ----
+// 工厂默认一条产线（每 PRODUCE_MS 出 1 支）；花科技点可开辟更多产线，
+// 多条产线并行生产 → 同一时间一座工厂就能同时出多个单位（产出速率 × 产线数）。
+const FAC_LINE_COST = 500; // 每开辟一条新产线消耗的科技点
+const FAC_MAX_LINES = 3; // 单厂产线上限（最多同时生产 3 个单位）
+// 总部「生产加速」：用科技点加快本方所有部队的生产速度。
+// 每一次都在「当前间隔」上再减 1/15（复利 / 非线性），最多 20 次。
+const PROD_SPEED_COST = 1000; // 每次升级消耗的科技点
+const PROD_SPEED_MAX = 20; // 升级次数上限
+const PROD_SPEED_STEP = 1 / 15; // 每次在现有间隔上再减少的比例
+
 // ---- 研究所 / 总部 / 科技点 ----
 const LAB_R = 31; // 研究所碰撞半径（原 46）
 const LAB_HP = 1200; // 研究所满血：同工厂一样可被攻击，打光即由最后一击者接管
@@ -62,7 +75,9 @@ const STATS = {
   shield: { label: '盾卫', hp: 175, dmg: 8, range: 50, cd: 1.1, speed: 66, r: 10 },
   ranger: { label: '游侠', hp: 65, dmg: 10, range: 200, cd: 1.5, speed: 82, r: 9 },
   burst: { label: '轰击', hp: 75, dmg: 18, range: 165, cd: 2.1, speed: 58, r: 9, splash: 41 },
-  burn: { label: '燎原', hp: 80, dmg: 7, range: 120, cd: 1.7, speed: 78, r: 9, burn: true },
+  // 燎原：持续喷火（不点射）。dmg 的含义是「每秒火焰伤害」而不是「每次伤害」，
+  // cd 不参与射速（火焰是连续的），只作为面板兜底展示。
+  burn: { label: '燎原', hp: 80, dmg: 6, range: 135, cd: 0.25, speed: 78, r: 9, burn: true },
   // 激光兵：持续光束直伤（不走弹道）。锁定同一个目标越久伤害越高，最高 5 倍；
   // 一旦更换锁定目标就要重新蓄能（前摇期间不射击）。
   laser: { label: '激光兵', hp: 70, dmg: 2.5, range: 175, cd: 0.4, speed: 76, r: 9, laser: true },
@@ -75,9 +90,10 @@ const TIER_CD = [1, 0.88, 0.78];
 const LASER_WINDUP_MS = 800; // 前摇：换目标后这么久内不射击（蓄能）
 const LASER_RAMP_MS = 4000; // 蓄能满倍率所需时间：锁定每持续 4 秒，伤害 +1 倍
 const LASER_MAX_MUL = 5; // 倍率上限（初始 1 倍 → 最高 5 倍）
-const AGGRO_BONUS = 70; // 索敌范围 = 射程 + 该值
+// 索敌余量：只锁定「已经进入攻击范围」的敌人，仅留一点点余量避免边界抖动。
+// 单位不再自动追击——敌人跑出范围就停火，想打就自己右键把它拉过去。
+const ATTACK_SLACK = 10;
 const SCAN_MS = 250; // 索敌重估间隔
-const LEASH_DIST = 320; // 空闲守军追击半径（超出即归位）
 const MELEE_RANGE = 65; // ≤ 该射程视为近战（弹道高速短命）
 
 // ---- 弹道 ----
@@ -85,14 +101,83 @@ const BULLET_SPEED = 330;
 const BULLET_SPEED_MELEE = 520;
 const BULLET_LIFE_MS = 2400;
 const BULLET_R = 5;
-const BURN_DPS = 9;
-const BURN_MS = 3000;
+// 直射弹（非激光、非近战）命中后的爆炸半径：所有「子弹」都带溅射，
+// 且落点落在目标碰撞体积的随机一点（见 unitFire 的 aimAng），所以擦边命中时一次能溅到多个单位。
+const BULLET_SPLASH = 18;
 
-const COLORS = ['#b03a2e', '#2e5e8c', '#3f7a52', '#a8742c'];
+// ---- 轰击（burst）抛射弹 ----
+// 轰击不再走平直弹道，而是「抛射」：记录发射点 (sx,sy) 与落点 (tx,ty)，按飞行时间参数化，
+// 地面位置在两点之间线性插值，高度 z 走一条抛物线（峰值为 peak，落地 z=0）。
+// 因此无论目标躲到山后多远，弹都能**越过山脉**落到落点 —— 它既不撞山，溅射也不受山体遮挡。
+// 飞行时长随距离拉长（远射更慢、弧更高），手感更接近曲射炮。
+const SHELL_FLIGHT_BASE = 620; // 基础飞行时间（ms，落点极近时）
+const SHELL_FLIGHT_PER_PX = 2.0; // 每多 1px 距离增加的飞行时间（ms）
+const SHELL_PEAK_BASE = 46; // 基础弧顶高度（px）
+const SHELL_PEAK_PER_PX = 0.52; // 每多 1px 距离增加的弧顶高度（px）
+
+// ---- 燎原：喷火 / 灼烧地形 ----
+// 燎原不再是「一发燃烧弹命中后挂一段持续掉血」，而是**持续喷吐火焰**：
+// 火舌每步向前推进、在落点结算一次范围伤害（只伤敌方，单次极低但一直在烧），
+// 同时**在落点铺开一片灼烧地形**。踩在灼烧地形上的单位会持续掉血，
+// 而且这里敌我通吃 —— 这是全局唯一的友伤来源，所以数值压得很低、范围给得很大。
+// 火场的寿命跟着「最后一次被火舌刷到」走：火焰一停，几秒内自然熄灭。
+const FLAME_R = 52; // 火舌落点的范围伤害半径（范围大）
+const FLAME_PULSE_MS = 180; // 喷火的表现脉冲（枪口焰 + 后坐）—— 不是射速，火焰本身是连续的
+const FIRE_MAX = 160; // 场上灼烧地块上限（防极端情况下列表无限膨胀）
+
+/**
+ * 灼烧地形**逐阶解锁**（用户设定）：
+ *   一级燎原只会喷火，火舌落点不留火场 —— 想烧地，得先把它进化一次；
+ *   二级开始在地上留下灼烧地形（基准值）；
+ *   三级火场更大、烧得更久、伤害也更高。
+ *
+ * 每片火场自带自己的 r/dps/lifeMs（而不是共用全局常量），
+ * 因为场上会同时存在不同阶数留下的火场，客户端还要按各自寿命上限算衰减。
+ *   r      火场半径（范围大）
+ *   dps    每秒伤害（低，而且**敌我通吃**）
+ *   lifeMs 最后一次被火舌刷到之后，还能烧多久（几秒内自然熄灭）
+ *   mergeD 同主人的相近落点并入同一片火场的距离（否则每步都会新铺一块）
+ */
+const FIRE_TIERS = [
+  null, // 一级：不留火场（只有火舌本身的范围伤害）
+  { r: 46, dps: 3.5, lifeMs: 3000, mergeD: 34 }, // 二级：基准
+  { r: 64, dps: 6, lifeMs: 5200, mergeD: 44 }, // 三级：更大 / 更久 / 更疼
+];
+
+/** 取该阶数的火场参数；一级返回 null，表示「这一阶的燎原不留火场」 */
+function fireProfile(tier) {
+  return FIRE_TIERS[clamp(tier || 1, 1, 3) - 1];
+}
+
+/**
+ * 弹种编号（下发到客户端的紧凑表示，客户端按它选画法）。
+ *   0 弹丸 / 1 近战 / 2 炮击 / 3 火焰 / 4 激光（激光不走弹道，只用于「开火」表现）
+ * 客户端 public/games/warfactory/ui.js 的 drawBullets / 枪口焰分支与此一一对应。
+ *
+ * 注意：3（火焰）现在**不再有弹体** —— 燎原改成了持续喷吐的火舌（见 sprayFlame），
+ * 编号 3 只用来让客户端把枪口焰画成火焰色。快照里不会出现 k=3 的弹丸，
+ * 但 drawBulletBody / drawSplatFx 仍保留 k=3 的分支，供 docs 特效图谱页逐格核对。
+ */
+const BULLET_KIND_IX = { bullet: 0, melee: 1, shell: 2, fire: 3 };
+/** 开火事件里的弹种编号：4 表示激光（客户端画冷光蓄能焰，而非火花） */
+const SHOT_KIND_LASER = 4;
+/**
+ * 目标类别编号（与单位快照里的「锁定目标类别」「追击命令目标类别」共用同一套编号）：
+ * 0 无 / 1 单位 / 2 工厂 / 3 研究所 / 4 总部。
+ * 客户端只收到编号与 id，具体坐标由它从本地的单位/建筑视图里取。
+ */
+const TARGET_KIND_IX = { u: 1, f: 2, l: 3, h: 4 };
+
+// 玩家归属色：红 / 蓝 / 黄 / 绿。
+// 客户端把它同时用于单位本体描色、单位脚下底色盘、工厂底色盘（60% 透明）等，
+// 改动这里请连带看一眼 public/games/warfactory/ui.js 的 OWNER_PAD_ALPHA。
+const COLORS = ['#b03a2e', '#2e5e8c', '#c9a227', '#3f7a52'];
 
 // ---- 地形（元胞自动机：上半生成 + 180° 旋转出下半）----
 // 类型编号与客户端（public/games/warfactory/ui.js）保持一致：
 //   0 平原 / 2 山地（不可通行，窄而连续的山脉）/ 3 沼泽（可通行，减速）/ 4 水域（不可通行，大片连续）
+// 其中「山地」另有高度：它同时遮挡视线与弹道（山两侧互相看不见、打不到）；
+// 「水域」只是不可通行的平面，不遮挡视线，弹丸照常飞越水面。
 const TERR_COLS = 108;
 const TERR_ROWS = 72; // 偶数行：确保上下半 180° 旋转无缝衔接
 const TERR_CELL = 40; // 4320/40=108，2880/40=72
@@ -115,6 +200,11 @@ const RIDGE_WIDEN = 0.32; // 山脊加宽成 2 格的概率（控制山体「窄
 // 寻路：每步最多新建多少个地形流场（缓存未命中时才建；超限的单位本步退回直线转向）
 const FLOW_BUILD_PER_STEP = 8;
 const FLOW_CACHE_MAX = 96; // 流场缓存上限（按目标格缓存）
+// ---- 山体遮挡（山有高度）----
+// 山地不只是「不可通行」：它还会挡住视线与弹道，山两侧的单位互相看不见、打不到。
+// 水域只是不可通行（平面），不遮挡视线，弹丸照常飞过水面。
+const LOS_STEP = TERR_CELL / 2; // 视线采样步长（半格 20px：不漏掉 1 格宽的山脊，也不会因擦角误判）
+const BULLET_TERRAIN_STEP = 8; // 弹道逐帧位移可达 33px，需细分采样才不会「跨过」山脊
 
 /** FNV-1a 字符串哈希，作为每局地形种子（与客户端算法一致） */
 function hashStr(s) {
@@ -641,6 +731,57 @@ function terrainPassable(game, x, y) {
   return t !== TT_MOUNTAIN && t !== TT_WATER;
 }
 
+/** 取某坐标所在的地形格线性下标（越界返回 -1） */
+function cellIdxRaw(t, x, y) {
+  const c = Math.floor(x / t.cell);
+  const r = Math.floor(y / t.cell);
+  if (r < 0 || c < 0 || r >= t.rows || c >= t.cols) return -1;
+  return r * t.cols + c;
+}
+
+/**
+ * 沿直线细分采样，返回「第一次进入山体格」的距离（px）；全程不碰山返回 -1。
+ * 水域 / 沼泽 / 平原都不阻挡，只有 TT_MOUNTAIN 阻挡。
+ * @param {object} opts
+ *   - step      采样步长（默认 LOS_STEP）
+ *   - skipEnds  true 时忽略「起点 / 终点自身所在格」——单位贴着山脚站立时，
+ *               自己的格子不该被算成遮挡；索敌判定用 true，弹道扫掠用 false。
+ */
+function mountainHitAlong(game, x1, y1, x2, y2, opts) {
+  const t = game.terrain;
+  if (!t) return -1;
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-3) return -1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const st = (opts && opts.step) || LOS_STEP;
+  const skip = Boolean(opts && opts.skipEnds);
+  const ci0 = skip ? cellIdxRaw(t, x1, y1) : -1;
+  const ci1 = skip ? cellIdxRaw(t, x2, y2) : -1;
+  const hit = (s) => {
+    const r = Math.floor((y1 + uy * s) / t.cell);
+    const c = Math.floor((x1 + ux * s) / t.cell);
+    if (r < 0 || c < 0 || r >= t.rows || c >= t.cols) return false;
+    const i = r * t.cols + c;
+    if (i === ci0 || i === ci1) return false;
+    return t.grid[r][c] === TT_MOUNTAIN;
+  };
+  for (let s = st; s < len; s += st) {
+    if (hit(s)) return s;
+  }
+  return hit(len) ? len : -1;
+}
+
+/**
+ * 两点之间视线是否被山体挡住。
+ * 山有高度 → 山两侧互相看不见：既不能索敌，也不能开火（水域不遮挡）。
+ */
+function losBlocked(game, x1, y1, x2, y2) {
+  return mountainHitAlong(game, x1, y1, x2, y2, { step: LOS_STEP, skipEnds: true }) >= 0;
+}
+
 /**
  * 找到离 (x,y) 最近的「可通行且不压建筑」的格心。
  * 目标点本身可立足（不在建筑占位内）时原样返回，保持精确；
@@ -1147,14 +1288,120 @@ function stepUnit(game, u, dx, dy) {
   return false;
 }
 
-/** 出生工厂坐标（按人数椭圆均布） */
-function basePos(index, count) {
-  const table = BASE_ANGLES[count] || BASE_ANGLES[4];
-  const a = (table[index % table.length] * Math.PI) / 180;
+/** 出生点随机化的边界参数（世界像素） */
+const HQ_MIN_GAP = 1500; // 任意两座总部之间的最小间距——「旋转克隆」之后也不能贴在一起
+const HQ_BUILDING_GAP = 300; // 总部与中立工厂/研究所的最小额外间距（叠在建筑半径上）
+const HQ_RADIUS_JITTER = 0.2; // 椭圆半径最多向内收缩 20%（让出生点不至于永远贴在最外圈）
+const HQ_SPOT_TRIES = 160; // 每个出生点的重掷次数
+const HQ_BASE_MARGIN = 200; // 出生点距世界边缘的最小距离
+
+/** 椭圆环上的一点：angle 弧度、k 为半径缩放（1 = 标准椭圆） */
+function ellipsePoint(angle, k) {
   return {
-    x: clamp(ELLIPSE.cx + Math.cos(a) * ELLIPSE.rx, FACTORY_R + 40, WORLD_W - FACTORY_R - 40),
-    y: clamp(ELLIPSE.cy + Math.sin(a) * ELLIPSE.ry, FACTORY_R + 40, WORLD_H - FACTORY_R - 40),
+    x: ELLIPSE.cx + Math.cos(angle) * ELLIPSE.rx * k,
+    y: ELLIPSE.cy + Math.sin(angle) * ELLIPSE.ry * k,
   };
+}
+
+/** 绕世界中心旋转 180°：地图就是「上半 180° 克隆出下半」，出生点按同一套配对 */
+function mirrorPoint(p) {
+  return { x: ELLIPSE.cx * 2 - p.x, y: ELLIPSE.cy * 2 - p.y };
+}
+
+/** 出生点四周是否有走得出去的口子：16 个方向里至少 3 个方向能连走 3 步 */
+function baseAreaOpen(game, x, y) {
+  const N = 16;
+  let open = 0;
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2;
+    let clear = 0;
+    for (let step = 1; step <= 4; step++) {
+      const rr = step * TERR_CELL * 0.9;
+      if (terrainPassable(game, x + Math.cos(a) * rr, y + Math.sin(a) * rr)) clear++;
+    }
+    if (clear >= 3) open++;
+  }
+  return open >= 3;
+}
+
+/**
+ * 出生点（总部位置）：不再钉死在固定角度表上，改为在椭圆环上随机取点。
+ *
+ * 地图是「上半 + 180° 旋转克隆」的点对称图（地形、中立工厂、研究所全是如此），
+ * 所以偶数人局按 180° 配对：取一个随机点，它的克隆点（绕世界中心转 180°）交给
+ * 同轴的伙伴玩家——两人分到的地形与建筑关系完全同构（公平），而落点每局都不一样。
+ *
+ * 随机点若太靠近世界中心，它和克隆点就会挤在一起，所以对「任意两座总部」都做
+ * 最小间距判定（HQ_MIN_GAP），不满足就重掷；另外还要避开中立工厂/研究所，
+ * 且四周得走得出去（别把总部塞进湖心/深山里的小坑）。
+ * 逐级放宽（LADDER）保证一定有解，但最后一级也仍要求 ≥ 2×占领半径，绝不会贴脸。
+ * 人数为奇数时没法两两配对，直接按同一套「间距 + 避让」规则各自随机落点。
+ * @returns {{x:number, y:number}[]} 与玩家下标一一对应（已 round1）
+ */
+function pickBasePositions(game, count, rng) {
+  const table = BASE_ANGLES[count] || BASE_ANGLES[4];
+  const rot = rng() * Math.PI * 2;
+  const paired = count % 2 === 0;
+  const out = new Array(count);
+  const placed = [];
+  /** 该点是否满足：不出界、离已放好的总部够远、避开中立工厂/研究所、（可选）四周走得出去 */
+  const fits = (p, rule) => {
+    if (p.x < HQ_BASE_MARGIN || p.x > WORLD_W - HQ_BASE_MARGIN) return false;
+    if (p.y < HQ_BASE_MARGIN || p.y > WORLD_H - HQ_BASE_MARGIN) return false;
+    for (const q of placed) if (dist(q.x, q.y, p.x, p.y) < rule.gap) return false;
+    for (const f of NEUTRAL_FACTORIES) if (dist(f.x, f.y, p.x, p.y) < rule.build + FACTORY_R) return false;
+    for (const l of LABS) if (dist(l.x, l.y, p.x, p.y) < rule.build + LAB_R) return false;
+    return !rule.open || baseAreaOpen(game, p.x, p.y);
+  };
+  // 逐级放宽：① 够远 + 避让建筑 + 四周开阔 → ② 放弃「开阔」 → ③④ 只保「不贴脸」。
+  // 注意最后一级仍要求 ≥ 2×占领半径，所以任何一档都不会把两座总部叠在一起。
+  const LADDER = [
+    { gap: HQ_MIN_GAP, build: HQ_BUILDING_GAP, open: true },
+    { gap: HQ_MIN_GAP, build: HQ_BUILDING_GAP, open: false },
+    { gap: Math.round(HQ_MIN_GAP * 0.6), build: CAPTURE_R * 2 + 60, open: false },
+    { gap: CAPTURE_R * 2 + 20, build: CAPTURE_R * 2 + 20, open: false },
+  ];
+  const take = (p) => {
+    placed.push(p);
+    return { x: round1(p.x), y: round1(p.y) };
+  };
+  for (let i = 0; i < count; i++) {
+    if (out[i]) continue; // 偶数人局：奇数位由同轴的伙伴（i^1）一并填好
+    const mate = paired ? i ^ 1 : -1;
+    const axis = ((table[i % table.length] * Math.PI) / 180) + rot;
+    // 候选：整圈椭圆环上随机取点（不是只在角度表附近抖一抖 —— 那样一旦那片区域
+    // 被湖/山压住就会全军覆没），末尾再补一个角度表上的标准点兜底。
+    const cands = [];
+    for (let t = 0; t < HQ_SPOT_TRIES; t++) {
+      cands.push(ellipsePoint(rng() * Math.PI * 2, 1 - rng() * HQ_RADIUS_JITTER));
+    }
+    cands.push(ellipsePoint(axis, 1));
+    let p1 = null;
+    let p2 = null;
+    for (const rule of LADDER) {
+      for (const c of cands) {
+        if (!fits(c, rule)) continue;
+        const m = mate >= 0 ? mirrorPoint(c) : null;
+        if (m) {
+          // 克隆点除了自己要合格，还得和本体拉开距离——否则两座总部会贴在一起
+          if (dist(c.x, c.y, m.x, m.y) < rule.gap) continue;
+          if (!fits(m, rule)) continue;
+        }
+        p1 = c;
+        p2 = m;
+        break;
+      }
+      if (p1) break;
+    }
+    if (!p1) {
+      // 理论上到不了这里（最后一档几乎什么都收）。真到了就退回标准点，保证一定能开局
+      p1 = ellipsePoint(axis, 1);
+      p2 = mate >= 0 ? mirrorPoint(p1) : null;
+    }
+    out[i] = take(p1);
+    if (mate >= 0) out[mate] = take(p2);
+  }
+  return out;
 }
 
 /** 按类型/等级/分支计算战斗属性 */
@@ -1177,34 +1424,21 @@ function createGameState(room) {
   const chosen = seats.slice(0, count);
   const rng = makeRng((Date.now() ^ 0x5f356495) >>> 0);
 
-  const players = chosen.map((p, i) => {
-    const pos = basePos(i, count);
-    return {
-      id: p.id,
-      name: p.name || '玩家',
-      color: COLORS[i % COLORS.length],
-      baseX: pos.x,
-      baseY: pos.y,
-      kills: 0,
-      losses: 0,
-      evolved: 0,
-      captured: 0,
-      rp: 0, // 科技（研究）点数：只有占领中的研究所会产出
-      eliminated: false,
-      left: false,
-    };
-  });
-
-  // 总部：每名玩家一座，开局即归属本人；被打光则「总部陷落」→ 该玩家出局
-  const hqs = players.map((p, i) => ({
-    id: i + 1,
-    x: round1(p.baseX),
-    y: round1(p.baseY),
-    owner: i,
-    hp: HQ_HP,
-    hpMax: HQ_HP,
-    down: false,
-    evoCd: 0,
+  const players = chosen.map((p, i) => ({
+    id: p.id,
+    name: p.name || '玩家',
+    color: COLORS[i % COLORS.length],
+    // 出生点要等地形出来才能定（总部是随机落的，得先看地形站不站得住），见下方 pickBasePositions
+    baseX: null,
+    baseY: null,
+    kills: 0,
+    losses: 0,
+    evolved: 0,
+    captured: 0,
+    rp: 0, // 科技（研究）点数：只有占领中的研究所会产出
+    rpAccMs: 0, // 距下次结算已累积的毫秒数（到 RP_PERIOD_MS 即一次性发放）
+    eliminated: false,
+    left: false,
   }));
 
   // 无初始工厂：开局场上全部工厂都是中立的，需要靠打光血量去夺
@@ -1221,6 +1455,7 @@ function createGameState(room) {
       capProg: 0,
       contested: false,
       prodProg: 0,
+      lines: 1, // 产线数（1..FAC_MAX_LINES）：多条并行生产，产出速率 ×lines
       home: false,
       // 中立工厂只有完整工厂的 1/3 血量，被拿下后恢复满血
       hp: Math.round(FACTORY_HP * NEUTRAL_HP_RATIO),
@@ -1271,9 +1506,21 @@ function createGameState(room) {
       tierDmg: TIER_DMG,
       tierRange: TIER_RANGE,
       tierCd: TIER_CD,
-      aggroBonus: AGGRO_BONUS,
-      burnDps: BURN_DPS,
-      burnMs: BURN_MS,
+      aggroBonus: 0, // 已废弃（不再有追击圈）：保留字段避免旧客户端读 consts 时取到 undefined
+      attackSlack: ATTACK_SLACK,
+      facLineCost: FAC_LINE_COST,
+      facMaxLines: FAC_MAX_LINES,
+      prodSpeedCost: PROD_SPEED_COST,
+      prodSpeedMax: PROD_SPEED_MAX,
+      prodSpeedStep: PROD_SPEED_STEP,
+      flameR: FLAME_R,
+      /**
+       * 灼烧地形逐阶参数（下标 0/1/2 = 一/二/三级）：[半径, 秒伤, 停喷后寿命ms]；
+       * 一级是 null —— 燎原一级只喷火、不留火场，二级起才在地上留火，三级更大更久更疼。
+       * 客户端单位面板 / 图例按它显示当前阶数的数值。
+       */
+      fireTiers: FIRE_TIERS.map((p) => (p ? [p.r, p.dps, p.lifeMs] : null)),
+      bulletSplash: BULLET_SPLASH, // 直射弹命中后的爆炸半径（所有非激光子弹都带溅射）
       laserWindupMs: LASER_WINDUP_MS,
       laserRampMs: LASER_RAMP_MS,
       laserMaxMul: LASER_MAX_MUL,
@@ -1284,15 +1531,17 @@ function createGameState(room) {
     players,
     factories,
     labs,
-    hqs,
+    hqs: [], // 总部：地形与随机出生点确定后再填
     units: [],
     bullets: [],
+    fires: [], // 灼烧地形（燎原喷出的火场）：[{ id, x, y, r, owner, born, until }]
     events: [],
     over: false,
     winnerId: null,
     seq: 0,
     nextUnitId: 1,
     nextBulletId: 1,
+    nextFireId: 1,
     _rng: rng,
     _lastTick: Date.now(),
     _lastStateBroadcast: 0,
@@ -1310,11 +1559,35 @@ function createGameState(room) {
   );
   makeTerrain(game, terrainSeed);
 
+  // 总部位置：在椭圆环上随机取点（同一房间同一布局，换房即换布局），
+  // 但要过「最小间距 + 避让中立建筑 + 四周可走」三关，避免总部与总部（含 180° 克隆点）挨太近。
+  const bases = pickBasePositions(game, players.length, makeRng((terrainSeed ^ 0x9e3779b9) >>> 0));
+  for (let i = 0; i < players.length; i++) {
+    players[i].baseX = bases[i].x;
+    players[i].baseY = bases[i].y;
+  }
+
+  // 总部：每名玩家一座，开局即归属本人；被打光则「总部陷落」→ 该玩家出局
+  game.hqs = players.map((p, i) => ({
+    id: i + 1,
+    x: p.baseX,
+    y: p.baseY,
+    owner: i,
+    hp: HQ_HP,
+    hpMax: HQ_HP,
+    down: false,
+    evoCd: 0,
+    speedLv: 0, // 生产加速等级（0..PROD_SPEED_MAX）：每级把本方生产间隔再缩短 1/15
+  }));
+
+  // 出生点周围的山/水一并清成平原（含 180° 克隆格），否则开局部队会被地形封死
+  clearTerrainAroundBuildings(game, game.terrain.grid);
+
   // 开局部队：每名玩家在总部旁拥有「每种初级单位各一个」（无初始工厂，工厂全靠打下来）
   const hqSource = { id: 0, owner: 0, level: 3 }; // level 3 → 总部亲兵可一路进阶到顶阶
   for (let i = 0; i < players.length; i++) {
     hqSource.owner = i;
-    const hq = hqs[i];
+    const hq = game.hqs[i];
     TYPE_LIST.forEach((type, k) => {
       const ang = (k / TYPE_LIST.length) * Math.PI * 2 + rng() * 0.4;
       spawnUnit(
@@ -1390,16 +1663,12 @@ function spawnUnit(game, fac, type, x, y) {
     targetFac: 0, // 当前锁定的敌方工厂 id（0 = 无）
     targetLab: 0, // 当前锁定的敌方研究所 id（0 = 无）
     targetHq: 0, // 当前锁定的敌方总部 id（0 = 无）
+    manualTarget: null, // 玩家右键锁定的手动攻击目标 { kind, id }，优先于自动索敌
     scanAt: 0,
     moveX: null,
     moveY: null,
-    homeX: x,
-    homeY: y,
-    chasing: false,
-    disengageUntil: 0,
-    burnUntil: 0,
-    burnDps: 0,
-    burnFrom: -1,
+    burning: false, // 当前是否站在灼烧地形里（客户端据此画身上的火苗）
+    pulseAt: 0, // 上一次喷火表现脉冲（枪口焰/后坐）的时间戳
     lastHitBy: 0,
     killerIdx: null,
     dead: false,
@@ -1425,26 +1694,64 @@ function unitCountOf(game, ownerIdx) {
   return n;
 }
 
-/** 该玩家当前实际产出的研究点/秒 = 已占领研究所数 × (RP_PER_LAB / RP_PERIOD_MS)（一座不占则为 0） */
-function researchRate(game, ownerIdx) {
+/** 该玩家当前已占领的研究所数量 */
+function labCountOf(game, ownerIdx) {
   let n = 0;
   for (const l of game.labs) if (l.owner === ownerIdx) n++;
-  return (n * RP_PER_LAB * 1000) / RP_PERIOD_MS;
+  return n;
 }
 
-/** 科技点累积：只有占领中的研究所才产出研究点，完全被动（不需要任何操作） */
+/**
+ * 该玩家的「平均」研究点产出（点/秒）= 已占领研究所数 × (RP_PER_LAB / RP_PERIOD_MS)。
+ * 仅用于界面展示与测试推算：实际结算是离散跳变的（每 RP_PERIOD_MS 一次性发放整数点），
+ * 本函数不参与结算。
+ */
+function researchRate(game, ownerIdx) {
+  return (labCountOf(game, ownerIdx) * RP_PER_LAB * 1000) / RP_PERIOD_MS;
+}
+
+/**
+ * 科技点结算（离散跳变）：每满 RP_PERIOD_MS 一次性发放「当前研究所数 × RP_PER_LAB」点整数。
+ * - 计时按玩家独立走：只要手里还有研究所就继续计时；研究所全部失去则计时清零（不产出、不攒进度）。
+ * - 到点按「发放那一刻的研究所数量」计算，中途占下/丢掉研究所会立刻反映在下一次结算上。
+ * - 已封顶（RP_CAP）时不再计时，避免解封后瞬间爆发。
+ * 完全被动，不需要任何操作。
+ */
 function updateResearch(game, dt) {
+  const stepMs = dt * 1000;
   for (let i = 0; i < game.players.length; i++) {
     const p = game.players[i];
-    if (p.eliminated || p.left) continue;
-    const rate = researchRate(game, i);
-    if (rate > 0) p.rp = Math.min(RP_CAP, p.rp + rate * dt);
+    if (p.eliminated || p.left) {
+      p.rpAccMs = 0;
+      continue;
+    }
+    const n = labCountOf(game, i);
+    if (n <= 0) {
+      p.rpAccMs = 0; // 一座不占：不产出，进度也不保留
+      continue;
+    }
+    if (p.rp >= RP_CAP) {
+      p.rpAccMs = 0;
+      continue;
+    }
+    p.rpAccMs = (p.rpAccMs || 0) + stepMs;
+    // 用 while 兜住「一帧跨过多个周期」的极端情况，保证不会漏发
+    while (p.rpAccMs >= RP_PERIOD_MS) {
+      p.rpAccMs -= RP_PERIOD_MS;
+      p.rp = Math.min(RP_CAP, p.rp + n * RP_PER_LAB);
+      if (p.rp >= RP_CAP) {
+        p.rpAccMs = 0;
+        break;
+      }
+    }
   }
 }
 
 function pushEvent(game, ev) {
   game.events.push(ev);
-  if (game.events.length > 60) game.events.shift();
+  // 上限 160：开火（shot）与命中（hit）是高频视觉事件，一屏上百支互射时每帧
+  // （100ms）就能攒出几十条；窗口太小会把 kill / evo / hqdown 这类关键事件挤掉。
+  if (game.events.length > 160) game.events.shift();
 }
 
 /**
@@ -1575,15 +1882,27 @@ function updateFactories(game, dt) {
 
 /* ---------------- 生产 ---------------- */
 
+/**
+ * 该玩家当前「单条产线」的生产间隔（毫秒）= 基础间隔 × (14/15)^生产加速等级。
+ * 每次升级都在「当前间隔」上再减 1/15（复利、非线性），越升收益越小但仍持续变快。
+ */
+function prodIntervalMs(game, ownerIdx) {
+  const hq = game.hqs.find((h) => h.owner === ownerIdx);
+  const lv = clamp(Math.round((hq && hq.speedLv) || 0), 0, PROD_SPEED_MAX);
+  return PRODUCE_MS * Math.pow(1 - PROD_SPEED_STEP, lv);
+}
+
 function updateProduction(game, dt, now) {
   const dtMs = dt * 1000;
-  const stamp = now || Date.now();
+  void now; // 保留时间参数以维持签名（生产节奏完全由 dt / 间隔决定）
   // 每名玩家当前部队数（兵力上限判定用；每步只统计一次）
   const counts = game.players.map((_, i) => unitCountOf(game, i));
   for (const f of game.factories) {
     if (f.owner < 0) continue;
-    // 每 20 秒生产 1 支。兵力达上限时进度停在 1（不丢进度），有部队阵亡立刻补出
-    f.prodProg = Math.min(1, f.prodProg + dtMs / PRODUCE_MS);
+    const lines = clamp(Math.round(f.lines || 1), 1, FAC_MAX_LINES);
+    // 多产线并行：进度按「产线数」倍速累积，但一次只吐一支（不爆兵），
+    // 因此等效产出速率 = 1 / (间隔/产线数)。兵力达上限时进度停在 lines（不丢进度），有部队阵亡立刻补出。
+    f.prodProg = Math.min(lines, f.prodProg + (dtMs / prodIntervalMs(game, f.owner)) * lines);
     if (f.prodProg < 1) continue;
     if (counts[f.owner] >= PLAYER_UNIT_CAP) continue; // 已达每玩家兵力上限 → 暂停生产
     f.prodProg -= 1;
@@ -1598,27 +1917,60 @@ function updateProduction(game, dt, now) {
       f.y + Math.sin(ang) * d
     );
     if (u) counts[f.owner] += 1; // 同一帧内多厂产出也要计入
-    // 设了集结点的工厂：新兵自动前往集结点（给 1.5s 脱离窗口，避免半路被拉去交战）
+    // 设了集结点的工厂：新兵自动前往集结点（期间照常边走边打，不需要脱离窗口）
     if (u && f.rally) {
       u.moveX = f.rally.x;
       u.moveY = f.rally.y;
-      u.chasing = false;
-      u.targetId = 0;
-      u.disengageUntil = stamp + 1500;
     }
   }
 }
 
 /* ---------------- 单位 AI ---------------- */
 
+/**
+ * 把「kind + id」解析成可攻击目标（供手动攻击锁定 / 校验用）。
+ * 只接受「非己方」目标：敌方或中立（如被弃/被占领后 owner===-1 的建筑）都合法；
+ * 目标不存在、已阵亡、或已易主为己方 → 返回 null（视为失效）。
+ * 返回 { kind, id, x, y, r }。
+ */
+function lookupTarget(game, ownerIdx, kind, id) {
+  if (kind === 'u') {
+    const e = game.units.find((x) => x.id === id && !x.dead);
+    if (!e || e.ownerIdx === ownerIdx) return null;
+    return { kind: 'u', id: e.id, x: e.x, y: e.y, r: e.r };
+  }
+  if (kind === 'f') {
+    const f = game.factories.find((x) => x.id === id);
+    if (!f || f.owner === ownerIdx) return null;
+    return { kind: 'f', id: f.id, x: f.x, y: f.y, r: FACTORY_R };
+  }
+  if (kind === 'l') {
+    const l = game.labs.find((x) => x.id === id);
+    if (!l || l.owner === ownerIdx) return null;
+    return { kind: 'l', id: l.id, x: l.x, y: l.y, r: LAB_R };
+  }
+  if (kind === 'h') {
+    const h = game.hqs.find((x) => x.id === id);
+    if (!h || h.down || h.owner === ownerIdx) return null;
+    return { kind: 'h', id: h.id, x: h.x, y: h.y, r: HQ_R };
+  }
+  return null;
+}
+
 function findTarget(game, u) {
-  const aggro = u.range + AGGRO_BONUS;
+  // 轰击（burst）是曲射炮：弹道越过山脉，所以即使中间隔着山也能索敌、也能打到山另一侧。
+  // 其余兵种仍受视线遮挡（山挡住就看不见、打不到）。
+  const overMountain = Boolean(u.splash);
+  // 索敌半径 = 自身攻击范围（单位按中心距 + 目标半径，建筑按到边缘的距离）+ 少量余量。
+  // 不再有「射程 + 70」的追击圈：敌人没进范围就当作看不见，单位原地待命。
   let best = null;
   let bestD = Infinity;
   for (const e of game.units) {
     if (e.dead || e.ownerIdx === u.ownerIdx) continue;
     const d = dist(u.x, u.y, e.x, e.y);
-    if (d > aggro) continue;
+    if (d > u.range + e.r + ATTACK_SLACK) continue;
+    // 山体挡住视线 → 看不见，也就无从索敌（水域不遮挡）；轰击例外，可越山索敌
+    if (!overMountain && losBlocked(game, u.x, u.y, e.x, e.y)) continue;
     // 优先当前目标（粘性），其次最近
     const score = e.id === u.targetId ? d - 40 : d;
     if (score < bestD) {
@@ -1636,7 +1988,8 @@ function findTarget(game, u) {
     if (ref.owner === u.ownerIdx) return;
     if (kind === 'h' && ref.down) return;
     const d = dist(u.x, u.y, ref.x, ref.y) - radius; // 到建筑边缘的距离
-    if (d > aggro) return;
+    if (d > u.range + ATTACK_SLACK) return;
+    if (!overMountain && losBlocked(game, u.x, u.y, ref.x, ref.y)) return; // 山挡住了 → 看不见建筑（轰击例外）
     const cur = kind === 'f' ? u.targetFac : kind === 'l' ? u.targetLab : u.targetHq;
     // 粘性：当前锁定的目标不吃 40 距离优惠，仅在同等距离时优先
     const score = ref.id === cur ? d - 40 : d;
@@ -1653,27 +2006,109 @@ function findTarget(game, u) {
 }
 
 function unitFire(game, u, target, now) {
-  const kind = u.splash ? 'shell' : u.burn ? 'fire' : u.range <= MELEE_RANGE ? 'melee' : 'bullet';
+  // 燎原不走这里（它持续喷火、没有弹体，见 sprayFlame），所以弹种只剩三种
+  const kind = u.splash ? 'shell' : u.range <= MELEE_RANGE ? 'melee' : 'bullet';
   const speed = kind === 'melee' ? BULLET_SPEED_MELEE : BULLET_SPEED;
   const ang = Math.atan2(target.y - u.y, target.x - u.x);
   u.angle = ang;
+  const sx = u.x + Math.cos(ang) * (u.r + 4);
+  const sy = u.y + Math.sin(ang) * (u.r + 4);
+  // 瞄准点不是目标中心，而是碰撞体积（半径 target.r 的圆）上的随机一点。
+  // 落点偏到边缘时，爆炸半径就可能把旁边的单位也卷进去 —— 一次发射打到多个单位。
+  const aimAng = Math.random() * Math.PI * 2;
+  const aimX = target.x + Math.cos(aimAng) * target.r;
+  const aimY = target.y + Math.sin(aimAng) * target.r;
+  if (kind === 'shell') {
+    // 轰击：抛射弹。记录发射点 / 落点，按飞行时间参数化抛物线；它越过山脉、落地才炸。
+    // 落点 = 目标碰撞体积上的随机一点（aimX/aimY）。
+    const gdx = aimX - sx;
+    const gdy = aimY - sy;
+    const D = Math.hypot(gdx, gdy);
+    const flightDur = SHELL_FLIGHT_BASE + D * SHELL_FLIGHT_PER_PX;
+    const peak = SHELL_PEAK_BASE + D * SHELL_PEAK_PER_PX;
+    game.bullets.push({
+      id: game.nextBulletId++,
+      x: sx, y: sy, z: 0,
+      vx: (gdx / flightDur) * 1000, // 地面平面速度（px/s），仅用于快照朝向
+      vy: (gdy / flightDur) * 1000,
+      dmg: u.dmg,
+      ownerIdx: u.ownerIdx,
+      ownerId: u.ownerId,
+      shooterId: u.id,
+      kind,
+      splash: u.splash || 0,
+      tx: aimX,
+      ty: aimY,
+      sx, sy,
+      flightDur,
+      flightT: 0,
+      peak,
+      arc: true, // 抛射弹：越过山脉、固定落点、不被追踪
+      targetId: 0,
+      aimAng,
+      born: now,
+      dead: false,
+    });
+    pushShot(game, u, ang, BULLET_KIND_IX[kind] || 0);
+    return;
+  }
+  // 直射弹（bullet）直接瞄向碰撞体积的随机一点（aimX/aimY），不再追踪目标中心；
+  // 近战（melee）仍打中心、仍追踪。两者共用同一子弹结构。
+  const fireAng = kind === 'bullet' ? Math.atan2(aimY - sy, aimX - sx) : ang;
+  const fx = kind === 'bullet' ? aimX : target.x;
+  const fy = kind === 'bullet' ? aimY : target.y;
+  const tid = kind === 'melee' ? target.id : 0; // 直射弹不追踪（已瞄到落点）；近战仍追踪
+  const bSplash = kind === 'melee' ? 0 : BULLET_SPLASH;
   game.bullets.push({
     id: game.nextBulletId++,
-    x: u.x + Math.cos(ang) * (u.r + 4),
-    y: u.y + Math.sin(ang) * (u.r + 4),
-    vx: Math.cos(ang) * speed,
-    vy: Math.sin(ang) * speed,
+    x: sx,
+    y: sy,
+    vx: Math.cos(fireAng) * speed,
+    vy: Math.sin(fireAng) * speed,
     dmg: u.dmg,
     ownerIdx: u.ownerIdx,
     ownerId: u.ownerId,
     shooterId: u.id,
     kind,
-    splash: u.splash || 0,
-    tx: target.x,
-    ty: target.y,
-    targetId: kind === 'shell' ? 0 : target.id,
+    splash: bSplash,
+    tx: fx,
+    ty: fy,
+    targetId: tid,
+    aimAng,
     born: now,
     dead: false,
+  });
+  pushShot(game, u, ang, BULLET_KIND_IX[kind] || 0);
+}
+
+/**
+ * 推一条「开火」事件：枪口位置 + 朝向（弧度）+ 弹种 + 射手 id/体型。
+ * 客户端据此在枪口喷出火焰并让射手向后一顿（后坐）——
+ * 弹道快照是 10Hz 抽样的，靠它推不出「哪一下是刚开的火」。
+ */
+function pushShot(game, u, ang, kindIx) {
+  pushEvent(game, {
+    t: 'shot',
+    x: round1(u.x + Math.cos(ang) * (u.r + 5)),
+    y: round1(u.y + Math.sin(ang) * (u.r + 5)),
+    a: round2(ang),
+    k: kindIx,
+    oi: u.ownerIdx,
+    uid: u.id,
+    r: Math.round(u.r),
+  });
+}
+
+/** 直射弹命中：推一条 hit 事件（客户端在落点炸出一团不规则墨花，并在地上留弹痕） */
+function pushHit(game, b) {
+  pushEvent(game, {
+    t: 'hit',
+    x: round1(b.x),
+    y: round1(b.y),
+    a: round2(Math.atan2(b.vy, b.vx)),
+    k: BULLET_KIND_IX[b.kind] || 0,
+    oi: b.ownerIdx,
+    id: b.id,
   });
 }
 
@@ -1697,6 +2132,17 @@ function laserZap(game, u, target, now) {
   const mul = laserMul(u, now);
   u.lockMul = mul;
   const dmg = u.dmg * mul;
+  const ang = Math.atan2(target.y - u.y, target.x - u.x);
+  // 开火表现：枪口一记冷光蓄能焰 + 命中点一团灼痕（激光不走弹道，全靠这两个事件表现）
+  pushShot(game, u, ang, SHOT_KIND_LASER);
+  pushEvent(game, {
+    t: 'hit',
+    x: round1(target.x - Math.cos(ang) * (target.r || 0)),
+    y: round1(target.y - Math.sin(ang) * (target.r || 0)),
+    a: round2(ang),
+    k: SHOT_KIND_LASER,
+    oi: u.ownerIdx,
+  });
   if (target.kind === 'fac') damageFactory(game, target.ref, dmg, u.ownerIdx);
   else if (target.kind === 'lab') damageLab(game, target.ref, dmg, u.ownerIdx);
   else if (target.kind === 'hq') damageHq(game, target.ref, dmg, u.ownerIdx);
@@ -1707,39 +2153,47 @@ function laserZap(game, u, target, now) {
   }
 }
 
+/**
+ * 单位每步推进：索敌 → 移动 → 开火。
+ *
+ * 设计要点（本轮改动）：
+ * - **不自动追击**：`findTarget` 只在「攻击范围 + 少量余量」内锁人；锁不到就原地待命，
+ *   绝不会为了敌人自己跑出去（想要追击请右键把部队拉过去）。
+ * - **移动攻击**：移动与开火彻底解耦 —— 走指令点的同时，只要目标在攻击范围内就照常开火，
+ *   不再有「停下才打」。
+ * - 目标离开范围 / 被山挡住 → 停火（激光兵会重置锁定与蓄能），但仍继续走自己的路。
+ * - **燎原例外**：它不点射，而是持续喷火（每步结算一次火舌，见 sprayFlame），
+ *   所以走的是 `u.burn` 那条分支，不参与 cd 与弹道。
+ */
 function updateUnits(game, dt, now) {
   for (const u of game.units) {
     if (u.dead) continue;
     if (u.cdLeft > 0) u.cdLeft -= dt;
 
-    // 周期性索敌（撤退窗口内不索敌，方便把残兵拉出火线）
+    // ---- 周期性索敌（只锁攻击范围内的敌人；没有就清空目标原地待命）----
     if (now >= u.scanAt) {
       u.scanAt = now + SCAN_MS + (u.id % 5) * 20;
-      if (u.disengageUntil && now < u.disengageUntil) {
-        u.targetId = 0;
-        u.targetFac = 0;
-        u.targetLab = 0;
-        u.targetHq = 0;
-      } else {
-        const t = findTarget(game, u);
-        if (t) {
-          if (!u.targetId && !u.targetFac && !u.targetLab && !u.targetHq) {
-            // 从空闲转入交战：记录归位点（守军拴绳）
-            u.homeX = u.x;
-            u.homeY = u.y;
-            u.chasing = !u.moveX;
-          }
-          u.targetId = t.kind === 'u' ? t.id : 0;
-          u.targetFac = t.kind === 'f' ? t.id : 0;
-          u.targetLab = t.kind === 'l' ? t.id : 0;
-          u.targetHq = t.kind === 'h' ? t.id : 0;
+      // 追击攻击命令（玩家右键指定）优先：**不论远近都锁定它**。
+      // 射程外由下面的「追击」段负责主动赶路；目标死亡 / 易主 / 消失则命令自动解除。
+      let resolved = false;
+      if (u.manualTarget) {
+        const mt = lookupTarget(game, u.ownerIdx, u.manualTarget.kind, u.manualTarget.id);
+        if (!mt) {
+          u.manualTarget = null; // 目标已亡 / 已易主 / 不存在 → 追击命令解除
         } else {
-          u.targetId = 0;
-          u.targetFac = 0;
-          u.targetLab = 0;
-          u.targetHq = 0;
-          u.chasing = false;
+          u.targetId = mt.kind === 'u' ? mt.id : 0;
+          u.targetFac = mt.kind === 'f' ? mt.id : 0;
+          u.targetLab = mt.kind === 'l' ? mt.id : 0;
+          u.targetHq = mt.kind === 'h' ? mt.id : 0;
+          resolved = true;
         }
+      }
+      if (!resolved) {
+        const t = findTarget(game, u);
+        u.targetId = t && t.kind === 'u' ? t.id : 0;
+        u.targetFac = t && t.kind === 'f' ? t.id : 0;
+        u.targetLab = t && t.kind === 'l' ? t.id : 0;
+        u.targetHq = t && t.kind === 'h' ? t.id : 0;
       }
     }
 
@@ -1770,25 +2224,84 @@ function updateUnits(game, dt, now) {
       }
     }
 
-    // 空闲守军拴绳：追太远就归位
-    if (!u.moveX && u.chasing && target) {
-      if (dist(u.x, u.y, u.homeX, u.homeY) > LEASH_DIST) {
+    // 山体遮挡：目标躲到山另一侧后视线断开。
+    //  - 自动索敌：立刻放弃（看不到 = 打不到），下一个索敌周期重新评估，走出山影自然重新接战。
+    //  - 追击攻击命令：**不解除命令**，保持锁定让部队自己绕过去（下面追击段负责赶路），
+    //    只是绕路期间不开火 —— 同一面山不能既挡视线又挡命令。
+    // 轰击例外：曲射炮弹道越山，山挡住视线照样能持续轰击。
+    const overMountain = Boolean(u.splash);
+    let losBlockedNow = false;
+    if (target && !overMountain) {
+      losBlockedNow = losBlocked(game, u.x, u.y, target.x, target.y);
+      if (losBlockedNow && !u.manualTarget) {
         u.targetId = 0;
-        u.chasing = false;
-        u.moveX = u.homeX;
-        u.moveY = u.homeY;
+        u.targetFac = 0;
+        u.targetLab = 0;
+        u.targetHq = 0;
         target = null;
       }
     }
 
-    const engaged = target && !(u.disengageUntil && now < u.disengageUntil);
-    const tDist = engaged ? dist(u.x, u.y, target.x, target.y) : 0;
-    const tReach = engaged ? u.range + target.r : 0;
+    // ---- 移动 ----
+    // 追击攻击命令：目标在射程外 → 主动寻路接近（不受通用「到点即停」的 26px 阈值影响，
+    // 否则射程短的兵种会在射程边缘被判成「已到达」而卡住）。一直追到进射程为止 ——
+    // 目标逃跑就跑着追，命令被取消（move/stop）或目标阵亡才停。
+    // 其余情况仍只执行玩家指令（集结点派遣 / 右键移动），绝不自动追击。
+    if (u.manualTarget) {
+      if (target) {
+        const reach = u.range + target.r;
+        const td = dist(u.x, u.y, target.x, target.y);
+        if (td > reach) {
+          u.angle = Math.atan2(target.y - u.y, target.x - u.x);
+          const spd = u.speed * dt * terrainSpeedFactor(game, u);
+          // 单步不超过「距射程边缘的距离」，贴到边缘就停，不会越过目标或绕圈
+          const step = Math.min(spd, Math.max(2, td - reach));
+          stepViaFlow(game, u, target.x, target.y, step);
+        }
+      }
+    } else if (u.moveX != null) {
+      const md = dist(u.x, u.y, u.moveX, u.moveY);
+      if (md <= 26) {
+        u.moveX = null;
+        u.moveY = null;
+      } else {
+        u.angle = Math.atan2(u.moveY - u.y, u.moveX - u.x);
+        const spd = u.speed * dt * terrainSpeedFactor(game, u);
+        // 沿地形流场绕开山地与水域抵达指令点（集结点派遣同样走这里）
+        if (!stepViaFlow(game, u, u.moveX, u.moveY, spd)) {
+          if (md <= 26 + TERR_CELL) {
+            u.moveX = null;
+            u.moveY = null;
+          }
+        }
+      }
+    }
+
+    // ---- 开火：目标进入攻击范围就打（无论正在移动还是站着）----
+    // 追击途中视线被山挡（绕路中）→ 打得着才开火，别穿山打。
+    const tDist = target ? dist(u.x, u.y, target.x, target.y) : 0;
+    const tReach = target ? u.range + target.r : 0;
+    const inRange = Boolean(target) && tDist <= tReach && !losBlockedNow;
+
+    // 燎原：不是「点射」，而是**持续喷吐**。只要目标在射程内，每步都推一次火舌
+    // （伤害按 dt 结算，没有弹道、没有命中判定），火舌的落点就是「火焰落下的地方」。
+    // 锁定状态（lockKind/lockId）同时下发给客户端，让它自己连线画出这道火舌 ——
+    // 与激光兵共用同一套「锁定目标」下发格式。
+    if (u.burn) {
+      u.lockKind = inRange ? (target.kind === 'fac' ? 2 : target.kind === 'lab' ? 3 : target.kind === 'hq' ? 4 : 1) : 0;
+      u.lockId = inRange ? (target.kind ? target.ref.id : target.id) : 0;
+      if (inRange) {
+        u.angle = Math.atan2(target.y - u.y, target.x - u.x);
+        // 落点取「朝目标方向推进到目标身上」——目标在射程内，所以这一步不会超出射程
+        const reach = Math.min(tDist, u.range + target.r);
+        sprayFlame(game, u, u.x + Math.cos(u.angle) * reach, u.y + Math.sin(u.angle) * reach, dt, now);
+      }
+      continue;
+    }
 
     // 激光兵：维护「锁定」。只有真正进入射程才开始蓄能；换目标（或目标丢失/离开射程）
     // 立刻重置倍率并进入前摇，前摇期间不开火。
     if (u.laser) {
-      const inRange = engaged && tDist <= tReach;
       const key = inRange
         ? (target.kind || 'u') + ':' + (target.kind ? target.ref.id : target.id)
         : '';
@@ -1810,56 +2323,134 @@ function updateUnits(game, dt, now) {
       u.lockId = key ? (target.kind ? target.ref.id : target.id) : 0;
     }
 
-    if (engaged) {
-      const d = tDist;
-      const reach = tReach;
+    if (inRange) {
       u.angle = Math.atan2(target.y - u.y, target.x - u.x);
-      if (d > reach * 0.92) {
-        const spd = u.speed * dt * terrainSpeedFactor(game, u);
-        // 追击也走地形寻路：目标在山/水另一侧时绕行，而不是撞墙站住
-        stepViaFlow(game, u, target.x, target.y, spd);
-      } else {
-        // 激光兵用绝对时间控制射速；其余兵种沿用倒计时（浮点累减会略慢，属既有手感）
-        const ready = u.laser ? now >= u.nextFireAt : u.cdLeft <= 0;
-        if (ready && !(u.laser && now < u.windupUntil)) {
-          if (u.laser) {
-            laserZap(game, u, target, now);
-            u.nextFireAt = now + u.cdMax * 1000;
-          } else {
-            unitFire(game, u, target, now);
-            u.cdLeft = u.cdMax;
-          }
-        }
-      }
-    } else if (u.moveX != null) {
-      const d = dist(u.x, u.y, u.moveX, u.moveY);
-      if (d <= 26) {
-        u.moveX = null;
-        u.moveY = null;
-        u.disengageUntil = 0;
-      } else {
-        const ang = Math.atan2(u.moveY - u.y, u.moveX - u.x);
-        u.angle = ang;
-        const spd = u.speed * dt * terrainSpeedFactor(game, u);
-        // 沿地形流场绕开山地与水域抵达指令点（集结点派遣同样走这里）
-        if (!stepViaFlow(game, u, u.moveX, u.moveY, spd)) {
-          if (d <= 26 + TERR_CELL) {
-            u.moveX = null;
-            u.moveY = null;
-            u.disengageUntil = 0;
-          }
+      // 激光兵用绝对时间控制射速；其余兵种沿用倒计时（浮点累减会略慢，属既有手感）
+      const ready = u.laser ? now >= u.nextFireAt : u.cdLeft <= 0;
+      if (ready && !(u.laser && now < u.windupUntil)) {
+        if (u.laser) {
+          laserZap(game, u, target, now);
+          u.nextFireAt = now + u.cdMax * 1000;
+        } else {
+          unitFire(game, u, target, now);
+          u.cdLeft = u.cdMax;
         }
       }
     }
   }
 }
 
-/* ---------------- 弹道 ---------------- */
+/* ---------------- 燎原：喷火 / 灼烧地形 ---------------- */
 
-function applyBurn(victim, fromIdx, now) {
-  victim.burnUntil = now + BURN_MS;
-  victim.burnDps = Math.max(victim.burnDps || 0, BURN_DPS);
-  victim.burnFrom = fromIdx;
+/**
+ * 在落点铺开 / 刷新一片灼烧地形。
+ *
+ * **一级燎原不留火场**：`fireProfile(tier)` 为 null 时直接返回 null，只在火舌落点结算范围伤害。
+ *
+ * 「火舌每步都在推」意味着每秒有几十个落点，若每个都新铺一块火，场上会瞬间堆出几百块。
+ * 所以同一个主人的相近落点（≤ mergeD）**并入已有火场**，只把寿命推回满值；
+ * 火舌跟着目标走远了，才会在更远处新铺一块 —— 于是画面上是一条连着的火线，而不是一堆火点。
+ * 每片火场记下自己的 r/dps/lifeMs（不同阶数的火场可以同时在场）；
+ * 跨阶合并时逐项取强的一方 —— 三级燎原扫过二级留下的火区，那片火会整体升级。
+ * 每次刷新都把 `until` 推回 `now + lifeMs`：火焰一直喷，火就一直烧；
+ * 火焰一停，最后一次刷新过后 lifeMs（几秒）内火场自然熄灭 —— 这就是「消失」的来源。
+ *
+ * @param {number} [tier=2] 喷火者的阶数（一级不留火场）
+ * @returns {object|null} 新建的火场（不留火场 / 并入已有火场时返回 null）
+ */
+function addFire(game, x, y, ownerIdx, now, tier) {
+  const prof = fireProfile(tier == null ? 2 : tier);
+  if (!prof) return null; // 一级燎原：只喷火，不在地上留火
+  let best = null;
+  let bestD = Infinity;
+  for (const f of game.fires) {
+    if (f.owner !== ownerIdx) continue;
+    const d = dist(f.x, f.y, x, y);
+    if (d < bestD) {
+      bestD = d;
+      best = f;
+    }
+  }
+  if (best && bestD <= Math.max(best.mergeD || 0, prof.mergeD)) {
+    // 并入已有火场：逐项取强（同级通常相同；被更高阶的火扫过时整片升级）
+    best.r = Math.max(best.r, prof.r);
+    best.dps = Math.max(best.dps || 0, prof.dps);
+    best.lifeMs = Math.max(best.lifeMs || 0, prof.lifeMs);
+    best.mergeD = Math.max(best.mergeD || 0, prof.mergeD);
+    best.until = Math.max(best.until, now + best.lifeMs);
+    return null;
+  }
+  const f = {
+    id: game.nextFireId++,
+    x: round1(x),
+    y: round1(y),
+    r: prof.r,
+    dps: prof.dps,
+    lifeMs: prof.lifeMs,
+    mergeD: prof.mergeD,
+    owner: ownerIdx,
+    born: now,
+    until: now + prof.lifeMs,
+  };
+  game.fires.push(f);
+  if (game.fires.length > FIRE_MAX) game.fires.splice(0, game.fires.length - FIRE_MAX);
+  return f;
+}
+
+/**
+ * 一次火舌推进：燎原每步（约每秒 20+ 次）对落点做一次结算。
+ *
+ * ① 落点范围伤害：`FLAME_R` 内的一切**敌方**单位按秒伤持续掉血（山挡住的打不到）。
+ *    这是「持续喷吐」而不是「一发一发打」——所以没有弹道、没有命中判定，伤害按 dt 结算。
+ *    各阶都一样：火焰本身就会烧人，**留不留灼烧地形才是分阶的地方**。
+ * ② 在落点铺开 / 刷新一片灼烧地形 —— 只有**二级及以上**才铺（见 FIRE_TIERS）。
+ * ③ 表现脉冲：每 FLAME_PULSE_MS 推一条 shot 事件（枪口焰 + 射手后坐）。
+ *    若每步都推，客户端每秒会堆几十个焰，反而糊成一片。
+ */
+function sprayFlame(game, u, x, y, dt, now) {
+  const dmg = u.dmg * dt;
+  if (dmg > 0) {
+    for (const e of game.units) {
+      if (e.dead || e.ownerIdx === u.ownerIdx) continue;
+      if (dist(e.x, e.y, x, y) > FLAME_R + e.r) continue;
+      if (losBlocked(game, u.x, u.y, e.x, e.y)) continue;
+      e.lastHitBy = u.id;
+      retaliate(game, e, u.id);
+      damageUnit(game, e, dmg, u.ownerIdx);
+    }
+  }
+  const born = addFire(game, x, y, u.ownerIdx, now, u.tier);
+  if (born) pushEvent(game, { t: 'flame', x: born.x, y: born.y, r: born.r, oi: u.ownerIdx, id: born.id });
+  if (now >= (u.pulseAt || 0)) {
+    u.pulseAt = now + FLAME_PULSE_MS;
+    pushShot(game, u, Math.atan2(y - u.y, x - u.x), BULLET_KIND_IX.fire);
+  }
+}
+
+/**
+ * 灼烧地形结算：站在火里的一切单位都掉血 —— **不分敌我**（这是全局唯一的友伤来源）。
+ *
+ * 每秒伤害取每片火自己的 `f.dps`（二级 3.5 / 三级 6 —— 三级燎原烧出来的火更疼）。
+ * 顺带维护 `u.burning`：客户端只凭这一个标记决定「身上要不要画火苗」，
+ * 所以每步先全部清掉、再按本步位置重新打标（火场是移动的，不能只加不减）。
+ */
+function updateFires(game, dt, now) {
+  for (const u of game.units) if (!u.dead) u.burning = false;
+  if (!game.fires.length) return;
+  for (let i = game.fires.length - 1; i >= 0; i--) {
+    const f = game.fires[i];
+    if (f.until <= now) {
+      game.fires.splice(i, 1); // 火焰停了有一会儿了 → 火场熄灭
+      continue;
+    }
+    const dps = f.dps == null ? FIRE_TIERS[1].dps : f.dps;
+    for (const u of game.units) {
+      if (u.dead) continue;
+      if (dist(u.x, u.y, f.x, f.y) > f.r + u.r) continue;
+      u.burning = true;
+      damageUnit(game, u, dps * dt, f.owner); // 敌我通吃：自家部队踩上去一样烧
+    }
+  }
 }
 
 function damageUnit(game, victim, amount, killerIdx) {
@@ -1874,44 +2465,51 @@ function damageUnit(game, victim, amount, killerIdx) {
   }
 }
 
-/** 受击反击：被攻击且处于空闲的单位立即锁定攻击者（防止被远程无伤风筝） */
+/**
+ * 受击反击：被攻击且处于空闲的单位立即锁定攻击者。
+ * 只在攻击者「已经进入我方攻击范围」时才锁定 —— 不再自动追出范围
+ * （追出去只会被远程兵白嫖）；范围外的攻击者等它自己走进来再打。
+ */
 function retaliate(game, victim, shooterId) {
   if (!shooterId || victim.targetId || victim.moveX != null || victim.dead) return;
   const shooter = game.units.find((u) => u.id === shooterId && !u.dead);
   if (!shooter || shooter.ownerIdx === victim.ownerIdx) return;
+  if (dist(victim.x, victim.y, shooter.x, shooter.y) > victim.range + shooter.r + ATTACK_SLACK) return;
+  // 被山挡住的敌人不还击（看不见对方，还击只会让部队朝山体扎堆）
+  if (losBlocked(game, victim.x, victim.y, shooter.x, shooter.y)) return;
   victim.targetId = shooter.id;
-  victim.homeX = victim.x;
-  victim.homeY = victim.y;
-  victim.chasing = true;
 }
 
-function explodeShell(game, b, x, y, now) {
+function explodeShell(game, b, x, y, now, overMountain) {
   b.dead = true;
   pushEvent(game, { t: 'boom', x: round1(x), y: round1(y), r: b.splash, oi: b.ownerIdx });
+  // 溅射不越山（默认）：山脊另一侧的敌人不该被「隔山」炸到。
+  // 但抛射弹（轰击）是飞越山脉落到落点的，落点那一侧的敌人理应被炸到 —— overMountain 时跳过 LOS。
+  const sightOk = (ax, ay, bx, by) => overMountain || !losBlocked(game, ax, ay, bx, by);
   for (const e of game.units) {
     if (e.dead || e.ownerIdx === b.ownerIdx) continue;
-    if (dist(e.x, e.y, x, y) <= b.splash + e.r) {
-      e.lastHitBy = b.shooterId || 0;
-      retaliate(game, e, b.shooterId);
-      damageUnit(game, e, b.dmg, b.ownerIdx);
-    }
+    if (dist(e.x, e.y, x, y) > b.splash + e.r) continue;
+    if (!sightOk(x, y, e.x, e.y)) continue;
+    e.lastHitBy = b.shooterId || 0;
+    retaliate(game, e, b.shooterId);
+    damageUnit(game, e, b.dmg, b.ownerIdx);
   }
   // 炮击同样会砸伤范围内的敌方建筑（工厂 / 研究所 / 总部）
   for (const f of game.factories) {
     if (f.owner === b.ownerIdx) continue;
-    if (dist(f.x, f.y, x, y) <= b.splash + FACTORY_R) {
+    if (dist(f.x, f.y, x, y) <= b.splash + FACTORY_R && sightOk(x, y, f.x, f.y)) {
       damageFactory(game, f, b.dmg, b.ownerIdx);
     }
   }
   for (const l of game.labs) {
     if (l.owner === b.ownerIdx) continue;
-    if (dist(l.x, l.y, x, y) <= b.splash + LAB_R) {
+    if (dist(l.x, l.y, x, y) <= b.splash + LAB_R && sightOk(x, y, l.x, l.y)) {
       damageLab(game, l, b.dmg, b.ownerIdx);
     }
   }
   for (const h of game.hqs) {
     if (h.owner === b.ownerIdx || h.down) continue;
-    if (dist(h.x, h.y, x, y) <= b.splash + HQ_R) {
+    if (dist(h.x, h.y, x, y) <= b.splash + HQ_R && sightOk(x, y, h.x, h.y)) {
       damageHq(game, h, b.dmg, b.ownerIdx);
     }
   }
@@ -1920,8 +2518,43 @@ function explodeShell(game, b, x, y, now) {
 function updateBullets(game, dt, now) {
   for (const b of game.bullets) {
     if (b.dead) continue;
+
+    // ---- 抛射弹（轰击）：抛物线飞行，越过山脉，落地才炸 ----
+    // 不追踪、不撞山、不提前炸——整段飞行只做「插值地面位置 + 算高度」，到时定点引爆。
+    if (b.arc) {
+      b.flightT += dt * 1000;
+      const tt = b.flightDur > 0 ? clamp(b.flightT / b.flightDur, 0, 1) : 1;
+      b.x = b.sx + (b.tx - b.sx) * tt;
+      b.y = b.sy + (b.ty - b.sy) * tt;
+      b.z = 4 * b.peak * tt * (1 - tt); // 抛物线：t=0/1 时 z=0，t=0.5 时达峰值 peak
+      if (b.flightT >= b.flightDur || b.x < -20 || b.x > WORLD_W + 20 || b.y < -20 || b.y > WORLD_H + 20) {
+        explodeShell(game, b, b.tx, b.ty, now, true); // 越山落点，溅射同样不受山体遮挡
+      }
+      continue;
+    }
+
+    const ox = b.x;
+    const oy = b.y;
     b.x += b.vx * dt;
     b.y += b.vy * dt;
+
+    // 山体有高度：弹道撞山即止。细分采样整段位移，避免 10Hz 下「一步跨过」山脊。
+    // 炮击在坡面炸开（溅射同样不越山），直射弹撞山只是一个墨点。水面/沼泽不挡弹道。
+    {
+      const segLen = Math.hypot(b.x - ox, b.y - oy);
+      const hitS = segLen > 0 ? mountainHitAlong(game, ox, oy, b.x, b.y, { step: BULLET_TERRAIN_STEP }) : -1;
+      if (hitS >= 0) {
+        const ix = ox + ((b.x - ox) / segLen) * hitS;
+        const iy = oy + ((b.y - oy) / segLen) * hitS;
+        if (b.kind === 'shell') {
+          explodeShell(game, b, ix, iy, now, false);
+        } else {
+          b.dead = true;
+          pushEvent(game, { t: 'spark', x: round1(ix), y: round1(iy) });
+        }
+        continue;
+      }
+    }
 
     // 非炮击弹道轻微追踪目标，保证命中率
     if (b.targetId) {
@@ -1952,19 +2585,34 @@ function updateBullets(game, dt, now) {
         }
       }
       if (movedPast || hitEnemy) {
-        explodeShell(game, b, b.tx, b.ty, now);
+        explodeShell(game, b, b.tx, b.ty, now, false);
       }
       continue;
     }
 
-    // 直射弹道：命中任意敌人
+    // 带爆炸半径的弹（直射弹 / 非越山炮击）：命中或越过落点即爆。
+    // 子弹本身已瞄向目标碰撞体积上的随机一点，所以落点偏到边缘时，爆炸半径就可能把旁边的单位也卷进去。
+    if (b.splash > 0) {
+      const movedPast = (b.vx * (b.x - b.tx) + b.vy * (b.y - b.ty)) > 0;
+      let hitSomething = false;
+      for (const e of game.units) {
+        if (e.dead || e.ownerIdx === b.ownerIdx) continue;
+        if (dist(e.x, e.y, b.x, b.y) <= e.r + BULLET_R + 2) { hitSomething = true; break; }
+      }
+      if (movedPast || hitSomething) {
+        explodeShell(game, b, b.x, b.y, now, false);
+      }
+      continue;
+    }
+
+    // 近战（无爆炸半径）：命中单体
     for (const e of game.units) {
       if (e.dead || e.ownerIdx === b.ownerIdx) continue;
       if (dist(e.x, e.y, b.x, b.y) <= e.r + BULLET_R) {
         b.dead = true;
+        pushHit(game, b);
         e.lastHitBy = b.shooterId || 0;
         retaliate(game, e, b.shooterId);
-        if (b.kind === 'fire') applyBurn(e, b.ownerIdx, now);
         damageUnit(game, e, b.dmg, b.ownerIdx);
         break;
       }
@@ -1976,6 +2624,7 @@ function updateBullets(game, dt, now) {
         if (f.owner === b.ownerIdx) continue;
         if (dist(f.x, f.y, b.x, b.y) <= FACTORY_R + BULLET_R) {
           b.dead = true;
+          pushHit(game, b);
           damageFactory(game, f, b.dmg, b.ownerIdx);
           break;
         }
@@ -1986,6 +2635,7 @@ function updateBullets(game, dt, now) {
         if (l.owner === b.ownerIdx) continue;
         if (dist(l.x, l.y, b.x, b.y) <= LAB_R + BULLET_R) {
           b.dead = true;
+          pushHit(game, b);
           damageLab(game, l, b.dmg, b.ownerIdx);
           break;
         }
@@ -1996,6 +2646,7 @@ function updateBullets(game, dt, now) {
         if (h.owner === b.ownerIdx || h.down) continue;
         if (dist(h.x, h.y, b.x, b.y) <= HQ_R + BULLET_R) {
           b.dead = true;
+          pushHit(game, b);
           damageHq(game, h, b.dmg, b.ownerIdx);
           break;
         }
@@ -2006,14 +2657,7 @@ function updateBullets(game, dt, now) {
   if (game.bullets.length > 400) game.bullets.splice(0, game.bullets.length - 400);
 }
 
-/* ---------------- 灼烧 / 分离 / 尸体清理 ---------------- */
-
-function updateBurns(game, dt, now) {
-  for (const u of game.units) {
-    if (u.dead || u.burnUntil <= now) continue;
-    damageUnit(game, u, u.burnDps * dt, u.burnFrom);
-  }
-}
+/* ---------------- 分离 / 尸体清理 ---------------- */
 
 /** 单位圆形分离 + 不穿过工厂建筑 + 边界约束 */
 function separateUnits(game) {
@@ -2178,7 +2822,7 @@ function step(game, dt, now) {
   updateFactories(game, dt);
   updateUnits(game, dt, now);
   updateBullets(game, dt, now);
-  updateBurns(game, dt, now);
+  updateFires(game, dt, now);
   separateUnits(game);
   unstickAll(game);
   const kills = reapDead(game);
@@ -2231,20 +2875,37 @@ function snapshot(game) {
       u.branch === 'A' ? 1 : u.branch === 'B' ? 2 : 0,
       Math.round(u.hp),
       u.maxTier,
-      u.burnUntil > now ? 1 : 0,
+      u.burning ? 1 : 0, // 站在灼烧地形里（客户端画身上的火苗）
       u.homeFac || 0, // 产出该单位的工厂（0 = 总部亲兵）；侧栏统计「可进化部队」用
-      // —— 激光兵锁定状态（非激光兵恒为 0）——
-      u.laser ? u.lockKind : 0, // 锁定目标类别：0 无 / 1 单位 / 2 工厂 / 3 研究所 / 4 总部
-      u.laser ? u.lockId : 0, // 锁定目标 id
+      // —— 锁定目标（激光兵：正在照射的目标 / 燎原：正在喷吐的火舌落点），其余兵种恒为 0 ——
+      u.laser || u.burn ? u.lockKind : 0, // 锁定目标类别：0 无 / 1 单位 / 2 工厂 / 3 研究所 / 4 总部
+      u.laser || u.burn ? u.lockId : 0, // 锁定目标 id
       u.laser ? Math.round(u.lockMul * 100) : 0, // 当前伤害倍率 ×100（100 = 1 倍）
       u.laser && u.windupUntil > now ? Math.round(u.windupUntil - now) : 0, // 前摇剩余毫秒（>0 表示蓄能中）
+      // —— 追击攻击命令（玩家右键指定）：类别 0 = 无命令 / 1 单位 / 2 工厂 / 3 研究所 / 4 总部 ——
+      // 客户端据此在目标处常驻一个锁定指示（命令解除时自动消失），追击途中玩家也能看见打谁。
+      u.manualTarget ? TARGET_KIND_IX[u.manualTarget.kind] || 0 : 0,
+      u.manualTarget ? u.manualTarget.id : 0,
     ]),
-    b: game.bullets.map((b) => [
-      round1(b.x),
-      round1(b.y),
-      b.ownerIdx,
-      b.kind === 'shell' ? 2 : b.kind === 'fire' ? 3 : b.kind === 'melee' ? 1 : 0,
-    ]),
+    b: game.bullets.map((b) => {
+      const sp = Math.hypot(b.vx, b.vy) || 1;
+      return [
+        round1(b.x),
+        round1(b.y),
+        b.ownerIdx,
+        BULLET_KIND_IX[b.kind] || 0,
+        // 弹体朝向（单位向量）：客户端按它把弹丸画成「沿弹道拖笔的墨滴」而不是圆点
+        round2(b.vx / sp),
+        round2(b.vy / sp),
+        // 个体随机种子（由弹体 id 稳定派生）：每发子弹的炸开/拖尾形状各不相同，
+        // 但同一发每帧一致 —— 否则 10Hz 刷新会把它闪成一团砂。
+        Math.round(((b.id % 97) / 97) * 100) / 100,
+        // 抛射弹（轰击）：当前高度 z（px，0 表示贴地/已落地）+ 是否抛射弹 arc。
+        // 客户端据此把轰击弹「抬高本体 + 画地面阴影 + 落点虚线圈」，呈现越山抛物线。
+        round1(b.z || 0),
+        b.arc ? 1 : 0,
+      ];
+    }),
     f: game.factories.map((f) => [
       f.id,
       f.owner,
@@ -2254,10 +2915,11 @@ function snapshot(game) {
       f.contested ? 1 : 0,
       Math.round(f.hp), // 工厂当前血量（打光即易主）
       Math.round(f.evoCd || 0), // 手动进化冷却剩余（毫秒）
+      clamp(Math.round(f.lines || 1), 1, FAC_MAX_LINES), // 产线数（1..3）：并行生产
     ]),
     // 研究所：[id, 归属, 当前血量, 满血]（同样是打光即易主）
     lb: game.labs.map((l) => [l.id, l.owner, Math.round(l.hp), Math.round(l.hpMax)]),
-    // 总部：[id, 归属, 当前血量, 满血, 是否已陷落, 进化冷却剩余]
+    // 总部：[id, 归属, 当前血量, 满血, 是否已陷落, 进化冷却剩余, 生产加速等级]
     hq: game.hqs.map((h) => [
       h.id,
       h.owner,
@@ -2265,15 +2927,28 @@ function snapshot(game) {
       Math.round(h.hpMax),
       h.down ? 1 : 0,
       Math.round(h.evoCd || 0),
+      clamp(Math.round(h.speedLv || 0), 0, PROD_SPEED_MAX),
     ]),
     // 科技点：与 players 同序（左上角 HUD / 记分牌用）
     rp: game.players.map((p) => Math.round(p.rp)),
+    // 距下次研究点结算的进度（累积毫秒，0..RP_PERIOD_MS）：客户端画「下次 +N」进度条用
+    rpAcc: game.players.map((p) => Math.round(p.rpAccMs || 0)),
     // 兵力：与 players 同序（右上角兵力上限提示用）
     uc: game.players.map((_, i) => unitCountOf(game, i)),
     // 集结点（仅下发已设置的，绝大多数时候为空数组）：[工厂id, x, y]
     r: game.factories
       .filter((f) => f.rally)
       .map((f) => [f.id, Math.round(f.rally.x), Math.round(f.rally.y)]),
+    // 灼烧地形（燎原喷出的火场）：[x, y, 半径, 剩余寿命毫秒, 归属]
+    // 剩余寿命让客户端能把火画成「逐渐熄灭」——火舌一停，客户端跟着倒计时淡出。
+    fr: game.fires.map((f) => [
+      Math.round(f.x),
+      Math.round(f.y),
+      f.r,
+      Math.max(0, Math.round(f.until - now)),
+      f.owner,
+      f.lifeMs, // 该片火场的寿命上限：客户端按「剩余 / 上限」算衰减（三级火场更耐烧）
+    ]),
     ev: game.events.splice(0, game.events.length),
   };
 }
@@ -2296,6 +2971,8 @@ function publicGameState(game) {
       captured: p.captured,
       rp: Math.round(p.rp),
       rpRate: researchRate(game, i),
+      rpAccMs: Math.round(p.rpAccMs || 0), // 距下次结算的累积毫秒
+      rpPerPeriod: labCountOf(game, i) * RP_PER_LAB, // 下次结算将发放的点数（0 = 不产出）
       eliminated: Boolean(p.eliminated),
       left: Boolean(p.left),
     })),
@@ -2308,6 +2985,7 @@ function publicGameState(game) {
       capBy: f.capBy,
       capProg: Math.round(f.capProg),
       prodProg: round2(f.prodProg),
+      lines: clamp(Math.round(f.lines || 1), 1, FAC_MAX_LINES), // 产线数（1..3）
       home: Boolean(f.home),
       hp: Math.round(f.hp),
       hpMax: f.hpMax,
@@ -2333,6 +3011,9 @@ function publicGameState(game) {
       hpMax: h.hpMax,
       down: Boolean(h.down),
       ecd: Math.round(h.evoCd || 0),
+      speedLv: clamp(Math.round(h.speedLv || 0), 0, PROD_SPEED_MAX), // 生产加速等级
+      // 该玩家当前「单条产线」的生产间隔（毫秒，已计入加速）：客户端直接展示，不必自己算
+      prodIntervalMs: Math.round(prodIntervalMs(game, h.owner)),
     })),
     units: game.units.length,
     over: Boolean(game.over),
@@ -2397,10 +3078,34 @@ function setPlayerInput(game, playerId, data) {
       if (!ids.includes(u.id)) continue;
       u.moveX = tx;
       u.moveY = ty;
-      u.chasing = false;
-      // 1.5s 脱离窗口：残兵可以拉出火线，之后恢复自动迎击
-      u.disengageUntil = now + 1500;
-      u.targetId = 0;
+      u.targetId = 0; // 立刻重新索敌（移动中照常开火，所以不需要脱离窗口）
+      u.manualTarget = null; // 行军指令取消追击攻击命令（右键别处 = 取消）
+      n++;
+    }
+    return n > 0;
+  }
+  if (cmd === 'attack') {
+    // 追击攻击命令：右键点中的敌 / 中立单位或建筑。
+    // 目标在射程内就直接打；**不在射程内会主动寻路赶上去**（见 updateUnits 的追击段），
+    // 目标逃跑也一路追下去 —— 直到玩家右键别处（move）/ 停止（stop），或目标死亡/易主。
+    const kind = String(d.kind || '');
+    if (!['u', 'f', 'l', 'h'].includes(kind)) return false;
+    const id = Number(d.id);
+    if (!Number.isFinite(id)) return false;
+    // 只接受非己方目标（敌方 / 中立建筑 owner===-1）
+    const tgt = lookupTarget(game, oi, kind, id);
+    if (!tgt) return false;
+    const ids = Array.isArray(d.ids) ? d.ids.slice(0, 80) : [];
+    if (!ids.length) return false;
+    let n = 0;
+    for (const u of game.units) {
+      if (u.dead || u.ownerIdx !== oi) continue;
+      if (!ids.includes(u.id)) continue;
+      u.manualTarget = { kind, id };
+      // 攻击命令取代此前的移动命令，否则部队会先去旧目标点再回头
+      u.moveX = null;
+      u.moveY = null;
+      u.scanAt = 0; // 立刻重新索敌，不用等下一个扫描周期（250ms）
       n++;
     }
     return n > 0;
@@ -2474,6 +3179,34 @@ function setPlayerInput(game, playerId, data) {
     pushEvent(game, { t: 'fcevo', fid, oi, tier: pick.tier, x: round1(pick.x), y: round1(pick.y) });
     return true;
   }
+  if (cmd === 'facLine') {
+    // 开辟产线：花科技点在自有工厂上再加一条产线（最多 FAC_MAX_LINES 条）。
+    // 产线并行生产，同一时间一座工厂就能同时出多个单位。
+    const fid = Math.round(Number(d.fid));
+    const f = game.factories.find((x) => x.id === fid);
+    if (!f || f.owner !== oi) return false; // 只能给自己名下的工厂开产线
+    const lines = clamp(Math.round(f.lines || 1), 1, FAC_MAX_LINES);
+    if (lines >= FAC_MAX_LINES) return false; // 已满产
+    if (p.rp < FAC_LINE_COST) return false; // 科技点不足
+    p.rp -= FAC_LINE_COST;
+    f.lines = lines + 1;
+    game._captures = (game._captures || 0) + 1; // 让客户端立刻看到扣费与产线变化
+    pushEvent(game, { t: 'line', oi, fid, lines: f.lines, x: round1(f.x), y: round1(f.y) });
+    return true;
+  }
+  if (cmd === 'prodSpeed') {
+    // 总部产能升级：花科技点加快本方所有部队的生产速度（每级把当前间隔再缩短 1/15）。
+    const hq = game.hqs.find((h) => h.owner === oi);
+    if (!hq || hq.down) return false;
+    const lv = clamp(Math.round(hq.speedLv || 0), 0, PROD_SPEED_MAX);
+    if (lv >= PROD_SPEED_MAX) return false; // 已满级
+    if (p.rp < PROD_SPEED_COST) return false; // 科技点不足
+    p.rp -= PROD_SPEED_COST;
+    hq.speedLv = lv + 1;
+    game._captures = (game._captures || 0) + 1; // 让客户端立刻看到扣费与等级变化
+    pushEvent(game, { t: 'spd', oi, lv: hq.speedLv, x: round1(hq.x), y: round1(hq.y) });
+    return true;
+  }
   if (cmd === 'stop') {
     const ids = Array.isArray(d.ids) ? d.ids.slice(0, 80) : [];
     for (const u of game.units) {
@@ -2482,10 +3215,7 @@ function setPlayerInput(game, playerId, data) {
       u.moveX = null;
       u.moveY = null;
       u.targetId = 0;
-      u.chasing = false;
-      u.disengageUntil = 0;
-      u.homeX = u.x;
-      u.homeY = u.y;
+      u.manualTarget = null; // 停止指令取消追击攻击命令（部队原地待命），下次则自动索敌
     }
     return true;
   }
@@ -2640,6 +3370,12 @@ module.exports = {
     updateProduction,
     updateUnits,
     updateBullets,
+    sprayFlame,
+    addFire,
+    fireProfile,
+    updateFires,
+    explodeShell,
+    retaliate,
     reapDead,
     updateOutcome,
     findTarget,
@@ -2648,12 +3384,16 @@ module.exports = {
     damageHq,
     updateResearch,
     researchRate,
+    labCountOf,
+    prodIntervalMs,
     promoteUnit,
     laserMul,
     laserZap,
     terrainCell,
     terrainSpeedFactor,
     terrainPassable,
+    losBlocked,
+    mountainHitAlong,
     canStand,
     nearestPassable,
     stepViaFlow,
@@ -2700,6 +3440,7 @@ module.exports = {
       TT_MOUNTAIN,
       TT_SWAMP,
       TT_WATER,
+      LOS_STEP,
       SWAMP_SLOW,
       WATER_TOP,
       SWAMP_TOP,
@@ -2707,6 +3448,17 @@ module.exports = {
       LASER_WINDUP_MS,
       LASER_RAMP_MS,
       LASER_MAX_MUL,
+      FLAME_R,
+      FLAME_PULSE_MS,
+      FIRE_TIERS,
+      FIRE_MAX,
+      BULLET_SPLASH,
+      ATTACK_SLACK,
+      FAC_LINE_COST,
+      FAC_MAX_LINES,
+      PROD_SPEED_COST,
+      PROD_SPEED_MAX,
+      PROD_SPEED_STEP,
     },
   },
 };

@@ -1,3 +1,979 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>战争工厂 · 底部指挥栏预览</title>
+<style>
+  body { margin: 0; padding: 14px; background: #f4efe2; font-family: "Noto Serif SC", "Songti SC", serif; }
+  .panel.game-panel { max-width: 1300px; margin: 0 auto; }
+  h2 { margin: 0 0 4px; font-size: 20px; color: #2a2620; }
+  .game-status { margin: 0 0 10px; font-size: 13px; color: #6c5f4b; }
+  .muted { display: none; }
+  /* 战争工厂（水墨即时战略）面板样式 */
+
+/*
+ * 指挥栏高度：浮在地图下沿时要参与两处计算 ——
+ * ① ui.js 把画布左下角的 HUD 抬到它上面（其实走的是实测 getBoundingClientRect，这里是兜底）；
+ * ② 聊天窗要抬到它上面（见 public/css/style.css，用 var(--wf-cmdbar-h, 0px) 取值）。
+ * 改指挥栏里的高度（小地图 200 / 粗览 216 / 详情 216）时记得同步这个数。
+ */
+:root {
+  --wf-cmdbar-h: 282px;
+}
+
+/*
+ * [hidden] 兜底：本文件里大量 .xxx { display: flex/block } 的类选择器
+ * 优先级高于 UA 样式的 [hidden] { display: none }，会把 hidden 属性
+ * 悄悄盖掉（现象：总部面板里冒出「开辟产线」按钮、初级工厂冒出进化按钮）。
+ * 面板内所有 hidden 一律以这条为准。
+ */
+#panel-warfactory [hidden] {
+  display: none !important;
+}
+
+/*
+ * ================= 地图铺满整屏 =================
+ * 面板可见时：地图不再是一个居中的 1280 宽方框，而是铺满整个视口；
+ * 顶部那一行（菜单 / 对局计时）与底部指挥栏改成浮在地图上的图层，
+ * 面板自己的标题 / 副标题让位隐藏 —— 全屏之后画面里只剩「游戏界面 + 地图」。
+ */
+#panel-warfactory:not([hidden]) {
+  height: 100%;
+}
+
+#panel-warfactory:not([hidden]) #game-title,
+#panel-warfactory:not([hidden]) #game-sides {
+  display: none !important;
+}
+
+#panel-warfactory:not([hidden]) .warfactory-wrap {
+  max-width: none;
+  height: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.warfactory-wrap {
+  position: relative;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  border: 1px solid rgba(90, 74, 52, 0.55);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #ece3cd;
+  box-shadow: 0 2px 14px rgba(60, 48, 30, 0.18);
+}
+
+#warfactory-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1280 / 800;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+/* 铺满整屏时画布跟着容器走：宽高都由视口决定，纵横比不再是约束 */
+#panel-warfactory:not([hidden]) #warfactory-canvas {
+  height: 100%;
+  aspect-ratio: auto;
+}
+
+/* ---- 地图内浮层：右上角「？」规则入口 + 规则面板 ---- */
+.wf-map-tools {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 7;
+  display: flex;
+  gap: 6px;
+}
+
+.wf-map-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid rgba(90, 74, 52, 0.55);
+  border-radius: 6px;
+  background: rgba(246, 239, 221, 0.86);
+  color: #2a2620;
+  font-family: "STKaiti", "KaiTi", "Noto Serif SC", "SimSun", serif;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(60, 48, 30, 0.16);
+}
+
+.wf-map-btn:hover {
+  background: rgba(252, 249, 240, 0.98);
+}
+
+.wf-map-btn[aria-expanded='true'] {
+  border-color: rgba(160, 58, 44, 0.6);
+  background: rgba(160, 58, 44, 0.14);
+  color: #8a2f22;
+}
+
+.wf-help {
+  position: absolute;
+  top: 52px;
+  right: 10px;
+  z-index: 8;
+  width: min(560px, calc(100% - 20px));
+  max-height: min(74vh, 660px);
+  overflow: auto;
+  padding: 0 14px 14px;
+  border: 1px solid rgba(90, 74, 52, 0.6);
+  border-radius: 6px;
+  background: rgba(250, 246, 234, 0.97);
+  box-shadow: 0 8px 28px rgba(60, 48, 30, 0.28);
+  color: #3c342a;
+  text-align: left;
+  font-size: 12px;
+}
+
+.wf-help-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 0 7px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid rgba(90, 74, 52, 0.25);
+  background: rgba(250, 246, 234, 0.97);
+}
+
+.wf-help-title {
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 2px;
+  color: #8a2f22;
+}
+
+.wf-help-close {
+  border: 0;
+  background: transparent;
+  color: #7d6f58;
+  font-size: 19px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.wf-help-close:hover {
+  color: #a03a2c;
+}
+
+.wf-help-body {
+  line-height: 1.75;
+}
+
+/* 规则块在浮层里改成左对齐、无边框（原来是页面下方那一条条横线） */
+.wf-help-body .warfactory-legend {
+  display: block;
+  max-width: none;
+  margin: 10px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.wf-help-body .warfactory-legend-item {
+  display: block;
+  margin: 2px 0;
+}
+
+.wf-help-body .warfactory-help {
+  max-width: none;
+  margin: 12px 0 0;
+  text-align: left;
+}
+
+/* ---- 工厂面板（渲染在底部指挥栏右栏内，见 .wcb-detail 的流式覆盖） ---- */
+.warfactory-facpanel {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 6;
+  width: 236px;
+  padding: 10px 12px 12px;
+  border: 1px solid rgba(90, 74, 52, 0.6);
+  border-radius: 6px;
+  background: rgba(250, 246, 234, 0.96);
+  box-shadow: 0 4px 18px rgba(60, 48, 30, 0.22);
+  font-size: 13px;
+  color: #3c342a;
+}
+
+.wfp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.wfp-title {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.wfp-close {
+  border: none;
+  background: transparent;
+  color: #7d6f58;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.wfp-close:hover {
+  color: #a03a2c;
+}
+
+.wfp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #6c5f4b;
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+
+.wfp-level {
+  padding: 1px 7px;
+  border-radius: 3px;
+  background: rgba(90, 74, 52, 0.12);
+  font-weight: 600;
+}
+
+.wfp-bar {
+  position: relative;
+  height: 7px;
+  border: 1px solid rgba(90, 74, 52, 0.35);
+  border-radius: 3px;
+  background: rgba(236, 227, 205, 0.9);
+  overflow: hidden;
+}
+
+.wfp-bar > i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: #5f8a4a;
+  transition: width 0.12s linear;
+}
+
+.wfp-bar-hp > i {
+  background: #5f8a4a;
+}
+
+.wfp-bar-hp.is-mid > i {
+  background: #c8871f;
+}
+
+.wfp-bar-hp.is-low > i {
+  background: #a03a2c;
+}
+
+.wfp-bar-prod > i {
+  background: #4d6f8a;
+}
+
+.wfp-hp-text {
+  margin-top: 3px;
+  font-size: 11px;
+  color: #7d6f58;
+}
+
+.wfp-sec-title {
+  margin: 10px 0 5px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #5a4a34;
+  border-bottom: 1px solid rgba(90, 74, 52, 0.25);
+  padding-bottom: 3px;
+}
+
+.wfp-unit {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.wfp-glyph {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  background: #8a2f22;
+  color: #f6efdd;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 32px;
+  text-align: center;
+}
+
+.wfp-unit-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.wfp-unit-name {
+  font-weight: 600;
+}
+
+.wfp-unit-desc {
+  font-size: 11px;
+  color: #7d6f58;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wfp-evolve {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border: 1px solid rgba(160, 58, 44, 0.7);
+  border-radius: 4px;
+  background: rgba(160, 58, 44, 0.1);
+  color: #8a2f22;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* 独占一行的进化按钮（总部面板 / 工厂面板通用） */
+.wfp-evolve-block {
+  display: block;
+  width: 100%;
+  margin-top: 9px;
+  padding: 6px 9px;
+}
+
+.wfp-evolve:hover:not(:disabled) {
+  background: rgba(160, 58, 44, 0.2);
+}
+
+.wfp-evolve:disabled {
+  border-color: rgba(90, 74, 52, 0.35);
+  background: rgba(90, 74, 52, 0.08);
+  color: #9b8f7c;
+  cursor: default;
+}
+
+.wfp-note {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #7d6f58;
+  line-height: 1.5;
+}
+
+.wfp-rally {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(90, 74, 52, 0.25);
+  font-size: 11px;
+  color: #6c5f4b;
+}
+
+/* ---- 部队面板（同样渲染在指挥栏右栏内） ---- */
+.warfactory-unitpanel {
+  width: 244px;
+}
+
+/* 右栏三块内容互斥：我方概况 / 工厂面板 / 部队面板 */
+.wup-hero {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 7px;
+}
+
+/* 属性表：等宽行，标签与数值分列 */
+.wup-stats {
+  white-space: pre-line;
+  line-height: 1.75;
+  font-size: 12px;
+  color: #3c342a;
+  font-variant-numeric: tabular-nums;
+}
+
+.wup-stats b {
+  font-weight: 700;
+  color: #8a2f22;
+}
+
+/* 状态提示行：灼烧 / 锁定倍率 / 蓄能 */
+.wup-extra {
+  margin-top: 7px;
+  padding: 3px 8px;
+  border: 1px solid rgba(47, 111, 122, 0.45);
+  border-radius: 3px;
+  background: rgba(47, 111, 122, 0.1);
+  font-size: 11px;
+  line-height: 1.5;
+  color: #2f6f7a;
+}
+
+.wup-extra:empty {
+  display: none;
+}
+
+.wup-extra.is-none {
+  border-color: rgba(90, 74, 52, 0.3);
+  background: rgba(90, 74, 52, 0.06);
+  color: #7d6f58;
+}
+
+/* 编制汇总（多选）的主标题 */
+.wup-roster {
+  font-weight: 600;
+  color: #3c342a;
+}
+
+/* ============ 底部指挥栏：小地图 ｜ 单位粗览 ｜ 单位详情 ============ */
+
+.warfactory-cmdbar {
+  display: grid;
+  grid-template-columns: 326px minmax(0, 1fr) 344px;
+  gap: 10px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid rgba(90, 74, 52, 0.5);
+  background: #e4dac1;
+}
+
+/*
+ * 指挥栏浮在地图下沿（不再把地图顶上去）。
+ * 半透明 + 一点模糊，既能挡在读得清，又不至于把地图整个盖死。
+ */
+#panel-warfactory:not([hidden]) .warfactory-cmdbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  height: var(--wf-cmdbar-h);
+  background: rgba(228, 218, 193, 0.94);
+  backdrop-filter: blur(3px);
+}
+
+/* 对局状态：指挥栏顶沿的窄条（原来在地图上方那一行） */
+.wcb-status {
+  grid-column: 1 / -1;
+  margin: 0 0 6px;
+  padding: 0 0 5px;
+  border-bottom: 1px dashed rgba(90, 74, 52, 0.35);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+  color: #5a4c38;
+}
+
+.wcb-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.wcb-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 5px;
+  padding-bottom: 3px;
+  border-bottom: 1px dashed rgba(90, 74, 52, 0.35);
+  font-size: 12px;
+  color: #5a4c38;
+}
+
+.wcb-title {
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.wcb-tip,
+.wcb-count {
+  font-size: 11px;
+  color: #8a7a5e;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 左：小地图（尺寸与 ui.js 的 MINIMAP_W/H 保持一致） ---- */
+.warfactory-minimap {
+  display: block;
+  width: 300px;
+  height: 200px;
+  border: 1px solid rgba(90, 74, 52, 0.6);
+  border-radius: 3px;
+  background: #f6efdd;
+  cursor: pointer;
+  touch-action: none;
+}
+
+/* ---- 中：单位粗览 ---- */
+.wov-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(58px, 1fr));
+  gap: 5px;
+  align-content: start;
+  height: 216px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.wov-empty {
+  grid-column: 1 / -1;
+  align-self: center;
+  padding: 26px 0;
+  text-align: center;
+  font-size: 12px;
+  color: #8a7a5e;
+}
+
+.wov-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 3px 3px;
+  border: 1px solid rgba(90, 74, 52, 0.35);
+  border-radius: 3px;
+  background: rgba(250, 246, 234, 0.7);
+  cursor: pointer;
+  user-select: none;
+}
+
+.wov-tile:hover {
+  border-color: rgba(160, 58, 44, 0.55);
+  background: rgba(252, 249, 240, 0.95);
+}
+
+.wov-tile.is-sel {
+  border-color: rgba(160, 58, 44, 0.85);
+  box-shadow: inset 0 0 0 1px rgba(160, 58, 44, 0.45);
+  background: rgba(252, 244, 236, 0.98);
+}
+
+.wov-glyph {
+  display: block;
+  width: 22px;
+  height: 22px;
+  line-height: 22px;
+  text-align: center;
+  border-radius: 2px;
+  color: #f6efdd;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.wov-tier {
+  font-size: 11px;
+  line-height: 1;
+  color: #5a4c38;
+  letter-spacing: 0.5px;
+}
+
+.wov-hp {
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(90, 74, 52, 0.18);
+  overflow: hidden;
+}
+
+.wov-hp > i {
+  display: block;
+  height: 100%;
+  background: #4a6b3a;
+}
+
+.wov-hp.is-mid > i {
+  background: #8a6b22;
+}
+
+.wov-hp.is-low > i {
+  background: #8a2f22;
+}
+
+/* ---- 右：单位详情 ---- */
+.wdt-body {
+  height: 216px; /* 与左栏「小地图标题 + 200px 画布」对齐 */
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+/* 详情栏内的两个面板改为流式排布（原本浮动在战场右上角） */
+.wcb-detail .warfactory-facpanel,
+.wcb-detail .warfactory-unitpanel {
+  position: static;
+  width: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+
+/* 中栏（单位粗览）只在选中部队时出现：没选中整段收起，右栏跨两列补位 */
+.wcb-overview[hidden] {
+  display: none !important;
+}
+
+.wcb-detail.is-wide {
+  grid-column: 2 / 4;
+}
+
+/* 跨列后限制阅读宽度，免得一行拉太长 */
+.wcb-detail.is-wide .wdt-body {
+  max-width: 620px;
+}
+
+/* 我方概况：未选中任何目标时显示（只留科技点 + 一行提示，详细数据「点谁看谁」） */
+.warfactory-self {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: #3c342a;
+}
+
+.warfactory-self[hidden] {
+  display: none;
+}
+
+/* 键值行：产线 2 / 3、生产加速 3 / 20 级 */
+.wfp-kv {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #3c342a;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 产能 / 提速说明行 */
+.wfp-rate {
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #6c5f4b;
+  font-variant-numeric: tabular-nums;
+}
+
+.wfp-spd {
+  margin-top: 4px;
+}
+
+.wfp-spd[hidden] {
+  display: none;
+}
+
+.wsl-line {
+  font-size: 12px;
+  color: #6c5f4b;
+  font-variant-numeric: tabular-nums;
+}
+
+.wsl-dim {
+  color: #8a7a5e;
+}
+
+.warfactory-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  align-items: baseline;
+  justify-content: center;
+  max-width: 1280px;
+  margin: 4px auto;
+  padding: 6px 10px;
+  border-top: 1px dashed rgba(90, 74, 52, 0.35);
+  border-bottom: 1px dashed rgba(90, 74, 52, 0.35);
+  font-size: 12px;
+  color: #5a4c38;
+}
+
+.warfactory-legend-title {
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #8a2f22;
+}
+
+.warfactory-legend-item {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.warfactory-legend-item b {
+  font-weight: 700;
+  color: #3c342a;
+}
+
+.warfactory-legend-item em {
+  font-style: normal;
+  color: #7d6f58;
+}
+
+/* 地形图例色块 */
+.warfactory-terrain-legend {
+  margin-top: 2px;
+}
+.terr-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  margin-right: 2px;
+  vertical-align: -1px;
+  border: 1px solid rgba(90, 74, 52, 0.35);
+}
+.terr-water { background: rgba(74, 96, 112, 0.75); }
+.terr-swamp { background: rgba(104, 104, 72, 0.6); }
+.terr-mountain { background: rgba(72, 68, 62, 0.7); }
+.terr-plain { background: rgba(246, 239, 221, 0.9); }
+
+.warfactory-help {
+  text-align: center;
+  font-size: 12px;
+  color: #7d6f58;
+  margin: 6px auto 14px;
+  max-width: 1280px;
+}
+
+</style>
+</head>
+<body>
+<!-- 战争工厂对局面板（水墨即时战略） -->
+<div class="panel game-panel" id="panel-warfactory" hidden>
+  <!--
+    布局：地图铺满整个屏幕（见 style.css 的「地图铺满整屏」一节）。
+    指挥栏浮在地图下沿、规则说明收进右上角的浮层 —— 地图下方不再有任何东西，
+    全屏（F11）之后画面里只有「游戏界面 + 地图」。
+  -->
+  <div class="warfactory-wrap">
+    <canvas
+      id="warfactory-canvas"
+      width="1280"
+      height="800"
+      data-i18n-attr="aria-label:warfactory.boardAria"
+      aria-label="战争工厂战场"
+    ></canvas>
+
+    <!-- 右上角浮层：规则与操作（原来的图例整段搬到这里，默认收起） -->
+    <div class="wf-map-tools">
+      <button
+        type="button"
+        id="wf-help-btn"
+        class="wf-map-btn"
+        aria-expanded="false"
+        aria-controls="wf-help"
+        title="规则与操作"
+        aria-label="规则与操作"
+      >？</button>
+    </div>
+    <div class="wf-help" id="wf-help" role="dialog" aria-label="规则与操作" hidden>
+      <div class="wf-help-head">
+        <span class="wf-help-title">规则与操作</span>
+        <button type="button" class="wf-help-close" id="wf-help-close" aria-label="关闭">×</button>
+      </div>
+      <div class="wf-help-body">
+        <div class="warfactory-legend">
+          <span class="warfactory-legend-title" data-i18n="warfactory.legendTitle">兵种图谱</span>
+          <span class="warfactory-legend-item"><b>锐士</b><em data-i18n="warfactory.unit.warrior">近战突进，攻守兼备</em></span>
+          <span class="warfactory-legend-item"><b>盾卫</b><em data-i18n="warfactory.unit.shield">重甲缓慢，坚不可摧</em></span>
+          <span class="warfactory-legend-item"><b>游侠</b><em data-i18n="warfactory.unit.ranger">远程狙击，薄血长射</em></span>
+          <span class="warfactory-legend-item"><b>轰击</b><em data-i18n="warfactory.unit.burst">范围炮击，落点成墨</em></span>
+          <span class="warfactory-legend-item"><b>燎原</b><em data-i18n="warfactory.unit.burn">持续喷火；二级起落点留下灼烧地形</em></span>
+          <span class="warfactory-legend-item"><b>激光兵</b><em data-i18n="warfactory.unit.laser">锁定越久伤害越高，最高 5 倍</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">地形</span>
+          <span class="warfactory-legend-item"><i class="terr-swatch terr-water"></i><b>水域</b><em>不可通行</em></span>
+          <span class="warfactory-legend-item"><i class="terr-swatch terr-swamp"></i><b>沼泽</b><em>可通行，减速 50%</em></span>
+          <span class="warfactory-legend-item"><i class="terr-swatch terr-mountain"></i><b>山地</b><em>不可通行，且有高度：挡住视线与弹道，山两侧互相看不见、打不到</em></span>
+          <span class="warfactory-legend-item"><i class="terr-swatch terr-plain"></i><b>平原</b><em>一览无余</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">交战</span>
+          <span class="warfactory-legend-item"><b>不追击</b><em>敌人进入攻击范围才开火；跑出范围即停火，部队绝不自己追出去</em></span>
+          <span class="warfactory-legend-item"><b>移动攻击</b><em>行军途中照常开火，边走边打（不必停下）</em></span>
+          <span class="warfactory-legend-item"><b>索敌范围</b><em>= 自身攻击范围，更远的敌人当作看不见</em></span>
+          <span class="warfactory-legend-item"><b>唯一的友伤</b><em>只有燎原的灼烧地形会烧自己人：把火铺在自家部队脚下，掉血的是自己（一级燎原不留火场，所以只有二级起才烧得到自己）</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">战场识别</span>
+          <span class="warfactory-legend-item"><b>归属色</b><em>红 / 蓝 / 黄 / 绿四方阵营色；单位脚下、工厂厂区、总部台基都压同色底盘（60% 透明），一眼看清是谁的</em></span>
+          <span class="warfactory-legend-item"><b>血量</b><em>所有单位默认常显血条（满血也显示），颜色随归属方</em></span>
+          <span class="warfactory-legend-item"><b>选中效果</b><em>被选中的部队脚下多一圈亮色呼吸光环，四周再加四角方框</em></span>
+          <span class="warfactory-legend-item"><b>开火</b><em>开枪时枪口会喷出锯齿状的火星与硝烟，射手同时向后一顿（后坐）；燎原是一道往外泼的长火舌，激光兵是冷白细芒</em></span>
+          <span class="warfactory-legend-item"><b>弹道</b><em>弹丸是沿弹道拖笔的墨滴（不是圆点），每发的笔锋都不一样；炮击弹更粗更沉（燎原不走弹道，是持续的火舌）</em></span>
+          <span class="warfactory-legend-item"><b>命中</b><em>打中哪里就在哪里炸开一团不规则的墨（像水球拍在地上），带一圈飞溅</em></span>
+          <span class="warfactory-legend-item"><b>弹痕</b><em>命中处在地上留一小块墨渍，约 9 秒后淡去——一眼看出这片区域刚被打过</em></span>
+          <span class="warfactory-legend-item"><b>灼烧地形</b><em>燎原的火舌落在哪里，哪里就烧起一片暗红火场（范围很大）；踩在上面的单位持续掉血，<b>不分敌我</b>，火焰一停几秒内自行熄灭。<b>一级燎原不留火场</b>，进化到二级才会烧地，三级火场更大、烧得更久、伤害更高</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">指挥栏</span>
+          <span class="warfactory-legend-item"><b>小地图</b><em>左下；点击或按住拖动即可把镜头跳到该处</em></span>
+          <span class="warfactory-legend-item"><b>单位粗览</b><em>中栏；只列当前选中的部队，没选中时这一栏不显示（想看谁就点谁）</em></span>
+          <span class="warfactory-legend-item"><b>侦察</b><em>他家的部队 / 工厂 / 总部 / 研究所也能左键点开看数据——只读，没有升级与指令按钮；框选永远只圈自己的部队</em></span>
+          <span class="warfactory-legend-item"><b>单位详情</b><em>右栏；点部队看属性，点工厂看产能，点总部看血量与产能升级</em></span>
+          <span class="warfactory-legend-item"><b>F2</b><em>全选我方所有部队（F 只选镜头内）</em></span>
+          <span class="warfactory-legend-item"><b>滚轮</b><em>在战场上滚动滚轮缩放视野；以鼠标所指位置为锚点，拉远看全局、推近看细节</em></span>
+          <span class="warfactory-legend-item"><b>中键平移</b><em>按住鼠标中键在战场上拖动，地图跟着手走（浏览器自带的「中键自动滚动」已屏蔽，中键只用来拖地图）</em></span>
+          <span class="warfactory-legend-item"><b>空格</b><em>镜头立刻回到自家总部（总部没了则回自家工厂；缩放倍率不变）</em></span>
+          <span class="warfactory-legend-item"><b>编队</b><em>Ctrl / Shift + 数字键 0-9：把当前选中的部队编入该编号（没选中则清空该编号）</em></span>
+          <span class="warfactory-legend-item"><b>数字键 0-9</b><em>选中该编队；同一编号连按两下，镜头立刻飞到编队的第一支部队（编队为空则不动）</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">工厂</span>
+          <span class="warfactory-legend-item"><b>固定兵种</b><em>每座工厂开局锁定一种兵，只产这一种</em></span>
+          <span class="warfactory-legend-item"><b>产线</b><em>默认 1 条；花 500 科技点在工厂面板里开辟新产线，最多 3 条并行生产</em></span>
+          <span class="warfactory-legend-item"><b>集结点</b><em>左键点选工厂 → 右键设集结点，此后新兵自动前往（Delete 清除）</em></span>
+          <span class="warfactory-legend-item"><b>进化</b><em>中/高级工厂的面板里有「进化」按钮，让本厂部队立刻进阶一阶</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">科技</span>
+          <span class="warfactory-legend-item"><b>科技点</b><em>左上角显示；只有占领研究所才产出——每座每 3 秒「一次性」+2 点（两座即每 3 秒一次 +4），HUD 进度条走满才跳，一座不占则为 0</em></span>
+          <span class="warfactory-legend-item"><b>进化</b><em>每 500 科技点可让一支部队进阶一阶（不再是经验）</em></span>
+          <span class="warfactory-legend-item"><b>生产加速</b><em>点选总部 → 花 1000 科技点点「加速生产」；每次在当前生产间隔上再减 1/15（复利），最多 20 级</em></span>
+          <span class="warfactory-legend-item"><b>研究所</b><em>初始中立，与工厂一样有血量：打光即由「最后一击者」接管并满血</em></span>
+          <span class="warfactory-legend-item"><b>总部</b><em>每人一座、不可易主；被打光即总部陷落，本人出局</em></span>
+        </div>
+        <div class="warfactory-legend warfactory-terrain-legend">
+          <span class="warfactory-legend-title">出击</span>
+          <span class="warfactory-legend-item"><b>初始部队</b><em>开局没有工厂，只在总部拥有 6 种初级单位各 1 支</em></span>
+          <span class="warfactory-legend-item"><b>总部面板</b><em>左键点选自己的总部 → 右侧详情栏，可加速生产、也可用科技点让亲兵进阶</em></span>
+        </div>
+        <p class="warfactory-help" data-i18n="warfactory.help">
+          部队只打攻击范围内的敌人、不自动追击，但移动中照常开火 · 工厂与研究所有血量：打光即由「最后一击者」接管，易主后恢复满血，中立建筑只有 1/3 血 · 每 500 科技点进化一支部队 · 左键框选部队 · 右键移动 · F 选取镜头内部队 / F2 全选我方部队 · 选中工厂后右键设集结点 · 点工厂花 500 开路产线（最多 3 条）· 点总部花 1000 加速生产（最多 20 级）· WASD/方向键移动镜头 · 点击小地图跳转 · 总部被打爆即出局
+        </p>
+      </div>
+    </div>
+
+    <!-- ============ 底部指挥栏：对局状态 ｜ 小地图 ｜ 单位粗览 ｜ 单位详情 ============ -->
+    <div class="warfactory-cmdbar">
+      <!-- 对局状态（原来在地图上方那行，现在并进指挥栏顶沿，不占地图外的位置） -->
+      <p id="game-status" class="game-status wcb-status">—</p>
+      <!-- 左：小地图 -->
+      <section class="wcb-col wcb-mini">
+        <header class="wcb-head">
+          <span class="wcb-title">小地图</span>
+          <span class="wcb-tip">点击/拖动跳转</span>
+        </header>
+        <canvas
+          id="warfactory-minimap"
+          class="warfactory-minimap"
+          width="300"
+          height="200"
+          aria-label="小地图"
+        ></canvas>
+      </section>
+
+      <!-- 中：单位粗览（只列当前选中的部队；没选中就整段不显示） -->
+      <section class="wcb-col wcb-overview" id="warfactory-ov-sec">
+        <header class="wcb-head">
+          <span class="wcb-title">单位粗览</span>
+          <span class="wcb-count" id="wov-count">—</span>
+        </header>
+        <div class="wov-grid" id="warfactory-overview"></div>
+      </section>
+
+      <!-- 右：单位详情（点单位看属性 / 点工厂看产能与升级 / 点总部看血量与产能升级） -->
+      <section class="wcb-col wcb-detail" id="warfactory-detail-sec">
+        <header class="wcb-head">
+          <span class="wcb-title" id="wdt-title">单位详情</span>
+          <span class="wcb-count" id="wdt-count"></span>
+        </header>
+        <div class="wdt-body">
+          <!-- 未选中任何目标时：只留一行科技点 + 操作提示 -->
+          <div class="warfactory-self" id="warfactory-self">
+            <div class="wsl-line" id="wsl-tech">科 0</div>
+            <div class="wsl-line wsl-dim" id="wsl-hint">左键点选我方单位 / 工厂 / 总部查看详情 · 滚轮缩放 · 中键拖动平移 · 空格回总部</div>
+          </div>
+
+          <!-- 选中工厂 / 总部后：在详情栏内展示（不再浮在战场上） -->
+          <aside id="warfactory-facpanel" class="warfactory-facpanel" hidden>
+            <div class="wfp-head">
+              <span class="wfp-title" id="wfp-title">工厂</span>
+              <button type="button" class="wfp-close" id="wfp-close" aria-label="关闭">×</button>
+            </div>
+            <div class="wfp-row">
+              <span id="wfp-owner">—</span>
+              <span class="wfp-level" id="wfp-level">—</span>
+            </div>
+            <div class="wfp-bar wfp-bar-hp"><i id="wfp-hp-fill"></i></div>
+            <div class="wfp-hp-text" id="wfp-hp-text">—</div>
+
+            <!-- —— 升级入口放在最上面（右栏高度有限，别让按钮沉到滚动区底下） —— -->
+            <button type="button" class="wfp-evolve wfp-evolve-block" id="wfp-line">开辟产线（500）</button>
+
+            <!-- —— 工厂：产能（产线 / 进度 / 速率） —— -->
+            <div class="wfp-sec-title" id="wfp-prod-sec">产能</div>
+            <div class="wfp-unit" id="wfp-unit">
+              <span class="wfp-glyph" id="wfp-glyph">兵</span>
+              <div class="wfp-unit-main">
+                <div class="wfp-unit-name" id="wfp-unit-name">—</div>
+                <div class="wfp-unit-desc" id="wfp-unit-desc">—</div>
+              </div>
+            </div>
+            <div class="wfp-kv" id="wfp-lines">产线 1 / 3</div>
+            <div class="wfp-bar wfp-bar-prod"><i id="wfp-prod-fill"></i></div>
+            <div class="wfp-rate" id="wfp-rate">—</div>
+            <div class="wfp-rally" id="wfp-rally">集结点：未设置</div>
+
+            <!-- —— 总部：生产加速（工厂时隐藏） —— -->
+            <div class="wfp-spd" id="wfp-spd">
+              <div class="wfp-sec-title" id="wfp-spd-sec">生产加速（全厂提速）</div>
+              <div class="wfp-kv" id="wfp-spd-lv">0 / 20 级</div>
+              <div class="wfp-rate" id="wfp-spd-rate">—</div>
+              <button type="button" class="wfp-evolve wfp-evolve-block" id="wfp-speed">加速生产（1000）</button>
+            </div>
+
+            <!-- —— 进化（工厂 / 总部都有） —— -->
+            <div class="wfp-sec-title" id="wfp-evo-sec">进化</div>
+            <button type="button" class="wfp-evolve wfp-evolve-block" id="wfp-evolve" hidden>进化</button>
+            <div class="wfp-note" id="wfp-note"></div>
+          </aside>
+
+          <!-- 选中部队后：单选看详细属性，多选看编制汇总 -->
+          <aside id="warfactory-unitpanel" class="warfactory-unitpanel" hidden>
+            <div class="wfp-head">
+              <span class="wfp-title" id="wup-title">部队</span>
+              <button type="button" class="wfp-close" id="wup-close" aria-label="关闭">×</button>
+            </div>
+            <div class="wup-hero">
+              <span class="wfp-glyph" id="wup-glyph">兵</span>
+              <div class="wfp-unit-main">
+                <div class="wfp-unit-name" id="wup-name">—</div>
+                <div class="wfp-unit-desc" id="wup-desc">—</div>
+              </div>
+            </div>
+            <div class="wfp-bar wfp-bar-hp wup-hp-bar"><i id="wup-hp-fill"></i></div>
+            <div class="wfp-hp-text" id="wup-hp-text">—</div>
+            <div class="wfp-sec-title" id="wup-stats-sec">属性</div>
+            <div class="wup-stats" id="wup-stats">—</div>
+            <div class="wup-extra" id="wup-extra"></div>
+            <div class="wfp-note" id="wup-note"></div>
+          </aside>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+window.__WF__ = {"state":{"type":"warfactory","world":{"w":4320,"h":2880},"consts":{"factoryR":39,"captureR":79,"captureRate":25,"reclaimRate":45,"produceMs":20000,"playerUnitCap":400,"playerUnitWarn":350,"factoryHp":2000,"neutralHpRatio":0.3333333333333333,"facEvolveCd":4000,"labR":31,"labHp":1200,"hqR":43,"hqHp":3000,"rpPerLab":2,"rpPeriodMs":3000,"evolveRpCost":500,"typeList":["warrior","shield","ranger","burst","burn","laser"],"stats":{"warrior":{"label":"锐士","hp":100,"dmg":11,"range":60,"cd":0.9,"speed":92,"r":9},"shield":{"label":"盾卫","hp":175,"dmg":8,"range":50,"cd":1.1,"speed":66,"r":10},"ranger":{"label":"游侠","hp":65,"dmg":10,"range":200,"cd":1.5,"speed":82,"r":9},"burst":{"label":"轰击","hp":75,"dmg":18,"range":165,"cd":2.1,"speed":58,"r":9,"splash":41},"burn":{"label":"燎原","hp":80,"dmg":6,"range":135,"cd":0.25,"speed":78,"r":9,"burn":true},"laser":{"label":"激光兵","hp":70,"dmg":2.5,"range":175,"cd":0.4,"speed":76,"r":9,"laser":true}},"tierHp":[1,1.7,2.6],"tierDmg":[1,1.55,2.2],"tierRange":[0,15,30],"tierCd":[1,0.88,0.78],"aggroBonus":0,"attackSlack":10,"facLineCost":500,"facMaxLines":3,"prodSpeedCost":1000,"prodSpeedMax":20,"prodSpeedStep":0.06666666666666667,"flameR":52,"fireTiers":[null,[46,3.5,3000],[64,6,5200]],"laserWindupMs":800,"laserRampMs":4000,"laserMaxMul":5,"colors":["#b03a2e","#2e5e8c","#c9a227","#3f7a52"]},"phase":"playing","phaseEndsAt":0,"players":[{"id":"p0","name":"墨客","color":"#b03a2e","kills":8,"losses":3,"evolved":2,"captured":4,"rp":620,"rpRate":1.3333333333333333,"rpAccMs":1500,"rpPerPeriod":4,"eliminated":false,"left":false},{"id":"p1","name":"砚台","color":"#2e5e8c","kills":4,"losses":6,"evolved":0,"captured":0,"rp":0,"rpRate":0.6666666666666666,"rpAccMs":0,"rpPerPeriod":2,"eliminated":false,"left":false}],"factories":[{"id":1,"x":1008,"y":1440,"level":3,"owner":0,"capBy":-1,"capProg":0,"prodProg":0.42,"lines":3,"home":false,"hp":2000,"hpMax":2000,"pt":"shield","ecd":0,"rx":1128,"ry":1530},{"id":2,"x":3312,"y":1440,"level":1,"owner":0,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"burn","ecd":0,"rx":null,"ry":null},{"id":3,"x":1764,"y":2124,"level":1,"owner":1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"burst","ecd":0,"rx":null,"ry":null},{"id":4,"x":2556,"y":756,"level":1,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"burst","ecd":0,"rx":null,"ry":null},{"id":5,"x":1764,"y":756,"level":2,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"shield","ecd":0,"rx":null,"ry":null},{"id":6,"x":2556,"y":2124,"level":2,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"shield","ecd":0,"rx":null,"ry":null},{"id":7,"x":2160,"y":1440,"level":3,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"warrior","ecd":0,"rx":null,"ry":null}],"labs":[{"id":1,"x":1260,"y":630,"owner":0,"hp":400,"hpMax":1200},{"id":2,"x":3060,"y":630,"owner":0,"hp":400,"hpMax":1200},{"id":3,"x":1260,"y":2250,"owner":1,"hp":400,"hpMax":1200},{"id":4,"x":3060,"y":2250,"owner":-1,"hp":400,"hpMax":1200}],"hqs":[{"id":1,"x":360,"y":1440,"owner":0,"hp":2400,"hpMax":3000,"down":false,"ecd":0,"speedLv":3,"prodIntervalMs":16261},{"id":2,"x":3960,"y":1440,"owner":1,"hp":930,"hpMax":3000,"down":false,"ecd":0,"speedLv":0,"prodIntervalMs":20000}],"units":16,"over":false,"winnerId":null,"seq":0,"serverTime":1790152339044,"terrain":{"cell":40,"cols":108,"rows":72,"data":"000000000000000004440000000002444444444444444400000444440000002222222222220000000444440000000000004444444444000000000000000004440000000004444444444444444400000444440000002222332222220000000444444000000000004444444444000000000000000044440000000044444444444444444400220044440000002222332222220000000444444000000000000444044444000000000000000444440000044444444444444444444400220004440000002222222222220000000444444000000000000000004444000000000000004444443333344444444444444444444400220000000000442222222222222440000444444000000000000000044444000000000000004444433333333334444444444444444444220000000044442222222222224444004444444000000000000000444444000000000000000444333333333300044444000044444444220000444444442442442242224444444244444000000000044404444400000000000000000033333333333000000022000044444444420004444444442244444442224422222222444000000000444444444400000000000000000003333344433000000022222444444444222222224444442244440000244222222222444000000004444444444000000000000000000000334444443300000022222444444444444244224222222444400000222222222222443330000044444444444000000000000000000000344444444333333220022444444444444444422222244444000000222222224442433333000444444444444000000000000000000000044444444333333220022444444444444444222222224244000000222200024444333333334444444444444000000000000000000000004444444330333000022244444242442442222222222224000000000000004444400000334440444444444442000000000000000000004444444200000002222222222222222222222222224422000000000000004444400000004400044444444444000000000000000000004444442200000002222222220022444222002004244422000000000000004444400000000000004444444444000000000000000000004444442200000003332220000000443332000004000000000000000000004444330000000000000000044444000000000000000000044444442200000003330000000000443332200000000000000000000030333333300000000000000000004444000000000000000000044444442200000003333000000000422222222000000003000000000333333333000000000000000000000000000000000000000000044444442200000000333000000000422222232222000003000000003333333333000000000000000000000000000000000000000000024444242220000200333020000000422222333320000303000000444444444433000000000000000000000000000222200000000020024442222220000200333020000000422222333300003333000004444444444444000004000000000000000000222222222222222222222222240000000200330020000000422222033330033333000004444444444444400044400000004440000000444442200000000022244444440000000220000022222224422200003344433330000004444444444444444444400000044444400000444444400000000044444444440000222220000022224444422222200344433000000000444444440044444444400000444444444444004444444000000044444444400002222222222222244444420002200344400000000000000444000044444444400004444444444444000444444400000444444444400002000220000022444444220002203344420000033000000000000044444444400004444444444444000044444440000444444444000002000200000002222222220002223444422220333300000000000444444444400000000000033300000044444443003444444400000022000200000000002200020002222222222200333330000000004444444444430000000000033000000044444443333444444000000002000220000000000000000002222222224222033333000000044444444444430000000000033000000004444443334444440000000002000200000000000000000002222222224222003333333333444444444444430000000000033300000000444443334444000000000002000200000000444000000000223322444400000333333333444444444444430000000000033333000000044433334444000000000022000200000000444440000000223324444000000033333333444444443344330000000000003330000000003333333444000000000002000200000000444444440000003324444000000003333334400000033333330000000000000000000000000300033344400000000002002200000000444444440000000024400444400000334444400000033333300000000000000000000000000000003334400000000002002000000004444444440000000000000444444000344444400000333333000000000000000000000000000000000334400000000002222000000004444444440000000000004444444000444444400000333333000000000000000000000000000000000000333333000004444444000444444400000000000044444444400000000222200000000004433000000000000000000000000000000000333333000004444443000444444000000000000044444444400000000200200000000004433300000000000000000000000000000003333330000004444433000004444004420000000044444444000000002200200000000004443330003000000000000000000000000033333330000004433333300000000444423300000044444444000000002000200000000000444333333300000000033300000000000033443344444444333333330000000444423322000000044444000000002000220000000000444433334440000000333330000000000034444444444444333333333000004444223322000000000444000000002000200000000000444433344444000000003330000000000034444444444444333333333300222422222222200000000000000000002000200000000044444433344444400000000330000000000034444444444440000000333330222422222222200000000000000000022000200000000444444333344444440000000330000000000034444444444400000000033333002222222222200020002200000000002000220000004444444300344444440000003330000000000004444444444000000000003333022224444322200022222222200000002000200000444444444000044444440000444444444444400004444444440000000000000330000024443302200022444444220000022000200004444444444000004444444000444444444444400004444444440000444000000000000004443002200024444442222222222222200004444444440000000444444400444444444444000004444444440044444444000000000334443002222224444422220000022222000044444444440000000004444444000004444440000004444444444444444444400000033334443300002224422222220000022000000044444442220000000002244444000000044400000004440004444444444444400000333330033330222224000000020033002000000042222222222222222222222222000000000000000000400000444444444444400000333300003333222224000000020333002000022222244420020000000002222000000000000000000000000000334444444444000000303000023333222224000000020333002000022242444420000000000000000000000000000000000000000000333333333300000000300000222232222224000000000333000000002244444440000000000000000000000000000000000000000000333333333000000000300000000222222224000000000333300000002244444440000000000000000000444400000000000000000003333333030000000000000000000002233344000000000033300000002244444440000000000000000000444440000000000000000033444400000000000000000000400000233344000000022233300000002244444400000000000000000000444444444400000000000004444400000000000000224442400200222444220022222222200000002244444400000000000000000000444444444440004400000004444400000000000000224422222222222222222222222222200000002444444400000000000000000000244444444444044433000004444400000000000000422222222222244244242444442220000333033444444400000000000000000000000444444444444433333333444420002222000000442422222222444444444444444220022333333444444440000000000000000000000444444444444000333334244422222222000000444442222224444444444444444220022333333444444443000000000000000000000444444444440000033344222222222222000004444222222422442444444444444222220000003344444433000000000000000000000444444444400000000444222222222442000044442244444422222222444444444222220000000334443333300000000000000000004444444444000000000444222222224422244444442244444444400024444444440000220000000333333333330000000000000000004444404440000000000444442444444422242244244244444444000022444444440000444440003333333333444000000000000000444444000000000000000444444400444422222222222244440000000022444444444444444444433333333334444400000000000000444440000000000000000444444000044222222222222244000000000022004444444444444444444443333344444400000000000000444400000000000000000444444000000022222222222200000044400022004444444444444444444440000044444000000000000000444440444000000000000444444000000022222233222200000044440022004444444444444444440000000044440000000000000000444444444400000000000444444000000022222233222200000044444000004444444444444444400000000044400000000000000000444444444400000000000044444000000022222222222200000044444000004444444444444444200000000044400000000000000000"}},"snap":{"t":1790152339044,"seq":0,"phase":"playing","until":0,"u":[[13,0,270,1550,4.51,0,1,0,70,1,0,1,0,0,0,0],[14,0,330,1550,4.14,0,3,1,70,1,0,2,0,0,0,0],[15,0,390,1550,3.31,1,2,2,122,1,0,3,0,0,0,0],[16,0,450,1550,1.71,1,3,1,122,1,0,4,0,0,0,0],[17,0,270,1608,3.61,2,2,1,46,1,0,5,0,0,0,0],[18,0,330,1608,3.61,3,1,0,53,1,0,6,0,0,0,0],[19,0,390,1608,6.2,3,3,2,53,1,0,7,0,0,0,0],[20,0,450,1608,0.59,4,2,1,56,1,0,8,0,0,0,0],[21,0,270,1666,4.43,5,3,1,49,1,0,9,0,0,100,0],[22,0,330,1666,1.19,5,1,0,49,1,0,10,0,0,100,0],[23,0,390,1666,5.6,2,1,0,46,1,0,11,0,0,0,0],[24,0,450,1666,3.97,0,2,2,70,1,0,12,0,0,0,0],[25,1,620,1350,3.98,2,1,0,65,1,0,13,0,0,0,0],[26,1,666,1360,3.54,1,1,0,175,1,0,14,0,0,0,0],[27,1,752,1290,1.35,2,1,0,65,1,0,15,0,0,0,0],[28,1,758,1260,4.86,1,1,0,175,1,0,16,0,0,0,0]],"b":[],"f":[[1,0,0,-1,0.42,0,2000,0,3],[2,0,0,-1,0,0,2000,0,1],[3,1,0,-1,0,0,2000,0,1],[4,-1,0,-1,0,0,2000,0,1],[5,-1,0,-1,0,0,2000,0,1],[6,-1,0,-1,0,0,2000,0,1],[7,-1,0,-1,0,0,2000,0,1]],"lb":[[1,0,400,1200],[2,0,400,1200],[3,1,400,1200],[4,-1,400,1200]],"hq":[[1,0,2400,3000,0,0,3],[2,1,930,3000,0,0,0]],"rp":[620,0],"rpAcc":[1500,0],"uc":[12,4],"r":[[1,1128,1530]],"fr":[],"ev":[]},"padState":{"type":"warfactory","world":{"w":4320,"h":2880},"consts":{"factoryR":39,"captureR":79,"captureRate":25,"reclaimRate":45,"produceMs":20000,"playerUnitCap":400,"playerUnitWarn":350,"factoryHp":2000,"neutralHpRatio":0.3333333333333333,"facEvolveCd":4000,"labR":31,"labHp":1200,"hqR":43,"hqHp":3000,"rpPerLab":2,"rpPeriodMs":3000,"evolveRpCost":500,"typeList":["warrior","shield","ranger","burst","burn","laser"],"stats":{"warrior":{"label":"锐士","hp":100,"dmg":11,"range":60,"cd":0.9,"speed":92,"r":9},"shield":{"label":"盾卫","hp":175,"dmg":8,"range":50,"cd":1.1,"speed":66,"r":10},"ranger":{"label":"游侠","hp":65,"dmg":10,"range":200,"cd":1.5,"speed":82,"r":9},"burst":{"label":"轰击","hp":75,"dmg":18,"range":165,"cd":2.1,"speed":58,"r":9,"splash":41},"burn":{"label":"燎原","hp":80,"dmg":6,"range":135,"cd":0.25,"speed":78,"r":9,"burn":true},"laser":{"label":"激光兵","hp":70,"dmg":2.5,"range":175,"cd":0.4,"speed":76,"r":9,"laser":true}},"tierHp":[1,1.7,2.6],"tierDmg":[1,1.55,2.2],"tierRange":[0,15,30],"tierCd":[1,0.88,0.78],"aggroBonus":0,"attackSlack":10,"facLineCost":500,"facMaxLines":3,"prodSpeedCost":1000,"prodSpeedMax":20,"prodSpeedStep":0.06666666666666667,"flameR":52,"fireTiers":[null,[46,3.5,3000],[64,6,5200]],"laserWindupMs":800,"laserRampMs":4000,"laserMaxMul":5,"colors":["#b03a2e","#2e5e8c","#c9a227","#3f7a52"]},"phase":"playing","phaseEndsAt":0,"players":[{"id":"p0","name":"墨客","color":"#b03a2e","kills":0,"losses":0,"evolved":0,"captured":0,"rp":0,"rpRate":0,"rpAccMs":0,"rpPerPeriod":0,"eliminated":false,"left":false},{"id":"p1","name":"砚台","color":"#2e5e8c","kills":0,"losses":0,"evolved":0,"captured":0,"rp":0,"rpRate":0,"rpAccMs":0,"rpPerPeriod":0,"eliminated":false,"left":false},{"id":"p2","name":"青瓷","color":"#c9a227","kills":0,"losses":0,"evolved":0,"captured":0,"rp":0,"rpRate":0,"rpAccMs":0,"rpPerPeriod":0,"eliminated":false,"left":false},{"id":"p3","name":"竹影","color":"#3f7a52","kills":0,"losses":0,"evolved":0,"captured":0,"rp":0,"rpRate":0,"rpAccMs":0,"rpPerPeriod":0,"eliminated":false,"left":false}],"factories":[{"id":1,"x":1008,"y":1440,"level":1,"owner":0,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"burn","ecd":0,"rx":null,"ry":null},{"id":2,"x":3312,"y":1440,"level":2,"owner":1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":1640,"hpMax":2000,"pt":"burn","ecd":0,"rx":null,"ry":null},{"id":3,"x":1764,"y":2124,"level":3,"owner":2,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":1280,"hpMax":2000,"pt":"laser","ecd":0,"rx":null,"ry":null},{"id":4,"x":2556,"y":756,"level":1,"owner":3,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":920,"hpMax":2000,"pt":"laser","ecd":0,"rx":null,"ry":null},{"id":5,"x":1764,"y":756,"level":2,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":667,"hpMax":2000,"pt":"shield","ecd":0,"rx":null,"ry":null},{"id":6,"x":2556,"y":2124,"level":2,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":667,"hpMax":2000,"pt":"shield","ecd":0,"rx":null,"ry":null},{"id":7,"x":2160,"y":1440,"level":3,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":667,"hpMax":2000,"pt":"burst","ecd":0,"rx":null,"ry":null}],"labs":[{"id":1,"x":1260,"y":630,"owner":-1,"hp":400,"hpMax":1200},{"id":2,"x":3060,"y":630,"owner":-1,"hp":400,"hpMax":1200},{"id":3,"x":1260,"y":2250,"owner":-1,"hp":400,"hpMax":1200},{"id":4,"x":3060,"y":2250,"owner":-1,"hp":400,"hpMax":1200}],"hqs":[{"id":1,"x":360,"y":1440,"owner":0,"hp":3000,"hpMax":3000,"down":false,"ecd":0,"speedLv":0,"prodIntervalMs":20000},{"id":2,"x":3960,"y":1440,"owner":1,"hp":3000,"hpMax":3000,"down":false,"ecd":0,"speedLv":0,"prodIntervalMs":20000},{"id":3,"x":2160,"y":2556,"owner":2,"hp":3000,"hpMax":3000,"down":false,"ecd":0,"speedLv":0,"prodIntervalMs":20000},{"id":4,"x":2160,"y":324,"owner":3,"hp":3000,"hpMax":3000,"down":false,"ecd":0,"speedLv":0,"prodIntervalMs":20000}],"units":16,"over":false,"winnerId":null,"seq":0,"serverTime":1790152339064,"terrain":{"cell":40,"cols":108,"rows":72,"data":"002200020000034444444444000000000444440000000000044444400000000000000000000000000444430000004444433444400000002200022000034444444444000000000444440000000000044444440000000000000000000000000444430000004444433444400000222200222000334444444444000000044444440002000000044444444000000000000000003330004444430000004444433344440000222222220033333330004443000000444444440002220000004444443300000000000000033334444444430000004444433344443333222222223333333300000333300000444444440022222000000444433300000000000000033334444444430000000444433334433333222222223333333000000033330000044444440002220000000333333330000000000000033334433444330000000444333333333333222222223333300000000003333300004444440022222000000333333333000000000000033333333333300000004444333333330000222222223333320000000000333330000444400002222220000333333333333000000000000033003333000000000444333333300000000000023333320000000000333330000000000022222220000030333333344400000000000000003330000000000044433444400000000000022222222222222222233300002002020022222222220000003333444440000000000000003330000000000444444444440000000222222222222222222222222222222222222222222222220000003333444444000444000033333333000000000444444444440000222222222222222222332200200002222222000332222222220000003333444444444444400333333333333333334444444444444400222222222000220002332200200000000002000333322222222222223333344444444444403333333333333333334444444444444444222222222000020002332200200000000002000033222222222222222233333444444444400300000333333333334444444444444444222222222000022002222200222000000002000003322232222020222233333334444444400000000003333333333444444444444444222222222000022222222222222200000002000003333333320000000233333333044444400000000000033333330044444444444444222222222000020022222222200000000004400003333333324444002222000000022224403000000000000033300000044444004444222222202222220022222222200000000004440000333333322444400044000000044224433300000000000003330000000440000444222222202222222220000022200000000004440000000003344444000004000000044220033333333400000000333000000000000000000200002200002200000022200000444444440000000000334440000000000000040020003333334440000000333300000000000000000220002200002200000022200000444444444000000000000000000000000000000020000333334444440000333300000000000000000200002200002200000322200000444444444440000000000000000000000000000020000333334444444000033000000000000000000200002200000200003333000000344444444440000000000000000000333000000020000433333444444000000000000000000000444200002200200200003333300000334400044400004444440000000003333022222020004443333444440000000000000000000000444200002222222200000333300000333000000000044444444000000333330022222220044443333444400000000000000000334444444200000000000000000033000003330000000000000444444444444333330000002220444443334444400000000000000003344444444200200000000000000333000003330000000000000004444444444433333333302334444443334444400000000000000003344444444220200000000000000330000003330000000000000000444444444443333333322334444443334444400000000000000033344444444422200000000000003330000000333000000000000000444444444444433333332244444443000444400000000000003333334444444222200000000000003330000000333000000000000000044444444444443333332444444400000344000000000033333333000044442222222000000000003300000000333000000000333000004444444444443333332444444000000333000000333333443330000000222222222000000000000000000000333000000003333300000003344444443333222444440000000033300003333334444300000000222220000003300000000000000003333000000003333333000000333344433000004444400000000003333444333330000000000000222220000033333000000000000033333000000000333333000000033333330000000000000000000003334444443330000000000000333200000033333300000000000033330000000000333333000000000000000000000000000000000003304444444440000000000000333200000033333330000000000033300000000003333333300000000000000000000000000000000003304444444440000000000000000000000000044444444403300000000000000000000000000000000003333333300000000003330000000000033333330000002333000000000000044444444403300000000000000000000000000000000000333333000000000033330000000000003333330000002333000000000000033344444433300000000000000000000033333330000000333333000000000333330000000000000333330000022222000000000000033333444333300000000004444400000334443333000000333333300000000333300000000000000003300000022222000000003444433333300003330000000044444222333344444443300000003333300000000333000000000000000000000222222222000000033344333333000000333000000444444233333344444444444400000333000000000333000000003300000000000222222244440000333333330000000000443000004444444233333344444444444440000000000000000333000000033300000000000002222444444433333300000000000004444000344444442233333334444444444444000000000000000333000000033300000000000002224444444443330000000000000004444433344444433223333333344444444444000000000000000033300000033000000000000002022444444443300000000000000004444433344444433203333333334444444444400000000000000033300000333000000000000002002444444443300000000000000004444433344444022200000033333444444444444000000000000033300000330000000000000000002444444433000000000000000004444333344440022222220033333000000444444440000000000333000003333000002222222200002444000000000000000000000044444333344400020222220333300000000044444400004440004433000003333300002002002200002444000000000000000000000444444333334000020000000333000000000000000000044444444443000000333300002000002200002000000000000000000330000444444433333000020000000000000000000000000000044444444444000002223000002200002200002000000000000000003333000044444433333000020000000000000000000000000000000444444444000002220000002200002200022000000000000000003333000000044433333300020040000000000000044433000000000044444444000002220000002200002200002000000000000000000333000000004333333330022440000000400000444443300000000044400000000002220000022222222202222222444000044000000033300000000000003334422440000000440004444223333333000044400000000002222222220022222202222222444400444440000003330000000000000304422220000000222200444423333333300004400000000002222222220020000222222222444444444444440033333330000000000004444440333333332000000023333333300000200000002222222222222220000222222222444444444444444333333333300000000004444444433333332222020222232223300000200000000222002222200220000222222222444444444444444433333333333000003004444444444333332222222222222222330000200000000002002233200020000222222222444444444444444433333333333333333304444444444443333322222222222223333000200000000002002233200022000222222222004444444444444433333333333333333004444444444444333300000022222222233000222222200002002233222222222222222222000044444444444000000000333333330000444000444444333300000022222222222222222222222222222222222222222222222000000044444444444000000000033300000000000000044444333300000022222222220020200200003332222222222222222220000000000004444334440000000000033300000000000000004443333333030000022222220000000000033333000000000023333320000000000003333333444000000000333300330000000000000333333333333000022222200004444000033333000000000023333322222222000033333333444400000003333333333330000000000000333333333000000222220044444400003333300000000003333322222222333333333333444000000033444334433330000000000000033333333000000022200044444440000033330000000333333322222222333334433334444000000034444444433330000000000000003334444000000222220044444444000003333000003333333322222222333344443334444400000034444444433330000000000000003344444400000022200044444444000000344400033333330022222222000044443334444400000034444400033300000000000000000444444440000000200044444440000000444444444433000222002222000004444334444400000034444000000000000000000000000044444440000000000044444000000000444444444430000220002200000004444334444400000034444000000000000000000000000004444440000000000044444000000000444444444430000020002200"}},"padSnap":{"t":1790152339065,"seq":0,"phase":"playing","until":0,"u":[[25,0,1995,1370,4.62,0,1,0,35,1,0,0,0,0,0,0],[26,0,2047,1370,3.95,1,2,1,96,1,0,0,0,0,0,0],[27,0,1995,1444,4.57,2,3,1,49,1,0,0,0,0,0,0],[28,0,2047,1444,4.31,3,1,0,71,1,0,0,0,0,0,0],[29,1,2105,1370,1.05,4,1,0,28,1,0,1,0,0,0,0],[30,1,2157,1370,4.93,5,2,1,39,1,0,1,0,0,100,0],[31,1,2105,1444,2.92,0,3,1,75,1,0,1,0,0,0,0],[32,1,2157,1444,2.18,1,1,0,166,1,0,1,0,0,0,0],[33,2,2215,1370,0.51,2,1,0,23,1,0,2,0,0,0,0],[34,2,2267,1370,5.85,3,2,1,41,1,0,2,0,0,0,0],[35,2,2215,1444,2.66,4,3,1,60,1,0,2,0,0,0,0],[36,2,2267,1444,3.32,5,1,0,67,1,0,2,0,0,100,0],[37,3,2325,1370,0.23,0,1,0,35,1,0,3,0,0,0,0],[38,3,2377,1370,0.6,1,2,1,96,1,0,3,0,0,0,0],[39,3,2325,1444,4.66,2,3,1,49,1,0,3,0,0,0,0],[40,3,2377,1444,0.47,3,1,0,71,1,0,3,0,0,0,0]],"b":[],"f":[[1,0,0,-1,0,0,2000,0,1],[2,1,0,-1,0,0,1640,0,1],[3,2,0,-1,0,0,1280,0,1],[4,3,0,-1,0,0,920,0,1],[5,-1,0,-1,0,0,667,0,1],[6,-1,0,-1,0,0,667,0,1],[7,-1,0,-1,0,0,667,0,1]],"lb":[[1,-1,400,1200],[2,-1,400,1200],[3,-1,400,1200],[4,-1,400,1200]],"hq":[[1,0,3000,3000,0,0,0],[2,1,3000,3000,0,0,0],[3,2,3000,3000,0,0,0],[4,3,3000,3000,0,0,0]],"rp":[0,0,0,0],"rpAcc":[0,0,0,0],"uc":[4,4,4,4],"r":[],"fr":[],"ev":[]},"padPick":{"x":1995,"y":1370},"padCenter":{"x":2160,"y":1440},"fxState":{"type":"warfactory","world":{"w":4320,"h":2880},"consts":{"factoryR":39,"captureR":79,"captureRate":25,"reclaimRate":45,"produceMs":20000,"playerUnitCap":400,"playerUnitWarn":350,"factoryHp":2000,"neutralHpRatio":0.3333333333333333,"facEvolveCd":4000,"labR":31,"labHp":1200,"hqR":43,"hqHp":3000,"rpPerLab":2,"rpPeriodMs":3000,"evolveRpCost":500,"typeList":["warrior","shield","ranger","burst","burn","laser"],"stats":{"warrior":{"label":"锐士","hp":100,"dmg":11,"range":60,"cd":0.9,"speed":92,"r":9},"shield":{"label":"盾卫","hp":175,"dmg":8,"range":50,"cd":1.1,"speed":66,"r":10},"ranger":{"label":"游侠","hp":65,"dmg":10,"range":200,"cd":1.5,"speed":82,"r":9},"burst":{"label":"轰击","hp":75,"dmg":18,"range":165,"cd":2.1,"speed":58,"r":9,"splash":41},"burn":{"label":"燎原","hp":80,"dmg":6,"range":135,"cd":0.25,"speed":78,"r":9,"burn":true},"laser":{"label":"激光兵","hp":70,"dmg":2.5,"range":175,"cd":0.4,"speed":76,"r":9,"laser":true}},"tierHp":[1,1.7,2.6],"tierDmg":[1,1.55,2.2],"tierRange":[0,15,30],"tierCd":[1,0.88,0.78],"aggroBonus":0,"attackSlack":10,"facLineCost":500,"facMaxLines":3,"prodSpeedCost":1000,"prodSpeedMax":20,"prodSpeedStep":0.06666666666666667,"flameR":52,"fireTiers":[null,[46,3.5,3000],[64,6,5200]],"laserWindupMs":800,"laserRampMs":4000,"laserMaxMul":5,"colors":["#b03a2e","#2e5e8c","#c9a227","#3f7a52"]},"phase":"playing","phaseEndsAt":0,"players":[{"id":"q0","name":"墨客","color":"#b03a2e","kills":1,"losses":0,"evolved":0,"captured":0,"rp":0,"rpRate":0,"rpAccMs":0,"rpPerPeriod":0,"eliminated":false,"left":false},{"id":"q1","name":"砚台","color":"#2e5e8c","kills":0,"losses":1,"evolved":0,"captured":0,"rp":0,"rpRate":0,"rpAccMs":0,"rpPerPeriod":0,"eliminated":false,"left":false}],"factories":[{"id":1,"x":1008,"y":1440,"level":1,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"warrior","ecd":0,"rx":null,"ry":null},{"id":2,"x":3312,"y":1440,"level":1,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"warrior","ecd":0,"rx":null,"ry":null},{"id":3,"x":1764,"y":2124,"level":1,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"shield","ecd":0,"rx":null,"ry":null},{"id":4,"x":2556,"y":756,"level":1,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"shield","ecd":0,"rx":null,"ry":null},{"id":5,"x":1764,"y":756,"level":2,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"burst","ecd":0,"rx":null,"ry":null},{"id":6,"x":2556,"y":2124,"level":2,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"burst","ecd":0,"rx":null,"ry":null},{"id":7,"x":2160,"y":1440,"level":3,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"burn","ecd":0,"rx":null,"ry":null}],"labs":[{"id":1,"x":1260,"y":630,"owner":-1,"hp":400,"hpMax":1200},{"id":2,"x":3060,"y":630,"owner":-1,"hp":400,"hpMax":1200},{"id":3,"x":1260,"y":2250,"owner":-1,"hp":400,"hpMax":1200},{"id":4,"x":3060,"y":2250,"owner":-1,"hp":400,"hpMax":1200}],"hqs":[{"id":1,"x":360,"y":1440,"owner":0,"hp":3000,"hpMax":3000,"down":false,"ecd":0,"speedLv":0,"prodIntervalMs":20000},{"id":2,"x":3960,"y":1440,"owner":1,"hp":3000,"hpMax":3000,"down":false,"ecd":0,"speedLv":0,"prodIntervalMs":20000}],"units":7,"over":false,"winnerId":null,"seq":0,"serverTime":1790152339089,"terrain":{"cell":40,"cols":108,"rows":72,"data":"000000000000000003333333333330000000000000333333000000000000000000222222000002243344444444400000000000000000000000000000000000333333333330000000000003333330000002200000000002222220000002443344444444000000000000000000000000000000000000033333333300000444433333333330000222222000000002222220000002444444444444000000000000000000000000000000000000003333330000000444444443300000000222222000000000222222000002444444444400000000000000000000000000000000000000000333000000000444444444300000022222222222222222222222222222444444444000000000000000000000000000000000000000000000000000000444444444400000222222222222222000222222000222044444440000000000000000000000000000000044400000000000000000022244444444400002222222222222222000200022000002044444440000000000000000000000000000000444440000000000222222222244444444430002222222222222222222200022000002004444440000000000000000000000000000000444440000000000000000222244444444433002222233322222000222220022000002000444440000200000000000000044000000000044440000000000000000220444444443443302222233322200000222220022222222000044440000200000000000000044000000000004440000000000002000020044444003333302222222220000000222222222222222000004440000200000000000000444000000000000000000000002222222220000000000333300000002000000000220000022222220000000400002220000000000000444000000000000000004400002004400000000000000333300000000000000000220000022200000000220002000222000000000000444000000000000000044440002004400000000000000333000000000000000000220000022200000002222222222222000000000004444000000000000000044444002000400000000000000000000000044400000000220000222200000002222200022200000000000004444000000000000000004444022000400000000000000000000000444440000000000022222200000002222200022204444440000000444000000000000000000444222222400000000000000000000000044444000000000022222200000002222200022244444444000000044000000000000000000444222222200000002222220000000200004444000000000022222200000002200000002244444444000000000000000000000000000442222222200000000002020000000200000444444000000022222200000000200000002244444440000000000000000443333333000042222222222000000000020000000200000444444000000000000220444440000000002244444440000000000000004444333333000000022222222000000000020000000200000444444000000000000220044444400000044444444430000000000000044444333330000000022222220000000000020000000200000444444000000022222200004444440000004444444333000000000000444444433000000000000200020000000000020002000000000444444444330200000000000444444000000444443333300000000000444444430000000000000000000000000000020002000000000444444444330000000000000444444000000044333444300000000000444444400000000000000000000000000000222222222220000044444443333000000000003344444000000033334444440000000000444444400000000000000000000000000222222202222220000004444443333333000000003334440000000003334444444333000000444444000000000000000000000000000222222200222220000000004433333344440000000333330000000000344444444333300000044444000003333000000000000000000222220003333322000000000033333444444000000333333000000000004444444433333000044440000003333000000000000000000223000033333220020020020003333444444000000334333333000000000444444433333000044400000003333000000000000000000223000333333220022222222203333444440000000344433333330000000444444433334000044400000003333000000000000000000223003333333220220000002203333344400000000444433333330000000044444444444000044400000000333000000000000000000033333300033220220000002203333300000000000444430003300000000044444444444004440000000000333000000000000000000033330000003220000000002200000000000000000000000000000000000000000444444444440000000000030000000000000000000003330000003320000000022000000000000000000000000000000000000000000044444444440000000000000000000000000000000003330000003333333003322000000000000000000000000000000000000000000044444444440000000000000000000000000000000003330000003333333333332000000000000000000000000000000000000000000044444444440000000000000000000000000000000000000000000233333333333300000033300000000000000000000000000000000044444444440000000000000000000000000000000000000000000223300333333300000033300000000000000000000000000000000044444444440000000000000000000000000000000000000000000220000000023300000033300000000000000000000030000000000044444444444000000000000000000000000000000000000000002200000000022300000033330000000000000000000333000000000044400444444444440000000003300034444000000000003333302200000022022330003333330000000000000000000333000000004440000444444444440000000033333334444000000004443333302200000022022333333300322000000000000000000333300000004440000433334444444000000033333334443000000044444333302222222220022333333000322000000000000000000333300000004440000333334444444000000000333333433000000444444333300020020020022333330000322000000000000000000333300000044440000333334444444400000000000333333000000444444333330000000000223333300022222000000000000000000333300000444440000003333444444443000000000033333000000044443333334400000000022222002222222000000000000000000000000000444444000000333444444433300000000044433300000000333333344444400000022222202222222000000000000000000000000004444444000000000044444433330000000444443300000000000333344444440000022222222222000000000000000000000000000004444444000000000003444333440000000444444000000000000033444444444000000000200020000000000000000000000000000034444444000000000003333344444000000444444000000000002033444444444000000000200020000000000020002000000000000334444444000000000000333444444400000044444400002222220000000444444000002000000020000000000022222220000000033333444440000000000000034444444440000004444440022000000000000444444000002000000020000000000222222220000000333333444400000000000000044444442200000000044444022000000000000444444000002000000020000000000222222222240000333333344000000000000000044444442200000002000000002222220000000444444000002000000020200000000002222222244000000000000000000000000000444444442200000002200000002222220000000000444400002000000022222200000002222222444000000000000000000440000000444444442220002222200000002222220000000000444440000000000000000000000004222222444000000000000000000444000000044444402220002222200000002222220000000000044444000000000000000000000004000220444400000000000000000444400000000000002220002222200000002222000022000000004440000000000000000000000004000200444440000000000000000444400000000000222222222222200000002220000022000000000000000000333000000000000004400200044440000000000000000444000000000000222000200022000000002220000022000000000000000003333000000000000004400200004400000000000000000444000000000000022200004000000022222220000022000000000200000003333000000000022222222200000000000000000000000444000000000000002000044400000222222222222222000000022222222203333300444440020000200000000000044400000000000440000000000000002000044440000222222220022222000002223332222203344344444444022000000000000000044440000000000440000000000000002000044444000200000220022222000222223332222200334444444442222000000000000000044444000000000000000000000000000000044444400200000220002222222222222222222200034444444442222222222000000000044444000000000000000000000000000000044444440200000220002000222222222222222200004444444442220000000000000000004440000000000000000000000000000000044444440222000222222000222222222222222000004444444444000000000000000000000000000000000000000000000000000000444444444222222222222222222222222222220000003444444444000000000333000000000000000000000000000000000000000004444444444200000222222000000000222222000000003344444444000000033333300000000000000000000000000000000000000444444444444200000022222200000000222222000033333333334444000003333333330000000000000000000000000000000000000444444443344200000022222200000000002200000033333300000000000033333333333000000000000000000000000000000000004444444443342200000222222000000000000000000333333000000000000033333333333300000000000000000"}},"fxSnap":{"t":1790152339089,"seq":0,"phase":"playing","until":0,"u":[[13,0,720,775,0.74,2,2,1,29,3,0,0,0,0,0,0],[14,1,868.3,803.3,3.14,1,3,2,140,3,0,1,0,0,0,0],[15,0,720,885,0.74,3,3,1,39,3,0,0,0,0,0,0],[17,0,720,995,0,5,2,1,42,3,0,0,1,18,230,0],[18,1,840,995,3.14,3,3,2,29,3,0,1,0,0,0,0],[19,0,720,1105,0,4,3,1,36,3,0,0,1,20,0,0],[20,1,840,1105,3.14,1,2,2,114,3,1,1,0,0,0,0]],"b":[[741.7,904.9,0,2,0.74,0.68,0.05],[810.5,995,1,2,-1,0,0.06]],"f":[[1,-1,0,-1,0,0,2000,0,1],[2,-1,0,-1,0,0,2000,0,1],[3,-1,0,-1,0,0,2000,0,1],[4,-1,0,-1,0,0,2000,0,1],[5,-1,0,-1,0,0,2000,0,1],[6,-1,0,-1,0,0,2000,0,1],[7,-1,0,-1,0,0,2000,0,1]],"lb":[[1,-1,400,1200],[2,-1,400,1200],[3,-1,400,1200],[4,-1,400,1200]],"hq":[[1,0,3000,3000,0,0,0],[2,1,3000,3000,0,0,0]],"rp":[0,0],"rpAcc":[0,0],"uc":[4,3],"r":[],"fr":[[840,1105,64,0,0,5200]],"ev":[{"t":"shot","x":734,"y":995,"a":0,"k":4,"oi":0,"uid":17,"r":9},{"t":"hit","x":831,"y":995,"a":0,"k":4,"oi":0},{"t":"shot","x":734,"y":1105,"a":0,"k":3,"oi":0,"uid":19,"r":9},{"t":"shot","x":734,"y":1105,"a":0,"k":3,"oi":0,"uid":19,"r":9},{"t":"shot","x":734,"y":995,"a":0,"k":4,"oi":0,"uid":17,"r":9},{"t":"hit","x":831,"y":995,"a":0,"k":4,"oi":0},{"t":"shot","x":734,"y":1105,"a":0,"k":3,"oi":0,"uid":19,"r":9},{"t":"shot","x":734,"y":1105,"a":0,"k":3,"oi":0,"uid":19,"r":9},{"t":"shot","x":734,"y":995,"a":0,"k":4,"oi":0,"uid":17,"r":9},{"t":"hit","x":831,"y":995,"a":0,"k":4,"oi":0},{"t":"shot","x":734,"y":1105,"a":0,"k":3,"oi":0,"uid":19,"r":9},{"t":"shot","x":730.3,"y":894.5,"a":0.74,"k":2,"oi":0,"uid":15,"r":9},{"t":"shot","x":826,"y":995,"a":3.14,"k":2,"oi":1,"uid":18,"r":9}]},"fxCenter":{"x":780,"y":940},"burnState":{"type":"warfactory","world":{"w":4320,"h":2880},"consts":{"factoryR":39,"captureR":79,"captureRate":25,"reclaimRate":45,"produceMs":20000,"playerUnitCap":400,"playerUnitWarn":350,"factoryHp":2000,"neutralHpRatio":0.3333333333333333,"facEvolveCd":4000,"labR":31,"labHp":1200,"hqR":43,"hqHp":3000,"rpPerLab":2,"rpPeriodMs":3000,"evolveRpCost":500,"typeList":["warrior","shield","ranger","burst","burn","laser"],"stats":{"warrior":{"label":"锐士","hp":100,"dmg":11,"range":60,"cd":0.9,"speed":92,"r":9},"shield":{"label":"盾卫","hp":175,"dmg":8,"range":50,"cd":1.1,"speed":66,"r":10},"ranger":{"label":"游侠","hp":65,"dmg":10,"range":200,"cd":1.5,"speed":82,"r":9},"burst":{"label":"轰击","hp":75,"dmg":18,"range":165,"cd":2.1,"speed":58,"r":9,"splash":41},"burn":{"label":"燎原","hp":80,"dmg":6,"range":135,"cd":0.25,"speed":78,"r":9,"burn":true},"laser":{"label":"激光兵","hp":70,"dmg":2.5,"range":175,"cd":0.4,"speed":76,"r":9,"laser":true}},"tierHp":[1,1.7,2.6],"tierDmg":[1,1.55,2.2],"tierRange":[0,15,30],"tierCd":[1,0.88,0.78],"aggroBonus":0,"attackSlack":10,"facLineCost":500,"facMaxLines":3,"prodSpeedCost":1000,"prodSpeedMax":20,"prodSpeedStep":0.06666666666666667,"flameR":52,"fireTiers":[null,[46,3.5,3000],[64,6,5200]],"laserWindupMs":800,"laserRampMs":4000,"laserMaxMul":5,"colors":["#b03a2e","#2e5e8c","#c9a227","#3f7a52"]},"phase":"playing","phaseEndsAt":0,"players":[{"id":"r0","name":"墨客","color":"#b03a2e","kills":0,"losses":0,"evolved":6,"captured":0,"rp":0,"rpRate":0,"rpAccMs":0,"rpPerPeriod":0,"eliminated":false,"left":false},{"id":"r1","name":"砚台","color":"#2e5e8c","kills":0,"losses":0,"evolved":0,"captured":0,"rp":0,"rpRate":0,"rpAccMs":0,"rpPerPeriod":0,"eliminated":false,"left":false}],"factories":[{"id":1,"x":1008,"y":1440,"level":1,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"ranger","ecd":0,"rx":null,"ry":null},{"id":2,"x":3312,"y":1440,"level":1,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"ranger","ecd":0,"rx":null,"ry":null},{"id":3,"x":1764,"y":2124,"level":1,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"laser","ecd":0,"rx":null,"ry":null},{"id":4,"x":2556,"y":756,"level":1,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"laser","ecd":0,"rx":null,"ry":null},{"id":5,"x":1764,"y":756,"level":2,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"shield","ecd":0,"rx":null,"ry":null},{"id":6,"x":2556,"y":2124,"level":2,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"shield","ecd":0,"rx":null,"ry":null},{"id":7,"x":2160,"y":1440,"level":3,"owner":-1,"capBy":-1,"capProg":0,"prodProg":0,"lines":1,"home":false,"hp":2000,"hpMax":2000,"pt":"warrior","ecd":0,"rx":null,"ry":null}],"labs":[{"id":1,"x":1260,"y":630,"owner":-1,"hp":400,"hpMax":1200},{"id":2,"x":3060,"y":630,"owner":-1,"hp":400,"hpMax":1200},{"id":3,"x":1260,"y":2250,"owner":-1,"hp":400,"hpMax":1200},{"id":4,"x":3060,"y":2250,"owner":-1,"hp":400,"hpMax":1200}],"hqs":[{"id":1,"x":360,"y":1440,"owner":0,"hp":3000,"hpMax":3000,"down":false,"ecd":0,"speedLv":0,"prodIntervalMs":20000},{"id":2,"x":3960,"y":1440,"owner":1,"hp":3000,"hpMax":3000,"down":false,"ecd":0,"speedLv":0,"prodIntervalMs":20000}],"units":9,"over":false,"winnerId":null,"seq":0,"serverTime":1790152339101,"terrain":{"cell":40,"cols":108,"rows":72,"data":"000000000000000444444400000000000222222244444200000004444444420000000000004444400000000000000000000220000000000000000000000444444400000000000222222222444400000004444444440000000000004444440000000000000000000220000000000000000000000044444000000000000002222222244440000004444444444330000000004444444442200000000000000222200000000000000000000000040000000000000002222222222244000004444444444333000000044444444442222222222000000222222000000000000000000000000000000000000000023232244444000004444444444333330000444444444442333333332000222222222000000000000000000000000000000000000000003332244444000004444422222233333332224444444442223333332233222222222000000000000000000000000000000003300000000332244442000004444424242203333322222220000442233333332333222222222000000000000000000000000000000033330000000032222222222224444424442200333322222220000002233333332333222000002000000000004000000000000000333333330000000034444444000224444424442200332222222200000002000000332333222000002222000000044400000000000000344333330000000334444444000224444424444200332220022000000002000000032233222222222222000000044440000000000000444444333000003334444440000222222222442200332220020000000002000000002333220000022222000000044440000000000000444444443000033334444400000222222222242200032222220000000002000022222233220000022222000000004440000000000000444400000333333334444400000222222222222222222240000000000002000022222232222000220002000000000000000000000000444400000033333334444400000222222222222222224444000000000222004444442202222002200000000000000000000000000000044400000003333334444330000222222222222222224444000000000222044444444002222222200000000000000000000000000000044400000004330333003333333222222222000330024444000000002200044444444000020000000000000000000000000000000000044400000004300033333333333333300022000330024440000000000000044444440000020000000000000000000000000000000000444400000004300000333333333333000022000000044440000000000000000444400000020000000000000000003333000000000004444330000003300000003333333333000000000000044400000000000000000000000000022000000000000000333333300000000044444300003333000000000333333333000000000000044400000000000000000000000000022000000000000003344443300000000044444300000333000000000333300033300000000000000000000000000000000000000004422000000000000003444443000000000004444300000333000000000333300003000000000000000000000000000000333000000044422220020000000000444443000000000004444330003333300000000433000000222222222220000000000000033333333000000044422222220000000000344443000000000000443334444333330000044440000000200220020200000000000000033333330000000044444400000000000000334443000000000000333334444444444444444440000000000000000000000000000000033333000000000044444000000000000000033333000000000400033334444444444444444400000000000000333300000000000000000000000000000044444000000000000000033330000000044440000034444444444444444400000000000003333300000000000000000000000000000044440000000000000000003300000000044440000004444444444444444400000000000003333000000000000000000000000000000044440000000000000000000000000000444440000000444444334444444300000030000003330000000000000000000000000000000044420000000000000000000000000004444440000000044433333444444330033333000003330000000000000000000000000000000044440000000000000000000000000044444440000000000033333444443333333443300000000000000000000000000000000000000044444440000000000000000000000044444400000000000003333344443333334444400000000000000000000000033300000000000444444440000000000000000000000044444400000000000003333300000033300000000000000000000000000003333300000000000440000000000000000000000000000004444400000000000003333000000000000000000000000000000000000033333300000000000440000000000000000000000000000000444400000000000003330000000000000000000000000000000000000333333000000000000440000000000000000000000000000000444000000000000003330000000000000000000000000000000000000333330000000000000440000000000000000000000000044000000000000033333000000000000000000000000000000000000033300000000000000444000000000000000000000000000000044000000000000333333000000000000000000000000000000000000033300000000000004444000000000000000000000000000000044000000000003333330000000000000000000000000000000000000333300000000000004444400000000000000000000000000000044000000000003333300000000000000000000000000003330000003333300000000000004444440000000000000000000000044444444000000000003330000000000000000000000004444433333344443333300000000000004444440000000000000000000000044444440000000000000000000000000000000000000003344333333344444333330000000000044444440000000000000000000000000044440000000000000000000000000000000033300000333330033444444333334440000000044444400000000000000000000000000024440000000000000000000000000000000033300000030000003444444433444444000000044444000000000000000000000000000044440000000000000000000000000000000333300000000000004444444444444444400000044440000000003300000000000000000044440000000000000000000000000000003333300000000000004444444444444444430000044440000000033330000000000000000444440000000000000000000000000000003333000000000000004444444444444444433330004000000000333330000000000000000444440000000000333330000000000000000000000000000000044444444444444444433333000000000000344433000000000000004444440000000033333330000000000000002020022002000000044440000033333444433344000000000000344443000000000022222224440000000333333330000000000000022222222222000000334000000003333300033444400000000000344444000000000020022224440000000333000000000000000000000000000000300003333000000000333000003444400000000000344444300000000000000224400000000000000000000000000000000000000003330003333000000000333000003444440000000003344443300000000000000220000000000000000000000000004440000000000000333333333000000000333300003444440000000003333333000000000000000220000000000000000000000000004440000000000000333333333300000003300000033444400000000000333300000000000000000020000004444000000000000000044440000000220000333333333333000003400000004444000000000000000000000000000000000020000044444440000000000000044420033000220003333333333333330003400000004440000000000000000000000000000000000020000444444440002200000000444420033000222222222333333300333033400000004440000000000000000000000000000002222222200444444440222000000000444422222222222222222000033444433333300000004440000000000000000000000000000002200222202244444400222000000000444422222222222222222000004444433333330000004444000000000000000000000000200022000222232222220000200000000000042222222222222222222000004444433333333000004444000000000000044400000000222220000022332222220000200000000022222230002242222222222000004444433330000344444444000000000000044440000000222220000022333200000000200000000020022233002244222222222000044444433300000333444444000000000000044440000000222222222222332230000000200000000220022233002444424444422000444444433000000033333443000000000000004440000000222200000222333233000000200000002222222233002244424444422000444444430000000033333333000000000000000400000000000200000222333233333332200000022222223333002244424444422222222222230000000033330000000000000000000000000000000222222222333233333332244000022222223333302242424444400000244442233000000003300000000000000000000000000000000222222222332233333322244444444422233333332222224444400000444442233300000000000000000000000000000000000000000222222222000233333333244444444444000033333444444444400000444442232320000000000000000000000000000000000000000222222000000222222222244444444440000000333444444444400000442222222222200000000000000040000000000000000000000002222000000000000002244444444400000000033444444444400000044442222222200000000000000444440000000000000000000000022000000000000000000044444400000000000044444444400000004444222222222000000000004444444000000000000000000000022000000000000000000004444400000000000024444444400000002444442222222000000000004444444000000000000000"}},"burnSnap":{"t":1790152339101,"seq":0,"phase":"playing","until":0,"u":[[13,0,3360,665,0.38,4,3,1,208,3,0,0,1,14,0,0],[14,1,3460,705,3.14,1,2,0,99,2,1,1,0,0,0,0],[15,0,3360,795,0,4,3,1,166,3,0,0,1,16,0,0],[16,1,3460,795,3.14,1,2,0,96,2,1,1,0,0,0,0],[17,0,3360,925,0,4,3,1,208,3,0,0,1,18,0,0],[18,1,3460,925,0,1,2,0,77,2,1,1,0,0,0,0],[19,0,3360,1065,0,4,1,0,60,3,0,0,1,20,0,0],[20,1,3460,1065,3.14,1,2,0,98,2,0,1,0,0,0,0],[21,0,3512,925,3.14,0,1,0,32,1,1,0,0,0,0,0]],"b":[],"f":[[1,-1,0,-1,0,0,2000,0,1],[2,-1,0,-1,0,0,2000,0,1],[3,-1,0,-1,0,0,2000,0,1],[4,-1,0,-1,0,0,2000,0,1],[5,-1,0,-1,0,0,2000,0,1],[6,-1,0,-1,0,0,2000,0,1],[7,-1,0,-1,0,0,2000,0,1]],"lb":[[1,-1,400,1200],[2,-1,400,1200],[3,-1,400,1200],[4,-1,400,1200]],"hq":[[1,0,3000,3000,0,0,0],[2,1,3000,3000,0,0,0]],"rp":[0,0],"rpAcc":[0,0],"uc":[5,4],"r":[],"fr":[[3460,705,64,6000,0,5200],[3460,795,64,6000,0,5200],[3460,925,64,6000,0,5200],[3160,540,46,6000,0,3000],[3300,540,64,6000,0,5200]],"ev":[{"t":"evo","uid":13,"oi":0,"tier":2,"x":3360,"y":665},{"t":"evo","uid":13,"oi":0,"tier":3,"x":3360,"y":665},{"t":"evo","uid":15,"oi":0,"tier":2,"x":3360,"y":795},{"t":"evo","uid":15,"oi":0,"tier":3,"x":3360,"y":795},{"t":"evo","uid":17,"oi":0,"tier":2,"x":3360,"y":925},{"t":"evo","uid":17,"oi":0,"tier":3,"x":3360,"y":925},{"t":"flame","x":3460,"y":705,"r":64,"oi":0,"id":1},{"t":"shot","x":3373,"y":670.2,"a":0.38,"k":3,"oi":0,"uid":13,"r":9},{"t":"flame","x":3460,"y":795,"r":64,"oi":0,"id":2},{"t":"shot","x":3374,"y":795,"a":0,"k":3,"oi":0,"uid":15,"r":9},{"t":"flame","x":3460,"y":925,"r":64,"oi":0,"id":3},{"t":"shot","x":3374,"y":925,"a":0,"k":3,"oi":0,"uid":17,"r":9},{"t":"shot","x":3475,"y":925,"a":0,"k":1,"oi":1,"uid":18,"r":10},{"t":"shot","x":3374,"y":1065,"a":0,"k":3,"oi":0,"uid":19,"r":9},{"t":"shot","x":3498,"y":925,"a":3.14,"k":1,"oi":0,"uid":21,"r":9},{"t":"hit","x":3500,"y":925,"a":0,"k":1,"oi":1,"id":1},{"t":"hit","x":3473,"y":925,"a":3.14,"k":1,"oi":0,"id":2},{"t":"shot","x":3373,"y":670.2,"a":0.38,"k":3,"oi":0,"uid":13,"r":9},{"t":"shot","x":3374,"y":795,"a":0,"k":3,"oi":0,"uid":15,"r":9},{"t":"shot","x":3374,"y":925,"a":0,"k":3,"oi":0,"uid":17,"r":9},{"t":"shot","x":3374,"y":1065,"a":0,"k":3,"oi":0,"uid":19,"r":9},{"t":"shot","x":3373,"y":670.2,"a":0.38,"k":3,"oi":0,"uid":13,"r":9},{"t":"shot","x":3374,"y":795,"a":0,"k":3,"oi":0,"uid":15,"r":9},{"t":"shot","x":3374,"y":925,"a":0,"k":3,"oi":0,"uid":17,"r":9},{"t":"shot","x":3374,"y":1065,"a":0,"k":3,"oi":0,"uid":19,"r":9},{"t":"shot","x":3373,"y":670.2,"a":0.38,"k":3,"oi":0,"uid":13,"r":9},{"t":"shot","x":3374,"y":795,"a":0,"k":3,"oi":0,"uid":15,"r":9},{"t":"shot","x":3374,"y":925,"a":0,"k":3,"oi":0,"uid":17,"r":9},{"t":"shot","x":3374,"y":1065,"a":0,"k":3,"oi":0,"uid":19,"r":9},{"t":"shot","x":3373,"y":670.2,"a":0.38,"k":3,"oi":0,"uid":13,"r":9},{"t":"shot","x":3374,"y":795,"a":0,"k":3,"oi":0,"uid":15,"r":9},{"t":"shot","x":3374,"y":925,"a":0,"k":3,"oi":0,"uid":17,"r":9},{"t":"shot","x":3374,"y":1065,"a":0,"k":3,"oi":0,"uid":19,"r":9},{"t":"shot","x":3498,"y":925,"a":3.14,"k":1,"oi":0,"uid":21,"r":9},{"t":"hit","x":3473,"y":925,"a":3.14,"k":1,"oi":0,"id":3},{"t":"shot","x":3373,"y":670.2,"a":0.38,"k":3,"oi":0,"uid":13,"r":9},{"t":"shot","x":3374,"y":795,"a":0,"k":3,"oi":0,"uid":15,"r":9},{"t":"shot","x":3374,"y":925,"a":0,"k":3,"oi":0,"uid":17,"r":9},{"t":"shot","x":3374,"y":1065,"a":0,"k":3,"oi":0,"uid":19,"r":9},{"t":"shot","x":3475,"y":925,"a":0,"k":1,"oi":1,"uid":18,"r":10},{"t":"hit","x":3500,"y":925,"a":0,"k":1,"oi":1,"id":4}]},"burnCenter":{"x":3420,"y":860},"squadFirst":{"x":270,"y":1550},"foes":{"unit":{"x":620,"y":1350},"fac":{"x":1764,"y":2124},"hq":{"x":3960,"y":1440},"lab":{"x":1260,"y":2250}}};
+</script>
+<script>
 'use strict';
 
 /**
@@ -103,7 +1079,8 @@ window.WarFactoryUi = (function () {
   let miniDrag = false; // 小地图上按住拖动可连续跳转镜头
   let ovBox = null; // 中栏：单位粗览网格容器
   let ovCountEl = null;
-  let ovSecEl = null; // 中栏整段（section）：常驻，未选中时显示空态提示
+  let ovSecEl = null; // 中栏整段（section）：没选中部队时整段收起
+  let detailSecEl = null; // 右栏整段（section）：中栏收起时它跨两列补位
   const ovEls = new Map(); // unit id → {tile, glyph, tier, hpFill, hpBar} 复用节点
   let ovKey = ''; // 结构签名：变化才重建 DOM（否则每帧重建会卡）
   let selfEl = null; // 右栏：我方概况
@@ -178,7 +1155,6 @@ window.WarFactoryUi = (function () {
   const MARK_INK_ALPHA = 0.28;
   const MARK_TINT_ALPHA = 0.17;
   const moveMarkers = [];
-  const attackMarkers = []; // 右键锁定攻击目标的落点提示
   const rallyFx = []; // 设置集结点时的落点特效
   /**
    * 灼烧地形（燎原喷出的火场）：服务端权威，每帧从快照 `fr` 整段替换。
@@ -204,7 +1180,7 @@ window.WarFactoryUi = (function () {
     warrior: '近战突进，攻守兼备',
     shield: '重甲缓慢，坚不可摧',
     ranger: '远程狙击，薄血长射',
-    burst: '曲射抛投，越山轰击',
+    burst: '范围炮击，落点成墨',
     burn: '持续喷火；二级起落点留下灼烧地形',
     laser: '锁定越久伤害越高，最高 5 倍',
   };
@@ -1963,30 +2939,6 @@ window.WarFactoryUi = (function () {
   }
 
   /**
-   * 解析「目标类别编号 + id」对应的世界坐标与半径（坐标全部从本地视图取）。
-   * 激光/燎原的锁定指示和「追击攻击命令」的常驻指示共用这一套解析。
-   */
-  function targetInfoOf(kind, id) {
-    if (kind === 1) {
-      const t = units.get(id);
-      return t ? { x: t.x, y: t.y, r: 22 } : null;
-    }
-    if (kind === 2) {
-      const f = factoriesView.find((x) => x.id === id);
-      return f ? { x: f.x, y: f.y, r: factoryRadius() } : null;
-    }
-    if (kind === 3) {
-      const l = labsView.find((x) => x.id === id);
-      return l ? { x: l.x, y: l.y, r: labR() } : null;
-    }
-    if (kind === 4) {
-      const h = hqView.find((x) => x.id === id);
-      return h ? { x: h.x, y: h.y, r: hqR() } : null;
-    }
-    return null;
-  }
-
-  /**
    * 激光兵光束：完全由服务端的「锁定状态」驱动。
    *  - 前摇中（lw > 0）：虚线瞄准 + 枪口蓄能光点 + 目标处收拢的锁定环（尚不造成伤害）
    *  - 已锁定（lw = 0）：枪口到目标的持续光束，粗细与亮度随倍率（1 → 5 倍）增强
@@ -2135,48 +3087,8 @@ window.WarFactoryUi = (function () {
     const c = ctx;
     if (!lastSnap || !lastSnap.b) return;
     for (const b of lastSnap.b) {
-      const z = b[7] || 0;
-      const arc = b[8] || 0;
-      // 抛射弹（轰击）：抬高本体 + 地面阴影 + 落点虚线圈，呈现越山抛物线观感
-      if (arc && z > 0.5) {
-        drawArcShell(c, b[0], b[1], z, playerColor(b[2]), b[4] || 1, b[5] || 0, (b[6] || 0) * 97 + 3);
-      } else {
-        drawBulletBody(c, b[0], b[1], playerColor(b[2]), b[3], b[4] || 1, b[5] || 0, (b[6] || 0) * 97 + 3);
-      }
+      drawBulletBody(c, b[0], b[1], playerColor(b[2]), b[3], b[4] || 1, b[5] || 0, (b[6] || 0) * 97 + 3);
     }
-  }
-
-  /**
-   * 抛射弹（轰击 burst）的画法：弹体被「抬」到离地 z 像素的高度，
-   * 地面上画一团圆而淡的阴影（越高越大越淡）提示落点，再套一圈虚线把「将落在此处」标出来。
-   * 这样即便它正飞越一道山脉，玩家也能一眼看出这是一发曲射炮、会落在哪。
-   */
-  function drawArcShell(c, x, y, z, col, dx, dy, seed) {
-    const rot = Math.atan2(dy, dx);
-    // ① 地面阴影：越高越大、越淡
-    const lift = clamp(z / 150, 0, 1);
-    c.fillStyle = hexAlpha(INK, 0.16 + 0.14 * (1 - lift));
-    c.beginPath();
-    c.ellipse(x, y, 5 + lift * 5, 3 + lift * 2.5, 0, 0, TAU);
-    c.fill();
-    // ② 落点虚线圈：提示这是抛射物、会落在这里（而非当前飞行位置）
-    c.strokeStyle = hexAlpha(col, 0.4);
-    c.lineWidth = 1.2;
-    c.setLineDash([3, 4]);
-    c.beginPath();
-    c.arc(x, y, 8.5, 0, TAU);
-    c.stroke();
-    c.setLineDash([]);
-    // ③ 抬升的弹体 + 抛射拖尾（拖尾略向上飘，强化「飞在天上」的感觉）
-    inkTrail(c, x, y - z, dx, dy, 24, 4, 0.4, INK);
-    inkBlobPath(c, x, y - z, 5.2, seed, { lobes: 8, jitter: 0.55, sx: 1.5, rot });
-    c.fillStyle = hexAlpha(INK, 0.9);
-    c.fill();
-    c.strokeStyle = hexAlpha(col, 0.4);
-    c.lineWidth = 1.2;
-    c.beginPath();
-    c.arc(x, y - z, 8, 0, TAU);
-    c.stroke();
   }
 
   /** 单发弹丸的画法（抽出来是为了 docs 下的特效图谱页能一格一格核对形状） */
@@ -2452,85 +3364,7 @@ window.WarFactoryUi = (function () {
       c.lineTo(m.x, m.y + 6);
       c.stroke();
     }
-    // 右键锁定攻击目标标记（红圈 + 内准星，与移动标记区分）
-    for (let i = attackMarkers.length - 1; i >= 0; i--) {
-      const m = attackMarkers[i];
-      const age = (t - m.born) / m.ttl;
-      if (age >= 1) {
-        attackMarkers.splice(i, 1);
-        continue;
-      }
-      const a = 1 - age;
-      c.strokeStyle = 'rgba(232,86,64,' + (0.9 * a).toFixed(3) + ')';
-      c.lineWidth = 2.6;
-      c.beginPath();
-      c.arc(m.x, m.y, 18 * (1 - age * 0.4), 0, TAU);
-      c.stroke();
-      c.beginPath();
-      for (let k = 0; k < 4; k++) {
-        const ang = (k / 4) * TAU;
-        c.moveTo(m.x + Math.cos(ang) * 12, m.y + Math.sin(ang) * 12);
-        c.lineTo(m.x + Math.cos(ang) * 18, m.y + Math.sin(ang) * 18);
-      }
-      c.stroke();
-    }
-    // 追击攻击命令的**常驻**指示（区别于上面 950ms 的点击反馈）：
-    // 命令只要还活着就一直画 —— 目标身上一圈缓慢转动的虚线锁定环 + 四角准星，
-    // 执行命令且被选中的部队还会拉一条虚线到目标，随时看得出「谁在追谁」。
-    // 右键别处 / 停止 / 目标阵亡后服务端不再下发命令 → 指示自动消失。
-    if (myPlayerIndex() >= 0) {
-      const ordered = new Map(); // key `kind:id` → { kind, id, chasers: [] }
-      for (const u of units.values()) {
-        if (!u.ok || u.oi !== myPlayerIndex()) continue;
-        const key = u.ok + ':' + u.od;
-        let it = ordered.get(key);
-        if (!it) {
-          it = { kind: u.ok, id: u.od, chasers: [] };
-          ordered.set(key, it);
-        }
-        it.chasers.push(u);
-      }
-      const spin = (t / 620) % 1;
-      for (const it of ordered.values()) {
-        const tp = targetInfoOf(it.kind, it.id);
-        if (!tp) continue;
-        // 被选中的执行部队 → 目标：细虚线（追击途中一眼看出目标在哪）
-        c.save();
-        c.setLineDash([5, 7]);
-        c.lineWidth = 1.7;
-        c.strokeStyle = 'rgba(216,64,44,0.5)';
-        c.beginPath();
-        for (const u of it.chasers) {
-          if (!selection.has(u.id)) continue;
-          c.moveTo(u.x, u.y);
-          c.lineTo(tp.x, tp.y);
-        }
-        c.stroke();
-        c.restore();
-        // 目标身上的锁定环：虚线随时间转动 + 四角准星
-        const rr = tp.r + 13;
-        c.save();
-        c.translate(tp.x, tp.y);
-        c.rotate(spin * TAU);
-        c.setLineDash([7, 6]);
-        c.lineWidth = 2;
-        c.strokeStyle = 'rgba(232,86,64,0.62)';
-        c.beginPath();
-        c.arc(0, 0, rr, 0, TAU);
-        c.stroke();
-        c.setLineDash([]);
-        c.lineWidth = 2.4;
-        c.beginPath();
-        for (let k = 0; k < 4; k++) {
-          const ang = (k / 4) * TAU + Math.PI / 4;
-          c.moveTo(Math.cos(ang) * (rr - 5), Math.sin(ang) * (rr - 5));
-          c.lineTo(Math.cos(ang) * (rr + 4), Math.sin(ang) * (rr + 4));
-        }
-        c.stroke();
-        c.restore();
-      }
-    }
-
+    // 集结点落点特效（扩散旗圈）
     for (let i = rallyFx.length - 1; i >= 0; i--) {
       const m = rallyFx[i];
       const age = (t - m.born) / m.ttl;
@@ -3468,7 +4302,7 @@ window.WarFactoryUi = (function () {
     warrior: '近战：贴上去缠斗，血量与伤害均衡。',
     shield: '重甲：血量最厚、推进最慢，适合顶在前面吃伤害。',
     ranger: '远程狙击：射程最远、血量最低，别让它贴身。',
-    burst: '曲射抛投：弹道越过山脉落到落点，范围全体受伤，专治扎堆的敌人（可隔山轰击）。',
+    burst: '范围炮击：落点范围内全体受伤，专治扎堆的敌人。',
     burn: '喷火：持续喷吐火焰、大范围灼烧（一级不留火场；二级起落点留下火场，三级火场更大、烧得更久、伤害更高）。',
     laser: '激光：锁定同一目标越久伤害越高（最高 5 倍），换目标要重新蓄能。',
     default: '自动攻击射程内的一切敌人（单位 / 工厂 / 研究所 / 总部）。',
@@ -3662,11 +4496,7 @@ window.WarFactoryUi = (function () {
         }
         if (upEls.desc) upEls.desc.textContent = UNIT_DESC[single.type] || '';
         if (upEls.statsSec) upEls.statsSec.textContent = '属性';
-        if (upEls.stats) {
-          upEls.stats.textContent = unitStatsText(single);
-          // 单选属性表不拆列：行里有「灼烧地…停喷后 5.2 秒熄灭」这种长行，拆列会折行反而更高
-          upEls.stats.classList.remove('is-roster');
-        }
+        if (upEls.stats) upEls.stats.textContent = unitStatsText(single);
         if (upEls.note) {
           upEls.note.textContent = foe
             ? '敌方部队 · 仅供查看，无法指挥'
@@ -3687,11 +4517,7 @@ window.WarFactoryUi = (function () {
             .join(' · ') + (view.length > 6 ? ' …' : '');
         }
         if (upEls.statsSec) upEls.statsSec.textContent = '编成（' + kinds + ' 种兵）';
-        if (upEls.stats) {
-          upEls.stats.textContent = rosterText(view);
-          // 编成汇总是「兵种（阶·分支）×数量」这种短行，最多十几行 —— 拆两列正好一屏放下
-          upEls.stats.classList.add('is-roster');
-        }
+        if (upEls.stats) upEls.stats.textContent = rosterText(view);
         if (upEls.note) {
           upEls.note.textContent = '多选时显示编成汇总；只选一支可看攻/射/速等详细属性。';
         }
@@ -3988,10 +4814,6 @@ window.WarFactoryUi = (function () {
       u.li = row[13] || 0; // 锁定目标 id
       u.lm = row[14] || 100; // 当前伤害倍率 ×100（100 = 1 倍）
       u.lw = row[15] || 0; // 前摇剩余毫秒（>0 = 蓄能中，尚未开火）
-      // 追击攻击命令（玩家右键指定）：0 = 没有命令。命令只要还在（哪怕正在赶路、还没进射程）
-      // 就一直下发，客户端据此在目标处常驻一个锁定指示 —— 命令一解除，指示随之消失。
-      u.ok = row[16] || 0; // 命令目标类别：0 无 / 1 单位 / 2 工厂 / 3 研究所 / 4 总部
-      u.od = row[17] || 0; // 命令目标 id
     }
     for (const id of [...units.keys()]) {
       if (!seen.has(id)) {
@@ -4242,8 +5064,7 @@ window.WarFactoryUi = (function () {
 
   /**
    * 中栏「单位粗览」：只列**当前选中**的我方部队（多选时逐个成格）。
-   * 没选中任何部队时显示一句空态提示——但**整栏始终在**：三栏常驻，右栏「单位详情」
-   * 才会永远钉在最右边（以前把中栏收掉、让右栏跨列补位，详情就滑到画面中间去了）。
+   * 没选中任何部队就整段收起，右栏跨两列补位——想看谁就点谁，不再平铺全部部队。
    * 结构用签名差分，只有选中集合/兵种/阶数变化才重建 DOM，否则每帧重建会卡。
    */
   function renderUnitOverview() {
@@ -4252,17 +5073,13 @@ window.WarFactoryUi = (function () {
     // 只列自己的部队：选中框里万一混进别人的也一并滤掉
     const list = !isSpectator && mine >= 0 ? selectedUnits().filter((u) => u.oi === mine) : [];
     const show = list.length > 0;
-    if (ovSecEl && ovSecEl.hidden) ovSecEl.hidden = false;
+    if (ovSecEl && ovSecEl.hidden !== !show) ovSecEl.hidden = !show;
+    if (detailSecEl) detailSecEl.classList.toggle('is-wide', !show);
     if (!show) {
-      // 用 '__empty' 当哨兵：初次渲染（ovKey 本来就是 ''）也要把空态提示补上
-      if (ovKey !== '__empty') {
-        ovKey = '__empty';
+      if (ovKey !== '') {
+        ovKey = '';
         ovBox.innerHTML = '';
         ovEls.clear();
-        const empty = document.createElement('div');
-        empty.className = 'wov-empty';
-        empty.textContent = '点选战场上的部队，这里列出已选部队的粗览';
-        ovBox.appendChild(empty);
       }
       if (ovCountEl && ovCountEl.textContent !== '—') ovCountEl.textContent = '—';
       return;
@@ -4560,13 +5377,8 @@ window.WarFactoryUi = (function () {
       boxSel.y1 = pos.y;
       evt.preventDefault();
     } else if (evt.button === 2) {
-      // 右键分流（指令越具体越优先）：
-      //   ① 选中了部队、且点中敌 / 中立单位或建筑 → 锁定攻击目标；
-      //   ② 选中了本方工厂、点的是空地 → 设集结点；
-      //   ③ 其余 → 指挥选中部队移动。
-      if (selection.size > 0 && issueAttackOn(pos.x, pos.y)) {
-        // 已锁定攻击目标，无需其他处理
-      } else if (selFacId) issueRally(pos.x, pos.y);
+      // 选中了本方工厂 → 右键设集结点；否则 → 指挥选中部队移动
+      if (selFacId) issueRally(pos.x, pos.y);
       else issueMove(pos.x, pos.y);
       evt.preventDefault();
     }
@@ -4721,58 +5533,6 @@ window.WarFactoryUi = (function () {
     if (typeof net !== 'undefined' && net && typeof net.sendRt === 'function') {
       net.sendRt({ cmd: 'move', x: Math.round(wx), y: Math.round(wy), ids });
       moveMarkers.push({ x: wx, y: wy, born: now, ttl: 850 });
-    }
-  }
-
-  /**
-   * 右键锁定攻击目标：玩家选中我方部队后，右键点中「敌 / 中立」单位或建筑，
-   * 把该目标设为这些部队的手动攻击目标（服务端在攻击范围内优先打它，否则自动）。
-   * 命中的是非己方目标才返回 true（由 onMouseDown 据此决定是否改走移动指令）。
-   */
-  function issueAttackOn(wx, wy) {
-    if (isSpectator || selection.size === 0) return false;
-    const mine = myPlayerIndex();
-    if (mine < 0) return false;
-    // 1) 点中的敌方 / 中立单位（任意归属，但非己方）
-    const hitU = unitAt(wx, wy, null);
-    if (hitU && hitU.oi !== mine) {
-      sendAttack('u', hitU.id, wx, wy);
-      return true;
-    }
-    // 2) 点中的敌方 / 中立建筑（工厂 / 研究所 / 总部，含被占领后 owner===-1 的中立）
-    const foeF = factoriesView.find(
-      (x) => x.owner !== mine && Math.hypot(x.x - wx, x.y - wy) < 70
-    );
-    if (foeF) {
-      sendAttack('f', foeF.id, wx, wy);
-      return true;
-    }
-    const foeL = labsView.find(
-      (x) => x.owner !== mine && Math.hypot(x.x - wx, x.y - wy) < labR() + 18
-    );
-    if (foeL) {
-      sendAttack('l', foeL.id, wx, wy);
-      return true;
-    }
-    const foeH = hqView.find(
-      (x) => !x.down && x.owner !== mine && Math.hypot(x.x - wx, x.y - wy) < hqR() + 18
-    );
-    if (foeH) {
-      sendAttack('h', foeH.id, wx, wy);
-      return true;
-    }
-    return false;
-  }
-
-  function sendAttack(kind, id, wx, wy) {
-    const now = Date.now();
-    if (now - lastCmdAt < 110) return;
-    lastCmdAt = now;
-    const ids = [...selection].slice(0, 80);
-    if (typeof net !== 'undefined' && net && typeof net.sendRt === 'function') {
-      net.sendRt({ cmd: 'attack', kind, id, ids });
-      attackMarkers.push({ x: wx, y: wy, born: now, ttl: 950 });
-      pushHudHint('已下达追击命令 · 右键别处取消');
     }
   }
 
@@ -5368,8 +6128,9 @@ window.WarFactoryUi = (function () {
     hudInsetsStale = true;
     ovBox = document.getElementById('warfactory-overview');
     ovCountEl = document.getElementById('wov-count');
-    // 中栏整段：常驻（未选中时显示空态提示，见 renderUnitOverview）
+    // 中栏整段 + 右栏整段：没选中部队时中栏整段收起、右栏跨两列补位
     ovSecEl = document.getElementById('warfactory-ov-sec');
+    detailSecEl = document.getElementById('warfactory-detail-sec');
     wdtTitleEl = document.getElementById('wdt-title');
     wdtCountEl = document.getElementById('wdt-count');
     ovKey = '';
@@ -5499,7 +6260,6 @@ window.WarFactoryUi = (function () {
       effects.length = 0;
       groundMarks.length = 0;
       moveMarkers.length = 0;
-      attackMarkers.length = 0;
       rallyFx.length = 0;
       selection.clear();
       selFacId = 0;
@@ -5634,3 +6394,312 @@ window.WarFactoryUi = (function () {
     scales: { vis: UNIT_VIS_SCALE, body: UNIT_BODY_SCALE },
   };
 })();
+</script>
+<script>
+
+(function () {
+  var statusEl = document.getElementById('game-status');
+  function fail(msg) { document.title = 'PREVIEW-ERROR ' + msg; }
+  window.onerror = function (m) { fail(m); };
+  try {
+  var ui = window.WarFactoryUi;
+  var d = window.__WF__;
+  var WW = d.state.world.w, WH = d.state.world.h;
+
+  // ---- 拦 2D 上下文的 setTransform，记下最后一帧的世界变换，用来把世界坐标换算成屏幕坐标 ----
+  // 只认「对角 + 平移非零」的变换：世界变换是 (kk,0,0,kk,-cam.x*kk,-cam.y*kk)，
+  // 而 HUD/小地图的重置是 (dpr,0,0,dpr,0,0)——平移为零，不能拿来覆盖 cam。
+  var cam = null;
+  var camLog = []; // 最近几次世界变换（[k, camX, camY]），用来核对「渲染相机」是否真的动了
+  var rawGet = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function (kind) {
+    var c = rawGet.apply(this, arguments);
+    if (kind === '2d' && c && !c.__wfProbe) {
+      c.__wfProbe = 1;
+      var raw = c.setTransform.bind(c);
+      c.setTransform = function (a, b, cc, dd, e, f) {
+        if (a === dd && b === 0 && cc === 0 && a > 0.2 && (e !== 0 || f !== 0)) {
+          cam = { k: a, x: -e / a, y: -f / a };
+          camLog.push([a, cam.x, cam.y]);
+          if (camLog.length > 10) camLog.shift();
+        }
+        return raw(a, b, cc, dd, e, f);
+      };
+    }
+    return c;
+  };
+
+  document.getElementById('panel-warfactory').hidden = false;
+  var net = { on: function () {}, sendRt: function () {} };
+  ui.render(d.state, net, { meId: 'p0', isSpectator: false, title: '战争工厂' });
+  ui.applySnapshot(d.snap);
+
+  var mode = (String(location.search).match(/mode=(\w+)/) || [])[1] || 'self';
+  var qs = String(location.search);
+  var wheelDy = Number((qs.match(/wheel=(-?\d+)/) || [])[1] || 0);
+  // ?mode=pad&pad=1：换成四方同框那一局（2 人局里看不到黄/绿两方的底色）
+  var STATE = d.state;
+  var SNAP = d.snap;
+  if (qs.indexOf('pad=1') >= 0) {
+    STATE = d.padState;
+    SNAP = d.padSnap;
+    ui.render(STATE, net, { meId: 'p0', isSpectator: false, title: '战争工厂' });
+    ui.applySnapshot(SNAP);
+  }
+  var foeKind = (qs.match(/foe=(\w+)/) || [])[1] || '';
+  // ?burn=1：燎原喷火态（火舌 + 灼烧地形）。火场寿命是相对真实时钟算的，
+  // 所以这一局是拿 Date.now() 真跑出来的，不能像别的模式那样喂假时间。
+  if (qs.indexOf('burn=1') >= 0) {
+    STATE = d.burnState;
+    SNAP = d.burnSnap;
+    ui.render(STATE, net, { meId: 'r0', isSpectator: false, title: '战争工厂' });
+    ui.applySnapshot(SNAP);
+  }
+  // ?fx=1：真实交火态。开火事件只在「喂快照那一帧」生效一次 ——
+  // 枪口焰是 170~240ms 的短促动画，若每帧都重喂事件，焰会永远停在 age=0
+  // （那时焰还没张开，alpha 是 0），截图上就什么都看不到。
+  if (qs.indexOf('fx=1') >= 0) {
+    STATE = d.fxState;
+    ui.render(STATE, net, { meId: 'q0', isSpectator: false, title: '战争工厂' });
+    ui.applySnapshot(d.fxSnap);
+    SNAP = Object.assign({}, d.fxSnap, { ev: [] });
+  }
+  /** 取一件「不是我的」目标（坐标由 main() 塞进 d.foes，publicGameState 不带单位） */
+  function pickFoe(kind) {
+    return (d.foes && d.foes[kind]) || null;
+  }
+
+  // 真实 WheelEvent：验证滚轮缩放（桩测试碰不到 passive/preventDefault 这类浏览器行为）
+  function wheelTo(dy) {
+    var cv = document.getElementById('warfactory-canvas');
+    var r = cv.getBoundingClientRect();
+    cv.dispatchEvent(new WheelEvent('wheel', {
+      deltaY: dy, deltaMode: 0, bubbles: true, cancelable: true,
+      clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+    }));
+  }
+  // 真实 KeyboardEvent：客户端按 evt.code 分支，所以要给 code 传 Space
+  function pressSpace() {
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', bubbles: true, cancelable: true }));
+  }
+  /** 真实键盘事件：数字键编队用的就是这条路径 */
+  function pressKey(code, shift) {
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      code: code, bubbles: true, cancelable: true, shiftKey: Boolean(shift),
+    }));
+  }
+
+  function ev(type, el, x, y) {
+    el.dispatchEvent(new MouseEvent(type, {
+      bubbles: true, button: 0, clientX: x, clientY: y,
+      preventDefault: function () {}, shiftKey: false,
+    }));
+  }
+  // 先点小地图把镜头挪过去，再点主战场 —— 免得目标落在视口外
+  function focus(wx, wy) {
+    var mm = document.getElementById('warfactory-minimap');
+    var r = mm.getBoundingClientRect();
+    ev('mousedown', mm, r.left + (wx / WW) * r.width, r.top + (wy / WH) * r.height);
+    ev('mouseup', mm, r.left + (wx / WW) * r.width, r.top + (wy / WH) * r.height);
+  }
+  function clickWorld(wx, wy) {
+    if (!cam) return false;
+    var cv = document.getElementById('warfactory-canvas');
+    var r = cv.getBoundingClientRect();
+    ev('mousedown', cv, r.left + (wx - cam.x) * cam.k, r.top + (wy - cam.y) * cam.k);
+    ev('mouseup', cv, r.left + (wx - cam.x) * cam.k, r.top + (wy - cam.y) * cam.k);
+    return true;
+  }
+  function pickUnit() {
+    var ov = document.getElementById('warfactory-overview');
+    var t = ov && ov.children[0];
+    if (t && String(t.className || '').indexOf('wov-tile') >= 0) {
+      t.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      return true;
+    }
+    return false;
+  }
+
+  function inView(wx, wy) {
+    if (!cam) return false;
+    var cv = document.getElementById('warfactory-canvas');
+    var r = cv.getBoundingClientRect();
+    var sx = r.left + (wx - cam.x) * cam.k;
+    var sy = r.top + (wy - cam.y) * cam.k;
+    return sx >= r.left && sx <= r.right && sy >= r.top && sy <= r.bottom;
+  }
+
+  var settle = 0;
+  (function warmup() {
+    ui.applySnapshot(SNAP);
+    if (++settle < 3) { requestAnimationFrame(warmup); return; }
+    // 无头截图模式下 rAF 帧数有限（约 6~8 帧），动作要压在前几帧完成
+    var wx = 0, wy = 0;
+    var panInfo = null;
+    var pendingPan = false;
+    if (mode === 'fac') {
+      var mineF = STATE.factories.filter(function (q) { return q.owner === 0; });
+      var f = mineF.filter(function (q) { return inView(q.x, q.y); })[0] || mineF[0];
+      wx = f.x; wy = f.y;
+      if (!inView(wx, wy)) focus(wx, wy); // 兜底：不在视口内就先用小地图挪镜头
+    } else if (mode === 'hq') {
+      var h = STATE.hqs.filter(function (q) { return q.owner === 0; })[0];
+      wx = h.x; wy = h.y;
+      if (!inView(wx, wy)) focus(wx, wy);
+    } else if (mode === 'unit') {
+      pickUnit();
+    }
+    if (mode === 'fac' || mode === 'hq') clickWorld(wx, wy);
+    var pendingClick = null;
+    if (foeKind) {
+      // 先把镜头挪到目标上（下一帧才点，否则探针里的 cam 还是旧的）
+      var tgt = pickFoe(foeKind);
+      if (tgt) {
+        pendingClick = { x: tgt.x, y: tgt.y };
+        focus(tgt.x, tgt.y);
+      } else {
+        document.title = 'PREVIEW-ERROR 没有可侦察的 ' + foeKind;
+      }
+    }
+    // ?mode=zoom&wheel=-600（负=放大）｜?space=1 让镜头回总部；二者可同时给
+    if (wheelDy) wheelTo(wheelDy);
+    if (qs.indexOf('space=1') >= 0) {
+      // 先把镜头甩到世界左上角，再按空格——这样才能看出「空格把镜头拉回总部」
+      focus(WW * 0.12, WH * 0.12);
+      pressSpace();
+    }
+    // ?squad=pre：只把镜头甩到远角（「连按两下」之前的对照态）
+    if (qs.indexOf('squad=pre') >= 0) {
+      focus(WW * 0.12, WH * 0.12);
+    }
+    // ?squad=1：F2 全选 → Shift+1 编入 1 号 → 把镜头甩到远角 → 连按两下 1
+    // 探针会打出编队首支部队应有的屏幕位置，与画布中心比对即知「镜头是否飞过去了」
+    if (qs.indexOf('squad=1') >= 0) {
+      pressKey('F2');
+      pressKey('Digit1', true); // Shift+1 = 编入
+      focus(WW * 0.12, WH * 0.12); // 先甩到远角，才看得出镜头被拉回来
+      pressKey('Digit1'); // 第一下：只选中
+      pressKey('Digit1'); // 第二下：连按 → 镜头飞到编队首支部队
+    }
+    // ?pan=1：先把镜头甩到地图中央（离四边都远），下一帧再按住中键拖一段距离。
+    // 真实 MouseEvent(button:1)，顺带记录 mousedown 有没有被 preventDefault ——
+    // 这正是「浏览器中键自动滚动被掐掉」的判据
+    if (qs.indexOf('pan=1') >= 0) {
+      pendingPan = true;
+      focus(WW * 0.5, WH * 0.5);
+    }
+    // ?mode=pad&pad=1：镜头落到四方列阵正中，并点选一支自家部队（看选中光环 + 四角方框）
+    if (qs.indexOf('pad=1') >= 0) {
+      focus(d.padCenter.x, d.padCenter.y);
+      if (d.padPick) pendingClick = { x: d.padPick.x, y: d.padPick.y };
+    }
+    // ?fx=1：镜头对准交火线正中；?fxpick=1 顺带选中一支自家部队（顺便看后坐）
+    if (qs.indexOf('burn=1') >= 0) {
+      // ?burn=1：镜头对准三支燎原中间的喷火线，并点选中间那支（顺便看面板里的火焰/灼烧数值）
+      focus(d.burnCenter.x - 40, d.burnCenter.y);
+      if (qs.indexOf('burnpick=1') >= 0) {
+        for (var bi = 0; bi < (SNAP.u || []).length; bi++) {
+          if (SNAP.u[bi][1] === 0 && SNAP.u[bi][5] === 4) {
+            pendingClick = { x: SNAP.u[bi][2], y: SNAP.u[bi][3] };
+            break;
+          }
+        }
+      }
+    }
+    if (qs.indexOf('fx=1') >= 0) {
+      focus(d.fxCenter.x, d.fxCenter.y);
+      if (qs.indexOf('fxpick=1') >= 0) {
+        var mineFx = [];
+        for (var si = 0; si < (SNAP.u || []).length; si++) {
+          if (SNAP.u[si][1] === 0) mineFx.push({ oi: 0, x: SNAP.u[si][2], y: SNAP.u[si][3] });
+        }
+        if (mineFx.length) pendingClick = { x: mineFx[0].x, y: mineFx[0].y };
+      }
+    }
+    var n2 = 0;
+    (function paint() {
+      ui.applySnapshot(SNAP);
+      if (pendingClick && n2 >= 1) {
+        var pc = pendingClick;
+        pendingClick = null;
+        clickWorld(pc.x, pc.y);
+      }
+      if (pendingPan && n2 >= 1) {
+        pendingPan = false;
+        try {
+          var cvP = document.getElementById('warfactory-canvas');
+          var rP = cvP.getBoundingClientRect();
+          var sxP = rP.left + rP.width * 0.5;
+          var syP = rP.top + rP.height * 0.5;
+          var mDown = new MouseEvent('mousedown', {
+            bubbles: true, cancelable: true, button: 1, buttons: 4, clientX: sxP, clientY: syP,
+          });
+          panInfo = { sx: 200, sy: 130, before: cam ? { k: cam.k, x: cam.x, y: cam.y } : null, pre: null };
+          cvP.dispatchEvent(mDown);
+          panInfo.pre = mDown.defaultPrevented;
+          window.dispatchEvent(new MouseEvent('mousemove', {
+            bubbles: true, cancelable: true, button: 1, buttons: 4, clientX: sxP + panInfo.sx, clientY: syP + panInfo.sy,
+          }));
+          window.dispatchEvent(new MouseEvent('mouseup', {
+            bubbles: true, cancelable: true, button: 1, buttons: 0, clientX: sxP + panInfo.sx, clientY: syP + panInfo.sy,
+          }));
+        } catch (ePan) {
+          panInfo = { err: String((ePan && ePan.message) || ePan) };
+        }
+      }
+      if (++n2 < 4) { requestAnimationFrame(paint); return; }
+      document.title = 'ready-' + mode +
+        ' k=' + (cam ? cam.k.toFixed(3) : '?') +
+        ' cam=' + (cam ? Math.round(cam.x) + ',' + Math.round(cam.y) : '?');
+      // dump-dom 拿不到运行后的 DOM，所以把镜头探针写进页面左上角，截图即可读数
+      var hq0 = STATE.hqs.filter(function (q) { return q.owner === 0; })[0];
+      var probe = document.getElementById('wfp-zoomprobe');
+      if (!probe) {
+        probe = document.createElement('div');
+        probe.id = 'wfp-zoomprobe';
+        probe.style.cssText = 'position:fixed;left:270px;top:8px;background:#fff;color:#000;font:13px monospace;padding:2px 8px;z-index:99999;border:1px solid #000;';
+        document.body.appendChild(probe);
+      }
+      var cvp = document.getElementById('warfactory-canvas').getBoundingClientRect();
+      var f1 = camLog[0], fN = camLog[camLog.length - 1];
+      var fmt = function (m) { return m ? (m[0].toFixed(2) + '@' + Math.round(m[1]) + ',' + Math.round(m[2])) : '?'; };
+      var hqScr = fN ? (Math.round(cvp.left + (hq0.x - fN[1]) * fN[0]) + ',' + Math.round(cvp.top + (hq0.y - fN[2]) * fN[0])) : '?';
+      // 编队首支部队（id 最小那支）落在画布的哪个位置：越接近画布中心 = 镜头越准
+      var sf = d.squadFirst;
+      var sqScr = (sf && fN) ? (Math.round(cvp.left + (sf.x - fN[1]) * fN[0]) + ',' + Math.round(cvp.top + (sf.y - fN[2]) * fN[0])) : '?';
+      var ctr = Math.round(cvp.left + cvp.width / 2) + ',' + Math.round(cvp.top + cvp.height / 2);
+      probe.textContent = 'frames=' + camLog.length +
+        ' first=' + fmt(f1) + ' last=' + fmt(fN) +
+        ' cvp=' + Math.round(cvp.width) + 'x' + Math.round(cvp.height) +
+        ' hq0scr=' + hqScr +
+        ' sq1=' + (sf ? sf.x + ',' + sf.y : '?') +
+        ' sq1scr=' + sqScr + ' cvctr=' + ctr;
+      if (qs.indexOf('fx=1') >= 0) {
+        // 交火态读数：这一帧画了几发弹、场上有几支兵、喂进去多少条事件
+        probe.textContent = 'FX bullets=' + ((SNAP.b || []).length) +
+          ' units=' + ((SNAP.u || []).length) +
+          ' events=' + ((d.fxSnap.ev || []).length) +
+          ' k=' + (cam ? cam.k.toFixed(2) : '?') +
+          ' cam=' + (cam ? Math.round(cam.x) + ',' + Math.round(cam.y) : '?');
+      }
+      if (panInfo && panInfo.err) {
+        probe.textContent = 'PAN-ERROR ' + panInfo.err;
+      } else if (panInfo && panInfo.before && fN) {
+        // 手移 → 画面位移：地图 1:1 跟手时两者应完全相等
+        probe.textContent =
+          'PAN mDownPrevented=' + panInfo.pre +
+          ' hand=' + panInfo.sx + ',' + panInfo.sy +
+          ' camBefore=' + Math.round(panInfo.before.x) + ',' + Math.round(panInfo.before.y) +
+          ' camAfter=' + Math.round(fN[1]) + ',' + Math.round(fN[2]) +
+          ' mapMovedOnScreen=' +
+          Math.round((panInfo.before.x - fN[1]) * fN[0]) + ',' +
+          Math.round((panInfo.before.y - fN[2]) * fN[0]);
+      }
+    })();
+  })();
+  } catch (err) { fail(err && err.message); }
+})();
+
+</script>
+</body>
+</html>
