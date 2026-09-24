@@ -1194,6 +1194,63 @@ for (const n of [3, 4]) {
     const foeRow = snap.u.find((r) => r[0] === foe.id);
     ok(foeRow && foeRow[10] === 1, '快照下发单位身上的「在燃烧」标记');
   }
+
+  // ---- ③ 建筑：只吃「火舌直接喷到」，不吃地上的灼烧地形 ----
+  {
+    const gc = createGameState(room(2));
+    gc.phase = 'playing';
+    gc.phaseEndsAt = 0;
+    gc.units.length = 0; // 清场：这一组只关心建筑挨不挨烧
+
+    const fac = gc.factories[0];
+    fac.owner = 1; // 敌方工厂
+    fac.hp = fac.hpMax;
+    const ownFac = gc.factories[1];
+    ownFac.owner = 0; // 自家工厂（对照：不该被自家火舌烧到）
+    ownFac.hp = ownFac.hpMax;
+    const lab = gc.labs[0];
+    lab.owner = 1;
+    lab.hp = lab.hpMax;
+    const hq = gc.hqs.find((h) => h.owner === 1);
+
+    const burner = __test.spawnUnit(gc, { id: 1, owner: 0, level: 3 }, 'burn', fac.x, fac.y);
+    // 把燎原挪到建筑边缘外侧一点点（建筑周边地形是清空的，视线一定畅通），火舌落点压在建筑中心
+    const stand = (bx, by, r) => {
+      burner.x = bx + r + 8;
+      burner.y = by;
+    };
+
+    stand(fac.x, fac.y, C.FACTORY_R);
+    const hpF = fac.hp;
+    const hpOwn = ownFac.hp;
+    __test.sprayFlame(gc, burner, fac.x, fac.y, 1, 5000); // 火舌正烧工厂 1 秒
+    ok(fac.hp < hpF, `火舌直接喷到敌方工厂 → 工厂掉血（${hpF} → ${Math.round(fac.hp)}）`);
+    ok(ownFac.hp === hpOwn, '自家工厂不被自家火舌烧到');
+
+    stand(lab.x, lab.y, C.LAB_R);
+    const hpL = lab.hp;
+    __test.sprayFlame(gc, burner, lab.x, lab.y, 1, 5100);
+    ok(lab.hp < hpL, `火舌直接喷到敌方研究所 → 研究所掉血（${hpL} → ${Math.round(lab.hp)}）`);
+
+    stand(hq.x, hq.y, C.HQ_R);
+    const hpH = hq.hp;
+    __test.sprayFlame(gc, burner, hq.x, hq.y, 1, 5200);
+    ok(hq.hp < hpH, `火舌直接喷到敌方总部 → 总部掉血（${hpH} → ${Math.round(hq.hp)}）`);
+
+    // 对照：把火铺在三座建筑脚下烧满 1 秒，建筑血量必须纹丝不动
+    const f2 = fac.hp;
+    const l2 = lab.hp;
+    const h2 = hq.hp;
+    __test.addFire(gc, fac.x, fac.y, 0, 6000, 3);
+    __test.addFire(gc, lab.x, lab.y, 0, 6000, 3);
+    __test.addFire(gc, hq.x, hq.y, 0, 6000, 3);
+    for (let i = 0; i < 20; i++) __test.updateFires(gc, 0.05, 6000 + i * 50); // 烧 1 秒
+    ok(gc.fires.length > 0, '对照组前提：火确实铺在了三座建筑脚下');
+    ok(
+      fac.hp === f2 && lab.hp === l2 && hq.hp === h2,
+      '灼烧地形对建筑完全无伤害（工厂 / 研究所 / 总部血量不变）'
+    );
+  }
 }
 
 console.log(failed ? `\n失败 ${failed} 项` : '\n全部通过');

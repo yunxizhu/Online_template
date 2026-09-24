@@ -16,8 +16,10 @@ window.WarFactoryUi = (function () {
   let WORLD_H = 1600;
   let VIEW_W = 1280; // 当前镜头覆盖的世界宽：滚轮缩放会实时改变它
   let VIEW_H = 800; // 当前镜头覆盖的世界高：由容器纵横比 × 缩放决定
-  const ZOOM_MIN = 0.5; // 滚轮最远倍率（相对 1 倍镜头）
+  const ZOOM_MIN = 0.22; // 滚轮最远倍率的硬下限（相对 1 倍镜头）：再远地图就小得没意义了
   const ZOOM_MAX = 2.2; // 滚轮最近倍率
+  // 最远倍率 = 整张地图塞进「可见区」的倍率 × 这个余量（<1 表示边上还留一圈空）
+  const ZOOM_FIT_SLACK = 0.85;
   const MINIMAP_W = 300; // 小地图逻辑尺寸（与面板 canvas 的 width/height 一致）
   const MINIMAP_H = 200;
   // 画布 HUD 的安全边距：地图上有浮层（菜单按钮 / 指挥栏）时，别把 HUD 画到浮层底下。
@@ -3101,11 +3103,16 @@ window.WarFactoryUi = (function () {
       c.fillStyle = playerColor(u.oi);
       c.fillRect(u.x * sx - 1.4, u.y * sy - 1.4, 3, 3);
     }
-    // 视口框（相机能看到的那块）
+    // 视口框（相机能看到的那块）：与世界的交集 —— 镜头可以越界（把地图下沿顶到指挥栏之上），
+    // 越出去的部分本来就没有地图，截断后再画，框就不会跑到小地图外面去。
     c.strokeStyle = hexAlpha(INK, 0.75);
     c.lineWidth = 1;
     c.setLineDash([4, 3]);
-    c.strokeRect(cam.x * sx, cam.y * sy, VIEW_W * sx, VIEW_H * sy);
+    const vx0 = clamp(cam.x, 0, WORLD_W) * sx;
+    const vy0 = clamp(cam.y, 0, WORLD_H) * sy;
+    const vx1 = clamp(cam.x + VIEW_W, 0, WORLD_W) * sx;
+    const vy1 = clamp(cam.y + VIEW_H, 0, WORLD_H) * sy;
+    c.strokeRect(vx0, vy0, Math.max(0, vx1 - vx0), Math.max(0, vy1 - vy0));
     c.setLineDash([]);
     void t;
   }
@@ -4391,7 +4398,8 @@ window.WarFactoryUi = (function () {
    * 缩放换算的唯一出口（滚轮 / 改窗口尺寸都走这里）。
    *   zoom      = 屏幕像素 / 世界像素，绘制矩阵用
    *   VIEW_W/H  = 镜头覆盖的世界尺寸，框选、F 键、小地图视野框、鼠标取世界坐标都用它
-   * 下限由世界大小反推，保证视野不会比整张地图更大（否则 clampCam 会让画面露出纸边）。
+   * 下限改成「整张地图装得进可见区」：看得见的范围是扣掉上下浮层之后的那块，
+   * 地图比视口小的部分由 clampCam 居中摆放（边上露出底色，而不是贴着某一边）。
    */
   function applyZoom() {
     const cw = Math.max(1, cssW);
@@ -4402,11 +4410,19 @@ window.WarFactoryUi = (function () {
      * 「视口宽 1280」上，画布放大只会把一切等比放大，视野一点不增加）。
      */
     const base = 1;
-    const minZ = Math.max(
-      base * ZOOM_MIN,
-      cw / Math.max(1, WORLD_W),
-      ch / Math.max(1, WORLD_H)
-    );
+    /*
+     * 可见高度 = 画布高 - 顶部菜单 - 底部指挥栏：这两块是压在画布上的浮层，
+     * 被它们盖住的那条不算「看得见」，所以按它来算「整图装得下」的倍率。
+     */
+    const visH = Math.max(80, ch - hudPadTop - hudPadBot);
+    /*
+     * 下限原来是 max(cw/W, ch/H)（cover，视口不许比地图大）——于是一块 1400×760 的
+     * 画布横向永远卡在 0.58 倍，地图左右两边根本挪不到眼前，更别说被指挥栏压住的下沿。
+     * 现在取 min(cw/W, visH/H)（contain，整图装进可见区）再乘一点余量，
+     * 滚轮能拉得远得多；多出来的留白由 clampCam 摆正。
+     */
+    const fit = Math.min(cw / Math.max(1, WORLD_W), visH / Math.max(1, WORLD_H));
+    const minZ = clamp(fit * ZOOM_FIT_SLACK, base * ZOOM_MIN, base * ZOOM_MAX);
     const maxZ = base * ZOOM_MAX;
     zoom = clamp(base * zoomMul, minZ, maxZ);
     // 收敛回写：撞到世界边界时限位，滚轮不会「空转」后再突然跳一大格
@@ -4416,9 +4432,24 @@ window.WarFactoryUi = (function () {
     clampCam();
   }
 
+  /**
+   * 镜头限位：上下各留一段「越界余量」，余量 = 对应浮层的高度 ÷ zoom。
+   *
+   * 底部指挥栏和顶部菜单是压在画布上的浮层。按老限位（世界边贴视口边）停住时，
+   * 地图最下边那一条正好停在指挥栏底下 —— 永远看不见。现在允许镜头再多推这一段，
+   * 被浮层压住的那条地图就能顶到浮层上方（代价是底下露出一条底色，属正常留白）。
+   *
+   * 反过来，当视口比世界还大（拉到最远）时不贴边，而是摆在「上下浮层之间」的正中。
+   */
   function clampCam() {
-    cam.x = clamp(cam.x, 0, Math.max(0, WORLD_W - VIEW_W));
-    cam.y = clamp(cam.y, 0, Math.max(0, WORLD_H - VIEW_H));
+    const padTop = hudPadTop / zoom; // 浮层高度（屏幕像素）换算成世界单位
+    const padBot = hudPadBot / zoom;
+    const spanX = WORLD_W - VIEW_W; // >0 表示世界比视口大，镜头还有得挪
+    const spanY = WORLD_H - VIEW_H;
+    if (spanX >= 0) cam.x = clamp(cam.x, 0, spanX);
+    else cam.x = spanX / 2; // 视口比世界宽 → 左右居中，留白对称
+    if (spanY >= 0) cam.y = clamp(cam.y, -padTop, spanY + padBot);
+    else cam.y = (spanY + padBot - padTop) / 2; // 视口比世界高 → 在上下浮层之间居中
   }
 
   function centerOn(x, y) {

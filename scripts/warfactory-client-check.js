@@ -1107,7 +1107,11 @@ console.log('\n[15] 底部指挥栏三栏：小地图（左）｜单位粗览（
   miniEl.dispatch('mouseup', {});
   pump();
   const atTL = camFromLastFrame();
-  ok(atTL && Math.abs(atTL.x) < 1 && Math.abs(atTL.y) < 1, '点小地图左上角 → 镜头跳到世界 (0,0)');
+  // 顶边不再死贴视口 0：要留出顶部浮层的高度，世界最上边才不会被菜单压住
+  ok(
+    atTL && Math.abs(atTL.x) < 1 && atTL.y <= 0.5 && atTL.y > -40,
+    '点小地图左上角 → 镜头跳到世界左上角（顶边让开顶部浮层 ' + Math.round(-atTL.y) + '）'
+  );
 
   miniEl.dispatch('mousedown', { button: 0, clientX: 1279, clientY: 799, preventDefault() {} });
   miniEl.dispatch('mouseup', {});
@@ -1405,19 +1409,26 @@ console.log('\n[17] 滚轮缩放大地图 · 空格回总部');
   );
   ok(viewSize().w < CW, '放大后视野变窄（' + Math.round(viewSize().w) + ' 世界像素宽）');
 
-  // ---------- 缩小：下限＝整张地图 ----------
+  // ---------- 缩小：下限＝整张地图装进「扣掉上下浮层」的可见区（再松 15%）----------
   for (let i = 0; i < 60; i++) wheel(240, 640, 400);
   const zMin = zoomOf();
   const vMin = viewSize();
-  const expectMin = Math.max(0.5, CW / ws.w, CH / ws.h);
-  ok(
-    vMin.w <= ws.w + 1 && vMin.h <= ws.h + 1,
-    '拉到最远也不超出世界（视野 ' + Math.round(vMin.w) + '×' + Math.round(vMin.h) + ' / 世界 ' + ws.w + '×' + ws.h + '）'
-  );
+  const OVERLAY = 28; // 测试桩没有真实浮层：上下各退回默认边距（HUD_PAD=14）
+  const fitMin = Math.min(CW / ws.w, (CH - OVERLAY) / ws.h); // 整图装进可见区的倍率
+  const expectMin = Math.max(0.22, fitMin * 0.85);
   ok(
     Math.abs(zMin - expectMin) < 0.02,
-    '缩放下限 = max(0.5 倍, 世界边界)（' + zMin.toFixed(3) + '× ≈ ' + expectMin.toFixed(3) + '×）'
+    '缩放下限 = max(0.22 倍, 整图装进可见区 × 0.85)（' + zMin.toFixed(3) + '× ≈ ' + expectMin.toFixed(3) + '×）'
   );
+  ok(zMin < 0.5, '比原来的 0.5 倍下限拉得更远（' + zMin.toFixed(2) + '×）');
+  // 视野比世界还大时不再贴着某个角：整图摆在可见区中间，留白左右对称
+  if (vMin.w > ws.w + 1) {
+    const cMin = camCenter();
+    ok(
+      Math.abs(cMin.x - ws.w / 2) < 1,
+      '拉到最远（视野比世界宽）→ 地图左右居中（中心 ' + Math.round(cMin.x) + ' / 世界中心 ' + ws.w / 2 + '）'
+    );
+  }
 
   // ---------- 上限 ----------
   for (let i = 0; i < 80; i++) wheel(-240, 640, 400);
@@ -2145,19 +2156,20 @@ console.log('\n[20] 中键按住拖动 = 平移地图（网页自带的中键行
   };
   dragFar(100, 100, 300, 300); // 一直往右下拖 → 镜头被顶到世界左上角
   const tl3 = camTL20();
+  const liftTop = -tl3.y * tl3.k; // 世界顶边被推到视口第几像素（= 顶部浮层高度）
   ok(
-    tl3.x > -0.5 && tl3.y > -0.5 && tl3.x < 1 && tl3.y < 1,
-    '一直往右下拖 → 镜头稳稳贴住世界左上边界（' + Math.round(tl3.x) + ',' + Math.round(tl3.y) + '）'
+    Math.abs(tl3.x) < 1 && liftTop >= 0 && liftTop < 40,
+    '一直往右下拖 → 镜头贴住世界左上边界（顶边让开 ' + Math.round(liftTop) + 'px 顶部浮层）'
   );
   dragFar(600, 400, -300, -300); // 再一直往左上拖 → 顶到世界右下角
   const tl3b = camTL20();
   const vw3 = 1280 / tl3b.k;
   const vh3 = 800 / tl3b.k;
+  const liftBot = (tl3b.y + vh3 - ws20.h) * tl3b.k; // 世界底边抬到视口底边之上多少像素
   ok(
-    Math.abs(tl3b.x + vw3 - ws20.w) < 2 && Math.abs(tl3b.y + vh3 - ws20.h) < 2,
-    '一直往左上拖 → 镜头贴住世界右下边界（' +
-      Math.round(tl3b.x + vw3) + ' vs 世界宽 ' + ws20.w + '；' +
-      Math.round(tl3b.y + vh3) + ' vs 世界高 ' + ws20.h + '）'
+    Math.abs(tl3b.x + vw3 - ws20.w) < 2 && liftBot >= 0 && liftBot < 40,
+    '一直往左上拖 → 镜头贴住世界右下边界（底边抬起 ' + Math.round(liftBot) +
+      'px —— 正好让出底部指挥栏，地图最下边看得见）'
   );
 
   // ---------- ④ 松开中键后，移动鼠标不再拖地图 ----------

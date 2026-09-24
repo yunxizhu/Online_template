@@ -370,7 +370,7 @@
       "shield": "slow heavy armor",
       "ranger": "long-range sniper, fragile",
       "burst": "arcing lob, fires over ridges",
-      "burn": "sprays flame; leaves burning ground from tier 2 on",
+      "burn": "sprays flame, scorches buildings; burning ground (tier 2+) hurts units only",
       "laser": "damage ramps while locked, up to 5x"
     },
     "countdownHint": "Seize factories and labs · 500 tech points evolves a unit",

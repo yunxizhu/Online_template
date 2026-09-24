@@ -121,6 +121,8 @@ const SHELL_PEAK_PER_PX = 0.52; // 每多 1px 距离增加的弧顶高度（px�
 // 同时**在落点铺开一片灼烧地形**。踩在灼烧地形上的单位会持续掉血，
 // 而且这里敌我通吃 —— 这是全局唯一的友伤来源，所以数值压得很低、范围给得很大。
 // 火场的寿命跟着「最后一次被火舌刷到」走：火焰一停，几秒内自然熄灭。
+// **建筑只吃火舌的直接打击**：落点范围内的敌方建筑同样掉血，但地上的灼烧地形
+// 对建筑完全无效 —— 想拆工厂/研究所/总部，就得把火舌一直喷在它身上。
 const FLAME_R = 52; // 火舌落点的范围伤害半径（范围大）
 const FLAME_PULSE_MS = 180; // 喷火的表现脉冲（枪口焰 + 后坐）—— 不是射速，火焰本身是连续的
 const FIRE_MAX = 160; // 场上灼烧地块上限（防极端情况下列表无限膨胀）
@@ -2403,8 +2405,11 @@ function addFire(game, x, y, ownerIdx, now, tier) {
  * ① 落点范围伤害：`FLAME_R` 内的一切**敌方**单位按秒伤持续掉血（山挡住的打不到）。
  *    这是「持续喷吐」而不是「一发一发打」——所以没有弹道、没有命中判定，伤害按 dt 结算。
  *    各阶都一样：火焰本身就会烧人，**留不留灼烧地形才是分阶的地方**。
- * ② 在落点铺开 / 刷新一片灼烧地形 —— 只有**二级及以上**才铺（见 FIRE_TIERS）。
- * ③ 表现脉冲：每 FLAME_PULSE_MS 推一条 shot 事件（枪口焰 + 射手后坐）。
+ * ② 落点范围内的**敌方建筑**（工厂 / 研究所 / 总部）同样按秒伤掉血 —— 这是「直接打击」，
+ *    与炮击溅射同规则（自家建筑免疫、山挡住打不到）。注意：只有火舌**直接烧到**才结算，
+ *    地上那片灼烧地形对建筑完全无效（见 updateFires）。
+ * ③ 在落点铺开 / 刷新一片灼烧地形 —— 只有**二级及以上**才铺（见 FIRE_TIERS）。
+ * ④ 表现脉冲：每 FLAME_PULSE_MS 推一条 shot 事件（枪口焰 + 射手后坐）。
  *    若每步都推，客户端每秒会堆几十个焰，反而糊成一片。
  */
 function sprayFlame(game, u, x, y, dt, now) {
@@ -2418,6 +2423,25 @@ function sprayFlame(game, u, x, y, dt, now) {
       retaliate(game, e, u.id);
       damageUnit(game, e, dmg, u.ownerIdx);
     }
+    // 火舌直接烧到建筑才算数：工厂 / 研究所 / 总部按同一份秒伤掉血（规则同炮击溅射）
+    for (const f of game.factories) {
+      if (f.owner === u.ownerIdx) continue;
+      if (dist(f.x, f.y, x, y) > FLAME_R + FACTORY_R) continue;
+      if (losBlocked(game, u.x, u.y, f.x, f.y)) continue;
+      damageFactory(game, f, dmg, u.ownerIdx);
+    }
+    for (const l of game.labs) {
+      if (l.owner === u.ownerIdx) continue;
+      if (dist(l.x, l.y, x, y) > FLAME_R + LAB_R) continue;
+      if (losBlocked(game, u.x, u.y, l.x, l.y)) continue;
+      damageLab(game, l, dmg, u.ownerIdx);
+    }
+    for (const h of game.hqs) {
+      if (h.owner === u.ownerIdx || h.down) continue;
+      if (dist(h.x, h.y, x, y) > FLAME_R + HQ_R) continue;
+      if (losBlocked(game, u.x, u.y, h.x, h.y)) continue;
+      damageHq(game, h, dmg, u.ownerIdx);
+    }
   }
   const born = addFire(game, x, y, u.ownerIdx, now, u.tier);
   if (born) pushEvent(game, { t: 'flame', x: born.x, y: born.y, r: born.r, oi: u.ownerIdx, id: born.id });
@@ -2429,6 +2453,9 @@ function sprayFlame(game, u, x, y, dt, now) {
 
 /**
  * 灼烧地形结算：站在火里的一切单位都掉血 —— **不分敌我**（这是全局唯一的友伤来源）。
+ *
+ * **只烧单位，不烧建筑**：火场烧不掉工厂 / 研究所 / 总部 —— 建筑只吃火舌的「直接打击」
+ * （见 sprayFlame），地上的余火对它们无效。燎原想拆建筑，就得把火舌喷在建筑身上。
  *
  * 每秒伤害取每片火自己的 `f.dps`（二级 3.5 / 三级 6 —— 三级燎原烧出来的火更疼）。
  * 顺带维护 `u.burning`：客户端只凭这一个标记决定「身上要不要画火苗」，
