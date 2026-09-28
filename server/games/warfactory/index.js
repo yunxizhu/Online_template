@@ -4,14 +4,17 @@
  * 战争工厂（warfactory）：2–4 人水墨即时战略。
  *
  * 规则：
- * - 无经济系统。地图上散布 9 座战争工厂（初级×4 / 中级×2 / 高级×1）与 4 座研究所。
- * - 单位进驻工厂占领圈即可占领（圈内有守军则争夺冻结）；占领后每隔一段时间
- *   自动生产初级单位，直到该厂出身的存活部队达到本厂兵力上限。
- * - 工厂等级决定两件事：兵力上限（初级 4 / 中级 6 / 高级 9），
- *   以及该厂出厂单位的进化上限——初级工厂的兵永远只能是初级。
- * - 单位靠战斗攒经验自动进化（初级→中级→高级），研究所归属方的经验获取 ×1.5。
+ * - 无经济系统。地图上散布 12 座战争工厂（初级×6 / 中级×4 / 高级×2）与 4 座研究所。
+ * - 单位进驻工厂占领圈即可占领（圈内有守军则争夺冻结）；占领后每条产线各自计时，
+ *   到点产出该产线当前阶数的单位（不再按「每厂兵力上限」截断）。
+ * - 工厂等级只决定一件事：本厂每条产线能进化到的最高阶（初级 1 / 中级 2 / 高级 3）。
+ * - 产线：工厂与总部默认各 1 条，花科技点可再开辟（最多 FAC_MAX_LINES 条），
+ *   开辟时自选兵种；中 / 高级工厂的每条产线还能花科技点单独进化一阶 ——
+ *   首次进化必须先定型分支（A 攻势 / B 守势），此后这条线**直接产出该阶单位**
+ *   （而不是继续产出初级、再由玩家一支支手动进阶）。
+ * - 总部也出兵：默认产锐士，且总部产线**不可进化**（永远只有初级）。
  * - 单位五种：锐士（近战突进）、盾卫（重甲坦克）、游侠（远程狙击）、
- *   轰击（范围炮击）、燎原（燃烧灼烧）；进化时随机定型 A 攻势 / B 守势。
+ *   轰击（范围炮击）、燎原（燃烧灼烧）；产线首次进化时定型 A 攻势 / B 守势。
  * - 操作：框选己方部队 → 右键下达「移动/进攻移动」。
  *   单位**不会自动追击**：只有敌人进入攻击范围才开火，敌人跑出范围即停火（不追）。
  *   行军途中照常开火（移动攻击），所以不追击也能边走边打。
@@ -21,75 +24,111 @@
  * 全量 game:state 在阶段切换 / 占领 / 淘汰 / 胜负时广播（至少间隔 1s 节流）。
  */
 
-// 地图放大到原来的 1.8 倍（面积 ×3.24）：4320 / 2880
-const WORLD_W = 4320;
-const WORLD_H = 2880;
+const WFData = require('./data.js'); // 平衡数据总表：兵种 / 进化 / 科技费用 / 建筑 / 总部 / 激光 / 火焰
+
+// 地图再放大一倍：边长 ×2（面积 ×4）→ 8640 / 5760
+// 注意：格子边长 TERR_CELL 保持不变（40px），因此行列数同步翻倍（见 TERR_COLS / TERR_ROWS）。
+const WORLD_W = 8640;
+const WORLD_H = 5760;
 const TICK_MS = 100;
 const MAX_DT = 0.25;
 
 const COUNTDOWN_MS = 3000;
 
+// ---- 格子单位制 ----
+// data.js 里所有长度都以「格」为单位，这里统一换算成像素供引擎使用。
+// 想整体缩放战场尺度，只改 data.js 的 grid.cell 即可。
+const GRID = WFData.grid.cell; // 1 格 = 多少像素
+/** 格 → 像素 */
+function cellsToPx(n) {
+  return n * GRID;
+}
+/** 占位格数 → 碰撞半径（像素）：占 size 格见方的东西，半径 = size/2 格 */
+function sizeToR(size) {
+  return (size * GRID) / 2;
+}
+
 // ---- 工厂 / 研究所 ----
-// 建筑半径按 2/3 缩小（与单位同步）
-const FACTORY_R = 39; // 建筑本体碰撞半径（原 58）
-const CAPTURE_R = 79; // 占领判定半径（原 118）
-const CAPTURE_RATE = 25; // 每秒占领进度（无守军时 4 秒占领）
-const RECLAIM_RATE = 45; // 守方在场时的进度回退速度
-const PRODUCE_MS = 20000; // 出兵间隔（每座工厂每 20 秒生产 1 支）
+const FACTORY_R = sizeToR(WFData.buildings.factorySize); // 工厂碰撞半径（12×12 格 → 半径 6 格）
+const CAPTURE_R = cellsToPx(WFData.buildings.captureR); // 占领判定半径
+const CAPTURE_RATE = WFData.buildings.captureRate; // 每秒占领进度
+const RECLAIM_RATE = WFData.buildings.reclaimRate; // 守方在场时的进度回退速度
+const PRODUCE_MS = WFData.buildings.produceMs; // 出兵间隔
 // 每名玩家的部队总数上限：达到即暂停所有工厂的生产（兵死了立刻恢复）
 const PLAYER_UNIT_CAP = 400;
 const PLAYER_UNIT_WARN = 350; // 达到该数量后客户端在右上角常驻提示
 // 工厂可被攻击：血量 = 单位血量的 20 倍；血打光即由「最后一击者」接管
-const FACTORY_HP = 2000;
+const FACTORY_HP = WFData.buildings.factoryHp;
 // 中立工厂只有完整工厂的 1/3 血量
-const NEUTRAL_HP_RATIO = 1 / 3;
+const NEUTRAL_HP_RATIO = WFData.buildings.neutralHpRatio;
 // 手动进化冷却（毫秒）：非初级工厂每间隔这么久才能手动进阶一支本厂部队
-const FAC_EVOLVE_CD = 4000;
+const FAC_EVOLVE_CD = WFData.tech.facEvolveCd;
 
 // ---- 工厂产线升级 / 总部产能升级 ----
 // 工厂默认一条产线（每 PRODUCE_MS 出 1 支）；花科技点可开辟更多产线，
 // 多条产线并行生产 → 同一时间一座工厂就能同时出多个单位（产出速率 × 产线数）。
-const FAC_LINE_COST = 500; // 每开辟一条新产线消耗的科技点
-const FAC_MAX_LINES = 3; // 单厂产线上限（最多同时生产 3 个单位）
+// 第 1 项：所有「花科技点升级」的动作统一为 300 点（原先开辟 200 / 进化 600，桌面端文案还误写成 1000）。
+// 开辟产线、产线进化、总部生产加速 —— 三者同价，玩家不用再记三套数字。
+const UPGRADE_RP_COST = WFData.tech.upgradeRpCost; // 统一升级价
+const FAC_LINE_COST = WFData.tech.facLineCost; // 开辟一条新产线
+// 第 8 项：每座建筑（工厂 / 研究所）最多**额外**开拓 1 条产线 ——
+// 工厂/总部默认 1 条，开拓后 2 条（取代原先的 3 条上限）。
+const FAC_MAX_LINES = WFData.tech.facMaxLines; // 单厂产线上限（含默认那条）
+// 产线进化：把某一条产线的「出厂阶数」整体抬高一阶 —— 此后这条线直接吐该阶单位，
+// 比旧规则（一次只进阶一支现存部队）强得多，所以单独定价、不再沿用 EVOLVE_RP_COST。
+const FAC_LINE_EVOLVE_COST = WFData.tech.facLineEvolveCost; // 每进化一条产线
+// 总部产线：总部自己也会出兵，默认兵种固定为锐士，且**不可进化**（永远只出初级）。
+// 想换兵种可以花科技点再开辟产线（开辟时自选），但同样只能是一级。
+const HQ_PROD_TYPE = WFData.buildings.hqProdType;
 // 总部「生产加速」：用科技点加快本方所有部队的生产速度。
 // 每一次都在「当前间隔」上再减 1/15（复利 / 非线性），最多 20 次。
-const PROD_SPEED_COST = 1000; // 每次升级消耗的科技点
-const PROD_SPEED_MAX = 20; // 升级次数上限
-const PROD_SPEED_STEP = 1 / 15; // 每次在现有间隔上再减少的比例
+const PROD_SPEED_COST = WFData.tech.prodSpeedCost; // 每次升级消耗的科技点
+const PROD_SPEED_MAX = WFData.tech.prodSpeedMax; // 升级次数上限
+const PROD_SPEED_STEP = WFData.tech.prodSpeedStep; // 每次在现有间隔上再减少的比例
+
+// ---- 第 7 项：研究所「研究产线」----
+// 研究所也能花科技点开拓 1 条研究产线（每座最多 1 条，点击即生效、无二级选择）。
+// 开拓后该研究所的科技点产出 +50%（每座每 3 秒 2 点 → 3 点）。
+const LAB_LINE_COST = WFData.tech.labLineCost; // 开拓研究产线消耗的科技点
+const LAB_MAX_LINES = WFData.tech.labMaxLines; // 每座研究所最多开拓的产线条数
+const LAB_LINE_RP_MUL = WFData.tech.labLineRpMul; // 已开拓产线的研究所产出倍率（+50%）
+
+// ---- 第 6 项：总部防卫 ----
+// 总部自带防卫火力：锁定进入射程的敌方部队，先亮出明显的攻击前摇，再一发直伤。
+const HQ_ATK_RANGE = cellsToPx(WFData.hqDefense.range); // 防卫射程
+const HQ_ATK_CD = WFData.hqDefense.cd; // 攻击间隔（秒）
+const HQ_ATK_DMG = WFData.hqDefense.dmg; // 每发伤害
+const HQ_ATK_WINDUP_MS = WFData.hqDefense.windupMs; // 攻击前摇（毫秒）：锁定后先蓄能这么久才开火
 
 // ---- 研究所 / 总部 / 科技点 ----
-const LAB_R = 31; // 研究所碰撞半径（原 46）
-const LAB_HP = 1200; // 研究所满血：同工厂一样可被攻击，打光即由最后一击者接管
-const HQ_R = 43; // 总部碰撞半径（原 64）
-const HQ_HP = 3000; // 总部满血：被打光即「总部陷落」，该玩家出局
-const RP_PER_LAB = 2; // 每座已占领的研究所每 3 秒提供 2 点研究点；一座不占则完全不产出
-const RP_PERIOD_MS = 3000; // 研究点结算周期
-const EVOLVE_RP_COST = 500; // 每 500 点研究点可进化一次单位（取代原经验体系）
-const RP_CAP = 9999; // 科技点上限，仅用于展示封顶
+const LAB_R = sizeToR(WFData.buildings.labSize); // 研究所碰撞半径（6×6 格 → 半径 3 格）
+const LAB_HP = WFData.buildings.labHp; // 研究所满血：同工厂一样可被攻击，打光即由最后一击者接管
+const HQ_R = sizeToR(WFData.buildings.hqSize); // 总部碰撞半径（9×9 格 → 半径 4.5 格）
+const HQ_HP = WFData.buildings.hqHp; // 总部满血：被打光即「总部陷落」，该玩家出局
+const RP_PER_LAB = WFData.tech.rpPerLab; // 每座已占领的研究所每 3 秒提供 2 点研究点；一座不占则完全不产出
+const RP_PERIOD_MS = WFData.tech.rpPeriodMs; // 研究点结算周期
+// 旧「单支部队进阶」的价钱：进化改为「产线整体抬一阶」后已不再参与结算，
+// 仅保留常量与下发字段（evolveRpCost）以免旧客户端读 consts 时取到 undefined。
+const EVOLVE_RP_COST = WFData.tech.evolveRpCost;
+const RP_CAP = WFData.tech.rpCap; // 科技点上限，仅用于展示封顶
 
 // ---- 单位 ----
-const TYPE_LIST = ['warrior', 'shield', 'ranger', 'burst', 'burn', 'laser'];
-// 单位半径按 2/3 缩小（r 为原来的 2/3），血量/伤害/射程等战斗数值保持不变
-const STATS = {
-  warrior: { label: '锐士', hp: 100, dmg: 11, range: 60, cd: 0.9, speed: 92, r: 9 },
-  shield: { label: '盾卫', hp: 175, dmg: 8, range: 50, cd: 1.1, speed: 66, r: 10 },
-  ranger: { label: '游侠', hp: 65, dmg: 10, range: 200, cd: 1.5, speed: 82, r: 9 },
-  burst: { label: '轰击', hp: 75, dmg: 18, range: 165, cd: 2.1, speed: 58, r: 9, splash: 41 },
-  // 燎原：持续喷火（不点射）。dmg 的含义是「每秒火焰伤害」而不是「每次伤害」，
-  // cd 不参与射速（火焰是连续的），只作为面板兜底展示。
-  burn: { label: '燎原', hp: 80, dmg: 6, range: 135, cd: 0.25, speed: 78, r: 9, burn: true },
-  // 激光兵：持续光束直伤（不走弹道）。锁定同一个目标越久伤害越高，最高 5 倍；
-  // 一旦更换锁定目标就要重新蓄能（前摇期间不射击）。
-  laser: { label: '激光兵', hp: 70, dmg: 2.5, range: 175, cd: 0.4, speed: 76, r: 9, laser: true },
-};
-const TIER_HP = [1, 1.7, 2.6];
-const TIER_DMG = [1, 1.55, 2.2];
-const TIER_RANGE = [0, 15, 30];
-const TIER_CD = [1, 0.88, 0.78];
+const TYPE_LIST = Object.keys(WFData.units); // 兵种顺序与 data.js 中一致
+// 开局部队：展开 data.js 的 [[兵种, 数量], ...] → 扁平兵种列表
+const START_ROSTER = [];
+for (const entry of WFData.startRoster || []) {
+  const type = entry[0];
+  const n = Math.max(0, entry[1] | 0);
+  if (!TYPE_LIST.includes(type) || n <= 0) continue;
+  for (let i = 0; i < n; i++) START_ROSTER.push(type);
+}
+// 战斗数值全部来自 data.js（见 WFData.units）。
+const STATS = WFData.units;
+// 进化兵种：2/3 阶的完整属性直接查 evolved[type][tier]（见 data.js，独立数据表）
 // ---- 激光兵 ----
-const LASER_WINDUP_MS = 800; // 前摇：换目标后这么久内不射击（蓄能）
-const LASER_RAMP_MS = 4000; // 蓄能满倍率所需时间：锁定每持续 4 秒，伤害 +1 倍
-const LASER_MAX_MUL = 5; // 倍率上限（初始 1 倍 → 最高 5 倍）
+const LASER_WINDUP_MS = WFData.laser.windupMs; // 前摇：换目标后这么久内不射击（蓄能）
+const LASER_RAMP_MS = WFData.laser.rampMs; // 蓄能满倍率所需时间：锁定每持续 4 秒，伤害 +1 倍
+const LASER_MAX_MUL = WFData.laser.maxMul; // 倍率上限（初始 1 倍 → 最高 5 倍）
 // 索敌余量：只锁定「已经进入攻击范围」的敌人，仅留一点点余量避免边界抖动。
 // 单位不再自动追击——敌人跑出范围就停火，想打就自己右键把它拉过去。
 const ATTACK_SLACK = 10;
@@ -97,8 +136,8 @@ const SCAN_MS = 250; // 索敌重估间隔
 const MELEE_RANGE = 65; // ≤ 该射程视为近战（弹道高速短命）
 
 // ---- 弹道 ----
-const BULLET_SPEED = 330;
-const BULLET_SPEED_MELEE = 520;
+// 弹速按兵种写在 data.js 的 bulletSpeed 里；这里只留缺省兜底（旧数据 / 无弹道兵种）。
+const BULLET_SPEED_FALLBACK = 330;
 const BULLET_LIFE_MS = 2400;
 const BULLET_R = 5;
 // 直射弹（非激光、非近战）命中后的爆炸半径：所有「子弹」都带溅射，
@@ -109,23 +148,23 @@ const BULLET_SPLASH = 18;
 // 轰击不再走平直弹道，而是「抛射」：记录发射点 (sx,sy) 与落点 (tx,ty)，按飞行时间参数化，
 // 地面位置在两点之间线性插值，高度 z 走一条抛物线（峰值为 peak，落地 z=0）。
 // 因此无论目标躲到山后多远，弹都能**越过山脉**落到落点 —— 它既不撞山，溅射也不受山体遮挡。
-// 飞行时长随距离拉长（远射更慢、弧更高），手感更接近曲射炮。
-const SHELL_FLIGHT_BASE = 620; // 基础飞行时间（ms，落点极近时）
-const SHELL_FLIGHT_PER_PX = 2.0; // 每多 1px 距离增加的飞行时间（ms）
+// 飞行时长由该兵种的 bulletSpeed 与距离换算（远射更久）；弧顶高度仍随距离升高。
+const SHELL_FLIGHT_MIN_MS = 280; // 抛射最短飞行时间（ms），避免贴脸瞬间落地
 const SHELL_PEAK_BASE = 46; // 基础弧顶高度（px）
 const SHELL_PEAK_PER_PX = 0.52; // 每多 1px 距离增加的弧顶高度（px）
 
 // ---- 燎原：喷火 / 灼烧地形 ----
-// 燎原不再是「一发燃烧弹命中后挂一段持续掉血」，而是**持续喷吐火焰**：
-// 火舌每步向前推进、在落点结算一次范围伤害（只伤敌方，单次极低但一直在烧），
-// 同时**在落点铺开一片灼烧地形**。踩在灼烧地形上的单位会持续掉血，
-// 而且这里敌我通吃 —— 这是全局唯一的友伤来源，所以数值压得很低、范围给得很大。
+// 燎原不再按秒摊伤害，而是跟其它兵种一样**按次结算**：
+// 每 `cd` 秒喷「一口火」，一口 = `dmg` 点范围伤害（只伤敌方），并在落点刷新灼烧地形。
+// （对比：火应用到一口结算一次；灼烧地形本身仍按 dps 每秒烧人。）
+// 火舌的**落点**锁在敌人身上（见 sprayFlame），所以连着喷时几口火落在同一个地方。
+// 踩在灼烧地形上的单位持续掉血，而且这里敌我通吃 —— 这是全局唯一的友伤来源，
+// 所以灼烧地形的 dps 压得很低、范围给得很大。
 // 火场的寿命跟着「最后一次被火舌刷到」走：火焰一停，几秒内自然熄灭。
 // **建筑只吃火舌的直接打击**：落点范围内的敌方建筑同样掉血，但地上的灼烧地形
 // 对建筑完全无效 —— 想拆工厂/研究所/总部，就得把火舌一直喷在它身上。
-const FLAME_R = 52; // 火舌落点的范围伤害半径（范围大）
-const FLAME_PULSE_MS = 180; // 喷火的表现脉冲（枪口焰 + 后坐）—— 不是射速，火焰本身是连续的
-const FIRE_MAX = 160; // 场上灼烧地块上限（防极端情况下列表无限膨胀）
+const FLAME_R = cellsToPx(WFData.flame.r); // 火舌落点的范围伤害半径（范围大）
+const FIRE_MAX = WFData.flame.maxFires; // 场上灼烧地块上限（防列表无限膨胀）
 
 /**
  * 灼烧地形**逐阶解锁**（用户设定）：
@@ -140,11 +179,10 @@ const FIRE_MAX = 160; // 场上灼烧地块上限（防极端情况下列表无�
  *   lifeMs 最后一次被火舌刷到之后，还能烧多久（几秒内自然熄灭）
  *   mergeD 同主人的相近落点并入同一片火场的距离（否则每步都会新铺一块）
  */
-const FIRE_TIERS = [
-  null, // 一级：不留火场（只有火舌本身的范围伤害）
-  { r: 46, dps: 3.5, lifeMs: 3000, mergeD: 34 }, // 二级：基准
-  { r: 64, dps: 6, lifeMs: 5200, mergeD: 44 }, // 三级：更大 / 更久 / 更疼
-];
+// 火焰档位（见 data.js）：r / mergeD 是格数，这里换算成像素；dps / lifeMs 原样保留
+const FIRE_TIERS = WFData.fireTiers.map((p) =>
+  p ? { r: cellsToPx(p.r), dps: p.dps, lifeMs: p.lifeMs, mergeD: cellsToPx(p.mergeD) } : null
+);
 
 /** 取该阶数的火场参数；一级返回 null，表示「这一阶的燎原不留火场」 */
 function fireProfile(tier) {
@@ -177,28 +215,38 @@ const COLORS = ['#b03a2e', '#2e5e8c', '#c9a227', '#3f7a52'];
 
 // ---- 地形（元胞自动机：上半生成 + 180° 旋转出下半）----
 // 类型编号与客户端（public/games/warfactory/ui.js）保持一致：
-//   0 平原 / 2 山地（不可通行，窄而连续的山脉）/ 3 沼泽（可通行，减速）/ 4 水域（不可通行，大片连续）
+//   0 平原 / 2 山地（不可通行，另有高度 → 遮挡视线与弹道）/ 4 水域（不可通行，大片连续；不遮挡视线）
 // 其中「山地」另有高度：它同时遮挡视线与弹道（山两侧互相看不见、打不到）；
 // 「水域」只是不可通行的平面，不遮挡视线，弹丸照常飞越水面。
-const TERR_COLS = 108;
-const TERR_ROWS = 72; // 偶数行：确保上下半 180° 旋转无缝衔接
-const TERR_CELL = 40; // 4320/40=108，2880/40=72
+const TERR_COLS = 216;
+const TERR_ROWS = 144; // 偶数行：确保上下半 180° 旋转无缝衔接
+const TERR_CELL = 40; // 8640/40=216，5760/40=144
 const TT_PLAIN = 0;
 const TT_MOUNTAIN = 2;
-const TT_SWAMP = 3;
 const TT_WATER = 4;
+// 沼泽已彻底移除：不再生成该地形，单位移动也不再有任何减速惩罚。
 const TERRAIN_CLEAR_CELLS = 3; // 建筑周围清理「山地/水域」的格子半径（约 120px，覆盖出兵环）
-const SWAMP_SLOW = 0.5; // 沼泽减速：处于沼泽的单位移动速度 ×0.5
-const WATER_TOP = 0.28; // 高程低于此值 → 水域（大片连续，不可通行）
-const SWAMP_TOP = 0.44; // 高程低于此值 → 沼泽（可通行，减速）
-const SMOOTH_ROUNDS = 6; // 平滑轮数越多，水域越成大片
-const MAJORITY_ROUNDS = 2; // 众数滤波轮数：抹掉孤立格，让水域/沼泽连成规整大片
-const MIN_WATER_BLOB = 14; // 小于该格数的水域斑块并入沼泽，保证水域大片连续
-const MIN_SWAMP_BLOB = 18; // 小于该格数的沼泽斑块并入平原（沼泽不零散混杂在平原里）
-const MIN_PLAIN_BLOB = 8; // 小于该格数的平原斑块并入沼泽（沼泽内部不含零碎平原）
-const MIN_PASSAGE = 2; // 最小通行通道宽度（格）：开运算消除宽度不足 2 格的狭窄缝隙
-const RIDGE_COUNT = 3; // 上半区域的山脉条数（下半由 180° 旋转得到）
-const RIDGE_WIDEN = 0.32; // 山脊加宽成 2 格的概率（控制山体「窄」）
+const WATER_TOP = 0.30; // 高程低于此值 → 水域（不可通行，只留大片）
+const SMOOTH_ROUNDS = 5; // 平滑轮数：轮数越多，水域越成大片
+const MAJORITY_ROUNDS = 2; // 众数滤波轮数：抹掉孤立格，让水域连成规整大片
+const MIN_WATER_BLOB = 26; // 小于该格数的水域并入平原（只要大湖，不要碎水塘）
+// 上半区域的山脉条数（下半由 180° 旋转得到，即全图约 2× 条）。
+// 山体已明显减量：条数更少、单条更短更直（更像一道「墙」而不是满地乱麻），
+// 不可通行地形占比从 ~39% 降到两成出头。出生点选址的「隔 2 道山脉」是逐级放宽的
+// （见 pickBasePositionsOnce 的 LADDER），山少了会自动退让，不会开局失败。
+const RIDGE_COUNT = 14;
+const RIDGE_WIDEN = 0.3; // 山脊加宽成 2 格的概率（控制山体「窄」）
+const RIDGE_TURN = 0.16; // 转向概率：越小山脊越直、越像一道墙
+const RIDGE_LEN_MIN = 0.6; // 单条山脊长度（世界格数的倍数）
+const RIDGE_LEN_MAX = 1.0;
+// ---- 连通性保证 ----
+// 「宽格」= 处在某个「2×2 全可通行」方块里的格子。要求所有宽格连成一整片：
+//   ① 不足 2 格宽的窄缝会被撑宽；
+//   ② 互相隔离的区域之间开出 2 格宽走廊；
+//   ③ 小到没意义的孤立碎块直接填掉。
+// 于是任何建筑（工厂 / 研究所 / 总部）都不可能被山或水包死，且通道至少 2 格宽。
+const MIN_REGION = 20; // 小于该格数的孤立可通行区直接填掉（免得留下走不出去的死地）
+const MAX_CARVE_PASSES = 6; // 开走廊的最大轮数（正常 1~2 轮就收敛）
 // 寻路：每步最多新建多少个地形流场（缓存未命中时才建；超限的单位本步退回直线转向）
 const FLOW_BUILD_PER_STEP = 8;
 const FLOW_CACHE_MAX = 96; // 流场缓存上限（按目标格缓存）
@@ -221,7 +269,7 @@ function hashStr(s) {
 
 /**
  * 生成地形网格（仅生成上半，下半由上半 180° 旋转得到）。
- * - 水域 / 沼泽 / 平原：元胞自动机（随机高程场 → 多轮邻域扩散平滑 → 归一化 + 拉伸 → 阈值分类），
+ * - 水域 / 平原：元胞自动机（随机高程场 → 多轮邻域扩散平滑 → 归一化 + 拉伸 → 阈值分类），
  *   平滑轮数较多，因此水域呈大片连续。
  * - 山地：不走阈值，改用「随机游走山脊」——若干条折线，宽度多为 1 格，故山体窄而连续成脉。
  * @returns {number[][]} grid[r][c] ∈ {0,2,3,4}
@@ -280,35 +328,26 @@ function generateTerrainGrid(rng) {
     }
   }
 
-  // 4) 上半分类：低处水域 / 次低沼泽 / 其余平原
+  // 4) 上半分类：低处水域 / 其余平原（沼泽已移除）
   const top = [];
   for (let r = 0; r < half; r++) {
     top[r] = [];
     for (let c = 0; c < gw; c++) {
-      const e = elev[r][c];
-      top[r][c] = e < WATER_TOP ? TT_WATER : e < SWAMP_TOP ? TT_SWAMP : TT_PLAIN;
+      top[r][c] = elev[r][c] < WATER_TOP ? TT_WATER : TT_PLAIN;
     }
   }
 
-  // 5) 元胞众数滤波：抹掉孤立格与锯齿边缘，让水域/沼泽连成规整大片
+  // 5) 元胞众数滤波：抹掉孤立格与锯齿边缘，让水域连成规整大片
   majorityFilter(top);
 
   // 6) 山体：随机游走画出窄而连续的山脉（覆盖在上半网格上）
   drawRidges(top, rng);
 
-  // 7) 抹掉面积过小的水域斑块（并入沼泽）——放在山脊之后，连被山脊切碎的水域也一并清掉，
+  // 7) 抹掉面积过小的水域斑块（并入平原）——放在山脊之后，连被山脊切碎的水域也一并清掉，
   //    确保剩下的水域都是大片连续
-  dropSmallBlobs(top, TT_WATER, MIN_WATER_BLOB, TT_SWAMP);
+  dropSmallBlobs(top, TT_WATER, MIN_WATER_BLOB, TT_PLAIN);
 
-  // 8) 沼泽与平原分离：小块沼泽并入平原、沼泽内部的零碎平原并入沼泽，
-  //    这样「沼泽区域」是一整块，不会和一小片一小片的平原互相穿插
-  dropSmallBlobs(top, TT_SWAMP, MIN_SWAMP_BLOB, TT_PLAIN);
-  dropSmallBlobs(top, TT_PLAIN, MIN_PLAIN_BLOB, TT_SWAMP);
-
-  // 9) 保证通行通道最小宽度：把被障碍夹成 1 格宽的缝隙填掉，避免出现「一线天」
-  widenPassages(top);
-
-  // 10) 下半 = 上半 180° 旋转（点对称）
+  // 8) 下半 = 上半 180° 旋转（点对称）
   const grid = [];
   for (let r = 0; r < gh; r++) {
     grid[r] = [];
@@ -323,7 +362,7 @@ function generateTerrainGrid(rng) {
 
 /**
  * 抹掉面积小于 minArea 的同类连通块，转为 fallback 类型。
- * 用于保证「水域是大片连续的」——零散小水坑并入沼泽。
+ * 用于保证「水域是大片连续的」——零散小水坑并入平原。
  */
 function dropSmallBlobs(grid, type, minArea, fallback) {
   const R = grid.length;
@@ -357,101 +396,320 @@ function dropSmallBlobs(grid, type, minArea, fallback) {
   }
 }
 
-/**
- * 保证通行通道最小宽度：形态学「开运算」（2×2 结构元先腐蚀再膨胀）。
- * 任何无法被某个「2×2 全可通行」方块覆盖的可通行格，都视为宽度不足 2 的窄缝，填成山地。
- * 为避免封缝后主陆被切断，逐个候选格试填：若使主陆可达面积下降则撤销该格（保持连通）。
- * 只在上半网格上运行，因此整图仍保持 180° 点对称。
- */
-function widenPassages(grid) {
-  const R = grid.length;
-  if (!R || MIN_PASSAGE <= 1) return;
-  const C = grid[0].length;
-  const pass = (r, c) =>
-    r >= 0 && r < R && c >= 0 && c < C && grid[r][c] !== TT_MOUNTAIN && grid[r][c] !== TT_WATER;
+/* ---------------- 连通性保证：全图可通行区连成一片，且通道至少 2 格宽 ---------------- */
 
-  // 1) 标记「被某个 2×2 全可通行方块覆盖」的格子
-  const covered = [];
-  for (let r = 0; r < R; r++) covered[r] = new Uint8Array(C);
-  for (let r = 0; r < R - 1; r++) {
-    for (let c = 0; c < C - 1; c++) {
-      if (pass(r, c) && pass(r + 1, c) && pass(r, c + 1) && pass(r + 1, c + 1)) {
-        covered[r][c] = 1;
-        covered[r + 1][c] = 1;
-        covered[r][c + 1] = 1;
-        covered[r + 1][c + 1] = 1;
+/** 某格是否可通行（山地 / 水域不可通行） */
+function cellPassable(grid, r, c) {
+  if (r < 0 || r >= TERR_ROWS || c < 0 || c >= TERR_COLS) return false;
+  const v = grid[r][c];
+  return v !== TT_MOUNTAIN && v !== TT_WATER;
+}
+
+/** 单格设为平原（越界忽略） */
+function setPlain(grid, r, c) {
+  if (r < 0 || r >= TERR_ROWS || c < 0 || c >= TERR_COLS) return;
+  grid[r][c] = TT_PLAIN;
+}
+
+/** 连同 180° 旋转格一起设为平原 —— 保证地图始终点对称（两家看地形完全同构） */
+function setPlainSym(grid, r, c) {
+  setPlain(grid, r, c);
+  setPlain(grid, TERR_ROWS - 1 - r, TERR_COLS - 1 - c);
+}
+
+/** 把 (r,c) 所在的 2×2 方块整块挖成平原（含旋转格）→ 该处通道宽度至少 2 格 */
+function carveWide(grid, r, c) {
+  const r0 = Math.min(Math.max(r, 0), TERR_ROWS - 2);
+  const c0 = Math.min(Math.max(c, 0), TERR_COLS - 2);
+  setPlainSym(grid, r0, c0);
+  setPlainSym(grid, r0 + 1, c0);
+  setPlainSym(grid, r0, c0 + 1);
+  setPlainSym(grid, r0 + 1, c0 + 1);
+}
+
+/**
+ * 「宽格」掩码：处在某个「2×2 全可通行」方块里 → 1。
+ * 于是「宽度 ≥2 格」被编码进掩码本身 —— 1 格宽的一线天不会出现在掩码里。
+ */
+function wideMask(grid) {
+  const m = [];
+  for (let r = 0; r < TERR_ROWS; r++) m[r] = new Uint8Array(TERR_COLS);
+  for (let r = 0; r < TERR_ROWS - 1; r++) {
+    for (let c = 0; c < TERR_COLS - 1; c++) {
+      if (
+        cellPassable(grid, r, c) &&
+        cellPassable(grid, r + 1, c) &&
+        cellPassable(grid, r, c + 1) &&
+        cellPassable(grid, r + 1, c + 1)
+      ) {
+        m[r][c] = 1;
+        m[r + 1][c] = 1;
+        m[r][c + 1] = 1;
+        m[r + 1][c + 1] = 1;
       }
     }
   }
+  return m;
+}
 
-  // 2) 候选：可通行但未被覆盖 → 处于宽度 1 的窄缝中
-  const cand = [];
-  for (let r = 0; r < R; r++) {
-    for (let c = 0; c < C; c++) {
-      if (pass(r, c) && !covered[r][c]) cand.push([r, c]);
-    }
-  }
-  if (!cand.length) return;
-
-  const flood = (sr, sc) => {
-    const vis = new Uint8Array(R * C);
-    if (!pass(sr, sc)) return { n: 0, first: sr * C + sc };
-    const q = [sr * C + sc];
-    vis[sr * C + sc] = 1;
-    let n = 0;
-    for (let h = 0; h < q.length; h++) {
-      const cur = q[h];
-      const cr = (cur / C) | 0;
-      const cc = cur % C;
-      n++;
-      if (pass(cr + 1, cc) && !vis[cur + C]) { vis[cur + C] = 1; q.push(cur + C); }
-      if (pass(cr - 1, cc) && !vis[cur - C]) { vis[cur - C] = 1; q.push(cur - C); }
-      if (pass(cr, cc + 1) && !vis[cur + 1]) { vis[cur + 1] = 1; q.push(cur + 1); }
-      if (pass(cr, cc - 1) && !vis[cur - 1]) { vis[cur - 1] = 1; q.push(cur - 1); }
-    }
-    return { n, first: q[0] };
-  };
-
-  // 3) 找最大连通分量作为连通性基准（以其任一格为种子）
+/** 掩码的 4-连通块（格 id = r*COLS+c），按格数从大到小 */
+function wideRegions(mask) {
+  const R = TERR_ROWS;
+  const C = TERR_COLS;
   const seen = new Uint8Array(R * C);
-  let seed = -1;
-  let best = 0;
+  const out = [];
   for (let r = 0; r < R; r++) {
     for (let c = 0; c < C; c++) {
-      if (seen[r * C + c] || !pass(r, c)) continue;
-      const res = flood(r, c);
-      // 把该分量整体标记已访问
-      const vis2 = new Uint8Array(R * C);
-      const q = [r * C + c];
-      vis2[r * C + c] = 1;
-      for (let h = 0; h < q.length; h++) {
-        const cur = q[h];
+      const id0 = r * C + c;
+      if (!mask[r][c] || seen[id0]) continue;
+      const cells = [id0];
+      seen[id0] = 1;
+      for (let h = 0; h < cells.length; h++) {
+        const cur = cells[h];
         const cr = (cur / C) | 0;
         const cc = cur % C;
-        seen[cur] = 1;
-        if (pass(cr + 1, cc) && !vis2[cur + C]) { vis2[cur + C] = 1; q.push(cur + C); }
-        if (pass(cr - 1, cc) && !vis2[cur - C]) { vis2[cur - C] = 1; q.push(cur - C); }
-        if (pass(cr, cc + 1) && !vis2[cur + 1]) { vis2[cur + 1] = 1; q.push(cur + 1); }
-        if (pass(cr, cc - 1) && !vis2[cur - 1]) { vis2[cur - 1] = 1; q.push(cur - 1); }
+        if (cr > 0 && !seen[cur - C] && mask[cr - 1][cc]) {
+          seen[cur - C] = 1;
+          cells.push(cur - C);
+        }
+        if (cr < R - 1 && !seen[cur + C] && mask[cr + 1][cc]) {
+          seen[cur + C] = 1;
+          cells.push(cur + C);
+        }
+        if (cc > 0 && !seen[cur - 1] && mask[cr][cc - 1]) {
+          seen[cur - 1] = 1;
+          cells.push(cur - 1);
+        }
+        if (cc < C - 1 && !seen[cur + 1] && mask[cr][cc + 1]) {
+          seen[cur + 1] = 1;
+          cells.push(cur + 1);
+        }
       }
-      if (res.n > best) {
-        best = res.n;
-        seed = r * C + c;
-      }
+      out.push(cells);
     }
   }
-  if (seed < 0) return;
-  const sr = (seed / C) | 0;
-  const sc = seed % C;
-  let baseline = best;
+  out.sort((a, b) => b.length - a.length);
+  return out;
+}
 
-  // 4) 逐个试填；若使主陆可达面积下降（被切断）则撤销
-  for (const [r, c] of cand) {
-    const old = grid[r][c];
-    grid[r][c] = TT_MOUNTAIN;
-    const n = flood(sr, sc).n;
-    if (n < baseline) grid[r][c] = old;
+/**
+ * 撑宽窄通道：只动真正的「通道格」（上下或左右对向都能走 → 这是一条缝，不是死胡同尖角），
+ * 挖掉它侧面的一格障碍，让它至少 2 格宽。连同旋转格一起挖，保持点对称。
+ */
+function widenNarrow(grid) {
+  for (let round = 0; round < 4; round++) {
+    const mask = wideMask(grid);
+    const marks = [];
+    for (let r = 0; r < TERR_ROWS; r++) {
+      for (let c = 0; c < TERR_COLS; c++) {
+        if (!cellPassable(grid, r, c) || mask[r][c]) continue;
+        const vert = cellPassable(grid, r - 1, c) && cellPassable(grid, r + 1, c);
+        const horz = cellPassable(grid, r, c - 1) && cellPassable(grid, r, c + 1);
+        if (!vert && !horz) continue; // 死胡同尖角：本来就不是通道，不动
+        if (vert) {
+          if (!cellPassable(grid, r, c - 1)) marks.push([r, c - 1]);
+          else if (!cellPassable(grid, r, c + 1)) marks.push([r, c + 1]);
+        } else {
+          if (!cellPassable(grid, r - 1, c)) marks.push([r - 1, c]);
+          else if (!cellPassable(grid, r + 1, c)) marks.push([r + 1, c]);
+        }
+      }
+    }
+    if (!marks.length) return;
+    for (const m of marks) setPlainSym(grid, m[0], m[1]);
   }
+}
+
+/**
+ * 从 sources 出发的小权重 Dijkstra：进入可通行格代价 0、水域 1、山地 3。
+ * 山地代价高 → 优先借水体开道，尽量不挖穿当成「墙」的山脉。
+ * @returns {{dist: Int32Array, prev: Int32Array}} prev 供回溯出开道路径
+ */
+function dijkstraFrom(grid, sources) {
+  const C = TERR_COLS;
+  const R = TERR_ROWS;
+  const N = R * C;
+  const dist = new Int32Array(N);
+  const prev = new Int32Array(N);
+  dist.fill(0x3fffffff);
+  prev.fill(-1);
+  // 极简二叉堆（两个平行数组，避免每条边都分配对象）
+  const hd = [];
+  const hi = [];
+  const hpush = (d, id) => {
+    hd.push(d);
+    hi.push(id);
+    let i = hd.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (hd[p] <= hd[i]) break;
+      const td = hd[p];
+      hd[p] = hd[i];
+      hd[i] = td;
+      const ti = hi[p];
+      hi[p] = hi[i];
+      hi[i] = ti;
+      i = p;
+    }
+  };
+  const hpop = () => {
+    const d = hd[0];
+    const id = hi[0];
+    const ld = hd.pop();
+    const li = hi.pop();
+    if (hd.length) {
+      hd[0] = ld;
+      hi[0] = li;
+      let i = 0;
+      for (;;) {
+        const l = i * 2 + 1;
+        const r2 = l + 1;
+        let m = i;
+        if (l < hd.length && hd[l] < hd[m]) m = l;
+        if (r2 < hd.length && hd[r2] < hd[m]) m = r2;
+        if (m === i) break;
+        const td = hd[m];
+        hd[m] = hd[i];
+        hd[i] = td;
+        const ti = hi[m];
+        hi[m] = hi[i];
+        hi[i] = ti;
+        i = m;
+      }
+    }
+    return [d, id];
+  };
+  for (const s of sources) {
+    if (dist[s] === 0) continue;
+    dist[s] = 0;
+    hpush(0, s);
+  }
+  while (hd.length) {
+    const cur = hpop();
+    const d = cur[0];
+    const id = cur[1];
+    if (d !== dist[id]) continue; // 过期的堆项
+    const cr = (id / C) | 0;
+    const cc = id % C;
+    const relax = (nr, nc) => {
+      if (nr < 0 || nr >= R || nc < 0 || nc >= C) return;
+      const nid = nr * C + nc;
+      const v = grid[nr][nc];
+      const w = v === TT_MOUNTAIN ? 3 : v === TT_WATER ? 1 : 0;
+      const nd = d + w;
+      if (nd < dist[nid]) {
+        dist[nid] = nd;
+        prev[nid] = id;
+        hpush(nd, nid);
+      }
+    };
+    relax(cr - 1, cc);
+    relax(cr + 1, cc);
+    relax(cr, cc - 1);
+    relax(cr, cc + 1);
+  }
+  return { dist, prev };
+}
+
+/**
+ * 连通性总保证（在整张图上跑，建筑清场之后调用）：
+ *   ① 撑宽所有不足 2 格的窄通道；
+ *   ② 填掉小到没意义的孤立碎块（按外围多数类型填成山或水，不留走不出去的死地）；
+ *   ③ 把剩下的每个孤立区都开一条 2 格宽走廊接到最大区 —— 于是不存在被山/水包死的地方。
+ * @param {number[][]} grid 地形网格
+ * @param {number[][]} anchors 必须留出口的格子（工厂 / 研究所 / 总部所在格）
+ */
+function ensureOpenTerrain(grid, anchors) {
+  const C = TERR_COLS;
+  const R = TERR_ROWS;
+  const anchorMask = new Uint8Array(R * C);
+  if (anchors) {
+    for (const a of anchors) {
+      const r = a[0];
+      const c = a[1];
+      if (r >= 0 && r < R && c >= 0 && c < C) anchorMask[r * C + c] = 1;
+    }
+  }
+
+  widenNarrow(grid);
+
+  for (let pass = 0; pass < MAX_CARVE_PASSES; pass++) {
+    const regs = wideRegions(wideMask(grid));
+    if (regs.length <= 1) break;
+    const main = regs[0];
+
+    // ② 碎块：不含建筑锚点的直接填掉（先统计外围类型，再统一改，避免边改边统计）
+    let filled = false;
+    for (let i = 1; i < regs.length; i++) {
+      if (regs[i].length >= MIN_REGION) continue;
+      let hasAnchor = false;
+      for (const id of regs[i]) {
+        if (anchorMask[id]) {
+          hasAnchor = true;
+          break;
+        }
+      }
+      if (hasAnchor) continue;
+      let mtn = 0;
+      let wat = 0;
+      for (const id of regs[i]) {
+        const r = (id / C) | 0;
+        const c = id % C;
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            if (!dr && !dc) continue;
+            const nr = r + dr;
+            const nc = c + dc;
+            if (nr < 0 || nr >= R || nc < 0 || nc >= C) continue;
+            const v = grid[nr][nc];
+            if (v === TT_MOUNTAIN) mtn++;
+            else if (v === TT_WATER) wat++;
+          }
+        }
+      }
+      if (!mtn && !wat) continue; // 外围全是平原：说明只是窄颈没撑开，交给下面的开道处理
+      const fill = wat > mtn ? TT_WATER : TT_MOUNTAIN;
+      for (const id of regs[i]) grid[(id / C) | 0][id % C] = fill;
+      filled = true;
+    }
+    if (filled) continue; // 地形变了，重新算连通块
+
+    // ③ 一次多源 Dijkstra 就能给所有孤立区各开一条道：各自回溯到最大区即可
+    const res = dijkstraFrom(grid, main);
+    const dist = res.dist;
+    const prev = res.prev;
+    for (let i = 1; i < regs.length; i++) {
+      let best = -1;
+      let bd = Infinity;
+      for (const id of regs[i]) {
+        if (dist[id] < bd) {
+          bd = dist[id];
+          best = id;
+        }
+      }
+      if (best < 0) continue;
+      for (let cur = best; cur >= 0; cur = prev[cur]) carveWide(grid, (cur / C) | 0, cur % C);
+    }
+  }
+
+  widenNarrow(grid); // 开完走廊可能又造出新的窄缝，再撑一次
+}
+
+/** 建筑（工厂 / 研究所 / 总部）所在的地形格：连通性保证必须给它们留出口 */
+function terrainAnchors(game) {
+  const out = [];
+  const push = (x, y) => {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    out.push([
+      clamp(Math.floor(y / TERR_CELL), 0, TERR_ROWS - 1),
+      clamp(Math.floor(x / TERR_CELL), 0, TERR_COLS - 1),
+    ]);
+  };
+  for (const f of game.factories || []) push(f.x, f.y);
+  for (const l of game.labs || []) push(l.x, l.y);
+  for (const h of game.hqs || []) push(h.x, h.y);
+  for (const p of game.players || []) if (p.baseX != null) push(p.baseX, p.baseY);
+  return out;
 }
 
 /** 元胞自动机「众数滤波」：每格取 3×3 邻域内占比最高的类型，抹掉孤立点与锯齿，使同类地形连成片 */
@@ -508,13 +766,13 @@ function drawRidges(grid, rng) {
     let r = Math.floor(rng() * half);
     let c = Math.floor(rng() * gw);
     let dir = Math.floor(rng() * 4);
-    const len = Math.floor(gw * (0.9 + rng() * 1.2));
+    const len = Math.floor(gw * (RIDGE_LEN_MIN + rng() * (RIDGE_LEN_MAX - RIDGE_LEN_MIN)));
     for (let s = 0; s < len; s++) {
       put(r, c);
       // 偶尔向垂直于走向的一侧加宽一格（正交方向，保证连通）
       if (rng() < RIDGE_WIDEN) put(r + dr4[(dir + 1) % 4], c + dc4[(dir + 1) % 4]);
-      // 小概率左右转向，形成折线而非直线
-      if (rng() < 0.22) dir = (dir + (rng() < 0.5 ? 1 : 3)) % 4;
+      // 转向概率调低（RIDGE_TURN）：山脊更直更长，像一道「墙」而不是满地乱麻
+      if (rng() < RIDGE_TURN) dir = (dir + (rng() < 0.5 ? 1 : 3)) % 4;
       let nr = r + dr4[dir];
       let nc = c + dc4[dir];
       if (nr < 0 || nr >= half || nc < 0 || nc >= gw) {
@@ -567,10 +825,12 @@ function clearTerrainAroundBuildings(game, grid) {
 }
 
 /** 生成地形并挂到对局状态上（权威来源，下发给客户端渲染） */
-function makeTerrain(game, seed) {
+function makeTerrain(game, seed, bands) {
   const rng = makeRng((seed >>> 0) || 1);
   const grid = generateTerrainGrid(rng);
   clearTerrainAroundBuildings(game, grid);
+  // 第 5 项：隔离带整片压成平原（放在建筑清场之后，免得又被挖回山/水）
+  carveIsolationBands(grid, bands);
   game.terrain = {
     cols: TERR_COLS,
     rows: TERR_ROWS,
@@ -586,36 +846,193 @@ const BASE_ANGLES = {
   3: [150, 30, 270],
   4: [180, 0, 90, 270],
 };
-const ELLIPSE = { cx: 2160, cy: 1440, rx: 1800, ry: 1116 };
+// 出生椭圆：随世界边长 ×2 同步放大（中心即世界中心）
+const ELLIPSE = { cx: 4320, cy: 2880, rx: 3600, ry: 2232 };
 
-/** 中立战争工厂（等级固定在地图上，180° 旋转对称：绕世界中心 (2160,1440)） */
-const NEUTRAL_FACTORIES = [
-  { x: 1008, y: 1440, level: 1 },
-  { x: 3312, y: 1440, level: 1 },
-  { x: 1764, y: 2124, level: 1 },
-  { x: 2556, y: 756, level: 1 },
-  { x: 1764, y: 756, level: 2 },
-  { x: 2556, y: 2124, level: 2 },
-  { x: 2160, y: 1440, level: 3 },
-];
+/* ---------------- 第 5 项：各出生区之间的「隔离带」---------------- */
+// 每两个相邻出生方向之间各开一条扇形的隔离带：带内地形强制压成**平原**（可通行的平地），
+// 且**不放任何工厂** —— 于是相邻玩家的出生区之间天然隔着一条空旷的缓冲地带。
+const BAND_HALF_ANGLE = 0.17; // 隔离带半角（弧度，约 ±10°）
+const BAND_R_MIN = 0.2; // 带的内缘（归一化到出生椭圆半径的比例）
+const BAND_R_MAX = 1.2; // 带的外缘
+
+/**
+ * 本局的隔离带方向表：取相邻出生方向的**角平分线**作为带心方向。
+ * @param {number} count 玩家人数
+ * @param {number} rot 出生方位整体旋转量（与 pickBasePositions 用同一个，保证带正好落在两家之间）
+ * @returns {number[]} 各带中心方向（弧度，已归一化到 [0,2π)）
+ */
+function isolationBands(count, rot) {
+  const table = BASE_ANGLES[count] || BASE_ANGLES[4];
+  const TAU2 = Math.PI * 2;
+  const norm = table
+    .map((deg) => (((deg * Math.PI) / 180 + rot) % TAU2 + TAU2) % TAU2)
+    .sort((a, b) => a - b);
+  const out = [];
+  for (let i = 0; i < norm.length; i++) {
+    const a = norm[i];
+    const b = norm[(i + 1) % norm.length];
+    // 最后一段跨越 0°，要补一圈再取中点
+    const mid = i === norm.length - 1 ? (a + b + TAU2) / 2 : (a + b) / 2;
+    out.push(((mid % TAU2) + TAU2) % TAU2);
+  }
+  return out;
+}
+
+/** 某点是否落在任一隔离带内（工厂布局据此排除候选点） */
+function inIsolationBand(bands, x, y) {
+  if (!bands || !bands.length) return false;
+  const dx = x - WORLD_W / 2;
+  const dy = y - WORLD_H / 2;
+  if (Math.hypot(dx, dy) < 1) return false;
+  // 半径按出生椭圆归一化，使「内缘/外缘」的判定与出生区同心
+  const rn = Math.hypot(dx / ELLIPSE.rx, dy / ELLIPSE.ry);
+  if (rn < BAND_R_MIN || rn > BAND_R_MAX) return false;
+  const a = Math.atan2(dy, dx);
+  const TAU2 = Math.PI * 2;
+  for (const b of bands) {
+    // 角度差必须先取模再折半：atan2 的值域是 (−π, π]，而 bands 是 [0, 2π)，
+    // 直接相减会超出 2π，折半后甚至算出负数 —— 负数恒 ≤ 半角，会把几乎全图误判成「在带内」。
+    let diff = (((a - b) % TAU2) + TAU2) % TAU2; // → [0, 2π)
+    if (diff > Math.PI) diff = TAU2 - diff; // → [0, π] 最短夹角
+    if (diff <= BAND_HALF_ANGLE) return true;
+  }
+  return false;
+}
+
+/** 把隔离带内的地形整片压成平原（带内「仅保留地形与平地」） */
+function carveIsolationBands(grid, bands) {
+  if (!bands || !bands.length) return;
+  for (let r = 0; r < TERR_ROWS; r++) {
+    for (let c = 0; c < TERR_COLS; c++) {
+      const x = (c + 0.5) * TERR_CELL;
+      const y = (r + 0.5) * TERR_CELL;
+      if (inIsolationBand(bands, x, y)) grid[r][c] = TT_PLAIN;
+    }
+  }
+}
+
+/**
+ * 中立战争工厂（按人数动态生成，180° 旋转对称）。
+ * 「人均 4 初 / 2 中 / 1 高」：2 人 = 8+4+2、3 人 = 12+6+3、4 人 = 16+8+4。
+ * 每座都与绕世界中心 (WORLD_W/2, WORLD_H/2) 旋转 180° 的孪生厂成对出现，
+ * 孪生同兵种（assignProdTypes 据此配对），保证对称性公平。
+ * 避让：地图边缘、研究所、彼此最小间距；总部由 pickBasePositions 反向避让本列表。
+ */
+let NEUTRAL_FACTORIES = [];
+
+/**
+ * 生成「人均 4 初 / 2 中 / 1 高」的中立工厂布局，严格 180° 点对称。
+ * @param {number} count 玩家人数（2/3/4）
+ * @param {() => number} rng 确定性随机源（每局分布不同，但始终是镜像对）
+ * @returns {{x:number,y:number,level:number}[]}
+ */
+function buildNeutralFactories(count, rng, bands) {
+  const n = clamp(count, 2, 4);
+  const need = { 3: n, 2: 2 * n, 1: 4 * n }; // 各阶总数（必为偶数；3 人局高级为奇数，多补一座中心厂）
+  const cx = WORLD_W / 2;
+  const cy = WORLD_H / 2;
+  // 世界边长 ×2 后，工厂分布椭圆同步放大（仍略大于总部出生椭圆，落在出生环外侧）
+  const EX = 3760;
+  const EY = 2360;
+  const EDGE = 520; // 距地图边缘最小留白
+  const FAC_GAP = 420; // 工厂之间最小中心距（> 400 满足布局测试，也远小于 2×占领半径）
+  const LAB_CLEAR = 430; // 距研究所最小中心距
+  const MIN_D = n % 2 === 1 ? FAC_GAP : FAC_GAP / 2; // 候选点到世界中心的最小距离：
+  //   - 偶数人局（2/4）：无正中心厂，只需「同一对镜像点」两点间距 2d ≥ FAC_GAP，故 MIN_D=FAC_GAP/2。
+  //   - 奇数人局（3）：高级为奇数，要在正中心补一座，它到其它任何厂都须 ≥ FAC_GAP，故 MIN_D=FAC_GAP。
+  // 候选点用向日葵（phyllotaxis）分布：在椭圆内天然均匀铺开，比「12 角 × 5 半径」的稀疏网格
+  // 更容易在 FAC_GAP 约束下塞下 4 人局的 28 座厂。
+  // N 要跟着椭圆面积走：世界边长 ×2 后面积 ×4，点数同步 ×4 才能维持同样的候选密度
+  // （密度不够时，4 人局会放不满 28 座）。
+  const N = 600;
+  const gold = Math.PI * (3 - Math.sqrt(5));
+  const raw = [];
+  for (let i = 1; i <= N; i++) {
+    const t = i / N;
+    const rr = Math.sqrt(t);
+    const ang = i * gold;
+    const x = round1(cx + EX * rr * Math.cos(ang));
+    const y = round1(cy + EY * rr * Math.sin(ang));
+    if (x < EDGE || x > WORLD_W - EDGE || y < EDGE || y > WORLD_H - EDGE) continue;
+    const mx = round1(WORLD_W - x);
+    const my = round1(WORLD_H - y);
+    // 第 5 项：隔离带内不放工厂（带内只留地形与平地）
+    if (inIsolationBand(bands, x, y) || inIsolationBand(bands, mx, my)) continue;
+    const d = Math.hypot(x - cx, y - cy);
+    if (d < MIN_D) continue; // 见 MIN_D 注释
+    raw.push({
+      a: { x, y },
+      b: { x: mx, y: my },
+      d,
+    });
+  }
+  const pairOk = (placed, p) => {
+    for (const q of placed) {
+      if (
+        dist(q.a.x, q.a.y, p.a.x, p.a.y) < FAC_GAP ||
+        dist(q.a.x, q.a.y, p.b.x, p.b.y) < FAC_GAP ||
+        dist(q.b.x, q.b.y, p.a.x, p.a.y) < FAC_GAP ||
+        dist(q.b.x, q.b.y, p.b.x, p.b.y) < FAC_GAP
+      ) return false;
+    }
+    for (const l of LABS) {
+      if (dist(l.x, l.y, p.a.x, p.a.y) < LAB_CLEAR || dist(l.x, l.y, p.b.x, p.b.y) < LAB_CLEAR) return false;
+    }
+    return true;
+  };
+  const totalPairs = Math.floor(need[3] / 2) + Math.floor(need[2] / 2) + Math.floor(need[1] / 2);
+  // 多种放置顺序（外→内、内→外、若干随机洗牌）各贪心跑一遍，取「放下对数最多」的结果兜底，
+  // 保证 4 人局（14 对）也一定放满。
+  let best = [];
+  const orderings = [raw.slice().sort((p, q) => q.d - p.d), raw.slice().sort((p, q) => p.d - q.d)];
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const cands = raw.slice();
+    for (let i = cands.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      const tmp = cands[i];
+      cands[i] = cands[j];
+      cands[j] = tmp;
+    }
+    orderings.push(cands);
+  }
+  for (const cands of orderings) {
+    const placed = [];
+    for (const c of cands) {
+      if (placed.length >= totalPairs) break;
+      if (pairOk(placed, c)) placed.push(c);
+    }
+    if (placed.length > best.length) best = placed;
+    if (best.length >= totalPairs) break;
+  }
+  best.sort((p, q) => p.d - q.d); // 越靠中心阶越高（更抢手、且四方等距更公平）
+  const out = [];
+  let pi = 0;
+  const takePairs = (lv, cnt) => {
+    for (let i = 0; i < cnt && pi < best.length; i++, pi++) {
+      out.push({ x: best[pi].a.x, y: best[pi].a.y, level: lv });
+      out.push({ x: best[pi].b.x, y: best[pi].b.y, level: lv });
+    }
+  };
+  const highPairs = Math.floor(need[3] / 2);
+  takePairs(3, highPairs);
+  if (need[3] % 2 === 1) out.push({ x: round1(cx), y: round1(cy), level: 3 }); // 3 人局高级奇数：世界正中心（自身即镜像）
+  takePairs(2, Math.floor(need[2] / 2));
+  takePairs(1, Math.floor(need[1] / 2));
+  return out;
+}
 
 /** 研究所（每座提供科技点产出） */
+// 研究所坐标随世界边长 ×2 同步放大（原 1260/3060 × 630/2250）
 const LABS = [
-  { x: 1260, y: 630 },
-  { x: 3060, y: 630 },
-  { x: 1260, y: 2250 },
-  { x: 3060, y: 2250 },
+  { x: 2520, y: 1260 },
+  { x: 6120, y: 1260 },
+  { x: 2520, y: 4500 },
+  { x: 6120, y: 4500 },
 ];
 
-/** 出兵类型权重 */
-const SPAWN_WEIGHTS = [
-  ['warrior', 24],
-  ['shield', 18],
-  ['ranger', 18],
-  ['burst', 15],
-  ['burn', 15],
-  ['laser', 14],
-];
+/** 出兵类型权重（见 data.js） */
+const SPAWN_WEIGHTS = WFData.spawnWeights;
 
 function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
@@ -658,7 +1075,47 @@ function makeRng(seed) {
 }
 
 /**
- * 开局为每座工厂**固定**一种生产单位类型，之后不再改变。
+ * 一条产线：兵种 type + 出厂阶数 tier（进化为单一方向，无分支）。
+ * - tier 决定这条线吐出来的兵是几阶：进化一次就整体抬一阶，此后一直按这个阶产；
+ * - 上限是本建筑等级：工厂看 level，总部恒为 1（总部产线不可进化）。
+ */
+function makeSlot(type) {
+  return {
+    type: TYPE_LIST.includes(type) ? type : TYPE_LIST[0],
+    tier: 1,
+    branch: '', // 已取消 A/B 分支，保留字段仅为兼容产线序列化
+  };
+}
+
+/**
+ * 把建筑（工厂 / 总部）的产线数组补齐到与 lines 一致。
+ * 外部（含测试）直接改 b.lines 时也能站得住 —— 缺的槽按第一条线的兵种补成一级线。
+ */
+function syncSlots(b) {
+  const n = clamp(Math.round(b.lines || 1), 1, FAC_MAX_LINES);
+  b.lines = n;
+  if (!Array.isArray(b.specs)) b.specs = [];
+  if (!Array.isArray(b.prog)) b.prog = [];
+  const base = b.specs.length ? b.specs[0].type : 'warrior';
+  while (b.specs.length < n) b.specs.push(makeSlot(base));
+  if (b.specs.length > n) b.specs.length = n;
+  while (b.prog.length < n) b.prog.push(0);
+  if (b.prog.length > n) b.prog.length = n;
+  return b.specs;
+}
+
+/** 产线被夺 / 退还中立后重置：只留一条一级线（兵种保留），免得白送别人一堆高阶产线 */
+function resetSlots(b) {
+  const base = b.specs && b.specs.length ? b.specs[0].type : b.prodType || 'warrior';
+  b.lines = 1;
+  b.specs = [makeSlot(base)];
+  b.prog = [0];
+  b.prodProg = 0;
+  return b.specs;
+}
+
+/**
+ * 开局为每座工厂**固定**第一条产线的兵种（之后由玩家自己开辟 / 进化产线）。
  * - 出生工厂：所有玩家统一同一种类型（保证绝对公平）；
  * - 中立工厂：按 180° 点对称配对分配（互为旋转对称的两座工厂同类型），保证对称性公平。
  * 同时初始化集结点（rally = null）。
@@ -681,14 +1138,16 @@ function assignProdTypes(factories, rng) {
   for (const f of factories) {
     f.rally = null;
     if (f.home) {
-      f.prodType = deck[0];
+      f.specs = [makeSlot(deck[0])];
+      f.prog = [0];
       done.add(f.id);
     }
   }
   for (const f of factories) {
     if (done.has(f.id)) continue;
     const t = nextType();
-    f.prodType = t;
+    f.specs = [makeSlot(t)];
+    f.prog = [0];
     done.add(f.id);
     // 找到 180° 旋转（绕世界中心点对称）对应的工厂，赋予同一类型
     const mx = WORLD_W - f.x;
@@ -696,13 +1155,15 @@ function assignProdTypes(factories, rng) {
     for (const g of factories) {
       if (done.has(g.id) || g.id === f.id) continue;
       if (Math.abs(g.x - mx) < 1 && Math.abs(g.y - my) < 1) {
-        g.prodType = t;
+        g.specs = [makeSlot(t)];
+        g.prog = [0];
         done.add(g.id);
       }
     }
   }
   for (const f of factories) {
-    if (!f.prodType) f.prodType = TYPE_LIST[0];
+    if (!f.specs || !f.specs.length) f.specs = [makeSlot(TYPE_LIST[0])];
+    if (!Array.isArray(f.prog) || !f.prog.length) f.prog = [0];
     if (f.rally === undefined) f.rally = null;
   }
 }
@@ -722,9 +1183,10 @@ function terrainCell(game, x, y) {
   return t.grid[r][c];
 }
 
-/** 沼泽减速：处于沼泽格的单位移动速度 ×0.5（山地/水域不可通行，不会站在其上） */
+/** 地形对移动速度的修正（沼泽已移除，恒为 1：地形不再影响移速） */
 function terrainSpeedFactor(game, u) {
-  return terrainCell(game, u.x, u.y) === TT_SWAMP ? SWAMP_SLOW : 1;
+  // 沼泽已移除：地形不再对移动速度做任何修正
+  return 1;
 }
 
 /** 该坐标可否踏入（山地、水域不可通行） */
@@ -743,7 +1205,7 @@ function cellIdxRaw(t, x, y) {
 
 /**
  * 沿直线细分采样，返回「第一次进入山体格」的距离（px）；全程不碰山返回 -1。
- * 水域 / 沼泽 / 平原都不阻挡，只有 TT_MOUNTAIN 阻挡。
+ * 水域 / 平原都不阻挡，只有 TT_MOUNTAIN 阻挡。
  * @param {object} opts
  *   - step      采样步长（默认 LOS_STEP）
  *   - skipEnds  true 时忽略「起点 / 终点自身所在格」——单位贴着山脚站立时，
@@ -1291,11 +1753,17 @@ function stepUnit(game, u, dx, dy) {
 }
 
 /** 出生点随机化的边界参数（世界像素） */
-const HQ_MIN_GAP = 1500; // 任意两座总部之间的最小间距——「旋转克隆」之后也不能贴在一起
+// 任意两座总部之间的最小间距——「旋转克隆」之后也不能贴在一起（世界 ×2 后同步放大）
+const HQ_MIN_GAP = 3000;
 const HQ_BUILDING_GAP = 300; // 总部与中立工厂/研究所的最小额外间距（叠在建筑半径上）
 const HQ_RADIUS_JITTER = 0.2; // 椭圆半径最多向内收缩 20%（让出生点不至于永远贴在最外圈）
-const HQ_SPOT_TRIES = 160; // 每个出生点的重掷次数
-const HQ_BASE_MARGIN = 200; // 出生点距世界边缘的最小距离
+// 每个出生点的重掷次数。要留足余量：第 2 项的「隔 2 道山脉」是个较苛刻的地形约束，
+// 候选点给得太少时会被迫放宽到 1 道甚至 0 道。
+const HQ_SPOT_TRIES = 400;
+const HQ_BASE_MARGIN = 400; // 出生点距世界边缘的最小距离（世界 ×2 后同步放大）
+// 第 2 项：任意两座总部之间必须至少隔着这么多条**独立的山脉带**（「墙」= 山脉）。
+// 判定方式：沿两座总部的连线采样地形，统计「连续山地」的段数（见 ridgeBandsBetween）。
+const HQ_MIN_RIDGES = 2;
 
 /** 椭圆环上的一点：angle 弧度、k 为半径缩放（1 = 标准椭圆） */
 function ellipsePoint(angle, k) {
@@ -1340,9 +1808,65 @@ function baseAreaOpen(game, x, y) {
  * 人数为奇数时没法两两配对，直接按同一套「间距 + 避让」规则各自随机落点。
  * @returns {{x:number, y:number}[]} 与玩家下标一一对应（已 round1）
  */
-function pickBasePositions(game, count, rng) {
+/**
+ * 第 2 项：统计两点之间隔着几条「独立的山脉带」——「墙」= 山脉（不可通行的山地）。
+ * 沿两点连线按半格步长采样地形，把**连续的**山地合并成一段：段数即山脉条数。
+ * 中间被平原 / 水域断开的算两条（山脉本来就常被谷地分开）。
+ */
+function ridgeBandsBetween(game, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1) return 0;
+  const step = TERR_CELL / 2; // 半格采样：不漏掉 1 格宽的山脊
+  const n = Math.max(2, Math.ceil(len / step));
+  let bands = 0;
+  let inBand = false;
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    const isMtn = terrainCell(game, a.x + dx * t, a.y + dy * t) === TT_MOUNTAIN;
+    if (isMtn && !inBand) bands += 1;
+    inBand = isMtn;
+  }
+  return bands;
+}
+
+/**
+ * 出生点布置：整局重排多次、取**山脉隔离最好**的那一套。
+ * 单个候选点是「逐个放宽」的（见 pickBasePositionsOnce 的 LADDER），
+ * 后面几座总部要同时满足「离前面所有总部够远 + 各隔 ≥HQ_MIN_RIDGES 条山脉」，
+ * 偶尔会被迫放宽。整体重排几次再挑最优，能把这种偶发放宽压掉。
+ */
+function pickBasePositions(game, count, rng, rot) {
+  const pairs = (count * (count - 1)) / 2;
+  let bestOut = null;
+  let bestScore = -1;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const out = pickBasePositionsOnce(game, count, rng, rot);
+    let okPairs = 0;
+    let minR = 99;
+    for (let i = 0; i < out.length; i++) {
+      for (let j = i + 1; j < out.length; j++) {
+        const r = ridgeBandsBetween(game, out[i], out[j]);
+        if (r >= HQ_MIN_RIDGES) okPairs += 1;
+        if (r < minR) minR = r;
+      }
+    }
+    // 先比「达标对数」，再比「最差那对的山脉数」
+    const score = okPairs * 100 + minR;
+    if (score > bestScore) {
+      bestScore = score;
+      bestOut = out;
+    }
+    if (okPairs >= pairs && minR >= HQ_MIN_RIDGES) break; // 全部达标，提前收工
+  }
+  return bestOut;
+}
+
+function pickBasePositionsOnce(game, count, rng, rot) {
   const table = BASE_ANGLES[count] || BASE_ANGLES[4];
-  const rot = rng() * Math.PI * 2;
+  // 旋转量由调用方给定（与隔离带、工厂布局共用），没传时自己摇一个（兼容旧调用）
+  if (!Number.isFinite(rot)) rot = rng() * Math.PI * 2;
   const paired = count % 2 === 0;
   const out = new Array(count);
   const placed = [];
@@ -1350,18 +1874,23 @@ function pickBasePositions(game, count, rng) {
   const fits = (p, rule) => {
     if (p.x < HQ_BASE_MARGIN || p.x > WORLD_W - HQ_BASE_MARGIN) return false;
     if (p.y < HQ_BASE_MARGIN || p.y > WORLD_H - HQ_BASE_MARGIN) return false;
-    for (const q of placed) if (dist(q.x, q.y, p.x, p.y) < rule.gap) return false;
+    for (const q of placed) {
+      if (dist(q.x, q.y, p.x, p.y) < rule.gap) return false;
+      // 第 2 项：任意两座总部之间至少隔着 rule.ridges 条山脉（「墙」）
+      if (rule.ridges > 0 && ridgeBandsBetween(game, q, p) < rule.ridges) return false;
+    }
     for (const f of NEUTRAL_FACTORIES) if (dist(f.x, f.y, p.x, p.y) < rule.build + FACTORY_R) return false;
     for (const l of LABS) if (dist(l.x, l.y, p.x, p.y) < rule.build + LAB_R) return false;
     return !rule.open || baseAreaOpen(game, p.x, p.y);
   };
   // 逐级放宽：① 够远 + 避让建筑 + 四周开阔 → ② 放弃「开阔」 → ③④ 只保「不贴脸」。
   // 注意最后一级仍要求 ≥ 2×占领半径，所以任何一档都不会把两座总部叠在一起。
+  // ridges = 该档要求的「两总部之间至少几条山脉」；随放宽逐级降低，最后一档不再强制。
   const LADDER = [
-    { gap: HQ_MIN_GAP, build: HQ_BUILDING_GAP, open: true },
-    { gap: HQ_MIN_GAP, build: HQ_BUILDING_GAP, open: false },
-    { gap: Math.round(HQ_MIN_GAP * 0.6), build: CAPTURE_R * 2 + 60, open: false },
-    { gap: CAPTURE_R * 2 + 20, build: CAPTURE_R * 2 + 20, open: false },
+    { gap: HQ_MIN_GAP, build: HQ_BUILDING_GAP, open: true, ridges: HQ_MIN_RIDGES },
+    { gap: HQ_MIN_GAP, build: HQ_BUILDING_GAP, open: false, ridges: HQ_MIN_RIDGES },
+    { gap: Math.round(HQ_MIN_GAP * 0.6), build: CAPTURE_R * 2 + 60, open: false, ridges: 1 },
+    { gap: CAPTURE_R * 2 + 20, build: CAPTURE_R * 2 + 20, open: false, ridges: 0 },
   ];
   const take = (p) => {
     placed.push(p);
@@ -1387,6 +1916,8 @@ function pickBasePositions(game, count, rng) {
         if (m) {
           // 克隆点除了自己要合格，还得和本体拉开距离——否则两座总部会贴在一起
           if (dist(c.x, c.y, m.x, m.y) < rule.gap) continue;
+          // 本体与克隆点之间同样要隔着足够的山脉（c 还没进 placed，fits 查不到它）
+          if (rule.ridges > 0 && ridgeBandsBetween(game, c, m) < rule.ridges) continue;
           if (!fits(m, rule)) continue;
         }
         p1 = c;
@@ -1406,16 +1937,48 @@ function pickBasePositions(game, count, rng) {
   return out;
 }
 
-/** 按类型/等级/分支计算战斗属性 */
-function unitStats(type, tier, branch) {
-  const s = STATS[type] || STATS.warrior;
-  const t = clamp(tier, 1, 3) - 1;
+/** 按类型/等级计算战斗属性（进化为单一方向，无 A/B 分支）。
+ *  1 阶 → 直接取 units[type]（基础数据表）；
+ *  2/3 阶 → 直接取 evolved[type][tier]（进化兵种独立数据表，完整属性块）。 */
+function unitStats(type, tier) {
+  const t = clamp(tier, 1, 3);
+  let base;
+  if (t === 1) {
+    base = STATS[type] || STATS.warrior;
+  } else {
+    base = (WFData.evolved[type] && WFData.evolved[type][t]) || STATS[type] || STATS.warrior;
+  }
   return {
-    hp: Math.round(s.hp * TIER_HP[t] * (branch === 'B' ? 1.25 : 1)),
-    dmg: round1(s.dmg * TIER_DMG[t] * (branch === 'A' ? 1.2 : 1)),
-    range: Math.round(s.range + TIER_RANGE[t]),
-    cd: round2(s.cd * TIER_CD[t]),
+    hp: Math.round(base.hp),
+    dmg: round1(base.dmg),
+    range: Math.round(cellsToPx(base.range)), // 格 → 像素
+    cd: round2(base.cd),
+    bulletSpeed: Math.round(base.bulletSpeed || BULLET_SPEED_FALLBACK),
   };
+}
+
+/**
+ * 把 data.js 里以「格」为单位的兵种属性块换算成**像素版**
+ * （生成单位、下发给客户端都用它，客户端拿到的一律是像素）。
+ *   range 格 → 像素；size 格见方 → 半径 r = size/2 格；splash 格 → 像素
+ */
+function statsToPx(s) {
+  return Object.assign({}, s, {
+    range: Math.round(cellsToPx(s.range)),
+    r: sizeToR(s.size || 2),
+    splash: s.splash ? Math.round(cellsToPx(s.splash)) : 0,
+  });
+}
+
+/** 下发给客户端的兵种属性一律是像素版（客户端不感知格子） */
+const STATS_PX = {};
+const EVOLVED_PX = {};
+for (const t of TYPE_LIST) {
+  STATS_PX[t] = statsToPx(WFData.units[t]);
+  EVOLVED_PX[t] = {};
+  for (const k of [2, 3]) {
+    if (WFData.evolved[t] && WFData.evolved[t][k]) EVOLVED_PX[t][k] = statsToPx(WFData.evolved[t][k]);
+  }
 }
 
 function createGameState(room) {
@@ -1425,6 +1988,12 @@ function createGameState(room) {
   const count = Math.max(2, Math.min(4, seats.length));
   const chosen = seats.slice(0, count);
   const rng = makeRng((Date.now() ^ 0x5f356495) >>> 0);
+  // 本局出生方位的整体旋转量：出生点、隔离带、工厂布局共用同一个，
+  // 保证隔离带正好落在相邻两家的出生区之间（第 5 项）。
+  const spawnRot = rng() * Math.PI * 2;
+  const bands = isolationBands(count, spawnRot);
+  // 按人数动态生成「人均 4 初 / 2 中 / 1 高」的中立工厂（严格 180° 点对称，且避开隔离带）
+  NEUTRAL_FACTORIES = buildNeutralFactories(count, rng, bands);
 
   const players = chosen.map((p, i) => ({
     id: p.id,
@@ -1458,6 +2027,8 @@ function createGameState(room) {
       contested: false,
       prodProg: 0,
       lines: 1, // 产线数（1..FAC_MAX_LINES）：多条并行生产，产出速率 ×lines
+      specs: [], // 每条产线的「兵种 + 出厂阶数 + 分支」，长度恒等于 lines（开局填一条）
+      prog: [], // 每条产线各自的生产进度（0..1），长度恒等于 lines
       home: false,
       // 中立工厂只有完整工厂的 1/3 血量，被拿下后恢复满血
       hp: Math.round(FACTORY_HP * NEUTRAL_HP_RATIO),
@@ -1476,6 +2047,8 @@ function createGameState(room) {
     hp: Math.round(LAB_HP * NEUTRAL_HP_RATIO),
     hpMax: LAB_HP,
     lastHitBy: -1,
+    // 第 7/8 项：研究产线（默认 0 条，花科技点可开拓 1 条 → 该所产出 +50%）
+    lines: 0,
   }));
 
   // 每座工厂开局锁定一种生产单位类型，并初始化集结点
@@ -1503,18 +2076,31 @@ function createGameState(room) {
       rpPeriodMs: RP_PERIOD_MS,
       evolveRpCost: EVOLVE_RP_COST,
       typeList: TYPE_LIST,
-      stats: STATS,
-      tierHp: TIER_HP,
-      tierDmg: TIER_DMG,
-      tierRange: TIER_RANGE,
-      tierCd: TIER_CD,
+      // 格子基准：客户端视觉（单位 / 建筑大小）按它对齐；其余下发的长度都是像素
+      grid: { cell: GRID },
+      stats: STATS_PX,
+      evolved: EVOLVED_PX,
       aggroBonus: 0, // 已废弃（不再有追击圈）：保留字段避免旧客户端读 consts 时取到 undefined
       attackSlack: ATTACK_SLACK,
       facLineCost: FAC_LINE_COST,
       facMaxLines: FAC_MAX_LINES,
+      evolveLineCost: FAC_LINE_EVOLVE_COST, // 单条产线进化一阶的科技点开销
+      hqProdType: HQ_PROD_TYPE, // 总部产线默认兵种（且不可进化）
+      hqCanEvolve: false, // 总部产线不可进化（客户端据此不出进化按钮）
       prodSpeedCost: PROD_SPEED_COST,
       prodSpeedMax: PROD_SPEED_MAX,
       prodSpeedStep: PROD_SPEED_STEP,
+      // 第 1 项：统一升级价（开辟产线 / 产线进化 / 生产加速三者同价）
+      upgradeRpCost: UPGRADE_RP_COST,
+      // 第 7 项：研究所研究产线
+      labLineCost: LAB_LINE_COST,
+      labMaxLines: LAB_MAX_LINES,
+      labLineRpMul: LAB_LINE_RP_MUL,
+      // 第 6 项：总部防卫（客户端据此画射程圈 / 前摇）
+      hqAtkRange: HQ_ATK_RANGE,
+      hqAtkCd: HQ_ATK_CD,
+      hqAtkDmg: HQ_ATK_DMG,
+      hqAtkWindupMs: HQ_ATK_WINDUP_MS,
       flameR: FLAME_R,
       /**
        * 灼烧地形逐阶参数（下标 0/1/2 = 一/二/三级）：[半径, 秒伤, 停喷后寿命ms]；
@@ -1559,11 +2145,16 @@ function createGameState(room) {
       'x' +
       WORLD_H
   );
-  makeTerrain(game, terrainSeed);
+  makeTerrain(game, terrainSeed, bands);
 
   // 总部位置：在椭圆环上随机取点（同一房间同一布局，换房即换布局），
   // 但要过「最小间距 + 避让中立建筑 + 四周可走」三关，避免总部与总部（含 180° 克隆点）挨太近。
-  const bases = pickBasePositions(game, players.length, makeRng((terrainSeed ^ 0x9e3779b9) >>> 0));
+  const bases = pickBasePositions(
+    game,
+    players.length,
+    makeRng((terrainSeed ^ 0x9e3779b9) >>> 0),
+    spawnRot
+  );
   for (let i = 0; i < players.length; i++) {
     players[i].baseX = bases[i].x;
     players[i].baseY = bases[i].y;
@@ -1580,18 +2171,33 @@ function createGameState(room) {
     down: false,
     evoCd: 0,
     speedLv: 0, // 生产加速等级（0..PROD_SPEED_MAX）：每级把本方生产间隔再缩短 1/15
+    // 总部产线：默认一条、默认产锐士、不可进化（与工厂共用同一套产线结构）
+    lines: 1,
+    specs: [makeSlot(HQ_PROD_TYPE)],
+    prog: [0],
+    prodProg: 0,
+    rally: null, // 第 4 项：总部集结点（右键设置，交互同己方工厂）
+    // 第 6 项：总部防卫（射程 200 / 间隔 0.5s / 伤害 20 / 前摇 500ms）
+    atkId: 0, // 当前锁定的敌方单位 id（0 = 无目标）
+    atkWindup: 0, // 前摇结束的绝对时间戳（> now 表示正在蓄能）
+    atkCd: 0, // 距离下次可开火的剩余秒数
   }));
 
   // 出生点周围的山/水一并清成平原（含 180° 克隆格），否则开局部队会被地形封死
   clearTerrainAroundBuildings(game, game.terrain.grid);
+  // 连通性保证：撑宽所有 1 格宽的窄缝，并给每个与外界隔绝的区域开一条 2 格宽走廊，
+  // 保证没有任何工厂 / 研究所 / 总部会被山或水包死（通道宽度恒 ≥2 格）。
+  ensureOpenTerrain(game.terrain.grid, terrainAnchors(game));
 
-  // 开局部队：每名玩家在总部旁拥有「每种初级单位各一个」（无初始工厂，工厂全靠打下来）
-  const hqSource = { id: 0, owner: 0, level: 3 }; // level 3 → 总部亲兵可一路进阶到顶阶
+  // 开局部队：每名玩家在总部旁拥有 data.js 配置的亲兵（无初始工厂，工厂全靠打下来）
+  // 总部产线不可进化 → 亲兵的进化上限同样是 1 阶（level 1）
+  const hqSource = { id: 0, owner: 0, level: 1 };
   for (let i = 0; i < players.length; i++) {
     hqSource.owner = i;
     const hq = game.hqs[i];
-    TYPE_LIST.forEach((type, k) => {
-      const ang = (k / TYPE_LIST.length) * Math.PI * 2 + rng() * 0.4;
+    const n = START_ROSTER.length || 1;
+    START_ROSTER.forEach((type, k) => {
+      const ang = (k / n) * Math.PI * 2 + rng() * 0.4;
       spawnUnit(
         game,
         hqSource,
@@ -1605,7 +2211,12 @@ function createGameState(room) {
   return game;
 }
 
-function spawnUnit(game, fac, type, x, y) {
+/**
+ * 造一支部队。
+ * @param {object} spec 可选：产出它的那条产线 {type, tier, branch} —— 出厂即按产线当前
+ *   阶数 / 分支定型（产线进化后，新兵直接就是进化后的单位，不再是「先出初级再手动进阶」）。
+ */
+function spawnUnit(game, fac, type, x, y, spec) {
   const ownerIdx = fac.owner;
   if (ownerIdx < 0 || ownerIdx >= game.players.length) return null;
   // 落点安全：万一压到不可通行地形（山/水），在附近螺旋找一个可站立的点
@@ -1627,18 +2238,20 @@ function spawnUnit(game, fac, type, x, y) {
       }
     }
   }
-  // 初级单位无分支；首次进化时随机定型 A 攻势 / B 守势
-  const branch = '';
-  const st = unitStats(type, 1, branch);
-  const s = STATS[type] || STATS.warrior;
+  // 出厂阶数 / 分支直接取自产线：没传产线就是一级、未定分支
+  const maxTier = clamp(Math.round(fac.level || 1), 1, 3);
+  const tier = spec ? clamp(Math.round(spec.tier || 1), 1, maxTier) : 1;
+  const branch = ''; // 已取消 A/B 分支，保留字段仅为兼容序列化
+  const st = unitStats(type, tier);
+  const s = statsToPx(STATS[type] || STATS.warrior); // 格 → 像素（r / range / splash）
   const u = {
     id: game.nextUnitId++,
     ownerId: game.players[ownerIdx].id,
     ownerIdx,
     type: TYPE_LIST.includes(type) ? type : 'warrior',
-    tier: 1,
+    tier,
     branch,
-    maxTier: clamp(fac.level, 1, 3),
+    maxTier,
     homeFac: fac.id,
     x: sx,
     y: sy,
@@ -1651,6 +2264,7 @@ function spawnUnit(game, fac, type, x, y) {
     cdLeft: 0,
     nextFireAt: 0, // 激光兵专用：下一次可射击的绝对时间戳（步进 dt 固定为 0.1s，用绝对时间可避免浮点累积导致射速漂移）
     speed: s.speed,
+    bulletSpeed: st.bulletSpeed, // 弹速（px/s），按兵种 / 阶数取自 data.js
     r: s.r,
     splash: s.splash || 0,
     burn: Boolean(s.burn),
@@ -1704,12 +2318,93 @@ function labCountOf(game, ownerIdx) {
 }
 
 /**
+ * 第 7 项：某座研究所的科技点产出（点 / 结算周期）。
+ * 开拓了研究产线的研究所产出 ×LAB_LINE_RP_MUL（+50%）。
+ */
+function labRpOf(l) {
+  return RP_PER_LAB * (l && l.lines >= 1 ? LAB_LINE_RP_MUL : 1);
+}
+
+/** 该玩家下一次结算能拿到的科技点总数（按各研究所是否已开拓产线累加） */
+function labRpTotalOf(game, ownerIdx) {
+  let sum = 0;
+  for (const l of game.labs) if (l.owner === ownerIdx) sum += labRpOf(l);
+  return sum;
+}
+
+/**
+ * 第 6 项：总部防卫。
+ * 锁定射程（HQ_ATK_RANGE）内最近的敌方部队 → 起一段明显的**攻击前摇**（HQ_ATK_WINDUP_MS）
+ * → 前摇走完且冷却结束才开火，每发 HQ_ATK_DMG 点直伤，攻击间隔 HQ_ATK_CD 秒。
+ * 锁定 / 前摇状态随快照下发，客户端据此画出「蓄能 → 开火」的前摇表现。
+ */
+function updateHqDefense(game, dt, now) {
+  for (const h of game.hqs) {
+    if (!h || h.down) {
+      if (h) {
+        h.atkId = 0;
+        h.atkWindup = 0;
+      }
+      continue;
+    }
+    if (h.atkCd > 0) h.atkCd -= dt;
+
+    // ① 校验当前目标：死了 / 跑出射程 / 被山挡住 → 作废
+    let target = null;
+    if (h.atkId) {
+      const t = game.units.find((u) => u.id === h.atkId);
+      if (
+        t &&
+        !t.dead &&
+        t.ownerIdx !== h.owner &&
+        dist(t.x, t.y, h.x, h.y) <= HQ_ATK_RANGE &&
+        !losBlocked(game, h.x, h.y, t.x, t.y)
+      ) {
+        target = t;
+      }
+    }
+    // ② 没有目标就重新索敌：射程内最近的敌方部队
+    if (!target) {
+      let bestD = Infinity;
+      for (const u of game.units) {
+        if (u.dead || u.ownerIdx === h.owner) continue;
+        const d = dist(u.x, u.y, h.x, h.y);
+        if (d > HQ_ATK_RANGE || d >= bestD) continue;
+        if (losBlocked(game, h.x, h.y, u.x, u.y)) continue;
+        bestD = d;
+        target = u;
+      }
+      h.atkId = target ? target.id : 0;
+      // 刚锁上（或换了目标）→ 重新起前摇
+      h.atkWindup = target ? now + HQ_ATK_WINDUP_MS : 0;
+      continue; // 本步只亮前摇，不开火
+    }
+    // ③ 前摇中 / 冷却中 → 只保持锁定与前摇表现
+    if (h.atkWindup > now || h.atkCd > 0) continue;
+    // ④ 开火：一发直伤，并重新起前摇与冷却
+    h.atkCd = HQ_ATK_CD;
+    h.atkWindup = now + HQ_ATK_WINDUP_MS;
+    target.lastHitBy = -1; // 总部不是单位：不让被打者「反击锁定」到某个不存在的单位
+    retaliate(game, target, 0);
+    damageUnit(game, target, HQ_ATK_DMG, h.owner);
+    pushEvent(game, {
+      t: 'hqatk',
+      oi: h.owner,
+      x: round1(h.x),
+      y: round1(h.y),
+      tx: round1(target.x),
+      ty: round1(target.y),
+    });
+  }
+}
+
+/**
  * 该玩家的「平均」研究点产出（点/秒）= 已占领研究所数 × (RP_PER_LAB / RP_PERIOD_MS)。
  * 仅用于界面展示与测试推算：实际结算是离散跳变的（每 RP_PERIOD_MS 一次性发放整数点），
  * 本函数不参与结算。
  */
 function researchRate(game, ownerIdx) {
-  return (labCountOf(game, ownerIdx) * RP_PER_LAB * 1000) / RP_PERIOD_MS;
+  return (labRpTotalOf(game, ownerIdx) * 1000) / RP_PERIOD_MS;
 }
 
 /**
@@ -1727,8 +2422,9 @@ function updateResearch(game, dt) {
       p.rpAccMs = 0;
       continue;
     }
-    const n = labCountOf(game, i);
-    if (n <= 0) {
+    // 第 7 项：产出按「各研究所是否已开拓研究产线」累加（开拓过的 +50%）
+    const per = labRpTotalOf(game, i);
+    if (per <= 0) {
       p.rpAccMs = 0; // 一座不占：不产出，进度也不保留
       continue;
     }
@@ -1740,7 +2436,7 @@ function updateResearch(game, dt) {
     // 用 while 兜住「一帧跨过多个周期」的极端情况，保证不会漏发
     while (p.rpAccMs >= RP_PERIOD_MS) {
       p.rpAccMs -= RP_PERIOD_MS;
-      p.rp = Math.min(RP_CAP, p.rp + n * RP_PER_LAB);
+      p.rp = Math.min(RP_CAP, p.rp + per);
       if (p.rp >= RP_CAP) {
         p.rpAccMs = 0;
         break;
@@ -1765,16 +2461,21 @@ function promoteUnit(game, u) {
   if (!u || u.dead || u.tier >= u.maxTier) return false;
   u.tier += 1;
   // 分支在首次进化时定型，之后保持
-  if (!u.branch) u.branch = game._rng() < 0.5 ? 'A' : 'B';
-  const st = unitStats(u.type, u.tier, u.branch);
+  const st = unitStats(u.type, u.tier);
   const ratio = u.maxHp > 0 ? u.hp / u.maxHp : 1;
   u.maxHp = st.hp;
   u.hp = Math.max(1, Math.round(st.hp * ratio));
   u.dmg = st.dmg;
   u.range = st.range;
   u.cdMax = st.cd;
-  u.splash = (STATS[u.type] || STATS.warrior).splash || 0;
-  u.burn = Boolean((STATS[u.type] || STATS.warrior).burn);
+  u.bulletSpeed = st.bulletSpeed;
+  // 体型随阶数长大（1 阶 2 格 → 2 阶 3 格 → 3 阶 4 格），溅射半径同步换算
+  const evoPx = statsToPx(
+    (WFData.evolved[u.type] && WFData.evolved[u.type][u.tier]) || STATS[u.type] || STATS.warrior
+  );
+  u.r = evoPx.r;
+  u.splash = evoPx.splash || 0;
+  u.burn = Boolean(evoPx.burn);
   game.players[u.ownerIdx].evolved += 1;
   pushEvent(game, { t: 'evo', uid: u.id, oi: u.ownerIdx, tier: u.tier, x: round1(u.x), y: round1(u.y) });
   return true;
@@ -1801,6 +2502,8 @@ function damageLab(game, l, amount, killerIdx) {
   l.owner = killerIdx;
   l.hp = l.hpMax; // 归属权发生变化 → 血量恢复满
   l.lastHitBy = -1;
+  // 易主则清除前任主人开拓的研究产线（与工厂「易主重置产线」保持一致）
+  l.lines = 0;
   game.players[killerIdx].captured += 1;
   game._captures = (game._captures || 0) + 1;
   pushEvent(game, { t: 'lab', lid: l.id, oi: l.owner, prev, x: l.x, y: l.y });
@@ -1845,8 +2548,8 @@ function damageFactory(game, f, amount, killerIdx) {
   f.hp = f.hpMax; // 归属权发生变化 → 血量恢复满
   f.capProg = 0;
   f.capBy = -1;
-  f.prodProg = 0;
   f.rally = null; // 易主则清除前任主人设的集结点
+  resetSlots(f); // 易主则产线一并重置：只留一条一级线，不白送新主人一堆高阶产线
   f.lastHitBy = -1;
   game.players[killerIdx].captured += 1;
   game._captures = (game._captures || 0) + 1;
@@ -1894,36 +2597,89 @@ function prodIntervalMs(game, ownerIdx) {
   return PRODUCE_MS * Math.pow(1 - PROD_SPEED_STEP, lv);
 }
 
+/**
+ * 让一座建筑（工厂 / 总部）的每条产线各自走进度、到点吐兵。
+ * 各线独立计时 → 一条线就是一条独立的流水线：兵种、阶数、分支各不相同。
+ * 兵力达上限时进度停在 1（不丢进度），有部队阵亡立刻补出。
+ * @returns {number} 本次步进里这座建筑新造出的部队数
+ */
+function runSlots(game, b, dtMs, counts, spawnAt) {
+  const specs = syncSlots(b);
+  const ivl = prodIntervalMs(game, b.owner);
+  let made = 0;
+  let best = 0;
+  for (let i = 0; i < specs.length; i++) {
+    const p = (b.prog[i] || 0) + dtMs / ivl;
+    if (p < 1) {
+      b.prog[i] = p;
+    } else if (counts[b.owner] >= PLAYER_UNIT_CAP) {
+      b.prog[i] = 1; // 满员：停在临界点，一有空位立刻补出
+    } else {
+      b.prog[i] = p - 1;
+      const u = spawnAt(specs[i]);
+      if (u) {
+        counts[b.owner] += 1; // 同一帧内多线产出也要计入
+        made += 1;
+      }
+    }
+    if (b.prog[i] > best) best = b.prog[i];
+  }
+  // 供客户端画「产能条」：取各线里最接近完工的那条
+  b.prodProg = round2(clamp(best, 0, 1));
+  return made;
+}
+
 function updateProduction(game, dt, now) {
   const dtMs = dt * 1000;
   void now; // 保留时间参数以维持签名（生产节奏完全由 dt / 间隔决定）
   // 每名玩家当前部队数（兵力上限判定用；每步只统计一次）
   const counts = game.players.map((_, i) => unitCountOf(game, i));
+
+  // ---- 工厂：每条产线按自己的兵种 / 阶数 / 分支出兵 ----
   for (const f of game.factories) {
     if (f.owner < 0) continue;
-    const lines = clamp(Math.round(f.lines || 1), 1, FAC_MAX_LINES);
-    // 多产线并行：进度按「产线数」倍速累积，但一次只吐一支（不爆兵），
-    // 因此等效产出速率 = 1 / (间隔/产线数)。兵力达上限时进度停在 lines（不丢进度），有部队阵亡立刻补出。
-    f.prodProg = Math.min(lines, f.prodProg + (dtMs / prodIntervalMs(game, f.owner)) * lines);
-    if (f.prodProg < 1) continue;
-    if (counts[f.owner] >= PLAYER_UNIT_CAP) continue; // 已达每玩家兵力上限 → 暂停生产
-    f.prodProg -= 1;
-    const ang = game._rng() * Math.PI * 2;
-    const d = FACTORY_R + 28;
-    // 每座工厂只生产开局锁定的那一种单位
-    const u = spawnUnit(
-      game,
-      f,
-      f.prodType || pickWeighted(game._rng),
-      f.x + Math.cos(ang) * d,
-      f.y + Math.sin(ang) * d
-    );
-    if (u) counts[f.owner] += 1; // 同一帧内多厂产出也要计入
-    // 设了集结点的工厂：新兵自动前往集结点（期间照常边走边打，不需要脱离窗口）
-    if (u && f.rally) {
-      u.moveX = f.rally.x;
-      u.moveY = f.rally.y;
-    }
+    runSlots(game, f, dtMs, counts, (spec) => {
+      const ang = game._rng() * Math.PI * 2;
+      const d = FACTORY_R + 28;
+      const u = spawnUnit(
+        game,
+        f,
+        spec.type,
+        f.x + Math.cos(ang) * d,
+        f.y + Math.sin(ang) * d,
+        spec
+      );
+      // 设了集结点的工厂：新兵自动前往集结点（期间照常边走边打，不需要脱离窗口）
+      if (u && f.rally) {
+        u.moveX = f.rally.x;
+        u.moveY = f.rally.y;
+      }
+      return u;
+    });
+  }
+
+  // ---- 总部：同样按产线出兵（默认产锐士、不可进化）----
+  for (const h of game.hqs) {
+    if (h.down) continue;
+    runSlots(game, h, dtMs, counts, (spec) => {
+      const ang = game._rng() * Math.PI * 2;
+      const d = HQ_R + 28;
+      // 总部产线不可进化 → 出厂上限恒为 1 阶
+      const u = spawnUnit(
+        game,
+        { id: 0, owner: h.owner, level: 1 },
+        spec.type,
+        h.x + Math.cos(ang) * d,
+        h.y + Math.sin(ang) * d,
+        spec
+      );
+      // 第 4 项：总部设了集结点的话，亲兵同样自动前往（与工厂一致）
+      if (u && h.rally) {
+        u.moveX = h.rally.x;
+        u.moveY = h.rally.y;
+      }
+      return u;
+    });
   }
 }
 
@@ -2010,7 +2766,7 @@ function findTarget(game, u) {
 function unitFire(game, u, target, now) {
   // 燎原不走这里（它持续喷火、没有弹体，见 sprayFlame），所以弹种只剩三种
   const kind = u.splash ? 'shell' : u.range <= MELEE_RANGE ? 'melee' : 'bullet';
-  const speed = kind === 'melee' ? BULLET_SPEED_MELEE : BULLET_SPEED;
+  const speed = Math.max(1, u.bulletSpeed || BULLET_SPEED_FALLBACK);
   const ang = Math.atan2(target.y - u.y, target.x - u.x);
   u.angle = ang;
   const sx = u.x + Math.cos(ang) * (u.r + 4);
@@ -2023,10 +2779,11 @@ function unitFire(game, u, target, now) {
   if (kind === 'shell') {
     // 轰击：抛射弹。记录发射点 / 落点，按飞行时间参数化抛物线；它越过山脉、落地才炸。
     // 落点 = 目标碰撞体积上的随机一点（aimX/aimY）。
+    // 飞行时长由该兵种 bulletSpeed 决定（地面平面匀速），近距有最短时间兜底。
     const gdx = aimX - sx;
     const gdy = aimY - sy;
     const D = Math.hypot(gdx, gdy);
-    const flightDur = SHELL_FLIGHT_BASE + D * SHELL_FLIGHT_PER_PX;
+    const flightDur = Math.max(SHELL_FLIGHT_MIN_MS, (D / speed) * 1000);
     const peak = SHELL_PEAK_BASE + D * SHELL_PEAK_PER_PX;
     game.bullets.push({
       id: game.nextBulletId++,
@@ -2037,6 +2794,9 @@ function unitFire(game, u, target, now) {
       ownerIdx: u.ownerIdx,
       ownerId: u.ownerId,
       shooterId: u.id,
+      // 谁打的：客户端据此画「这个兵种的那一款弹」，并按阶数放大弹体
+      type: u.type,
+      tier: u.tier,
       kind,
       splash: u.splash || 0,
       tx: aimX,
@@ -2071,6 +2831,9 @@ function unitFire(game, u, target, now) {
     ownerIdx: u.ownerIdx,
     ownerId: u.ownerId,
     shooterId: u.id,
+    // 谁打的：客户端据此画「这个兵种的那一款弹」，并按阶数放大弹体
+    type: u.type,
+    tier: u.tier,
     kind,
     splash: bSplash,
     tx: fx,
@@ -2135,8 +2898,8 @@ function laserZap(game, u, target, now) {
   u.lockMul = mul;
   const dmg = u.dmg * mul;
   const ang = Math.atan2(target.y - u.y, target.x - u.x);
-  // 开火表现：枪口一记冷光蓄能焰 + 命中点一团灼痕（激光不走弹道，全靠这两个事件表现）
-  pushShot(game, u, ang, SHOT_KIND_LASER);
+  // 激光是「持续喷吐」武器：开火表现只有命中点的灼痕，不再推 muzzle-flash 式的 shot 事件，
+  // 这样炮管不会因为每帧开火判定而抖动（后坐完全由 shot 事件驱动，去掉它即不抖）。
   pushEvent(game, {
     t: 'hit',
     x: round1(target.x - Math.cos(ang) * (target.r || 0)),
@@ -2164,8 +2927,8 @@ function laserZap(game, u, target, now) {
  * - **移动攻击**：移动与开火彻底解耦 —— 走指令点的同时，只要目标在攻击范围内就照常开火，
  *   不再有「停下才打」。
  * - 目标离开范围 / 被山挡住 → 停火（激光兵会重置锁定与蓄能），但仍继续走自己的路。
- * - **燎原例外**：它不点射，而是持续喷火（每步结算一次火舌，见 sprayFlame），
- *   所以走的是 `u.burn` 那条分支，不参与 cd 与弹道。
+ * - **燎原也按次结算**：`dmg` 是「一口火的伤害」，和其它兵种的「单发伤害」是同一个意思。
+ *   它没有弹道，但仍按自己的 `u.cdMax` 一口一口地喷 —— 走 `u.burn` 分支，不走弹道那条 `fire()`。
  */
 function updateUnits(game, dt, now) {
   for (const u of game.units) {
@@ -2285,18 +3048,21 @@ function updateUnits(game, dt, now) {
     const tReach = target ? u.range + target.r : 0;
     const inRange = Boolean(target) && tDist <= tReach && !losBlockedNow;
 
-    // 燎原：不是「点射」，而是**持续喷吐**。只要目标在射程内，每步都推一次火舌
-    // （伤害按 dt 结算，没有弹道、没有命中判定），火舌的落点就是「火焰落下的地方」。
-    // 锁定状态（lockKind/lockId）同时下发给客户端，让它自己连线画出这道火舌 ——
-    // 与激光兵共用同一套「锁定目标」下发格式。
+    // 燎原：没有弹道，但伤害和其它兵种一样按「次」结算。
+    // 只要目标在射程内就一直锁着（客户端据此连续画出这道火舌）；
+    // 真正的伤害 / 铺火场按 cd 的节拍走：每 u.cdMax 秒喷一口，一口 = u.dmg 点范围伤害。
     if (u.burn) {
       u.lockKind = inRange ? (target.kind === 'fac' ? 2 : target.kind === 'lab' ? 3 : target.kind === 'hq' ? 4 : 1) : 0;
       u.lockId = inRange ? (target.kind ? target.ref.id : target.id) : 0;
       if (inRange) {
         u.angle = Math.atan2(target.y - u.y, target.x - u.x);
-        // 落点取「朝目标方向推进到目标身上」——目标在射程内，所以这一步不会超出射程
-        const reach = Math.min(tDist, u.range + target.r);
-        sprayFlame(game, u, u.x + Math.cos(u.angle) * reach, u.y + Math.sin(u.angle) * reach, dt, now);
+        // 伤害与火场都按攻速结算（每 cdMax 秒一口），不是每步都算
+        if (u.cdLeft <= 0) {
+          u.cdLeft = u.cdMax;
+          // 落点取「朝目标方向推进到目标身上」——目标在射程内，所以这一步不会超出射程
+          const reach = Math.min(tDist, u.range + target.r);
+          sprayFlame(game, u, u.x + Math.cos(u.angle) * reach, u.y + Math.sin(u.angle) * reach, now);
+        }
       }
       continue;
     }
@@ -2400,20 +3166,21 @@ function addFire(game, x, y, ownerIdx, now, tier) {
 }
 
 /**
- * 一次火舌推进：燎原每步（约每秒 20+ 次）对落点做一次结算。
+ * 一口火（燎原的一次攻击）：由 updateUnits 按 `u.cdMax` 的节拍调用，一次一份伤害。
  *
- * ① 落点范围伤害：`FLAME_R` 内的一切**敌方**单位按秒伤持续掉血（山挡住的打不到）。
- *    这是「持续喷吐」而不是「一发一发打」——所以没有弹道、没有命中判定，伤害按 dt 结算。
- *    各阶都一样：火焰本身就会烧人，**留不留灼烧地形才是分阶的地方**。
- * ② 落点范围内的**敌方建筑**（工厂 / 研究所 / 总部）同样按秒伤掉血 —— 这是「直接打击」，
+ * ① 落点范围伤害：`FLAME_R` 内的一切**敌方**单位一次掉 `u.dmg` 点血（山挡住的打不到）。
+ *    和其它兵种一样按「次」结算 —— 没有弹道、没有命中判定，也不乘 dt，
+ *    **每秒期望伤害 = dmg / cd**。各阶都一样：火焰本身就会烧人，
+ *    **留不留灼烧地形才是分阶的地方**。
+ * ② 落点范围内的**敌方建筑**（工厂 / 研究所 / 总部）同样按这一份伤害掉血 —— 这是「直接打击」，
  *    与炮击溅射同规则（自家建筑免疫、山挡住打不到）。注意：只有火舌**直接烧到**才结算，
  *    地上那片灼烧地形对建筑完全无效（见 updateFires）。
  * ③ 在落点铺开 / 刷新一片灼烧地形 —— 只有**二级及以上**才铺（见 FIRE_TIERS）。
- * ④ 表现脉冲：每 FLAME_PULSE_MS 推一条 shot 事件（枪口焰 + 射手后坐）。
- *    若每步都推，客户端每秒会堆几十个焰，反而糊成一片。
+ * ④ 表现：推一条 flame 事件，客户端在落点演一次爆焰（一口火一次，不会糊成一片）。
+ *    连续的火舌本体由客户端按下发锁定自己画，与这次结算无关。
  */
-function sprayFlame(game, u, x, y, dt, now) {
-  const dmg = u.dmg * dt;
+function sprayFlame(game, u, x, y, now) {
+  const dmg = u.dmg;
   if (dmg > 0) {
     for (const e of game.units) {
       if (e.dead || e.ownerIdx === u.ownerIdx) continue;
@@ -2423,7 +3190,7 @@ function sprayFlame(game, u, x, y, dt, now) {
       retaliate(game, e, u.id);
       damageUnit(game, e, dmg, u.ownerIdx);
     }
-    // 火舌直接烧到建筑才算数：工厂 / 研究所 / 总部按同一份秒伤掉血（规则同炮击溅射）
+    // 火舌直接烧到建筑才算数：工厂 / 研究所 / 总部按同一份伤害掉血（规则同炮击溅射）
     for (const f of game.factories) {
       if (f.owner === u.ownerIdx) continue;
       if (dist(f.x, f.y, x, y) > FLAME_R + FACTORY_R) continue;
@@ -2445,10 +3212,8 @@ function sprayFlame(game, u, x, y, dt, now) {
   }
   const born = addFire(game, x, y, u.ownerIdx, now, u.tier);
   if (born) pushEvent(game, { t: 'flame', x: born.x, y: born.y, r: born.r, oi: u.ownerIdx, id: born.id });
-  if (now >= (u.pulseAt || 0)) {
-    u.pulseAt = now + FLAME_PULSE_MS;
-    pushShot(game, u, Math.atan2(y - u.y, x - u.x), BULLET_KIND_IX.fire);
-  }
+  // 燎原的火舌每口都在落点演一次爆焰（flame 事件），足够了 ——
+  // 不再额外周期推 shot 事件打出一顿一顿的枪口焰，免得炮管看着一直在抖。
 }
 
 /**
@@ -2566,7 +3331,7 @@ function updateBullets(game, dt, now) {
     b.y += b.vy * dt;
 
     // 山体有高度：弹道撞山即止。细分采样整段位移，避免 10Hz 下「一步跨过」山脊。
-    // 炮击在坡面炸开（溅射同样不越山），直射弹撞山只是一个墨点。水面/沼泽不挡弹道。
+    // 炮击在坡面炸开（溅射同样不越山），直射弹撞山只是一个墨点。水面不挡弹道。
     {
       const segLen = Math.hypot(b.x - ox, b.y - oy);
       const hitS = segLen > 0 ? mountainHitAlong(game, ox, oy, b.x, b.y, { step: BULLET_TERRAIN_STEP }) : -1;
@@ -2587,7 +3352,7 @@ function updateBullets(game, dt, now) {
     if (b.targetId) {
       const t = game.units.find((e) => e.id === b.targetId && !e.dead);
       if (t) {
-        const spd = Math.hypot(b.vx, b.vy) || BULLET_SPEED;
+        const spd = Math.hypot(b.vx, b.vy) || BULLET_SPEED_FALLBACK;
         const ang = Math.atan2(t.y - b.y, t.x - b.x);
         b.vx = Math.cos(ang) * spd;
         b.vy = Math.sin(ang) * spd;
@@ -2799,8 +3564,8 @@ function updateOutcome(game) {
       f.owner = -1;
       f.capProg = 0;
       f.capBy = -1;
-      f.prodProg = 0;
       f.rally = null;
+      resetSlots(f); // 出局 / 退出：产线一并重置成一条一级线
       f.lastHitBy = -1;
       f.hp = Math.round(FACTORY_HP * NEUTRAL_HP_RATIO); // 转为中立 → 只有 1/3 血量
     }
@@ -2845,6 +3610,7 @@ function step(game, dt, now) {
   game._captures = 0; // 易主 / 总部陷落由「打光血量」触发，这里统计本次步进内的次数
   game._flowBudget = FLOW_BUILD_PER_STEP; // 本步允许新建的寻路流场数
   updateResearch(game, dt);
+  updateHqDefense(game, dt, now); // 第 6 项：总部防卫（前摇 → 开火）
   updateProduction(game, dt, now);
   updateFactories(game, dt);
   updateUnits(game, dt, now);
@@ -2883,6 +3649,11 @@ function tick(game) {
 
 const TYPE_IX = {};
 TYPE_LIST.forEach((t, i) => (TYPE_IX[t] = i));
+
+/** 产线 → 快照紧凑表示：[兵种下标, 出厂阶数, 分支(0 未定 / 1 A / 2 B)] */
+function slotToRow(s) {
+  return [TYPE_IX[s.type] || 0, clamp(Math.round(s.tier || 1), 1, 3), s.branch === 'A' ? 1 : s.branch === 'B' ? 2 : 0];
+}
 
 function snapshot(game) {
   const now = Date.now();
@@ -2931,8 +3702,13 @@ function snapshot(game) {
         // 客户端据此把轰击弹「抬高本体 + 画地面阴影 + 落点虚线圈」，呈现越山抛物线。
         round1(b.z || 0),
         b.arc ? 1 : 0,
+        // —— 谁打的：兵种序号 + 阶数（0/undefined 视作一阶）——
+        // 每个兵种一套弹型，并随进化把弹体放大。老快照缺这两列时客户端退回按弹种画。
+        TYPE_IX[b.type] || 0,
+        clamp(b.tier || 1, 1, 3),
       ];
     }),
+    // 工厂：[id, 归属, 占领进度, 占领者, 生产进度, 争夺中, 当前血量, 进化冷却, 产线数, 各产线配置]
     f: game.factories.map((f) => [
       f.id,
       f.owner,
@@ -2941,12 +3717,20 @@ function snapshot(game) {
       round2(f.prodProg),
       f.contested ? 1 : 0,
       Math.round(f.hp), // 工厂当前血量（打光即易主）
-      Math.round(f.evoCd || 0), // 手动进化冷却剩余（毫秒）
+      Math.round(f.evoCd || 0), // 产线进化冷却剩余（毫秒）
       clamp(Math.round(f.lines || 1), 1, FAC_MAX_LINES), // 产线数（1..3）：并行生产
+      syncSlots(f).map(slotToRow), // 每条产线：[兵种, 出厂阶数, 分支]
     ]),
-    // 研究所：[id, 归属, 当前血量, 满血]（同样是打光即易主）
-    lb: game.labs.map((l) => [l.id, l.owner, Math.round(l.hp), Math.round(l.hpMax)]),
-    // 总部：[id, 归属, 当前血量, 满血, 是否已陷落, 进化冷却剩余, 生产加速等级]
+    // 研究所：[id, 归属, 当前血量, 满血, 已开拓的研究产线数]（同样是打光即易主，易主后产线清零）
+    lb: game.labs.map((l) => [
+      l.id,
+      l.owner,
+      Math.round(l.hp),
+      Math.round(l.hpMax),
+      clamp(Math.round(l.lines || 0), 0, LAB_MAX_LINES), // 第 7 项：0 或 1
+    ]),
+    // 总部：[id, 归属, 当前血量, 满血, 是否已陷落, 进化冷却剩余, 生产加速等级,
+    //        生产进度, 产线数, 各产线配置]（总部也出兵，但产线不可进化）
     hq: game.hqs.map((h) => [
       h.id,
       h.owner,
@@ -2955,6 +3739,12 @@ function snapshot(game) {
       h.down ? 1 : 0,
       Math.round(h.evoCd || 0),
       clamp(Math.round(h.speedLv || 0), 0, PROD_SPEED_MAX),
+      round2(h.prodProg || 0),
+      clamp(Math.round(h.lines || 1), 1, FAC_MAX_LINES),
+      syncSlots(h).map(slotToRow),
+      // 第 6 项：总部防卫状态 —— 锁定目标 id + 前摇剩余毫秒（>0 = 正在蓄能，客户端画前摇）
+      h.atkId || 0,
+      h.atkWindup > now ? Math.round(h.atkWindup - now) : 0,
     ]),
     // 科技点：与 players 同序（左上角 HUD / 记分牌用）
     rp: game.players.map((p) => Math.round(p.rp)),
@@ -2966,6 +3756,10 @@ function snapshot(game) {
     r: game.factories
       .filter((f) => f.rally)
       .map((f) => [f.id, Math.round(f.rally.x), Math.round(f.rally.y)]),
+    // 第 4 项：总部集结点（同样只下发已设置的）：[总部id, x, y]
+    hr: game.hqs
+      .filter((h) => h.rally)
+      .map((h) => [h.id, Math.round(h.rally.x), Math.round(h.rally.y)]),
     // 灼烧地形（燎原喷出的火场）：[x, y, 半径, 剩余寿命毫秒, 归属]
     // 剩余寿命让客户端能把火画成「逐渐熄灭」——火舌一停，客户端跟着倒计时淡出。
     fr: game.fires.map((f) => [
@@ -2999,7 +3793,7 @@ function publicGameState(game) {
       rp: Math.round(p.rp),
       rpRate: researchRate(game, i),
       rpAccMs: Math.round(p.rpAccMs || 0), // 距下次结算的累积毫秒
-      rpPerPeriod: labCountOf(game, i) * RP_PER_LAB, // 下次结算将发放的点数（0 = 不产出）
+      rpPerPeriod: labRpTotalOf(game, i), // 下次结算将发放的点数（含研究产线加成；0 = 不产出）
       eliminated: Boolean(p.eliminated),
       left: Boolean(p.left),
     })),
@@ -3013,10 +3807,11 @@ function publicGameState(game) {
       capProg: Math.round(f.capProg),
       prodProg: round2(f.prodProg),
       lines: clamp(Math.round(f.lines || 1), 1, FAC_MAX_LINES), // 产线数（1..3）
+      specs: syncSlots(f).map((s) => ({ type: s.type, tier: s.tier, branch: s.branch })), // 每条产线产什么、几阶
       home: Boolean(f.home),
       hp: Math.round(f.hp),
       hpMax: f.hpMax,
-      pt: f.prodType || TYPE_LIST[0], // 本厂固定生产的兵种
+      pt: (f.specs && f.specs[0] && f.specs[0].type) || TYPE_LIST[0], // 第一条产线的兵种（兼容旧字段）
       ecd: Math.round(f.evoCd || 0),
       rx: f.rally ? Math.round(f.rally.x) : null,
       ry: f.rally ? Math.round(f.rally.y) : null,
@@ -3028,6 +3823,8 @@ function publicGameState(game) {
       owner: l.owner,
       hp: Math.round(l.hp),
       hpMax: l.hpMax,
+      // 第 7/8 项：已开拓的研究产线数（0 或 1），开拓后该所产出 +50%
+      lines: clamp(Math.round(l.lines || 0), 0, LAB_MAX_LINES),
     })),
     hqs: game.hqs.map((h) => ({
       id: h.id,
@@ -3039,6 +3836,16 @@ function publicGameState(game) {
       down: Boolean(h.down),
       ecd: Math.round(h.evoCd || 0),
       speedLv: clamp(Math.round(h.speedLv || 0), 0, PROD_SPEED_MAX), // 生产加速等级
+      // 总部产线：默认产锐士、不可进化（hqCanEvolve = false）
+      lines: clamp(Math.round(h.lines || 1), 1, FAC_MAX_LINES),
+      specs: syncSlots(h).map((s) => ({ type: s.type, tier: s.tier, branch: s.branch })),
+      prodProg: round2(h.prodProg || 0),
+      // 第 4 项：总部集结点（与工厂同款字段，客户端据此画旗子）
+      rx: h.rally ? Math.round(h.rally.x) : null,
+      ry: h.rally ? Math.round(h.rally.y) : null,
+      // 第 6 项：总部防卫状态（锁定目标 / 前摇剩余毫秒）
+      atkId: h.atkId || 0,
+      atkWindupMs: h.atkWindup > Date.now() ? Math.round(h.atkWindup - Date.now()) : 0,
       // 该玩家当前「单条产线」的生产间隔（毫秒，已计入加速）：客户端直接展示，不必自己算
       prodIntervalMs: Math.round(prodIntervalMs(game, h.owner)),
     })),
@@ -3140,10 +3947,19 @@ function setPlayerInput(game, playerId, data) {
   if (cmd === 'rally') {
     const fid = Number(d.fid);
     if (!Number.isFinite(fid)) return false;
-    const f = game.factories.find((x) => x.id === fid);
-    if (!f || f.owner !== oi) return false; // 只能给自己名下的工厂设集结点
+    // 第 4 项：总部（fid === 0）也能设集结点，交互方式与己方工厂完全一致
+    let b = null;
+    if (fid === 0) {
+      const hq = game.hqs.find((h) => h.owner === oi);
+      if (!hq || hq.down) return false;
+      b = hq;
+    } else {
+      const f = game.factories.find((x) => x.id === fid);
+      if (!f || f.owner !== oi) return false; // 只能给自己名下的工厂设集结点
+      b = f;
+    }
     if (d.clear) {
-      f.rally = null;
+      b.rally = null;
       return true;
     }
     const x = Number(d.x);
@@ -3155,9 +3971,9 @@ function setPlayerInput(game, playerId, data) {
     let p = snapOutsideBuildings(game, clamp(x, 0, WORLD_W), clamp(y, 0, WORLD_H));
     const cb = compLabels(game);
     if (cb) {
-      let fc = cb.lab[cellOf(game, f.x, f.y).i];
+      let fc = cb.lab[cellOf(game, b.x, b.y).i];
       if (fc < 0) {
-        const fnp = nearestPassable(game, f.x, f.y);
+        const fnp = nearestPassable(game, b.x, b.y);
         if (fnp) fc = cb.lab[cellOf(game, fnp.x, fnp.y).i];
       }
       if (fc >= 0) {
@@ -3166,59 +3982,96 @@ function setPlayerInput(game, playerId, data) {
         p = rp;
       }
     }
-    f.rally = { x: p.x, y: p.y };
+    b.rally = { x: p.x, y: p.y };
     return true;
   }
   if (cmd === 'facEvolve') {
-    // 手动进阶：消耗 500 科技点，把一支部队立刻提升一阶。
-    // fid > 0 → 该工厂产出的部队；fid === 0 → 总部亲兵（初始那批，无工厂可点时用）。
-    const raw = Number(d.fid);
-    if (!Number.isFinite(raw)) return false;
-    const fid = raw === 0 ? 0 : Math.round(raw);
-    let cdOwner = null; // 冷却挂在建筑上：工厂用 f.evoCd，总部用 hq.evoCd
-    if (fid === 0) {
-      const hq = game.hqs.find((h) => h.owner === oi);
-      if (!hq || hq.down) return false;
-      if (hq.evoCd > 0) return false; // 冷却中
-      cdOwner = hq;
-    } else {
-      const f = game.factories.find((x) => x.id === fid);
-      if (!f || f.owner !== oi) return false; // 只能操作自己名下的工厂
-      if (f.level < 2) return false; // 初级工厂的兵最高只有一阶，无从进化
-      if (f.evoCd > 0) return false; // 冷却中
-      cdOwner = f;
-    }
-    if (p.rp < EVOLVE_RP_COST) return false; // 科技点不足
-    // 候选：该建筑产出、存活、尚未到顶阶的部队；优先最低阶（性价比最高）
-    let pick = null;
-    for (const u of game.units) {
-      if (u.dead || u.ownerIdx !== oi || (u.homeFac || 0) !== fid) continue;
-      if (u.tier >= u.maxTier) continue;
-      if (!pick || u.tier < pick.tier) pick = u;
-    }
-    if (!pick) return false;
-    const before = pick.tier;
-    if (!promoteUnit(game, pick)) return false;
-    if (pick.tier === before) return false;
-    p.rp -= EVOLVE_RP_COST; // 扣科技点
-    cdOwner.evoCd = FAC_EVOLVE_CD;
-    game._captures = (game._captures || 0) + 1; // 让客户端立刻看到扣费后的点数
-    pushEvent(game, { t: 'fcevo', fid, oi, tier: pick.tier, x: round1(pick.x), y: round1(pick.y) });
+    // 产线进化：把**某一条产线**的出厂阶数整体抬高一阶 —— 此后这条线直接吐该阶单位
+    // （旧规则是花点让一支现存部队进阶，产线仍继续吐初级，那不是玩家想要的效果）。
+    // 总部产线（fid === 0）不可进化，一律拒绝。
+    const fid = Math.round(Number(d.fid));
+    if (!Number.isFinite(fid) || fid === 0) return false;
+    const f = game.factories.find((x) => x.id === fid);
+    if (!f || f.owner !== oi) return false; // 只能操作自己名下的工厂
+    if (f.level < 2) return false; // 初级工厂的产线最高只有一阶，无从进化
+    if (f.evoCd > 0) return false; // 冷却中
+    if (p.rp < FAC_LINE_EVOLVE_COST) return false; // 科技点不足
+    const specs = syncSlots(f);
+    const li = clamp(Math.round(Number(d.li) || 0), 0, specs.length - 1);
+    const s = specs[li];
+    if (s.tier >= f.level) return false; // 已到本厂上限
+    s.tier += 1;
+    p.rp -= FAC_LINE_EVOLVE_COST; // 扣科技点
+    f.evoCd = FAC_EVOLVE_CD;
+    game._captures = (game._captures || 0) + 1; // 让客户端立刻看到扣费与产线变化
+    pushEvent(game, {
+      t: 'fcevo',
+      fid,
+      li,
+      oi,
+      tier: s.tier,
+      type: s.type,
+      x: round1(f.x),
+      y: round1(f.y),
+    });
     return true;
   }
   if (cmd === 'facLine') {
-    // 开辟产线：花科技点在自有工厂上再加一条产线（最多 FAC_MAX_LINES 条）。
-    // 产线并行生产，同一时间一座工厂就能同时出多个单位。
+    // 开辟产线：花科技点再加一条并行产线（最多 FAC_MAX_LINES 条）。
+    // 开辟时要先选好这条线产什么兵（d.type），没传就沿用第一条线的兵种。
+    // fid === 0 → 总部产线（总部也出兵，但只能是一级）。
     const fid = Math.round(Number(d.fid));
-    const f = game.factories.find((x) => x.id === fid);
-    if (!f || f.owner !== oi) return false; // 只能给自己名下的工厂开产线
-    const lines = clamp(Math.round(f.lines || 1), 1, FAC_MAX_LINES);
-    if (lines >= FAC_MAX_LINES) return false; // 已满产
+    let b = null;
+    if (fid === 0) {
+      const hq = game.hqs.find((h) => h.owner === oi);
+      if (!hq || hq.down) return false;
+      b = hq;
+    } else {
+      const f = game.factories.find((x) => x.id === fid);
+      if (!f || f.owner !== oi) return false; // 只能给自己名下的工厂开产线
+      b = f;
+    }
+    const specs = syncSlots(b);
+    if (specs.length >= FAC_MAX_LINES) return false; // 已满产
     if (p.rp < FAC_LINE_COST) return false; // 科技点不足
+    const type = TYPE_LIST.includes(d.type) ? d.type : specs[0].type;
     p.rp -= FAC_LINE_COST;
-    f.lines = lines + 1;
+    specs.push(makeSlot(type));
+    b.lines = specs.length;
+    b.prog.push(0);
     game._captures = (game._captures || 0) + 1; // 让客户端立刻看到扣费与产线变化
-    pushEvent(game, { t: 'line', oi, fid, lines: f.lines, x: round1(f.x), y: round1(f.y) });
+    pushEvent(game, {
+      t: 'line',
+      oi,
+      fid,
+      lines: b.lines,
+      type,
+      x: round1(b.x),
+      y: round1(b.y),
+    });
+    return true;
+  }
+  if (cmd === 'labLine') {
+    // 第 7 项：给研究所开拓研究产线 —— **点击即生效，没有二级选择项**
+    // （不需要选兵种、也不需要选分支，一条命令直接开工）。
+    // 第 8 项：每座研究所最多开拓 1 条。
+    const lid = Math.round(Number(d.lid));
+    if (!Number.isFinite(lid) || lid <= 0) return false;
+    const l = game.labs.find((x) => x.id === lid);
+    if (!l || l.owner !== oi) return false; // 只能给自家名下的研究所开产线
+    if ((l.lines || 0) >= LAB_MAX_LINES) return false; // 已开满
+    if (p.rp < LAB_LINE_COST) return false; // 科技点不足
+    p.rp -= LAB_LINE_COST;
+    l.lines = (l.lines || 0) + 1;
+    game._captures = (game._captures || 0) + 1; // 让客户端立刻看到扣费与产线变化
+    pushEvent(game, {
+      t: 'labline',
+      oi,
+      lid,
+      lines: l.lines,
+      x: round1(l.x),
+      y: round1(l.y),
+    });
     return true;
   }
   if (cmd === 'prodSpeed') {
@@ -3268,8 +4121,8 @@ function onPlayerQuit(game, playerId) {
       f.owner = -1;
       f.capProg = 0;
       f.capBy = -1;
-      f.prodProg = 0;
       f.rally = null;
+      resetSlots(f); // 出局 / 退出：产线一并重置成一条一级线
       f.lastHitBy = -1;
       f.hp = Math.round(FACTORY_HP * NEUTRAL_HP_RATIO); // 转为中立 → 只有 1/3 血量
     }
@@ -3412,8 +4265,14 @@ module.exports = {
     updateResearch,
     researchRate,
     labCountOf,
+    labRpOf,
+    labRpTotalOf,
+    updateHqDefense,
     prodIntervalMs,
     promoteUnit,
+    makeSlot,
+    syncSlots,
+    resetSlots,
     laserMul,
     laserZap,
     terrainCell,
@@ -3432,11 +4291,21 @@ module.exports = {
     damageUnit,
     generateTerrainGrid,
     makeTerrain,
+    ensureOpenTerrain,
+    terrainAnchors,
+    wideMask,
+    wideRegions,
+    cellPassable,
+    ridgeBandsBetween,
+    isolationBands,
+    inIsolationBand,
+    buildNeutralFactories,
     clearTerrainAroundBuildings,
     terrainToData,
     consts: {
       WORLD_W,
       WORLD_H,
+      GRID, // 格子基准：1 格 = GRID 像素（data.js 里所有长度都是格）
       FACTORY_R,
       CAPTURE_R,
       CAPTURE_RATE,
@@ -3456,8 +4325,11 @@ module.exports = {
       EVOLVE_RP_COST,
       COUNTDOWN_MS,
       TYPE_LIST,
-      STATS,
-      NEUTRAL_FACTORIES,
+      START_ROSTER,
+      STATS: STATS_PX, // 像素版（range / r / splash 已由格换算）
+      // 注意：NEUTRAL_FACTORIES 是运行时由 createGameState 按人数动态生成的（见 buildNeutralFactories），
+      // 这里用 getter 透传「当前值」，否则导出时只会抓到模块加载时的空数组 []。
+      get NEUTRAL_FACTORIES() { return NEUTRAL_FACTORIES; },
       LABS,
       COLORS,
       TERR_COLS,
@@ -3465,27 +4337,38 @@ module.exports = {
       TERR_CELL,
       TT_PLAIN,
       TT_MOUNTAIN,
-      TT_SWAMP,
-      TT_WATER,
+      TT_WATER, // 沼泽（3）已移除，不再生成
       LOS_STEP,
-      SWAMP_SLOW,
       WATER_TOP,
-      SWAMP_TOP,
       RIDGE_COUNT,
       LASER_WINDUP_MS,
       LASER_RAMP_MS,
       LASER_MAX_MUL,
       FLAME_R,
-      FLAME_PULSE_MS,
       FIRE_TIERS,
       FIRE_MAX,
       BULLET_SPLASH,
       ATTACK_SLACK,
       FAC_LINE_COST,
       FAC_MAX_LINES,
+      FAC_LINE_EVOLVE_COST,
+      HQ_PROD_TYPE,
       PROD_SPEED_COST,
       PROD_SPEED_MAX,
       PROD_SPEED_STEP,
+      // 第 1 项：统一升级价
+      UPGRADE_RP_COST,
+      // 第 6 项：总部防卫
+      HQ_ATK_RANGE,
+      HQ_ATK_CD,
+      HQ_ATK_DMG,
+      HQ_ATK_WINDUP_MS,
+      // 第 7/8 项：研究所研究产线
+      LAB_LINE_COST,
+      LAB_MAX_LINES,
+      LAB_LINE_RP_MUL,
+      RIDGE_COUNT,
+      HQ_MIN_RIDGES,
     },
   },
 };

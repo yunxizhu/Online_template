@@ -60,6 +60,7 @@
   <div class="legend">
     普通弹丸 = 归属色墨晕（底）+ 沿弹道拉长的墨滴（上）+ 身后三级收细的拖笔；
     炮击弹 = 粗墨块 + 长拖尾 + 虚线影；燃烧弹 = 朱砂火星 + 飘忽火尾；近战 = 一道沿真实攻击方向的短挥痕。
+    此处刻意只喂「弹种」，让客户端退回通用款（每个兵种各自的款式与随阶数放大见**五·五**）；
     同一弹种换一个个体种子，轮廓就该明显不重样。
   </div>
   <div id="bullets" style="margin-top:14px"></div>
@@ -102,6 +103,17 @@
     火场本体由快照持续下发（火焰一停，几秒内跟着熄灭），这里只核对「刚点着」的爆发感与淡出节奏。
   </div>
   <div id="flame" style="margin-top:14px"></div>
+
+  <hr class="rule">
+
+  <h2>五·五、每个兵种一套弹型，进化后整体放大</h2>
+  <div class="legend">
+    服务端每发子弹都带上「谁打的」（兵种 + 阶数，快照第 10/11 列），客户端据此分款式：
+    <b>锐士</b>＝短而沉的一枚墨刃、<b>盾卫</b>＝盾缘拍出去的扇面弧、<b>游侠</b>＝又细又长的墨矢、
+    <b>轰击</b>＝拖着黑烟的粗重墨弹（抛射时抬到半空）。
+    同一套形状随阶数整体放大（一 / 二 / 三级 ≈ 1 / 1.38 / 1.76 倍），下面的读数就是这么来的。
+  </div>
+  <div id="perType" style="margin-top:14px"></div>
 
   <hr class="rule">
 
@@ -464,6 +476,52 @@
           }
           var mt = document.createElement('td');
           mt.innerHTML = metricLine(spread);
+          row.appendChild(mt);
+          tb.appendChild(row);
+        }
+        tbl.appendChild(tb);
+        host.appendChild(tbl);
+      })();
+
+      /* ================= 五·五、兵种 × 阶数 ================= */
+      (function () {
+        var host = document.getElementById('perType');
+        var TYPES = [
+          ['warrior', '锐士', 'bullet', '短而沉的墨刃'],
+          ['shield', '盾卫', 'melee', '盾缘扇面弧'],
+          ['ranger', '游侠', 'bullet', '细长墨矢'],
+          ['burst', '轰击', 'shell', '粗重墨弹'],
+        ];
+        var tbl = document.createElement('table');
+        var thead = document.createElement('thead');
+        var tr = document.createElement('tr');
+        tr.appendChild(document.createElement('th'));
+        for (var t = 1; t <= 3; t++) {
+          var th = document.createElement('th');
+          th.textContent = t + ' 级';
+          tr.appendChild(th);
+        }
+        tr.appendChild((function () { var x = document.createElement('th'); x.textContent = '轮廓读数'; return x; })());
+        thead.appendChild(tr);
+        tbl.appendChild(thead);
+        var tb = document.createElement('tbody');
+        for (var i = 0; i < TYPES.length; i++) {
+          var row = document.createElement('tr');
+          row.appendChild(rowHead(TYPES[i][1], TYPES[i][3]));
+          var first = null;
+          var last = null;
+          for (var g = 1; g <= 3; g++) {
+            var td = document.createElement('td');
+            var cv = cell(TYPES[i][2], { a: 0, seed: 0.41, col: OWNER, type: TYPES[i][0], tier: g });
+            td.appendChild(cv);
+            if (!first) first = boundarySpread(cv);
+            last = boundarySpread(cv);
+            row.appendChild(td);
+          }
+          var mt = document.createElement('td');
+          mt.innerHTML = metricLine(last) +
+            '<div class="metric">最大边界 ' + first.max.toFixed(1) + ' → ' + last.max.toFixed(1) +
+            'px（一级 → 三级，' + (last.max / Math.max(0.1, first.max)).toFixed(2) + '×）</div>';
           row.appendChild(mt);
           tb.appendChild(row);
         }

@@ -44,7 +44,6 @@
         <div class="warfactory-legend warfactory-terrain-legend">
           <span class="warfactory-legend-title">地形</span>
           <span class="warfactory-legend-item"><i class="terr-swatch terr-water"></i><b>水域</b><em>不可通行</em></span>
-          <span class="warfactory-legend-item"><i class="terr-swatch terr-swamp"></i><b>沼泽</b><em>可通行，减速 50%</em></span>
           <span class="warfactory-legend-item"><i class="terr-swatch terr-mountain"></i><b>山地</b><em>不可通行，且有高度：挡住视线与弹道，山两侧互相看不见、打不到</em></span>
           <span class="warfactory-legend-item"><i class="terr-swatch terr-plain"></i><b>平原</b><em>一览无余</em></span>
         </div>
@@ -82,31 +81,50 @@
         </div>
         <div class="warfactory-legend warfactory-terrain-legend">
           <span class="warfactory-legend-title">工厂</span>
-          <span class="warfactory-legend-item"><b>固定兵种</b><em>每座工厂开局锁定一种兵，只产这一种</em></span>
-          <span class="warfactory-legend-item"><b>产线</b><em>默认 1 条；花 500 科技点在工厂面板里开辟新产线，最多 3 条并行生产</em></span>
-          <span class="warfactory-legend-item"><b>集结点</b><em>左键点选工厂 → 右键设集结点，此后新兵自动前往（Delete 清除）</em></span>
-          <span class="warfactory-legend-item"><b>进化</b><em>中/高级工厂的面板里有「进化」按钮，让本厂部队立刻进阶一阶</em></span>
+          <span class="warfactory-legend-item"><b>兵种自选</b><em>每条产线产什么兵由你定：开局第一条随机，之后再开辟产线时自己挑</em></span>
+          <span class="warfactory-legend-item"><b>产线</b><em>工厂与总部默认各 1 条；花 300 科技点在面板里点「开辟产线」（先选兵种），<b>最多再开 1 条</b>（合计 2 条）并行生产</em></span>
+          <span class="warfactory-legend-item"><b>已开拓标识</b><em>开拓过产线的建筑，模型<b>右下方</b>会多一枚明显简化的小模型（工厂＝屋顶折线加烟囱，研究所＝六边形环），一眼看出谁开过线</em></span>
+          <span class="warfactory-legend-item"><b>集结点</b><em>左键点选工厂 / 总部 → 右键设集结点，此后新兵自动前往（Delete 清除）；总部与工厂操作完全一致</em></span>
+          <span class="warfactory-legend-item"><b>侦察工厂</b><em>点敌方 / 中立工厂同样能看它的产线配置与产能（只读，没有按钮）</em></span>
+          <span class="warfactory-legend-item"><b>产线进化</b><em>中 / 高级工厂的每条产线都能单独进化一阶：进化后这条线<b>直接产出该阶单位</b>，而不是继续产初级再一支支手动进阶。每个兵种只有一条进化路线</em></span>
+          <span class="warfactory-legend-item"><b>易主重置</b><em>工厂被打下来后产线一并重置为「一条一级线」，高阶产线不会白送对手</em></span>
         </div>
         <div class="warfactory-legend warfactory-terrain-legend">
           <span class="warfactory-legend-title">科技</span>
           <span class="warfactory-legend-item"><b>科技点</b><em>左上角显示；只有占领研究所才产出——每座每 3 秒「一次性」+2 点（两座即每 3 秒一次 +4），HUD 进度条走满才跳，一座不占则为 0</em></span>
-          <span class="warfactory-legend-item"><b>进化</b><em>每 500 科技点可让一支部队进阶一阶（不再是经验）</em></span>
-          <span class="warfactory-legend-item"><b>生产加速</b><em>点选总部 → 花 1000 科技点点「加速生产」；每次在当前生产间隔上再减 1/15（复利），最多 20 级</em></span>
+          <span class="warfactory-legend-item"><b>统一 300</b><em>开辟产线 / 产线进化 / 生产加速<b>三样都是 300 科技点</b>，不再是过去的六百 / 一千</em></span>
+          <span class="warfactory-legend-item"><b>产线进化</b><em>每 300 科技点可让<b>一条产线</b>进化一阶（此后这条线一直产该阶单位）；总部产线不可进化</em></span>
+          <span class="warfactory-legend-item"><b>生产加速</b><em>点选总部 → 花 300 科技点点「加速生产」；每次在当前生产间隔上再减 1/15（复利），最多 20 级</em></span>
           <span class="warfactory-legend-item"><b>研究所</b><em>初始中立，与工厂一样有血量：打光即由「最后一击者」接管并满血</em></span>
-          <span class="warfactory-legend-item"><b>总部</b><em>每人一座、不可易主；被打光即总部陷落，本人出局</em></span>
+          <span class="warfactory-legend-item"><b>研究产线</b><em>占下研究所后，可在面板里花 200 科技点点「开拓研究产线」（点击即生效，<b>每所最多 1 条</b>）；开拓后该所每 3 秒的产出从 +2 提到 +3</em></span>
+          <span class="warfactory-legend-item"><b>总部防卫</b><em>总部自带一门炮：射程 200、每 0.5 秒一发、伤害 20；开火前有明显前摇（炮位聚能、目标环收紧、蓄能弧走满一圈才打）</em></span>
+          <span class="warfactory-legend-item"><b>总部</b><em>每人一座、不可易主；自带一条产线（默认产锐士、<b>不可进化</b>），被打光即总部陷落，本人出局</em></span>
         </div>
         <div class="warfactory-legend warfactory-terrain-legend">
           <span class="warfactory-legend-title">出击</span>
           <span class="warfactory-legend-item"><b>初始部队</b><em>开局没有工厂，只在总部拥有 6 种初级单位各 1 支</em></span>
-          <span class="warfactory-legend-item"><b>总部面板</b><em>左键点选自己的总部 → 右侧详情栏，可加速生产、也可用科技点让亲兵进阶</em></span>
+          <span class="warfactory-legend-item"><b>总部面板</b><em>左键点选自己的总部 → 右侧详情栏：看总部产线（默认锐士）、开辟新产线、加速生产</em></span>
         </div>
         <p class="warfactory-help" data-i18n="warfactory.help">
-          部队只打攻击范围内的敌人、不自动追击，但移动中照常开火 · 工厂与研究所有血量：打光即由「最后一击者」接管，易主后恢复满血，中立建筑只有 1/3 血 · 每 500 科技点进化一支部队 · 左键框选部队 · 右键移动 · F 选取镜头内部队 / F2 全选我方部队 · 选中工厂后右键设集结点 · 点工厂花 500 开路产线（最多 3 条）· 点总部花 1000 加速生产（最多 20 级）· WASD/方向键移动镜头 · 点击小地图跳转 · 总部被打爆即出局
+          部队只打攻击范围内的敌人、不自动追击，但移动中照常开火 · 工厂与研究所有血量：打光即由「最后一击者」接管，易主后恢复满血，中立建筑只有 1/3 血 · 每条产线产什么兵自己定：点工厂 / 总部花 300 开辟产线（先选兵种，最多合计 2 条）· 中高级工厂每条产线花 300 进化一阶（此后直接产该阶单位，每个兵种只有一条进化路线）· 总部默认产锐士且不可进化 · 左键框选部队 · 右键移动 · F 选取镜头内部队 / F2 全选我方部队 · 选中工厂 / 总部后右键设集结点 · 点总部花 300 加速生产（最多 20 级）· 点自家研究所花 200 开拓研究产线（产出 ×1.5）· WASD/方向键移动镜头 · 点击小地图跳转 · 总部被打爆即出局
         </p>
       </div>
     </div>
 
-    <!-- ============ 底部指挥栏：对局状态 ｜ 小地图 ｜ 单位粗览 ｜ 单位详情 ============ -->
+    <!-- ============ 第 9 项：胜利结算（任一方结束后弹出） ============ -->
+  <div class="wf-result" id="wf-result" role="dialog" aria-label="胜利结算" hidden>
+    <div class="wf-result-card">
+      <div class="wf-result-title" id="wfr-title">终 局</div>
+      <div class="wf-result-sub" id="wfr-sub">尘埃落定</div>
+      <div class="wf-result-rows" id="wfr-rows"></div>
+      <div class="wf-result-btns">
+        <button type="button" class="wf-result-btn" id="wfr-stay">留在战场</button>
+        <button type="button" class="wf-result-btn wf-result-btn-primary" id="wfr-exit">退出到大厅</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 底部指挥栏：对局状态 ｜ 小地图 ｜ 单位粗览 ｜ 单位详情 ============ -->
     <div class="warfactory-cmdbar">
       <!-- 对局状态（原来在地图上方那行，现在并进指挥栏顶沿，不占地图外的位置） -->
       <p id="game-status" class="game-status wcb-status">—</p>
@@ -165,17 +183,11 @@
             <div class="wfp-hp-text" id="wfp-hp-text">—</div>
 
             <div class="wfp-cols">
-              <!-- 左列：工厂看产能 / 总部看全厂提速 -->
+              <!-- 左列：产线清单（每条产线一行：兵种 / 阶数 + 各自的进化按钮）+ 全厂提速 -->
               <div class="wfp-col">
-                <!-- —— 工厂：产能（产线 / 进度 / 速率） —— -->
-                <div class="wfp-sec-title" id="wfp-prod-sec">产能</div>
-                <div class="wfp-unit" id="wfp-unit">
-                  <span class="wfp-glyph" id="wfp-glyph">兵</span>
-                  <div class="wfp-unit-main">
-                    <div class="wfp-unit-name" id="wfp-unit-name">—</div>
-                    <div class="wfp-unit-desc" id="wfp-unit-desc">—</div>
-                  </div>
-                </div>
+                <div class="wfp-sec-title" id="wfp-prod-sec">产能 · 产线</div>
+                <!-- 每条产线产什么、几阶、要不要进化，都在这几行里（总部产线不可进化，故无按钮） -->
+                <div class="wfp-lines" id="wfp-line-list"></div>
                 <div class="wfp-kv" id="wfp-lines">产线 1 / 3</div>
                 <div class="wfp-bar wfp-bar-prod"><i id="wfp-prod-fill"></i></div>
                 <div class="wfp-rate" id="wfp-rate">—</div>
@@ -186,20 +198,25 @@
                   <div class="wfp-sec-title" id="wfp-spd-sec">生产加速（全厂提速）</div>
                   <div class="wfp-kv" id="wfp-spd-lv">0 / 20 级</div>
                   <div class="wfp-rate" id="wfp-spd-rate">—</div>
-                  <button type="button" class="wfp-evolve wfp-evolve-block" id="wfp-speed">加速生产（1000）</button>
+                  <button type="button" class="wfp-evolve wfp-evolve-block" id="wfp-speed">加速生产（300）</button>
                 </div>
               </div>
 
-              <!-- 右列：所有能点的按钮都聚在这里 -->
+              <!-- 右列：开辟产线（先选兵种）+ 规则说明 -->
               <div class="wfp-col">
-                <button type="button" class="wfp-evolve wfp-evolve-block" id="wfp-line">开辟产线（500）</button>
-
-                <!-- —— 进化（工厂 / 总部都有） —— -->
-                <div class="wfp-sec-title" id="wfp-evo-sec">进化</div>
-                <button type="button" class="wfp-evolve wfp-evolve-block" id="wfp-evolve" hidden>进化</button>
+                <button type="button" class="wfp-evolve wfp-evolve-block" id="wfp-line">开辟产线（300）</button>
+                <!-- 第 7 项：研究所「开拓研究产线」—— 点击即生效，没有二级选择项 -->
+                <button type="button" class="wfp-evolve wfp-evolve-block" id="wfp-labline" hidden>开拓研究产线（200）</button>
+                <div class="wfp-sec-title">说明</div>
                 <div class="wfp-note" id="wfp-note"></div>
               </div>
             </div>
+
+            <!--
+              选择器：开辟产线时选「产什么兵」。
+              由脚本插到触发它的那一行 / 那个按钮正下方，保证一定在视野里。
+            -->
+            <div class="wfp-picker" id="wfp-picker" hidden></div>
           </aside>
 
           <!-- 选中部队后：单选看详细属性，多选看编制汇总 -->

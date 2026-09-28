@@ -228,7 +228,15 @@ function el(id) {
       for (const fn of handlers[type] || []) fn(evt);
     },
     appendChild(c) {
+      c.parentNode = node;
       node.children.push(c);
+      return c;
+    },
+    insertBefore(c, ref) {
+      c.parentNode = node;
+      const i = ref ? node.children.indexOf(ref) : -1;
+      if (i >= 0) node.children.splice(i, 0, c);
+      else node.children.push(c);
       return c;
     },
     querySelector(sel) {
@@ -332,11 +340,17 @@ const Ui = sandbox.window.WarFactoryUi;
 
 /** 从客户端源码里读 UNIT_VIS_SCALE 常量（全局视觉缩放） */
 const UNIT_VIS_SCALE = Number((/const UNIT_VIS_SCALE = ([\d.]+);/.exec(src) || [0, 0])[1]) || 1;
+/** 视觉格子对齐：一级兵体量目标 = UNIT_SIZE_CELLS 格 × 每格像素（与 ui.js 保持一致） */
+const UNIT_SIZE_CELLS = Number((/const UNIT_SIZE_CELLS = (\d+);/.exec(src) || [0, 2])[1]) || 2;
+const GRID_CELL_FALLBACK = Number((/const GRID_CELL_FALLBACK = (\d+);/.exec(src) || [0, 10])[1]) || 10;
+const UNIT_BODY_TARGET = Number((/const UNIT_BODY_TARGET = (\d+);/.exec(src) || [0, 15])[1]) || 15;
 /** 兵种基础体型系数：叠在 UNIT_VIS_SCALE 之上，锐士靠它补足体量 */
 function bodyScaleOf(type) {
   const body = (/const UNIT_BODY_SCALE = \{([^}]*)\}/.exec(src) || [0, ''])[1];
   const m = new RegExp(type + ':\\s*([\\d.]+)').exec(body);
-  return m ? Number(m[1]) : 1;
+  const base = m ? Number(m[1]) : 1;
+  // ui.js 里 bodyScaleOf 会把「15 口径」的表值放大到「2 格」目标，这里必须同步
+  return base * ((GRID_CELL_FALLBACK * UNIT_SIZE_CELLS) / UNIT_BODY_TARGET);
 }
 
 /** 小地图逻辑尺寸（从源码读，改尺寸时测试自动跟着走） */
@@ -449,18 +463,23 @@ g.players[0].rp = 620;
 function clickBuildingPoint(b, radius) {
   let best = { x: b.x, y: b.y };
   let bestD = -1;
-  for (let i = 0; i < 12; i++) {
-    const a = (i / 12) * Math.PI * 2;
-    const px = b.x + Math.cos(a) * radius;
-    const py = b.y + Math.sin(a) * radius;
-    let d = Infinity;
-    for (const u of g.units) {
-      if (u.dead) continue;
-      d = Math.min(d, Math.hypot(u.x - px, u.y - py));
-    }
-    if (d > bestD) {
-      bestD = d;
-      best = { x: px, y: py };
+  // 半径也要参与搜索：总部亲兵是「围成一圈」站着的，只在固定半径上绕一圈取点，
+  // 最优点也可能刚好贴在某个兵的选择半径边上（总部出生点随机 → 时好时坏）。
+  // 把圆心一起放进候选集后，最优点至少离每个亲兵一整圈的距离，断言不再抖。
+  for (const r of [0, radius * 0.5, radius]) {
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2;
+      const px = b.x + Math.cos(a) * r;
+      const py = b.y + Math.sin(a) * r;
+      let d = Infinity;
+      for (const u of g.units) {
+        if (u.dead) continue;
+        d = Math.min(d, Math.hypot(u.x - px, u.y - py));
+      }
+      if (d > bestD) {
+        bestD = d;
+        best = { x: px, y: py };
+      }
     }
   }
   return best;
@@ -492,7 +511,10 @@ ok(
   texts().includes(`每 ${rpPeriodSec} 秒 +${perPeriodOf(1)} · 研究所 ×1`),
   `显示每 ${rpPeriodSec} 秒产出与研究所数（每 ${rpPeriodSec} 秒 +${perPeriodOf(1)}）`
 );
-ok(log.texts.includes('可进化 ×1'), '≥500 时显示可进化次数');
+ok(
+  log.texts.includes('可进化 ×' + Math.floor(620 / Cc.FAC_LINE_EVOLVE_COST)),
+  `攒够 ${Cc.FAC_LINE_EVOLVE_COST} 时显示可进化次数`
+);
 
 // 离散结算：点数按周期一次性跳，HUD 显示「下次 +N · 剩余秒数」与结算进度条
 {
@@ -507,9 +529,11 @@ ok(log.texts.includes('可进化 ×1'), '≥500 时显示可进化次数');
   };
   setAcc(P * 0.5); // 进度走到一半
   ok(texts().includes('620'), '进度未满一个周期时点数不变（离散结算，仍为 620）');
+  // 剩余秒数按服务端周期推导（rpPeriodMs 改成 1500 后这里不会误报）
+  const leftHalfSec = ((P - P * 0.5) / 1000).toFixed(1);
   ok(
-    log.texts.some((t) => new RegExp('^下次 \\+' + perPeriodOf(1) + ' · 1\\.5s$').test(t)),
-    `显示距下次结算的倒计时（下次 +${perPeriodOf(1)} · 1.5s）`
+    log.texts.some((t) => new RegExp('^下次 \\+' + perPeriodOf(1) + ' · ' + leftHalfSec.replace('.', '\\.') + 's$').test(t)),
+    `显示距下次结算的倒计时（下次 +${perPeriodOf(1)} · ${leftHalfSec}s）`
   );
   const half = barWidths();
   setAcc(0);
@@ -522,10 +546,15 @@ ok(log.texts.includes('可进化 ×1'), '≥500 时显示可进化次数');
   Ui.applySnapshot(wf.snapshot(g));
   pump();
 }
-g.players[0].rp = 380;
+// 第 1 项：升级价统一为 300 → 取一个「不足一次」的点数（< FAC_LINE_EVOLVE_COST）看进度
+const rpPartial = Math.max(1, Math.floor(Cc.FAC_LINE_EVOLVE_COST * 0.6));
+g.players[0].rp = rpPartial;
 Ui.applySnapshot(wf.snapshot(g));
 pump();
-ok(texts().includes('380 / 500'), '不足 500 时显示进度 x/500');
+ok(
+  texts().includes(rpPartial + ' / ' + Cc.FAC_LINE_EVOLVE_COST),
+  `不足 ${Cc.FAC_LINE_EVOLVE_COST} 时显示进度 ${rpPartial}/${Cc.FAC_LINE_EVOLVE_COST}`
+);
 
 console.log('\n[2b] 观战视角的科技点 HUD');
 {
@@ -582,47 +611,96 @@ const hq0p = clickBuildingPoint(hq0, 30);
 ok(clickWorld(hq0p.x, hq0p.y), '点击总部');
 const panel = el('warfactory-facpanel');
 const title = el('warfactory-facpanel #wfp-title');
-const evo = el('warfactory-facpanel #wfp-evolve');
+const UNIT_CN = { warrior: '锐士', shield: '盾卫', ranger: '游侠', burst: '轰击', burn: '燎原', laser: '激光兵' };
+/** DOM 桩没有 querySelectorAll：按 class 递归找后代（行 / 行内文字 / 行内按钮 / 选择器选项） */
+const kidsByClass = (node, cls) => {
+  const out = [];
+  const visit = (n) => {
+    if (!n) return;
+    if (String(n.className || '').split(/\s+/).includes(cls)) out.push(n);
+    (n.children || []).forEach(visit);
+  };
+  visit(node);
+  return out;
+};
+/** 产线清单里所有「进化」按钮（总部 / 初级厂都不会有） */
+const lineEvoBtns = () => kidsByClass(el('warfactory-facpanel #wfp-line-list'), 'wfp-lbtn');
+/** 产线清单里每行的文字（序号·兵种 阶数 分支） */
+const lineRowTexts = () =>
+  kidsByClass(el('warfactory-facpanel #wfp-line-list'), 'wfp-lname').map((n) => n.textContent);
+/** 选择器里的选项按钮 */
+const pickerItems = () => kidsByClass(el('warfactory-facpanel #wfp-picker'), 'wfp-pick');
 ok(panel.hidden === false, '面板弹出');
 ok(title.textContent === '总部', '标题为「总部」');
-ok(evo.hidden === false && !evo.disabled, '总部可进化且按钮可用（' + evo.textContent + '）');
-ok(evo.textContent.includes('500'), '按钮显示 500 科技点');
-ok(el('warfactory-facpanel #wfp-prod-sec').hidden === true, '总部隐藏「正在生产」段');
+ok(el('warfactory-facpanel #wfp-prod-sec').hidden === false, '总部也出兵 → 显示「产能 · 产线」段');
+ok(
+  lineRowTexts().length === 1 && lineRowTexts()[0].includes('锐士'),
+  '总部产线清单显示默认产锐士（' + lineRowTexts().join(' / ') + '）'
+);
+ok(lineEvoBtns().length === 0, '总部产线不可进化 → 没有进化按钮');
 
-console.log('\n[5] 总部进化指令');
+console.log('\n[5] 总部开辟产线：先选兵种');
 sent.length = 0;
-evo.dispatch('click', { stopPropagation() {} });
-ok(sent.some((d) => d.cmd === 'facEvolve' && d.fid === 0), '发出 facEvolve(fid=0)：' + JSON.stringify(sent[0]));
+{
+  const lineBtn = el('warfactory-facpanel #wfp-line');
+  ok(lineBtn.hidden === false && !lineBtn.disabled, '总部面板可开辟产线（' + lineBtn.textContent + '）');
+  lineBtn.dispatch('click', { stopPropagation() {} });
+  const picker = el('warfactory-facpanel #wfp-picker');
+  ok(picker.hidden === false, '点「开辟产线」弹出兵种选择器');
+  ok(pickerItems().length === Cc.TYPE_LIST.length, '选择器列出全部 ' + Cc.TYPE_LIST.length + ' 个兵种');
+  const want = Cc.TYPE_LIST[2];
+  pickerItems()
+    .find((b) => b.textContent.indexOf(UNIT_CN[want]) === 0)
+    .dispatch('click', { stopPropagation() {} });
+  ok(
+    sent.some((d) => d.cmd === 'facLine' && d.fid === 0 && d.type === want),
+    '选定兵种后发出 facLine(fid=0, type)：' + JSON.stringify(sent[0])
+  );
+  ok(picker.hidden === true, '选完自动收起选择器');
+}
 
 console.log('\n[6] 点选自家工厂 → 工厂面板');
 const fac0 = g.factories[0];
 ok(clickWorld(fac0.x, fac0.y), '点击工厂');
 ok(title.textContent === '1 号工厂', '标题为工厂');
 ok(el('warfactory-facpanel #wfp-prod-sec').hidden === false, '显示「正在生产」');
-ok(el('warfactory-facpanel #wfp-unit-name').textContent.length > 0, '显示本厂兵种：' + el('warfactory-facpanel #wfp-unit-name').textContent);
+ok(
+  lineRowTexts().length >= 1 && lineRowTexts()[0].length > 0,
+  '产线清单显示每条线产什么兵：' + lineRowTexts().join(' / ')
+);
 ok(el('warfactory-facpanel #wfp-rally').hidden === false, '显示集结点状态');
 
-console.log('\n[7] 进化按钮三态');
+console.log('\n[7] 产线进化按钮三态');
 g.factories[0].level = 1;
 Ui.render(wf.publicGameState(g), net, view);
 Ui.applySnapshot(wf.snapshot(g));
 pump();
 clickWorld(fac0.x, fac0.y);
-ok(evo.hidden === true, '初级工厂不显示进化按钮');
+ok(lineEvoBtns().length === 0, '初级工厂的产线不可进化 → 没有进化按钮');
 g.factories[0].level = 2;
-g.units[0].homeFac = fac0.id;
-g.units[0].maxTier = 2; // 伪造一支本厂可进阶部队
 g.players[0].rp = 10;
 Ui.render(wf.publicGameState(g), net, view);
 Ui.applySnapshot(wf.snapshot(g));
 pump();
 clickWorld(fac0.x, fac0.y);
-ok(evo.hidden === false, '中级工厂显示进化按钮');
-ok(evo.disabled === true && evo.textContent.includes('科技点不足'), '点数不足时禁用（' + evo.textContent + '）');
-g.players[0].rp = 900;
+ok(lineEvoBtns().length === 1, '中级工厂每条产线各挂一个进化按钮');
+ok(
+  lineEvoBtns()[0].disabled === true && lineEvoBtns()[0].textContent.includes('科技点不足'),
+  '点数不足时禁用（' + lineEvoBtns()[0].textContent + '）'
+);
+g.players[0].rp = Cc.FAC_LINE_EVOLVE_COST * 2;
 Ui.applySnapshot(wf.snapshot(g));
 pump();
-ok(!evo.disabled, '点数充足后恢复可用（' + evo.textContent + '）');
+ok(!lineEvoBtns()[0].disabled, '点数充足后恢复可用（' + lineEvoBtns()[0].textContent + '）');
+
+console.log('\n[7b] 产线进化：单一方向，点进化直接发指令（不再选分支）');
+sent.length = 0;
+lineEvoBtns()[0].dispatch('click', { stopPropagation() {} });
+ok(sent.length === 1, '点进化只发一条指令（无分支选择中间态）：' + sent.length);
+ok(
+  sent.some((d) => d.cmd === 'facEvolve' && d.fid === fac0.id && d.li === 0 && !d.branch),
+  '直接发出 facEvolve(fid, li)，不再带 branch：' + JSON.stringify(sent[0])
+);
 
 console.log('\n[8] 空白处点击收起面板');
 // 总部出生点随机之后，写死的画布坐标可能正好压在总部/部队上（那就会被选中而不是收起面板），
@@ -715,8 +793,30 @@ console.log('\n[10] 激光兵光束（前摇 → 蓄能满）');
   gl.phase = 'playing';
   gl.phaseEndsAt = 0;
   gl.units.length = 0;
-  const L = wf.__test.spawnUnit(gl, { id: 900, owner: 0, level: 2 }, 'laser', 700, 500);
-  const E = wf.__test.spawnUnit(gl, { id: 901, owner: 1, level: 2 }, 'shield', 790, 500);
+  // 地图含随机成片山脉：硬编码坐标可能落在山里或被山挡住视线 → 索敌直接失败。
+  // 先扫一块「两处都可站且互相通视」的平地再摆用例。
+  const trl = gl.terrain;
+  const freeAtL = (x, y) => {
+    const cc = Math.floor(x / trl.cell);
+    const rr = Math.floor(y / trl.cell);
+    return rr >= 0 && cc >= 0 && rr < trl.rows && cc < trl.cols && trl.grid[rr][cc] === 0;
+  };
+  const blocksL = [...gl.factories, ...gl.labs, ...gl.hqs].map((b) => [b.x, b.y]);
+  let spL = null;
+  for (let rr = 3; rr < trl.rows - 3 && !spL; rr++) {
+    for (let cc = 3; cc < trl.cols - 5 && !spL; cc++) {
+      const ax = (cc + 0.5) * trl.cell;
+      const ay = (rr + 0.5) * trl.cell;
+      const bx = ax + 90;
+      if (!freeAtL(bx, ay)) continue;
+      if (blocksL.some((b) => Math.hypot(b[0] - ax, b[1] - ay) < 400)) continue;
+      if (wf.__test.losBlocked(gl, ax, ay, bx, ay)) continue;
+      spL = { ax, ay, bx };
+    }
+  }
+  ok(Boolean(spL), '找得到一块互相通视的平地摆激光用例');
+  const L = wf.__test.spawnUnit(gl, { id: 900, owner: 0, level: 2 }, 'laser', spL.ax, spL.ay);
+  const E = wf.__test.spawnUnit(gl, { id: 901, owner: 1, level: 2 }, 'shield', spL.bx, spL.ay);
   for (const u of [L, E]) {
     u.moveX = null;
     u.moveY = null;
@@ -753,9 +853,10 @@ console.log('\n[10] 激光兵光束（前摇 → 蓄能满）');
   log.texts.length = 0;
   pump();
   const maxW = log.strokes.length ? Math.max(...log.strokes) : 0;
-  ok(L.lockMul >= 5 - 0.01, `锁定倍率已封顶（${L.lockMul.toFixed(2)}）`);
+  const MAX_MUL = wf.__test.consts.LASER_MAX_MUL;
+  ok(L.lockMul >= MAX_MUL - 0.01, `锁定倍率已封顶（${L.lockMul.toFixed(2)} / 上限 ${MAX_MUL}）`);
   ok(maxW >= 8, `绘制粗光束（最粗 ${maxW.toFixed(1)}px，随倍率增强）`);
-  ok(texts().includes('×5.0'), '单位上方显示倍率读数 ×5.0');
+  ok(texts().includes('×' + MAX_MUL.toFixed(1)), `单位上方显示倍率读数 ×${MAX_MUL.toFixed(1)}`);
 }
 
 console.log('\n[11] 单位面板（单选看属性 / 多选看编成）');
@@ -795,7 +896,12 @@ console.log('\n[11] 单位面板（单选看属性 / 多选看编成）');
   ok(/射　程/.test(t1) && /攻　速/.test(t1) && /移　速/.test(t1), '显示射程 / 攻速 / 移速');
   ok(t1.includes('总部亲兵'), '显示部队来源（总部亲兵）');
   ok(/进　化/.test(t1) && t1.includes('科技点'), '显示进化上限与科技点消耗');
-  ok(up('#wup-hp-text').textContent === '100 / 100', '显示血量 100 / 100（初级锐士）');
+  // 血量从 data.js 动态取（手改 units.warrior.hp 时断言自动跟着走，不要写死数字）
+  const warriorHp = wf.__test.consts.STATS.warrior.hp;
+  ok(
+    up('#wup-hp-text').textContent === warriorHp + ' / ' + warriorHp,
+    `显示血量 ${warriorHp} / ${warriorHp}（初级锐士）`
+  );
   ok(up('#wup-stats').textContent.split('\n').length >= 7, '属性表至少 7 行（' + up('#wup-stats').textContent.split('\n').length + '）');
 
   // 点选容差应随单位体型同步放大：先点空白清空选择，再点单位外侧（略小于 24×缩放）仍应选中
@@ -808,22 +914,25 @@ console.log('\n[11] 单位面板（单选看属性 / 多选看编成）');
     `点选容差随体型放大（外侧 ${clickR.toFixed(1)}px 仍能选中）`
   );
 
-  // 攻击/血量的分级与分支：中级守势盾卫 = 基础血 × 中级系数 × 守势 1.25
+  // 攻击/血量的分级：中级盾卫直接从独立数据表 evolved.shield[2] 取，不再叠加分支修正
   const tank = wf.__test.spawnUnit(gp, { id: 0, owner: 0, level: 3 }, 'shield', 640, 560);
   tank.moveX = null;
   tank.moveY = null;
-  tank.branch = 'B'; // 先定分支，再走服务端正式进阶接口（进阶会重算血量/伤害）
   wf.__test.promoteUnit(gp, tank);
   Ui.applySnapshot(wf.snapshot(gp));
   pump();
   clickWorld(tank.x, tank.y);
   const gc = wf.publicGameState(gp).consts;
-  const shieldMax = Math.round(gc.stats.shield.hp * gc.tierHp[1] * 1.25);
+  const shieldMax = Math.round(gc.evolved.shield[2].hp);
   ok(
     up('#wup-hp-text').textContent === shieldMax + ' / ' + shieldMax,
-    `中级守势盾卫血量按公式推算（${up('#wup-hp-text').textContent}）`
+    `中级盾卫血量取独立数据表 evolved.shield[2]（${up('#wup-hp-text').textContent}）`
   );
-  ok(up('#wup-name').textContent.includes('守势'), '显示分支（守势）');
+  ok(
+    !up('#wup-name').textContent.includes('守势') &&
+      !up('#wup-name').textContent.includes('攻势'),
+    '单位名称不再显示分支（已改为单一进化方向）'
+  );
 
   // 多选：两支 → 编成汇总
   dragWorld(560, 440, 820, 620);
@@ -969,7 +1078,6 @@ console.log('\n[14] 阶数越高越繁复（内部花纹 + 外部挂件），锐
     }
     const u = wf.__test.spawnUnit(g, { id: 0, owner: 0, level: 3 }, type, spot.x, spot.y);
     u.tier = tier;
-    u.branch = tier > 1 ? 'A' : ''; // 统一看攻势分支，让各阶可比
     u.angle = 0; // 角度归零，量出来的包围盒才是正交的
     Ui.render(wf.publicGameState(g), net, view);
     Ui.applySnapshot(wf.snapshot(g));
@@ -980,8 +1088,11 @@ console.log('\n[14] 阶数越高越繁复（内部花纹 + 外部挂件），锐
     pump(); // 测量帧
 
     const cam = camFromLastFrame();
-    // 本体那一趟多了 scale(unitScale) 这一层，用等效缩放把它从地形 / 建筑 / 归属底色盘里筛出来
-    const bodyScale = cam ? cam.k * visScale * bodyScaleOf(type) : 0;
+    // 本体那一趟多了 scale(unitScale) 这一层，用等效缩放把它从地形 / 建筑 / 归属底色盘里筛出来。
+    // 缩放 = 全局 × 兵种归一 × 阶数倍率（三级 = 一级的 2 倍），三者都要乘进来才筛得准。
+    const bodyScale = cam
+      ? cam.k * visScale * bodyScaleOf(type) * Ui.scales.tier(type, tier)
+      : 0;
     const isBody = (m) => bodyScale > 0 && Math.abs(m - bodyScale) <= bodyScale * 1e-6;
     const pts = cam
       ? log.points.filter(([px, py, pm]) => {
@@ -1007,10 +1118,12 @@ console.log('\n[14] 阶数越高越繁复（内部花纹 + 外部挂件），锐
     };
   };
 
+  const BOX = {};
   for (const type of TYPES) {
     const s1 = shot(type, 1);
     const s2 = shot(type, 2);
     const s3 = shot(type, 3);
+    BOX[type] = { s1, s3 };
     ok(
       s2.strokes > s1.strokes && s3.strokes > s2.strokes,
       `${LABEL[type]}：阶数越高装饰越多（描边 初 ${s1.strokes} < 中 ${s2.strokes} < 高 ${s3.strokes}）`
@@ -1018,6 +1131,40 @@ console.log('\n[14] 阶数越高越繁复（内部花纹 + 外部挂件），锐
     ok(
       s3.box && s1.box && s3.box.w >= s1.box.w - 0.01 && s3.box.h >= s1.box.h - 0.01,
       `${LABEL[type]}：高级体型不小于初级（${s1.box ? `${s1.box.w.toFixed(1)}×${s1.box.h.toFixed(1)}` : '?'} → ${s3.box ? `${s3.box.w.toFixed(1)}×${s3.box.h.toFixed(1)}` : '?'}）`
+    );
+  }
+
+  // ---- 第 10 项：三级兵体型 = 一级兵的 2 倍 ----
+  // 量的是「本体半长」：span[tier] × tierScale = TIER_SIZE_MUL[tier] × span[1]。
+  // 不量包围盒 —— 三级还多出花纹 / 挂件 / 饰带这些「额外探出来」的装饰（一级完全没有），
+  // 包围盒必然比 2 倍更大，那是「外观更先进」应有的部分，不是体型。
+  for (const type of TYPES) {
+    const sp1 = Ui.scales.span(type, 1)[0];
+    const sp3 = Ui.scales.span(type, 3)[0];
+    const half1 = sp1 * Ui.scales.tier(type, 1);
+    const half3 = sp3 * Ui.scales.tier(type, 3);
+    ok(
+      Math.abs(half3 / half1 - 2) < 1e-9,
+      `${LABEL[type]}：三级本体半长 = 一级的 2 倍（${half1.toFixed(1)} → ${half3.toFixed(1)}，×${(half3 / half1).toFixed(3)}）`
+    );
+    // 连同装饰一起看：三级至少要明显大一圈（≥1.8 倍）
+    const b1 = BOX[type].s1.box;
+    const b3 = BOX[type].s3.box;
+    ok(
+      b3.w / b1.w >= 1.8 && b3.h / b1.h >= 1.8,
+      `${LABEL[type]}：三级连装饰明显大一圈（${b1.w.toFixed(1)}×${b1.h.toFixed(1)} → ${b3.w.toFixed(1)}×${b3.h.toFixed(1)}）`
+    );
+  }
+  // ---- 第 10 项：所有一级兵体型基本一致（按「体量 = 半长×半宽的几何平均」归一后比对）----
+  {
+    const bulk = TYPES.map((t) => {
+      const s = Ui.scales.span(t, 1);
+      return Math.sqrt(s[0] * s[1]) * bodyScaleOf(t);
+    });
+    const spread = Math.max(...bulk) / Math.min(...bulk);
+    ok(
+      spread <= 1.2,
+      `一级兵体型基本一致（体量 ${Math.min(...bulk).toFixed(2)}~${Math.max(...bulk).toFixed(2)}，极差 ×${spread.toFixed(3)}）`
     );
   }
 
@@ -1216,22 +1363,33 @@ console.log('\n[16] F2 全选 · 小地图放大 · 工厂产能升级 · 总部
     const lineText = el('warfactory-facpanel #wfp-lines');
     const rateText = el('warfactory-facpanel #wfp-rate');
     const spdBox = el('warfactory-facpanel #wfp-spd');
-    ok(lineText.textContent === '产线 1 / 3', '显示产线数（' + lineText.textContent + '）');
+    // 第 8 项：单厂上限 = 默认 1 条 + 最多再开 1 条（facMaxLines = 2）
+    ok(lineText.textContent === '产线 1 / 2', '显示产线数（' + lineText.textContent + '）');
     ok(/秒 \/ 支/.test(rateText.textContent), '显示产出速率（' + rateText.textContent + '）');
     ok(
       rateText.textContent.includes('20.0 秒 / 支') && rateText.textContent.includes('1 条并行'),
       '单条产线时速率 = 基础间隔（20.0 秒 / 支）'
     );
     ok(lineBtn.hidden === false && !lineBtn.disabled, '开辟产线按钮可用（' + lineBtn.textContent + '）');
-    ok(lineBtn.textContent.includes('500'), '按钮标注 500 科技点');
+    ok(lineBtn.textContent.includes(String(Cc.FAC_LINE_COST)), `按钮标注 ${Cc.FAC_LINE_COST} 科技点`);
     ok(spdBox.hidden === true, '工厂面板不显示总部专用的生产加速段');
 
+    // 点「开辟产线」→ 先弹兵种选择器，选完才发指令
     sent.length = 0;
     lineBtn.dispatch('click', { stopPropagation() {} });
-    ok(
-      sent.some((d) => d.cmd === 'facLine' && d.fid === fac0.id),
-      '点按钮发出 facLine 指令（' + JSON.stringify(sent[0]) + '）'
-    );
+    {
+      const picker = el('warfactory-facpanel #wfp-picker');
+      ok(picker.hidden === false && sent.length === 0, '先弹兵种选择器，此时还没发指令');
+      ok(pickerItems().length === Cc.TYPE_LIST.length, '列出全部 ' + Cc.TYPE_LIST.length + ' 个兵种');
+      const want = Cc.TYPE_LIST[1];
+      pickerItems()
+        .find((b) => b.textContent.indexOf(UNIT_CN[want]) === 0)
+        .dispatch('click', { stopPropagation() {} });
+      ok(
+        sent.some((d) => d.cmd === 'facLine' && d.fid === fac0.id && d.type === want),
+        '选完兵种才发 facLine（' + JSON.stringify(sent[0]) + '）'
+      );
+    }
 
     // 科技点不足 → 禁用
     g.players[0].rp = 100;
@@ -1241,14 +1399,17 @@ console.log('\n[16] F2 全选 · 小地图放大 · 工厂产能升级 · 总部
 
     // 产线满 → 按钮变成「已满」
     g.players[0].rp = 5000;
-    g.factories[0].lines = 3;
+    g.factories[0].lines = 3; // 手改超限：服务端会夹回上限 2
     Ui.applySnapshot(wf.snapshot(g));
     pump();
-    ok(lineText.textContent === '产线 3 / 3', '产线数随快照刷新（' + lineText.textContent + '）');
+    ok(
+      lineText.textContent === '产线 2 / 2',
+      '产线数随快照刷新且被夹到上限（' + lineText.textContent + '）'
+    );
     ok(lineBtn.disabled === true && lineBtn.textContent.includes('已满'), '满产线后按钮变为「已满」（' + lineBtn.textContent + '）');
     ok(
-      rateText.textContent.includes('3 条并行') && rateText.textContent.includes('6.7 秒 1 支'),
-      '3 条并行时合计每 6.7 秒 1 支（' + rateText.textContent + '）'
+      rateText.textContent.includes('2 条并行') && rateText.textContent.includes('10.0 秒 1 支'),
+      '2 条并行时合计每 10.0 秒 1 支（' + rateText.textContent + '）'
     );
   }
 
@@ -1275,9 +1436,16 @@ ok(clickWorld(hqp.x, hqp.y), '点选总部');
     );
     ok(spdLv.textContent === '生产加速 0 / 20 级', '显示加速等级（' + spdLv.textContent + '）');
     ok(spdBtn.hidden === false && !spdBtn.disabled, '加速按钮可用（' + spdBtn.textContent + '）');
-    ok(spdBtn.textContent.includes('1000'), '按钮标注 1000 科技点');
-    ok(el('warfactory-facpanel #wfp-line').hidden === true, '总部面板隐藏「开辟产线」按钮');
-    ok(el('warfactory-facpanel #wfp-prod-sec').hidden === true, '总部面板隐藏「产能」段');
+    ok(spdBtn.textContent.includes(String(Cc.PROD_SPEED_COST)), `按钮标注 ${Cc.PROD_SPEED_COST} 科技点`);
+    ok(
+      el('warfactory-facpanel #wfp-line').hidden === false,
+      '总部也出兵 → 面板显示「开辟产线」按钮'
+    );
+    ok(el('warfactory-facpanel #wfp-prod-sec').hidden === false, '总部面板显示「产能 · 产线」段');
+    ok(
+      kidsByClass(el('warfactory-facpanel #wfp-line-list'), 'wfp-lbtn').length === 0,
+      '总部产线不可进化（清单里没有进化按钮）'
+    );
 
     sent.length = 0;
     spdBtn.dispatch('click', { stopPropagation() {} });
@@ -1415,10 +1583,12 @@ console.log('\n[17] 滚轮缩放大地图 · 空格回总部');
   const vMin = viewSize();
   const OVERLAY = 28; // 测试桩没有真实浮层：上下各退回默认边距（HUD_PAD=14）
   const fitMin = Math.min(CW / ws.w, (CH - OVERLAY) / ws.h); // 整图装进可见区的倍率
-  const expectMin = Math.max(0.22, fitMin * 0.85);
+  // ZOOM_MIN 现为 0.35（拉远到 0.22 时整张图小得没意义，见 ui.js 常量注释）
+  const ZOOM_MIN = 0.35;
+  const expectMin = Math.max(ZOOM_MIN, fitMin * 0.85);
   ok(
     Math.abs(zMin - expectMin) < 0.02,
-    '缩放下限 = max(0.22 倍, 整图装进可见区 × 0.85)（' + zMin.toFixed(3) + '× ≈ ' + expectMin.toFixed(3) + '×）'
+    '缩放下限 = max(' + ZOOM_MIN + ' 倍, 整图装进可见区 × 0.85)（' + zMin.toFixed(3) + '× ≈ ' + expectMin.toFixed(3) + '×）'
   );
   ok(zMin < 0.5, '比原来的 0.5 倍下限拉得更远（' + zMin.toFixed(2) + '×）');
   // 视野比世界还大时不再贴着某个角：整图摆在可见区中间，留白左右对称
@@ -1620,13 +1790,12 @@ console.log('\n[18] 侦察他方目标（只读）· 框选只圈自己 · 中�
   ok(fp18('#wfp-title').textContent.indexOf('敌军') === 0, '标题标注敌军（' + fp18('#wfp-title').textContent + '）');
   ok(fp18('#wfp-owner').textContent.includes('乙'), '归属显示对手（' + fp18('#wfp-owner').textContent + '）');
   ok(fp18('#wfp-line').hidden === true, '不出现「开辟产线」');
-  ok(fp18('#wfp-evolve').hidden === true, '不出现「进化」');
+  ok(kidsByClass(fp18('#wfp-line-list'), 'wfp-lbtn').length === 0, '不出现产线「进化」按钮');
   ok(fp18('#wfp-spd').hidden === true, '不出现「生产加速」');
   ok(fp18('#wfp-rally').hidden === true, '不出现「集结点」');
   ok(fp18('#wfp-note').textContent.includes('仅供查看'), '底部提示只读（' + fp18('#wfp-note').textContent + '）');
   ok(/\/ \d+$/.test(fp18('#wfp-hp-text').textContent.trim()), '血量照常显示（' + fp18('#wfp-hp-text').textContent + '）');
   fp18('#wfp-line').dispatch('click', { stopPropagation() {} });
-  fp18('#wfp-evolve').dispatch('click', { stopPropagation() {} });
   fp18('#wfp-speed').dispatch('click', { stopPropagation() {} });
   pump();
   ok(sent.length === 0, '就算硬点（已隐藏的）按钮也不会发出任何指令');
@@ -2161,7 +2330,8 @@ console.log('\n[20] 中键按住拖动 = 平移地图（网页自带的中键行
     Math.abs(tl3.x) < 1 && liftTop >= 0 && liftTop < 40,
     '一直往右下拖 → 镜头贴住世界左上边界（顶边让开 ' + Math.round(liftTop) + 'px 顶部浮层）'
   );
-  dragFar(600, 400, -300, -300); // 再一直往左上拖 → 顶到世界右下角
+  // 世界放大到 8640×5760 后，跨到对角需要的位移远超 6000px → 每步拖 900px（20 步 = 18000）
+  dragFar(600, 400, -900, -900); // 再一直往左上拖 → 顶到世界右下角
   const tl3b = camTL20();
   const vw3 = 1280 / tl3b.k;
   const vh3 = 800 / tl3b.k;
@@ -2169,7 +2339,9 @@ console.log('\n[20] 中键按住拖动 = 平移地图（网页自带的中键行
   ok(
     Math.abs(tl3b.x + vw3 - ws20.w) < 2 && liftBot >= 0 && liftBot < 40,
     '一直往左上拖 → 镜头贴住世界右下边界（底边抬起 ' + Math.round(liftBot) +
-      'px —— 正好让出底部指挥栏，地图最下边看得见）'
+      'px —— 正好让出底部指挥栏，地图最下边看得见；右边界差 ' +
+      (tl3b.x + vw3 - ws20.w).toFixed(2) + 'px，世界 ' + ws20.w + '×' + ws20.h +
+      ' 视口 ' + vw3.toFixed(1) + '×' + vh3.toFixed(1) + '）'
   );
 
   // ---------- ④ 松开中键后，移动鼠标不再拖地图 ----------
@@ -2314,13 +2486,15 @@ console.log('\n[21] 归属底色盘（60% 透明）· 单位常显血条 · 选�
     '中立工厂不压归属底色（' + (neutralFac ? neutralFac.id + ' 号厂' : '?') + '）'
   );
 
-  // 几何：单位脚下的椭圆盘半径随体型缩放
-  const fW = UNIT_VIS_SCALE * bodyScaleOf('warrior');
+  // 几何：单位脚下的椭圆盘半径随体型缩放。
+  // 体型 = 全局缩放 × 兵种归一系数 × 阶数倍率（第 10 项：三级 = 一级的 2 倍），
+  // 与 drawUnits 里的 f 完全一致，用 Ui.scales.tier 取，避免脚本自己抄一份算歪。
+  const fW = UNIT_VIS_SCALE * bodyScaleOf('warrior') * Ui.scales.tier('warrior', mineU.tier || 1);
   ok(
     hasPt(mineU.x - 18 * fW, mineU.y + 11 * fW - 6.8 * fW) && hasPt(mineU.x + 18 * fW, mineU.y + 11 * fW + 6.8 * fW),
     '己方锐士脚下的归属色椭圆盘画在脚边（18×6.8 × 体型 ' + fW.toFixed(2) + '）'
   );
-  const fS = UNIT_VIS_SCALE * bodyScaleOf('shield');
+  const fS = UNIT_VIS_SCALE * bodyScaleOf('shield') * Ui.scales.tier('shield', foeU.tier || 1);
   ok(
     hasPt(foeU.x - 18 * fS, foeU.y + 11 * fS - 6.8 * fS) && hasPt(foeU.x + 18 * fS, foeU.y + 11 * fS + 6.8 * fS),
     '敌方盾卫同样压本方的归属色底盘'
@@ -2354,8 +2528,8 @@ console.log('\n[21] 归属底色盘（60% 透明）· 单位常显血条 · 选�
   ok(
     hpRects.some(
       (r) =>
-        Math.abs(r[0] - (foeU.x - (26 * fS) / 2)) < 0.01 &&
-        Math.abs(r[1] - (foeU.y - 28 * fS)) < 0.01
+        Math.abs(r[0] - (foeU.x - (26 * fS) / 2)) < 0.06 &&
+        Math.abs(r[1] - (foeU.y - 28 * fS)) < 0.06
     ),
     '敌方单位的血条也在（' + (26 * fS).toFixed(1) + ' 宽底槽）'
   );
@@ -2456,9 +2630,16 @@ console.log('\n[22] 弹道不规则炸开（水球感）· 开火动画与后坐
   g22.phaseEndsAt = 0;
   g22.units.length = 0;
   const sp = clearSpot(g22);
-  // 游侠射程 200 打得着；盾卫射程 50 打不着 100px 外的游侠 → 只有游侠开火，事件干净
-  const shooter = wf.__test.spawnUnit(g22, { id: 0, owner: 0, level: 1 }, 'ranger', sp.x - 40, sp.y);
-  const victim = wf.__test.spawnUnit(g22, { id: 1, owner: 1, level: 1 }, 'shield', sp.x + 60, sp.y);
+  // 站位按 data.js 推导：游侠够得着盾卫，盾卫够不着游侠 → 只有游侠开火，事件干净。
+  // （用户改射程后 100px 的写死距离会让盾卫也开火，boom 事件就不干净了 —— 踩过坑。）
+  const shooter = wf.__test.spawnUnit(g22, { id: 0, owner: 0, level: 1 }, 'ranger', sp.x, sp.y);
+  const victim = wf.__test.spawnUnit(g22, { id: 1, owner: 1, level: 1 }, 'shield', sp.x, sp.y);
+  const dist22 = Math.min(
+    shooter.range - 10, // 游侠一定够得着
+    victim.range + shooter.r + wf.__test.consts.ATTACK_SLACK + 40 // 盾卫一定够不着
+  );
+  shooter.x = sp.x - dist22 / 2;
+  victim.x = sp.x + dist22 / 2;
   let snapFire = null;
   let snapHit = null;
   let clk = 1000;
@@ -2508,7 +2689,32 @@ console.log('\n[22] 弹道不规则炸开（水球感）· 开火动画与后坐
   );
 
   const rows = (snapFire && snapFire.b) || [];
-  ok(rows.length > 0 && rows.every((r) => r.length === 9), '弹道快照带朝向与个体种子（' + rows.length + ' 发 × 9 字段：x,y,归属,弹种,dx,dy,种子,高度,抛射）');
+  ok(
+    rows.length > 0 && rows.every((r) => r.length === 11),
+    '弹道快照带朝向与个体种子（' + rows.length + ' 发 × 11 字段：x,y,归属,弹种,dx,dy,种子,高度,抛射,兵种,阶数）'
+  );
+  ok(
+    rows.length > 0 && rows.every((r) => r[9] >= 0 && r[9] <= 5 && r[10] >= 1 && r[10] <= 3),
+    '每发子弹带「谁打的」：兵种序号（0..5）与阶数（1..3），客户端据此分款式并随进化放大'
+  );
+  // 源码层面：每个有弹体的兵种一套画法 + 尺寸随阶数放大（含火舌 / 光束）
+  ok(
+    /function drawWarriorShot/.test(src) &&
+      /function drawShieldShot/.test(src) &&
+      /function drawRangerShot/.test(src) &&
+      /function drawBurstShell/.test(src),
+    '客户端为四个有弹体的兵种各写了一套专属弹型（锐士墨刃 / 盾卫扇面 / 游侠长矢 / 轰击重弹）'
+  );
+  ok(
+    /const BULLET_TIER_MUL = \[1, [.\d]+, [.\d]+\]/.test(src) &&
+      /function bulletScaleOf/.test(src) &&
+      /bulletScaleOf\(tier\)/.test(src),
+    '弹型尺寸统一乘阶数倍率（一级 → 三级整体放大）'
+  );
+  ok(
+    /beamScaleOf\(u\.tier \|\| 1\)/.test(src),
+    '火舌与光束（燎原 / 激光的「子弹」）同样随阶数变粗'
+  );
   ok(rows.length > 0 && rows.every((r) => Math.abs(Math.hypot(r[4], r[5]) - 1) < 0.03), '弹道朝向是单位向量');
   ok(rows.length > 0 && rows.every((r) => r[6] >= 0 && r[6] < 1), '每发子弹带 0..1 的稳定个体种子（形状不重样）');
   ok(rows.length > 0 && rows.every((r) => Number.isFinite(r[7]) && (r[8] === 0 || r[8] === 1)), '抛射弹带「高度 z」与「抛射标志 arc」（arc 为 0/1）');
@@ -2656,12 +2862,14 @@ console.log('\n[22] 弹道不规则炸开（水球感）· 开火动画与后坐
   ok(hotFresh < 0.2, '刚开火那一瞬焰还没张开（' + hotFresh.toFixed(2) + ' → 60ms 后 ' + '0.6+' + '）');
 
   // ---- ③ 弹丸不是圆点：墨团边界半径各不相同，且沿弹道拉长 ----
+  // 兵种序号给 9（越界 = 未知兵种，走「按弹种画的兜底墨团款」）：这一条量的是通用墨团的不规则度，
+  // 换成某个兵种的专属弹型后形状不再是多瓣墨团，不适用这把尺（专属弹型另有断言核对）。
   const bX = sp23.x + 150;
   const bY = sp23.y - 60;
-  Ui.applySnapshot(Object.assign({}, base, { b: [[bX, bY, 0, 0, 1, 0, 0.37]], ev: [] }));
+  Ui.applySnapshot(Object.assign({}, base, { b: [[bX, bY, 0, 0, 1, 0, 0.37, 0, 0, 9, 1]], ev: [] }));
   pump();
   const bs = scrOf(bX, bY);
-  const bPts = ringPts(bX, bY, 0, 8);
+  const bPts = ringPts(bX, bY, 0, 14);
   const bR = bPts.map(([x, y]) => Math.hypot(x - bs[0], y - bs[1])).filter((r) => r > 0.4);
   const kinds = new Set(bR.map((r) => Math.round(r * 20) / 20));
   ok(
@@ -2745,6 +2953,242 @@ console.log('\n[22] 弹道不规则炸开（水球感）· 开火动画与后坐
   pump();
   const capped = tintMarks().length;
   ok(capped === MARK_MAX, '弹痕上限生效（塞 ' + many.length + ' 处 → 画 ' + capped + ' 处）');
+}
+
+/* ==========================================================================
+   [23] 本轮 10 项：统一 300 / 侦察敌方工厂生产信息 / 总部集结点 /
+        总部防卫前摇 / 研究所研究产线 / 产线上限与标识 / 胜利结算弹窗
+   ========================================================================== */
+console.log('\n[23] 本轮十项（客户端侧）');
+{
+  const html23 = fs.readFileSync(path.join(ROOT, 'public/games/warfactory/panel.html'), 'utf8');
+  const css23 = fs.readFileSync(path.join(ROOT, 'public/games/warfactory/style.css'), 'utf8');
+
+  // ---------- ① 升级价统一 300 ----------
+  {
+    const c23 = wf.publicGameState(
+      wf.createGameState({ id: 'c23', players: [{ id: 'p0', name: '甲' }, { id: 'p1', name: '乙' }] })
+    ).consts;
+    ok(
+      c23.facLineCost === 300 && c23.evolveLineCost === 300 && c23.prodSpeedCost === 300 &&
+        c23.upgradeRpCost === 300,
+      `开辟产线 / 产线进化 / 生产加速 / 统一升级价 全为 300（${c23.facLineCost}/${c23.evolveLineCost}/${c23.prodSpeedCost}/${c23.upgradeRpCost}）`
+    );
+    ok(!/（600）|（1000）/.test(html23), '面板文案里不再出现 600 / 1000 的旧价');
+    ok(/id="wfp-line"[^>]*>开辟产线（300）/.test(html23), '面板「开辟产线」标注 300');
+    ok(/id="wfp-speed"[^>]*>加速生产（300）/.test(html23), '面板「加速生产」标注 300');
+  }
+
+  // ---------- ③ 敌方 / 中立工厂也能看生产信息 ----------
+  {
+    const g23 = wf.createGameState({
+      id: 'c23-peek',
+      players: [{ id: 'p0', name: '甲' }, { id: 'p1', name: '乙' }],
+    });
+    g23.phase = 'playing';
+    g23.phaseEndsAt = 0;
+    g23.units.length = 0;
+    const foeF = g23.factories.find((f) => f.owner !== 0) || g23.factories[1];
+    foeF.owner = 1;
+    const neuF = g23.factories.find((f) => f.owner < 0);
+    Ui.render(wf.publicGameState(g23), net, view);
+    Ui.applySnapshot(wf.snapshot(g23));
+    pump();
+
+    const fp = (sel) => el('warfactory-facpanel ' + sel);
+    const look = (fac) => {
+      const c = camFromLastFrame();
+      const ev = {
+        button: 0,
+        clientX: (fac.x - c.x) * c.k,
+        clientY: (fac.y - c.y) * c.k,
+        preventDefault() {},
+        shiftKey: false,
+      };
+      canvasEl.dispatch('mousedown', ev);
+      canvasEl.dispatch('mouseup', ev);
+      pump();
+    };
+    look(foeF);
+    ok(fp('#wfp-title').textContent.indexOf('敌军') >= 0, '点敌方工厂 → 标题标明敌军（' + fp('#wfp-title').textContent + '）');
+    ok(
+      /产线 \d+ \/ \d+/.test(fp('#wfp-lines').textContent) && fp('#wfp-lines').hidden === false,
+      '敌方工厂照常显示产线数（' + fp('#wfp-lines').textContent + '）'
+    );
+    ok(
+      /秒 \/ 支/.test(fp('#wfp-rate').textContent) && fp('#wfp-rate').hidden === false,
+      '敌方工厂照常显示产能速率（' + fp('#wfp-rate').textContent + '）'
+    );
+    const rows23 = el('warfactory-facpanel #wfp-line-list').children;
+    ok(rows23.length >= 1, '敌方工厂的产线清单也列出来了（' + rows23.length + ' 行）');
+    // 只读：开辟产线 / 进化按钮都不出现
+    ok(fp('#wfp-line').hidden === true, '敌方工厂没有「开辟产线」按钮');
+    const hasEvoBtn = rows23.some((r) =>
+      (r.children || []).some((ch) => String(ch.className || '').indexOf('wfp-lbtn') >= 0)
+    );
+    ok(!hasEvoBtn, '敌方工厂的产线行没有「进化」按钮');
+    if (neuF) {
+      look(neuF);
+      ok(fp('#wfp-title').textContent.indexOf('中立') >= 0, '点中立工厂 → 标题标明中立（' + fp('#wfp-title').textContent + '）');
+      ok(/产线 \d+ \/ \d+/.test(fp('#wfp-lines').textContent), '中立工厂也能看产线数（' + fp('#wfp-lines').textContent + '）');
+    }
+  }
+
+  // ---------- ④ 总部右键设集结点 ----------
+  {
+    const g23 = wf.createGameState({
+      id: 'c23-rally',
+      players: [{ id: 'p0', name: '甲' }, { id: 'p1', name: '乙' }],
+    });
+    g23.phase = 'playing';
+    g23.phaseEndsAt = 0;
+    g23.units.length = 0;
+    Ui.render(wf.publicGameState(g23), net, view);
+    Ui.applySnapshot(wf.snapshot(g23));
+    pump();
+    const myHq = g23.hqs.find((h) => h.owner === 0);
+    const c0 = camFromLastFrame();
+    const click = (wx, wy, btn) => {
+      const c = camFromLastFrame();
+      const ev = {
+        button: btn || 0,
+        clientX: (wx - c.x) * c.k,
+        clientY: (wy - c.y) * c.k,
+        preventDefault() {},
+        shiftKey: false,
+      };
+      canvasEl.dispatch('mousedown', ev);
+      canvasEl.dispatch('mouseup', ev);
+      pump();
+    };
+    void c0;
+    click(myHq.x, myHq.y); // 左键选中自家总部
+    ok(el('warfactory-facpanel').hidden === false, '左键点选自家总部 → 弹出面板');
+    ok(el('warfactory-facpanel #wfp-title').textContent === '总部', '面板标题为「总部」');
+    ok(el('warfactory-facpanel #wfp-rally').hidden === false, '总部面板里有「集结点」一行');
+    sent.length = 0;
+    click(myHq.x + 260, myHq.y + 180, 2); // 右键点地 → 设集结点
+    ok(
+      sent.some((d) => d.cmd === 'rally' && d.fid === 0 && typeof d.x === 'number'),
+      '总部右键设集结点 → 发 {cmd:"rally", fid:0}（' + JSON.stringify(sent[0] || null) + '）'
+    );
+    ok(
+      /集结点：\d+,\d+/.test(el('warfactory-facpanel #wfp-rally').textContent),
+      '面板显示总部集结点坐标（' + el('warfactory-facpanel #wfp-rally').textContent + '）'
+    );
+    // 服务端确实接受并记住（fid=0 = 我自己的总部）
+    const okSet = wf.setPlayerInput(g23, 'p0', { cmd: 'rally', fid: 0, x: 1234, y: 5678 });
+    ok(okSet && g23.hqs.find((h) => h.owner === 0).rally, '服务端接受总部集结点（fid=0 按归属方解析）');
+    ok(/function drawOneRally\(/.test(src) && /hqRallyKey\(h\.id\)/.test(src), '源码核对：集结点牵引线 / 旗标工厂与总部共用');
+  }
+
+  // ---------- ⑥ 总部防卫（射程 200 / 间隔 0.5s / 伤害 20 / 前摇 500ms） ----------
+  {
+    const c23 = wf.publicGameState(
+      wf.createGameState({ id: 'c23-hq', players: [{ id: 'p0', name: '甲' }, { id: 'p1', name: '乙' }] })
+    ).consts;
+    ok(
+      c23.hqAtkRange === 200 && c23.hqAtkCd === 0.5 && c23.hqAtkDmg === 20 && c23.hqAtkWindupMs === 500,
+      `总部防卫参数：射程 ${c23.hqAtkRange} / 间隔 ${c23.hqAtkCd}s / 伤害 ${c23.hqAtkDmg} / 前摇 ${c23.hqAtkWindupMs}ms`
+    );
+    ok(/function drawHqDefense\(/.test(src), '源码核对：有总部防卫的绘制函数');
+    ok(/drawHqDefense\(t\)/.test(src), '源码核对：每帧调用总部防卫绘制');
+    // 前摇三件套：聚能球 + 蓄能弧 + 目标处收拢环（走满才开火）
+    ok(/聚能球/.test(src) && /蓄能弧/.test(src) && /收拢的锁定环/.test(src), '前摇有「聚能球 + 蓄能弧 + 目标环收紧」的明显表现');
+    // 快照带前摇剩余，客户端据此连续倒计时
+    const gsnap = wf.createGameState({
+      id: 'c23-hqsnap',
+      players: [{ id: 'p0', name: '甲' }, { id: 'p1', name: '乙' }],
+    });
+    ok(wf.snapshot(gsnap).hq[0].length === 12, '总部快照 12 列（末两列＝锁定目标 / 前摇剩余）');
+    ok(/atkWindupAt/.test(src), '客户端按「快照剩余 + 接收时刻」自行倒计时（前摇连续长起来）');
+  }
+
+  // ---------- ⑦ 研究所开拓研究产线（点击即生效，无二级选择） ----------
+  {
+    ok(html23.includes('id="wfp-labline"'), '面板里有「开拓研究产线」按钮');
+    const c23 = wf.publicGameState(
+      wf.createGameState({ id: 'c23-lab', players: [{ id: 'p0', name: '甲' }, { id: 'p1', name: '乙' }] })
+    ).consts;
+    ok(c23.labLineCost === 200 && c23.labMaxLines === 1 && c23.labLineRpMul === 1.5,
+      `研究产线：花费 ${c23.labLineCost} / 每所上限 ${c23.labMaxLines} / 产出 ×${c23.labLineRpMul}`);
+    // 点击即生效：不发二级选择、不弹选择器
+    ok(
+      /cmd: 'labLine', lid/.test(src) && !/labLine[\s\S]{0,200}openPicker/.test(src),
+      '源码核对：点「开拓研究产线」直接发指令，没有二级选择项'
+    );
+    // 服务端行为：占下 → 开拓 → 产出 +50%；再点被拒
+    const gl = wf.createGameState({
+      id: 'c23-lab2',
+      players: [{ id: 'p0', name: '甲' }, { id: 'p1', name: '乙' }],
+    });
+    gl.phase = 'playing';
+    gl.phaseEndsAt = 0;
+    gl.labs[0].owner = 0; // 先占下（未占领时该所不产出，没法比倍率）
+    const before = wf.__test.labRpTotalOf(gl, 0);
+    gl.players[0].rp = 9999;
+    ok(wf.setPlayerInput(gl, 'p0', { cmd: 'labLine', lid: gl.labs[0].id }), '开拓研究产线成功');
+    ok(gl.labs[0].lines === 1, '研究所产线 0 → 1');
+    const after = wf.__test.labRpTotalOf(gl, 0);
+    ok(
+      before > 0 && Math.abs(after / before - 1.5) < 1e-9,
+      `开拓后该所产出 +50%（${before} → ${after}）`
+    );
+    ok(!wf.setPlayerInput(gl, 'p0', { cmd: 'labLine', lid: gl.labs[0].id }), '每所最多 1 条：再点被拒');
+    ok(wf.snapshot(gl).lb[0].length === 5, '研究所快照 5 列（末列＝已开拓产线数）');
+  }
+
+  // ---------- ⑧ 产线上限 2 + 已开拓标识 ----------
+  {
+    const c23 = wf.publicGameState(
+      wf.createGameState({ id: 'c23-cap', players: [{ id: 'p0', name: '甲' }, { id: 'p1', name: '乙' }] })
+    ).consts;
+    ok(c23.facMaxLines === 2 && c23.labMaxLines === 1,
+      `工厂最多 ${c23.facMaxLines} 条（默认 1 + 可开 1）、研究所最多 ${c23.labMaxLines} 条`);
+    ok(/function drawLineBadge\(/.test(src), '源码核对：有「已开拓产线」的小模型标识函数');
+    ok(/slots\.length >= 2\)/.test(src) && /drawLineBadge\(c, 'fac'/.test(src), '工厂开了第 2 条 → 右下角画简化小模型');
+    ok(/l\.lines \|\| 0\), 0, 1\) >= 1/.test(src) && /drawLineBadge\(c, 'lab'/.test(src), '研究所开了产线 → 右下角画简化小模型');
+    // 标识必须比本体简化：只用两三笔线稿，不画门窗瓦顶
+    const badge = /function drawLineBadge\(c, kind, col\) \{[\s\S]*?\n  \}/.exec(src);
+    ok(Boolean(badge) && badge[0].length < 1600, '标识造型明显简化（只是两三笔线稿）');
+  }
+
+  // ---------- ⑨ 胜利结算弹窗（含「退出到大厅」） ----------
+  {
+    ok(html23.includes('id="wf-result"'), 'panel.html 有胜利结算弹窗');
+    ok(html23.includes('id="wfr-exit"'), '结算弹窗有「退出到大厅」按钮');
+    ok(/退出到大厅/.test(html23), '按钮文案为「退出到大厅」');
+    ok(/\.wf-result\s*\{[^}]*position:\s*absolute/.test(css23), 'style.css 让结算弹窗浮在整屏之上');
+    ok(/function syncResultModal\(/.test(src), '源码核对：有结算弹窗的显隐逻辑');
+    ok(/net\.leaveRoom\(\)/.test(src), '「退出到大厅」走 net.leaveRoom()（与大厅离开房间同一条路）');
+    ok(/resultDismissed/.test(src), '点「留在战场」后不再重复弹（开新局才重新武装）');
+
+    // 真的弹出来：构造一个已结束的对局
+    const go = wf.createGameState({
+      id: 'c23-over',
+      players: [{ id: 'p0', name: '甲' }, { id: 'p1', name: '乙' }],
+    });
+    go.phase = 'over';
+    go.over = true;
+    go.winnerId = 'p0';
+    Ui.render(wf.publicGameState(go), net, view);
+    Ui.applySnapshot(wf.snapshot(go));
+    pump();
+    // 注意：本脚本的 DOM 桩里 querySelector(sel) 实际取的是 "<父id> <sel>" 这个键
+    const res = el('wf-result');
+    const rTitle = el('wf-result #wfr-title');
+    const rSub = el('wf-result #wfr-sub');
+    const rRows = el('wf-result #wfr-rows');
+    const rStay = el('wf-result #wfr-stay');
+    ok(res.hidden === false, '对局结束后自动弹出结算弹窗');
+    ok(rTitle.textContent.replace(/\s/g, '') === '大捷', '我赢了显示「大 捷」（' + rTitle.textContent + '）');
+    ok(/甲/.test(rSub.textContent), '副标题点名胜者（' + rSub.textContent + '）');
+    ok(rRows.children.length === 2, '结算列出全部 2 名玩家（' + rRows.children.length + ' 行）');
+    // 点「留在战场」→ 收起
+    rStay.dispatch('click', { stopPropagation() {} });
+    pump();
+    ok(res.hidden === true, '点「留在战场」收起弹窗');
+  }
 }
 
 console.log(failed ? `\n失败 ${failed} 项` : '\n全部通过');

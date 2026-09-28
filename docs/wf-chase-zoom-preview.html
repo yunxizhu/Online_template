@@ -3555,7 +3555,7 @@ window.WarFactoryUi = (function () {
     if (st.burn) {
       // 燎原不点射：伤害按秒结算，所以这里列的是「秒伤 + 火场」而不是「每次伤害 + 攻速」
       const flameR = c.flameR || 52;
-      lines.push('火　焰　' + fmtStat(st.dmg) + ' / 秒（范围 ' + flameR + '）');
+      lines.push('攻　击　' + fmtStat(st.dmg) + ' / 次（范围 ' + flameR + '）');
       const tFire = fireTierInfo(c, u.tier);
       if (!tFire) {
         // 一级不留火场：把「怎么才能烧地」直接写在面板上
@@ -3567,7 +3567,7 @@ window.WarFactoryUi = (function () {
         );
       }
       lines.push('射　程　' + st.range);
-      lines.push('攻　速　持续喷吐（无弹道）');
+      lines.push('攻　速　' + fmtStat(st.cd) + ' 秒 / 次（' + fmtStat(Math.round((1 / st.cd) * 100) / 100) + ' 次/秒）');
       lines.push('移　速　' + st.speed + '（沼泽减半）');
       lines.push('来　源　' + unitSourceLabel(u));
       lines.push(

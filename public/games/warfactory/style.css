@@ -330,6 +330,121 @@
   text-overflow: ellipsis;
 }
 
+/* ---- 产线清单：每条产线一行（兵种 / 阶数 + 该线专属的进化按钮） ---- */
+.wfp-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wfp-lrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wfp-lglyph {
+  width: 22px;
+  height: 22px;
+  line-height: 22px;
+  font-size: 13px;
+  border-radius: 3px;
+}
+
+.wfp-lname {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: #3c342a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.wfp-lbtn {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border: 1px solid rgba(160, 58, 44, 0.7);
+  border-radius: 3px;
+  background: rgba(160, 58, 44, 0.1);
+  color: #8a2f22;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.wfp-lbtn:hover:not(:disabled) {
+  background: rgba(160, 58, 44, 0.2);
+}
+
+.wfp-lbtn:disabled {
+  border-color: rgba(90, 74, 52, 0.35);
+  background: rgba(90, 74, 52, 0.08);
+  color: #9b8f7c;
+  cursor: default;
+}
+
+/* ---- 选择器（选兵种）：插在触发它的按钮正下方 ---- */
+.wfp-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin-top: 6px;
+  padding: 6px;
+  border: 1px solid rgba(90, 74, 52, 0.5);
+  border-radius: 5px;
+  background: rgba(248, 243, 229, 0.98);
+  box-shadow: 0 2px 8px rgba(60, 48, 30, 0.18);
+}
+
+.wfp-picker[hidden] {
+  display: none;
+}
+
+.wfp-picker-title {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  font-weight: 700;
+  color: #5a4a34;
+}
+
+.wfp-pick {
+  padding: 4px 4px;
+  border: 1px solid rgba(90, 74, 52, 0.45);
+  border-radius: 3px;
+  background: rgba(250, 246, 234, 0.9);
+  color: #3c342a;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+}
+
+.wfp-pick small {
+  display: block;
+  font-weight: 400;
+  font-size: 10px;
+  color: #7d6f58;
+}
+
+.wfp-pick:hover {
+  background: rgba(160, 58, 44, 0.12);
+  border-color: rgba(160, 58, 44, 0.6);
+}
+
+.wfp-pick-cancel {
+  grid-column: 1 / -1;
+  padding: 4px;
+  border: 1px solid rgba(90, 74, 52, 0.35);
+  border-radius: 3px;
+  background: transparent;
+  color: #7d6f58;
+  font-size: 11px;
+  cursor: pointer;
+}
+
 .wfp-evolve {
   flex: 0 0 auto;
   padding: 5px 9px;
@@ -785,9 +900,9 @@
   vertical-align: -1px;
   border: 1px solid rgba(90, 74, 52, 0.35);
 }
-.terr-water { background: rgba(74, 96, 112, 0.75); }
-.terr-swamp { background: rgba(104, 104, 72, 0.6); }
-.terr-mountain { background: rgba(72, 68, 62, 0.7); }
+/* 图例色块与实际画法对齐：水面偏冷偏暗（下沉），山地偏暖偏深（凸起） */
+.terr-water { background: rgba(58, 92, 118, 0.85); }
+.terr-mountain { background: rgba(74, 66, 54, 0.88); }
 .terr-plain { background: rgba(246, 239, 221, 0.9); }
 
 .warfactory-help {
@@ -797,3 +912,86 @@
   margin: 6px auto 14px;
   max-width: 1280px;
 }
+
+/* ================= 第 9 项：胜利结算弹窗 ================= */
+.wf-result {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(42, 38, 32, 0.42);
+  backdrop-filter: blur(2px);
+}
+.wf-result[hidden] { display: none; }
+
+.wf-result-card {
+  min-width: 320px;
+  max-width: 460px;
+  padding: 26px 30px 22px;
+  border: 1px solid rgba(90, 74, 52, 0.5);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #f6efdd 0%, #ece3cd 100%);
+  box-shadow: 0 12px 40px rgba(42, 38, 32, 0.35);
+  text-align: center;
+}
+.wf-result-title {
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: 6px;
+  color: #8a2f22;
+  line-height: 1.1;
+}
+.wf-result-sub {
+  margin-top: 6px;
+  font-size: 15px;
+  color: #6d6152;
+}
+.wf-result-rows {
+  margin: 18px 0 20px;
+  border-top: 1px solid rgba(90, 74, 52, 0.22);
+  border-bottom: 1px solid rgba(90, 74, 52, 0.22);
+  padding: 10px 0;
+}
+.wfr-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  font-size: 14px;
+  color: #4a4335;
+}
+.wfr-row.is-win { font-weight: 700; color: #8a2f22; }
+.wfr-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(42, 38, 32, 0.4);
+  flex: 0 0 auto;
+}
+.wfr-name { flex: 1 1 auto; text-align: left; }
+.wfr-state { flex: 0 0 auto; color: #7d6f58; font-size: 13px; }
+
+.wf-result-btns {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+.wf-result-btn {
+  padding: 8px 16px;
+  border: 1px solid rgba(90, 74, 52, 0.45);
+  border-radius: 5px;
+  background: rgba(246, 239, 221, 0.9);
+  color: #4a4335;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.wf-result-btn:hover { background: rgba(90, 74, 52, 0.1); }
+.wf-result-btn-primary {
+  border-color: rgba(160, 58, 44, 0.75);
+  background: rgba(160, 58, 44, 0.14);
+  color: #8a2f22;
+}
+.wf-result-btn-primary:hover { background: rgba(160, 58, 44, 0.24); }
