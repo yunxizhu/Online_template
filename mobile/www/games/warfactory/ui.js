@@ -22,6 +22,33 @@ window.WarFactoryUi = (function () {
   const ZOOM_FIT_SLACK = 0.85;
   const MINIMAP_W = 300; // 小地图逻辑尺寸（与面板 canvas 的 width/height 一致）
   const MINIMAP_H = 200;
+
+  // ==== 高低差（2.5D）：把地形的起伏真的画出来 ====
+  /*
+   * 与 public/games/warfactory/ui.js 同一套做法：选「浮雕错位 + 立体挤出」而不是把镜头
+   * 换成 45° 等距 —— 横向一点不动、纵向只做平移，于是框选仍是正矩形、拖屏方向不变、
+   * 鼠标也能反着推回世界坐标（见 visualToWorldY）。
+   *
+   * 三条规则一起构成「看得见的高度」：
+   *   ① 每一格地块整体抬高「层数 × HEIGHT_STEP」像素再画（0 层才落在它本来的位置上）；
+   *   ② 台阶朝着观察者的那一面（南立面）补一段带明暗的墙面 —— 有了立面才是「坡」，
+   *      否则只是把图往上挪，看不出高低；
+   *   ③ 站在地块上的东西（兵 / 工厂 / 总部 / 研究所 / 火线）跟着抬同样的高度。
+   *
+   * 同一份高度必须喂给三处，否则会出现「脚下的地和脚不是同一层」：
+   *   地形挤出用 liftCell(row,col)，实体锚点与命中判定都用 groundY(x,y)。
+   */
+  const HEIGHT_STEP = 18; // 每相差 1 层，纵向错开多少世界像素（地形格边长 40；崖面≈层差×此值，加厚才读得出断崖）
+  // 坡线 / 崖线的墨色与粗细（**屏幕像素**，画的时候除以 zoom 补偿 —— 拉到最远也看得见）
+  const CONTOUR_CLIFF = 'rgba(36,28,20,0.78)';
+  const CONTOUR_CLIFF_W = 4.6; // 崖沿线加粗：东西向只有这条线承载「过不去」
+  const CONTOUR_CLIFF_HI = 'rgba(255,250,236,0.38)';
+  const CONTOUR_SLOPE = 'rgba(126,110,82,0.34)';
+  const CONTOUR_SLOPE_W = 1.1;
+  const LIFT_MTN_BOOST = 2; // 山体额外拔高的视觉层数（一眼看出它立着）
+  const LIFT_WAT_SINK = 1; // 水面额外下沉的视觉层数（凹在洼地里）
+  const RIM_STEPS = 2; // 地图最南沿那圈「沙盘厚度」折合几层
+  const BG_PAD = 96; // 背景画布上下各留这么多世界像素，给抬起/下沉的地块当底纸
   // 画布 HUD 的安全边距：地图上有浮层（菜单按钮 / 指挥栏）时，别把 HUD 画到浮层底下。
   // 由 measureHudInsets() 按真实 DOM 尺寸算出来，量不到就退回默认的 14。
   const HUD_PAD = 14;
@@ -30,14 +57,30 @@ window.WarFactoryUi = (function () {
   let hudPadBot = HUD_PAD; // 左下角 HUD（集结点 / 点兵 / 短提示）的下边距
   let hudInsetsStale = true; // 布局变动后置位，下一帧重量一次
 
-  // ==== 建筑半径（与服务端 consts 对齐；服务端下发后以 consts 为准）====
-  const LAB_R_FALLBACK = 46;
-  const HQ_R_FALLBACK = 64;
+  // ==== 建筑尺寸：直接读 data.js 的 *Size（格）× grid.cell → 半径（px）====
+  // 碰撞与绘制共用同一套；改 factorySize / labSize / hqSize 两边一起变。
+  function gridCell() {
+    return (meta && meta.consts && meta.consts.grid && meta.consts.grid.cell) || 10;
+  }
+  function buildingSize(key, fallback) {
+    const K = meta && meta.consts;
+    if (K && K[key] != null) return Number(K[key]);
+    return fallback;
+  }
+  function factoryRadius() {
+    const K = meta && meta.consts;
+    if (K && K.factorySize != null) return (buildingSize('factorySize', 15) * gridCell()) / 2;
+    return (K && K.factoryR) || 75;
+  }
   function labR() {
-    return (meta && meta.consts && meta.consts.labR) || LAB_R_FALLBACK;
+    const K = meta && meta.consts;
+    if (K && K.labSize != null) return (buildingSize('labSize', 15) * gridCell()) / 2;
+    return (K && K.labR) || 75;
   }
   function hqR() {
-    return (meta && meta.consts && meta.consts.hqR) || HQ_R_FALLBACK;
+    const K = meta && meta.consts;
+    if (K && K.hqSize != null) return (buildingSize('hqSize', 15) * gridCell()) / 2;
+    return (K && K.hqR) || 75;
   }
 
   // ==== 水墨配色 ====
@@ -68,7 +111,34 @@ window.WarFactoryUi = (function () {
    * 满足「锐士的基础体型至少是盾卫的一半」。
    * 同样只影响观感：碰撞半径仍是服务端 STATS[type].r。
    */
-  const UNIT_BODY_SCALE = { warrior: 1.4, shield: 1, ranger: 1, burst: 1, burn: 1, laser: 1 };
+  const UNIT_BODY_SCALE = { warrior: 1.2769, shield: 0.6979, ranger: 1.201, burst: 1.0351, burn: 1.2769, laser: 1.1118 };
+
+  /**
+   * 光束的阶数倍率：激光束本来就宽，进化后同一套形状整体放大、但要收敛，
+   * 否则三阶的光束要盖住半个屏幕。
+   */
+  const BEAM_TIER_MUL = [1, 1.16, 1.32];
+  function beamScaleOf(tier) {
+    return BEAM_TIER_MUL[Math.max(0, Math.min(2, (tier | 0) - 1))] || 1;
+  }
+
+  /**
+   * **弹体的阶数倍率**：进化后同一套弹型整体放大（本体 1 / 1.5 / 2 倍，弹体收敛一档）。
+   * 快照第 11 列（下标 10）下发阶数，老快照缺列时退回 1 倍。
+   */
+  const BULLET_TIER_MUL = [1, 1.38, 1.76]; // 锐士 / 盾卫 / 游侠 / 轰击的弹体
+  function bulletScaleOf(tier) {
+    return BULLET_TIER_MUL[Math.max(0, Math.min(2, (tier | 0) - 1))] || 1;
+  }
+  /**
+   * **子弹「效果」的阶数倍率**：命中墨花、地面弹痕跟弹体本体走同一套倍率 ——
+   * 三级兵打出来的一发，就该炸出一团更大的墨、在地上留一块更大的痕。
+   * 火舌与激光束本来就很宽，走收敛更多的 BEAM_TIER_MUL。
+   * 枪口焰不用它：那一笔的尺寸本就取自射手体型（e.r 随阶数长大），再乘一遍会重复放大。
+   */
+  function fxScaleOf(type, tier) {
+    return type === 'burn' || type === 'laser' ? beamScaleOf(tier) : bulletScaleOf(tier);
+  }
   function bodyScaleOf(type) {
     return UNIT_BODY_SCALE[type] || 1;
   }
@@ -306,7 +376,49 @@ window.WarFactoryUi = (function () {
   let terrainGrid = null; // [gh][gw] → 地形类型 id
   let terrainGW = 0;
   let terrainGH = 0;
+  let terrainOffY = 0; // 画布给「抬起来的高地」留的上边白，主渲染贴回去时要减掉它
+  let heightGrid = null; // 服务端下发的高度层（行优先，取值 −levels..+levels）
+  let heightLevels = 3; // 层数（下发后以服务端 consts.heightLevels 为准）
+  let heightCliff = 2; // 层差 ≥ 此值 = 崖（过不去）—— 服务端下发的 height.cliffAt
+  let heightTerrace = 2; // 台地档位间隔（层）
+  // 坡与崖的边界线（世界坐标里已经算好抬升；每段 4 个数 x1,y1,x2,y2）。
+  // 单独存一份是为了**按下发时的屏幕粗细重画** —— 烘进地形贴图会被缩放抹平。
+  let contourCliff = null;
+  let contourSlope = null;
   const TERRAIN_CELL = 40; // 每个地形格的世界像素
+
+  // ---- 高低差：层 → 视觉抬升（像素）----
+  // 三个入口必须同源，否则会出现「地块抬了、站在上面的兵没抬」。
+  /** 某一格的**真实高度层**（不含山/水的视觉加成）—— 判崖一律用它，与服务端 cliffBetween 同口径 */
+  function hLevel(r, c) {
+    if (!heightGrid || !terrainGrid) return 0;
+    if (r < 0 || r >= terrainGH || c < 0 || c >= terrainGW) return 0;
+    return heightGrid[r * terrainGW + c] || 0;
+  }
+  /** 某一格往（-）/ 往上（+）错开多少像素；越界或还没下发都按 0 层，免得算出 NaN */
+  function liftCell(r, c) {
+    if (!heightGrid || !terrainGrid) return 0;
+    if (r < 0 || r >= terrainGH || c < 0 || c >= terrainGW) return 0;
+    let lv = hLevel(r, c);
+    const t = terrainGrid[r][c];
+    // 山再拔高一点、水再沉一点：不必真的多给射程，纯粹让它一眼看出「立」在地面上
+    if (t === 2) lv += LIFT_MTN_BOOST;
+    else if (t === 4) lv -= LIFT_WAT_SINK;
+    return lv * HEIGHT_STEP;
+  }
+  /** 世界坐标处的抬升量（像素） */
+  function liftAt(x, y) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return 0;
+    return liftCell(Math.floor(y / TERRAIN_CELL), Math.floor(x / TERRAIN_CELL));
+  }
+  /**
+   * 站在 **(x,y)** 的东西该画在哪条 y 上。
+   *
+   * 兵、建筑、贴地的圆全都走这一个出口 —— 它们与地形师出同源，永远不会各抬一套。
+   */
+  function groundY(x, y) {
+    return y - liftAt(x, y);
+  }
   // 与服务端（server/games/warfactory/index.js）保持一致的地形常量
   // 类型：0 平原 / 2 山地（不可通行，窄而连续；另有高度 → 遮挡视线与弹道）
   //      3 沼泽（可通行，减速）/ 4 水域（不可通行，大片连续；不遮挡视线）
@@ -370,6 +482,7 @@ window.WarFactoryUi = (function () {
       speed: s.speed || 80,
       r: s.r || 14,
       splash: s.splash || 0,
+      minRange: s.minRange || 0, // 最小射击半径（仅轰击）：更近的目标打不到
       burn: Boolean(s.burn),
       laser: Boolean(s.laser),
     };
@@ -392,18 +505,22 @@ window.WarFactoryUi = (function () {
   function buildBackground(seed) {
     const c = document.createElement('canvas');
     c.width = WORLD_W;
-    c.height = WORLD_H;
+    // 上下各留一截：北边的高地是被抬起来画的（会越过 y=0），南边也有下沉与沙盘厚度。
+    // 这两块必须有纸色垫着，否则抬起来的地块底下会漏出画布底色。
+    c.height = WORLD_H + BG_PAD * 2;
     const b = c.getContext('2d');
     const rng = makeRng(seed || 20260922);
+    b.save();
+    b.translate(0, BG_PAD); // 之后仍按世界坐标写：0 正好落在世界 y=0 上
 
     // 宣纸底色
     b.fillStyle = PAPER;
-    b.fillRect(0, 0, WORLD_W, WORLD_H);
+    b.fillRect(0, -BG_PAD, WORLD_W, c.height);
 
     // 纸纤维与噪点
     b.fillStyle = 'rgba(90,74,52,0.045)';
     for (let i = 0; i < 5200; i++) {
-      b.fillRect(rng() * WORLD_W, rng() * WORLD_H, 1.4, 1.4);
+      b.fillRect(rng() * WORLD_W, -BG_PAD + rng() * c.height, 1.4, 1.4);
     }
     b.strokeStyle = 'rgba(120,100,70,0.05)';
     b.lineWidth = 1;
@@ -527,8 +644,9 @@ window.WarFactoryUi = (function () {
     vg.addColorStop(0, 'rgba(80,60,30,0)');
     vg.addColorStop(1, 'rgba(80,60,30,0.14)');
     b.fillStyle = vg;
-    b.fillRect(0, 0, WORLD_W, WORLD_H);
+    b.fillRect(0, -BG_PAD, WORLD_W, c.height);
 
+    b.restore();
     bgCanvas = c;
     bgReady = true;
   }
@@ -641,6 +759,8 @@ window.WarFactoryUi = (function () {
       // 兜底生成时：清理建筑（工厂/研究所）周围的山地与水域，避免建筑被不可通行地形封死
       clearTerrainAroundBuildingsLocal(grid, gw, gh);
 
+      // 本地兜底生成时没有高度场（服务端权威那份才有）→ 全图按 0 层，仍是原来那张俯视图
+      heightGrid = null;
       setTerrainGrid(grid, gw, gh);
     } catch (err) {
       terrainReady = false;
@@ -739,17 +859,339 @@ window.WarFactoryUi = (function () {
     }
   }
 
-  // 把地形类型网格写入离屏画布（一次性栅格化，逐帧直接贴图）
+  // 把地形类型网格 + 高度层写入离屏画布（一次性栅格化，逐帧直接贴图）
   function setTerrainGrid(grid, gw, gh) {
     terrainGrid = grid;
     terrainGW = gw;
     terrainGH = gh;
+    // 画布上下都要留白：高处要把它**抬起来**画（超出 y=0），洼地要往下沉（超出 y=WORLD_H），
+    // 最南边还有一圈沙盘厚度。留白多一点也不亏 —— 反正是贴图，多出来的部分是透明的。
+    terrainOffY = (heightLevels + LIFT_MTN_BOOST) * HEIGHT_STEP + 1;
+    const dn = (heightLevels + LIFT_WAT_SINK + RIM_STEPS) * HEIGHT_STEP + 1;
     const cv = document.createElement('canvas');
     cv.width = WORLD_W;
-    cv.height = WORLD_H;
-    paintTerrain(cv.getContext('2d'), grid, gw, gh, TERRAIN_CELL);
+    cv.height = Math.ceil(WORLD_H + terrainOffY + dn);
+    const g = cv.getContext('2d');
+    g.clearRect(0, 0, cv.width, cv.height);
+    g.save();
+    g.translate(0, terrainOffY); // 之后所有地形坐标仍按「世界坐标」写，0 层正好落在 y=0
+    paintTerrain(g, grid, gw, gh, TERRAIN_CELL);
+    g.restore();
     terrainCanvas = cv;
     terrainReady = true;
+    buildContours(); // 坡线 / 崖线跟着地形一起收（抬升量也取自同一套层）
+  }
+
+  /**
+   * 收「坡线 / 崖线」两套边界段。
+   *
+   * 为什么要单独存、而不是烘进地形贴图：贴图的线宽是**世界像素**，一拉远就被缩放抹平
+   * （实测 z=−6 时每层只剩 1.17 屏幕像素）。存成线段后每帧按 `1 / zoom` 补线宽，
+   * 无论拉多远都是同样的一根线。
+   *
+   * 顺手把共线的相邻段并成一长段（台地边界大多是整条直线），八万格收下来也就千把段。
+   */
+  function buildContours() {
+    contourCliff = null;
+    contourSlope = null;
+    if (!heightGrid || !terrainGrid) return;
+    const CELL = TERRAIN_CELL;
+    const gh = terrainGH;
+    const gw = terrainGW;
+    const cliff = [];
+    const slope = [];
+    const push = (isCliff, seg) => (isCliff ? cliff : slope).push(seg);
+    // 横段：每格的**上**边界（与北邻不同层才画）
+    for (let r = 1; r < gh; r++) {
+      let prev = null;
+      for (let c = 0; c < gw; c++) {
+        const a = hLevel(r, c);
+        const b = hLevel(r - 1, c);
+        if (a === b) {
+          prev = null;
+          continue;
+        }
+        const isCliff = Math.abs(a - b) >= heightCliff;
+        const y = r * CELL - liftCell(r, c);
+        const x1 = c * CELL;
+        const seg = { x1, y1: y, x2: x1 + CELL, y2: y, cliff: isCliff };
+        if (prev && prev.cliff === isCliff && Math.abs(prev.y1 - y) < 0.01 && Math.abs(prev.x2 - x1) < 0.01) {
+          prev.x2 = seg.x2;
+        } else {
+          prev = seg;
+          push(isCliff, seg);
+        }
+      }
+    }
+    // 竖段：每格的**左**边界（与西邻不同层才画）
+    for (let c = 1; c < gw; c++) {
+      let prev = null;
+      for (let r = 0; r < gh; r++) {
+        const a = hLevel(r, c);
+        const b = hLevel(r, c - 1);
+        if (a === b) {
+          prev = null;
+          continue;
+        }
+        const isCliff = Math.abs(a - b) >= heightCliff;
+        const x = c * CELL;
+        const y1 = r * CELL - liftCell(r, c);
+        const seg = { x1: x, y1, x2: x, y2: y1 + CELL, cliff: isCliff };
+        if (prev && prev.cliff === isCliff && Math.abs(prev.x1 - x) < 0.01 && Math.abs(prev.y2 - y1) < 0.01) {
+          prev.y2 = seg.y2;
+        } else {
+          prev = seg;
+          push(isCliff, seg);
+        }
+      }
+    }
+    contourCliff = packSegs(cliff);
+    contourSlope = packSegs(slope);
+  }
+
+  function packSegs(list) {
+    if (!list.length) return null;
+    const out = new Float32Array(list.length * 4);
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i];
+      out[i * 4] = s.x1;
+      out[i * 4 + 1] = s.y1;
+      out[i * 4 + 2] = s.x2;
+      out[i * 4 + 3] = s.y2;
+    }
+    return out;
+  }
+
+  /** 把一段线段倒进当前 path（跳过镜头外的）—— 只 moveTo/lineTo，由调用方一次 stroke */
+  function segsPath(segs, x0, y0, x1, y1) {
+    let any = false;
+    for (let i = 0; i < segs.length; i += 4) {
+      const ax = segs[i];
+      const ay = segs[i + 1];
+      const bx = segs[i + 2];
+      const by = segs[i + 3];
+      if (ax < x0 && bx < x0) continue;
+      if (ax > x1 && bx > x1) continue;
+      if (ay < y0 && by < y0) continue;
+      if (ay > y1 && by > y1) continue;
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      any = true;
+    }
+    return any;
+  }
+
+  /**
+   * 找一个「崖线和坡线挨在一起」的世界坐标（给测试与出图脚本用）：
+   * 镜头对准这儿，一屏里才同时看得见「过不去的崖」和「走得上去的坡」，好比对两套画法。
+   * 找不到（整图只有一种边界）返回 null。
+   */
+  function contourSpotNear(radius) {
+    const R = radius || 700;
+    if (!contourCliff || !contourSlope) return null;
+    for (let i = 0; i < contourCliff.length; i += 4) {
+      const ax = (contourCliff[i] + contourCliff[i + 2]) / 2;
+      const ay = (contourCliff[i + 1] + contourCliff[i + 3]) / 2;
+      for (let j = 0; j < contourSlope.length; j += 4) {
+        const bx = (contourSlope[j] + contourSlope[j + 2]) / 2;
+        const by = (contourSlope[j + 1] + contourSlope[j + 3]) / 2;
+        if (Math.abs(ax - bx) <= R && Math.abs(ay - by) <= R) return { x: ax, y: ay };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 坡线 / 崖线（画在地形贴图之上、单位之下）。
+   *
+   * 线宽一律除以 zoom ⇒ **屏幕上恒定的粗细**，拉到最远也还看得见。
+   * 崖（层差 ≥ cliffAt）画粗、画深：那是过不去的断崖；
+   * 坡（层差 = 1）画细、画淡：那是从这儿能走上去的斜坡。
+   */
+  function drawContours() {
+    if (!contourCliff && !contourSlope) return;
+    const x0 = cam.x - 4;
+    const x1 = cam.x + VIEW_W + 4;
+    const y0 = cam.y - 4;
+    const y1 = cam.y + VIEW_H + 4;
+    ctx.save();
+    ctx.lineCap = 'butt';
+    ctx.lineJoin = 'miter';
+    if (contourSlope) {
+      ctx.strokeStyle = CONTOUR_SLOPE;
+      ctx.lineWidth = CONTOUR_SLOPE_W / zoom;
+      if (segsPath(contourSlope, x0, y0, x1, y1)) ctx.stroke();
+    }
+    if (contourCliff) {
+      ctx.strokeStyle = CONTOUR_CLIFF;
+      ctx.lineWidth = CONTOUR_CLIFF_W / zoom;
+      if (segsPath(contourCliff, x0, y0, x1, y1)) ctx.stroke();
+      // 崖沿再压一道偏冷的高光：崖顶那一线是「受光的棱」，一眼把高的一侧点出来
+      ctx.strokeStyle = CONTOUR_CLIFF_HI;
+      ctx.lineWidth = 1.6 / zoom;
+      ctx.translate(0, -2.4 / zoom);
+      if (segsPath(contourCliff, x0, y0, x1, y1)) ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /* ================= 地势射程环：把「站得高打得远」画在地图上 =================
+   *
+   * 需求原话：地图上就要看出来地势优势，而不是用文字去标出来。
+   * 所以这里**一个字都不写**，全靠环的形状与配色说话：选中自己的兵时，在地图上
+   * 画出它的**实际射程环**。环不是正圆 —— 沿每条射线按服务端口径走到头：
+   *     该处实际射程 = 基准射程 + (自己脚下层 − 目标处层) × HEIGHT_STEP_PX
+   * 于是「朝下坡鼓出去、朝上坡被削掉」，鼓出去那侧画暖金加粗、削掉那侧画冷灰变细，
+   * 再叠一个不考虑地势的虚线基准圈当尺子。占便宜的方向一眼就看得出，零文字。
+   */
+  const RELIEF_ANGLES = 44; // 环上采样的方向数
+  const RELIEF_STEP = 10; // 每条射线的前进步长（世界像素）
+  const RELIEF_RINGS = 8; // 一屏最多画几个环（再多会糊成一团）
+  const RELIEF_FILL = 0.07; // 环内填充的淡色
+  const RELIEF_GAIN = '#c8963c'; // 占便宜那一侧：暖金、粗、亮
+  const RELIEF_LOSS = '#6b6353'; // 吃亏那一侧：冷灰、细、暗
+  const RELIEF_FLAT = '#2a2620'; // 平地上不偏不倚：墨线
+  const RELIEF_DEAD = 0.05; // 外扩比例小于它就算平地（免得整圈都在闪金）
+
+  let heightStepPx = 0; // 每 1 层高低差折合多少像素射程（服务端 consts.HEIGHT_STEP_PX）
+  /** 每 1 层高低差 = 多少像素射程；服务端没下发就按「1 格 = 1 层」兜底 */
+  function reliefStepPx() {
+    if (heightStepPx > 0) return heightStepPx;
+    const g = meta && meta.consts && meta.consts.grid;
+    return (g && Number(g.cell)) || 10; // 服务端没下发就按「1 格 = 10px」兜底
+  }
+  /** 世界坐标处的高度层（真实层，与服务端 heightAtWorld 同口径） */
+  function hLevelAt(x, y) {
+    if (!heightGrid) return 0;
+    return hLevel(Math.floor(y / TERRAIN_CELL), Math.floor(x / TERRAIN_CELL));
+  }
+  /** 世界坐标处的地形类型（0 平原 / 2 山 / 4 水），越界按平原 */
+  function terrTypeAt(x, y) {
+    if (!terrainGrid) return 0;
+    const r = Math.floor(y / TERRAIN_CELL);
+    const c = Math.floor(x / TERRAIN_CELL);
+    if (r < 0 || r >= terrainGH || c < 0 || c >= terrainGW) return 0;
+    return terrainGrid[r][c];
+  }
+
+  /**
+   * 沿每条射线走到头，取「还够得着」的最远处 → 环上的半径。
+   * 与服务端同口径：目标处实际射程 = base + (自身层 − 目标层) × HEIGHT_STEP_PX；
+   * 山体挡视线也照抄（轰击的抛射弹越过山头，不受这条限制）。
+   */
+  function reliefRing(u, base) {
+    const stepPx = reliefStepPx();
+    const hSelf = hLevelAt(u.x, u.y);
+    const overMtn = Boolean(unitStatsOf(u.type, u.tier).splash);
+    const maxR = base + heightLevels * 2 * stepPx + RELIEF_STEP;
+    const out = new Float32Array(RELIEF_ANGLES);
+    for (let i = 0; i < RELIEF_ANGLES; i++) {
+      const a = (i / RELIEF_ANGLES) * TAU;
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      let best = 0;
+      for (let d = RELIEF_STEP; d <= maxR; d += RELIEF_STEP) {
+        const px = u.x + ca * d;
+        const py = u.y + sa * d;
+        // 撞上山体就到此为止（第一跳是脚下那一格，不算）—— 山两边互相看不见、打不到
+        if (!overMtn && d > RELIEF_STEP && terrTypeAt(px, py) === 2) break;
+        const eff = base + (hSelf - hLevelAt(px, py)) * stepPx;
+        if (d <= eff) best = d;
+      }
+      out[i] = best;
+    }
+    return out;
+  }
+
+  /**
+   * 选中我方单位时，在地图上画出它们的地势射程环。
+   * 环心跟着兵所在的那层抬起来、环上的点各自贴回地面 —— 环是「趴在地形上的」：
+   * 爬坡那侧被削掉一块、下坡那侧鼓出去一块。压在地形之上、单位与建筑之下。
+   */
+  function drawRangeRelief() {
+    if (isSpectator || !terrainReady || !heightGrid || selection.size === 0) return;
+    const mine = myPlayerIndex();
+    if (mine < 0) return;
+    const list = [];
+    for (const u of units.values()) {
+      if (!selection.has(u.id) || u.oi !== mine) continue;
+      list.push(u);
+      if (list.length >= RELIEF_RINGS) break;
+    }
+    if (!list.length) return;
+    const c = ctx;
+    const N = RELIEF_ANGLES;
+    const stepPx = reliefStepPx();
+    const maxGain = Math.max(1, heightLevels * 2 * stepPx);
+    c.save();
+    c.lineCap = 'round';
+    c.lineJoin = 'round';
+    for (const u of list) {
+      const base = unitStatsOf(u.type, u.tier).range || 0;
+      if (base <= 0) continue;
+      const ring = reliefRing(u, base);
+      const col = playerColor(mine);
+      const rx = new Float32Array(N);
+      const ry = new Float32Array(N);
+      for (let i = 0; i < N; i++) {
+        const a = (i / N) * TAU;
+        const wx = u.x + Math.cos(a) * ring[i];
+        const wy = u.y + Math.sin(a) * ring[i];
+        rx[i] = wx;
+        ry[i] = groundY(wx, wy); // 环上的点各自贴回它脚下那层地
+      }
+      // ① 环内铺一层淡淡的己方色：圈住「这个兵现在够得着的地方」
+      c.beginPath();
+      c.moveTo(rx[0], ry[0]);
+      for (let i = 1; i < N; i++) c.lineTo(rx[i], ry[i]);
+      c.closePath();
+      c.fillStyle = hexAlpha(col, RELIEF_FILL);
+      c.fill();
+      // ② 基准圈（不考虑地势时的射程）：细虚线当尺子，比出多/少了一截
+      c.strokeStyle = hexAlpha(RELIEF_FLAT, 0.22);
+      c.lineWidth = 1 / zoom;
+      c.setLineDash([5 / zoom, 6 / zoom]);
+      c.beginPath();
+      for (let i = 0; i <= N; i++) {
+        const a = ((i % N) / N) * TAU;
+        const wx = u.x + Math.cos(a) * base;
+        const wy = u.y + Math.sin(a) * base;
+        const gy = groundY(wx, wy);
+        if (i === 0) c.moveTo(wx, gy);
+        else c.lineTo(wx, gy);
+      }
+      c.stroke();
+      c.setLineDash([]);
+      // ③ 环线本身：外扩那侧暖金加粗、收缩那侧冷灰变细 —— 全程没有一个字
+      for (let i = 0; i < N; i++) {
+        const j = (i + 1) % N;
+        // 取两端里「偏离更狠」的那一端（同号取绝对值大的，异号就取平均）：
+        // 最小偏差就是步长 10px，两端一平均可能被抹成 5px —— 单个方向的尖角会整段失色。
+        const di = ring[i] - base;
+        const dj = ring[j] - base;
+        const dev = di * dj >= 0 ? (Math.abs(di) >= Math.abs(dj) ? di : dj) : (di + dj) / 2;
+        const g = clamp(dev / maxGain, -1, 1);
+        const up = g > RELIEF_DEAD;
+        const down = g < -RELIEF_DEAD;
+        c.strokeStyle = up
+          ? hexAlpha(RELIEF_GAIN, 0.34 + 0.5 * g)
+          : down
+            ? hexAlpha(RELIEF_LOSS, 0.34 + 0.4 * -g)
+            : hexAlpha(RELIEF_FLAT, 0.3);
+        c.lineWidth = (up ? 1.5 + 2.1 * g : 1.4) / zoom;
+        c.beginPath();
+        c.moveTo(rx[i], ry[i]);
+        c.lineTo(rx[j], ry[j]);
+        c.stroke();
+        // ④ 明显占便宜的方向再补一道外扩的暖光晕：越占便宜越亮
+        if (up && g > 0.34) {
+          c.strokeStyle = hexAlpha(RELIEF_GAIN, 0.13 * g);
+          c.lineWidth = (7 + 7 * g) / zoom;
+          c.stroke();
+        }
+      }
+    }
+    c.restore();
   }
 
   /** 解析服务端下发的地形（权威），优先于本地生成使用 */
@@ -768,6 +1210,29 @@ window.WarFactoryUi = (function () {
           grid[r][c] = Number.isInteger(v) && v >= 0 && v <= 4 ? v : 0;
           if (!Number.isInteger(v)) ok = false;
         }
+      }
+      // 高低差：每层一个字符（字符 − 偏移 = 层，偏移由服务端一起下发）
+      const off = Number.isFinite(terr.off) ? terr.off : (meta && meta.consts && meta.consts.HEIGHT_OFF) || 3;
+      // 坡与崖：层差 ≥ cliff 就是崖（过不去），只有 = 1 的坡走得上去
+      if (Number.isFinite(terr.cliff)) heightCliff = Math.max(1, Number(terr.cliff));
+      else if (meta && meta.consts && Number.isFinite(meta.consts.HEIGHT_CLIFF)) heightCliff = meta.consts.HEIGHT_CLIFF;
+      if (Number.isFinite(terr.terrace)) heightTerrace = Math.max(1, Number(terr.terrace));
+      if (terr.levels) heightLevels = Math.max(1, Number(terr.levels) || 1);
+      else if (meta && meta.consts && meta.consts.heightLevels) heightLevels = meta.consts.heightLevels;
+      // 每 1 层高低差折合多少像素射程 —— 地势射程环按它外扩 / 收缩
+      const cs = (meta && meta.consts) || {};
+      if (Number.isFinite(cs.HEIGHT_STEP_PX)) heightStepPx = Math.max(0, Number(cs.HEIGHT_STEP_PX));
+      if (terr.heights && terr.heights.length >= rows * cols) {
+        const hg = new Int8Array(rows * cols);
+        let bad = 0;
+        for (let i = 0; i < rows * cols; i++) {
+          const v = terr.heights.charCodeAt(i) - 48 - off;
+          hg[i] = Math.abs(v) <= heightLevels ? v : 0;
+          if (!Number.isFinite(hg[i])) bad++;
+        }
+        heightGrid = bad ? null : hg;
+      } else {
+        heightGrid = null; // 没下发（比如旧服务端）→ 全图按 0 层，仍是原来那张俯视图
       }
       setTerrainGrid(grid, cols, rows);
       return ok;
@@ -797,13 +1262,83 @@ window.WarFactoryUi = (function () {
     }
   }
 
-  // 把地形类型网格画成水墨笔触（平原留白透出宣纸）
+  // 把地形类型网格 + 高低差画成水墨笔触，并按层把地块「立」起来（平原留白透出宣纸）
   function paintTerrain(g, grid, gw, gh, CELL) {
+    // ---- 立体感的关键：层 → 本地坐标系里的抬升量（与实体的 groundY 同源）----
+    const liftOf = (r, c) => liftCell(r, c);
+    // 空地顶面几乎不按层铺色：台地只有几档，每档一块大色会把地图切成黄/灰色斑。
+    // 高低改由挤出立面 + 加厚崖线表达；顶面只留极淡一点。
+    const plainFill = (r, c) => {
+      if (!heightGrid) return null;
+      const lv = hLevel(r, c);
+      if (!lv) return null;
+      return lv > 0
+        ? 'rgba(255,250,232,' + (0.028 * lv).toFixed(3) + ')'
+        : 'rgba(58,66,78,' + (0.030 * -lv).toFixed(3) + ')';
+    };
+    // 立面（台阶朝着观察者的那一面）：比顶面深一号 —— 这就是「坡」被看见的那一面
+    const WALL_MTN = 'rgba(58,52,42,0.68)';
+    const WALL_WAT = 'rgba(40,66,88,0.64)';
+    // 坡：落差只有 1 层 → 浅浅一层暖色，看着就是「踩得上去的斜面」
+    const SLOPE_FACE = 'rgba(150,130,94,0.34)';
+    const SLOPE_LIP = 'rgba(255,250,232,0.22)';
+    // 崖：落差 ≥ cliff → 压到很暗，再补崖沿高光 + 竖向凿痕 + 崖脚暗边（立面随 HEIGHT_STEP 加厚）
+    const CLIFF_FACE = 'rgba(38,30,22,0.82)';
+    const CLIFF_LIP = 'rgba(255,250,236,0.42)';
+    const CLIFF_GROOVE = 'rgba(22,16,12,0.42)';
+    const CLIFF_FOOT = 'rgba(18,12,8,0.52)';
+    const RIM_K = RIM_STEPS * HEIGHT_STEP; // 地图南边缘那圈「厚度」（看着像一块切好的沙盘）
+
     for (let r = 0; r < gh; r++) {
+      const lastRow = r + 1 >= gh;
       for (let c = 0; c < gw; c++) {
         const t = grid[r][c];
-        if (t === 0) continue;
-        const x = c * CELL, y = r * CELL;
+        const x = c * CELL;
+        const lv = liftOf(r, c);
+        const sf = lastRow ? -RIM_K : liftOf(r + 1, c);
+        // 由远到近（行号小 = 远处）逐行画，相邻两行差一层就露出一段南向立面 ——
+        // 高低差就是这么被看见的，而不是「把图往上挪一下」。
+        const y = r * CELL - lv; // 顶面：0 层才落在它本来的位置上
+        const ySouth = (r + 1) * CELL - sf; // 南邻的顶边 = 本格立面的底边
+        if (ySouth > y + CELL + 0.4) {
+          const wallH = ySouth - y - CELL;
+          // 落几层？判崖一律用**真实高度层**（与服务端 cliffBetween 同口径），
+          // 不用带山/水加成的视觉抬升 —— 否则画出来的崖和实际过不去的地方对不上。
+          const dropL = hLevel(r, c) - hLevel(r + 1, c);
+          const isCliff = dropL >= heightCliff;
+          g.fillStyle = t === 2 ? WALL_MTN : t === 4 ? WALL_WAT : isCliff ? CLIFF_FACE : SLOPE_FACE;
+          g.fillRect(x, y + CELL, CELL + 0.6, wallH);
+          if (t !== 4) {
+            if (isCliff) {
+              // 崖沿：加厚受光棱 —— 断崖「厚度」主要靠这条 + 立面高度读出来
+              g.fillStyle = CLIFF_LIP;
+              g.fillRect(x, y + CELL, CELL + 0.6, Math.min(5.2, wallH * 0.42));
+              // 岩壁竖纹：一道道凿出来的竖沟，越往下越暗（山体本身也吃这套）
+              const cr = cellRng(r, c);
+              g.fillStyle = t === 2 ? 'rgba(28,24,18,0.40)' : CLIFF_GROOVE;
+              const gstep = Math.max(5, CELL * 0.2);
+              for (let gx = x + cr() * gstep; gx < x + CELL - 1; gx += gstep) {
+                const gw2 = 1.4 + cr() * 1.8;
+                g.fillRect(gx, y + CELL + 4.2, gw2, Math.max(3, (wallH - 4.2) * (0.55 + cr() * 0.4)));
+              }
+              // 崖脚：再压一道最暗的，把「高」和「低」彻底切开
+              g.fillStyle = CLIFF_FOOT;
+              g.fillRect(x, ySouth - Math.min(5.0, wallH * 0.4), CELL + 0.6, Math.min(5.0, wallH * 0.4));
+            } else {
+              // 坡：只在顶上留一道亮边 —— 与崖那种「深 + 带凿痕」的立面明显不是一回事
+              g.fillStyle = SLOPE_LIP;
+              g.fillRect(x, y + CELL, CELL + 0.6, Math.min(1.6, wallH * 0.4));
+            }
+          }
+        }
+        if (t === 0) {
+          const pf = plainFill(r, c);
+          if (pf) {
+            g.fillStyle = pf;
+            g.fillRect(x, y, CELL + 0.6, CELL + 0.6);
+          }
+          continue;
+        }
         const cx = x + CELL / 2, cy = y + CELL / 2;
         const cr = cellRng(r, c);
         if (t === 3) {
@@ -964,36 +1499,14 @@ window.WarFactoryUi = (function () {
     return w * 0.3;
   }
 
-  function factoryRadius() {
-    return (meta && meta.consts && meta.consts.factoryR) || 58;
-  }
-
   function drawFactory(f, t) {
     const c = ctx;
+    // R = factorySize × cell / 2：碰撞与绘制共用；改 data.js 的 factorySize 两边一起变
+    const R = factoryRadius();
+    const k = R / 52;
     c.save();
-    c.translate(f.x, f.y);
-
-    // 占领圈
-    const cr = (meta && meta.consts && meta.consts.captureR) || 118;
-    c.strokeStyle = hexAlpha(INK, 0.18);
-    c.lineWidth = 1.6;
-    c.setLineDash([7, 7]);
-    c.beginPath();
-    c.arc(0, 0, cr, 0, TAU);
-    c.stroke();
-    c.setLineDash([]);
-
-    // 占领进度弧
-    if (f.capProg > 0 && f.capBy >= 0) {
-      const col = playerColor(f.capBy);
-      c.strokeStyle = f.contested && Math.floor(t / 150) % 2 === 0
-        ? hexAlpha(col, 0.35)
-        : col;
-      c.lineWidth = 4.5;
-      c.beginPath();
-      c.arc(0, 0, cr, -Math.PI / 2, -Math.PI / 2 + (f.capProg / 100) * TAU);
-      c.stroke();
-    }
+    c.translate(f.x, groundY(f.x, f.y)); // 跟着地块抬起：厂房要「站在」它占的那层地上
+    c.scale(k, k);
 
     // 归属底色盘：整块厂区压上归属方阵营色（红/蓝/黄/绿）60% 透明。
     // 画在建筑之前，建筑压在上面；中立厂不着色，仍是一片素纸。
@@ -1004,7 +1517,7 @@ window.WarFactoryUi = (function () {
       c.ellipse(0, 20, 72, 33, 0, 0, TAU);
       c.fill();
       c.strokeStyle = hexAlpha(ocol, 0.9);
-      c.lineWidth = 1.8 / zoom;
+      c.lineWidth = 1.8 / zoom / k;
       c.stroke();
     }
 
@@ -1023,11 +1536,11 @@ window.WarFactoryUi = (function () {
     if (f.id === selFacId) {
       const pulse = 1 + Math.sin(t / 320) * 0.06;
       c.strokeStyle = hexAlpha(playerColor(f.owner), 0.9);
-      c.lineWidth = 3 / zoom;
-      c.setLineDash([9, 6]);
-      c.lineDashOffset = -(t / 50) % 15;
+      c.lineWidth = 3 / zoom / k;
+      c.setLineDash([9 / k, 6 / k]);
+      c.lineDashOffset = -((t / 50) % 15) / k;
       c.beginPath();
-      c.arc(0, 0, (factoryRadius() + 14) * pulse, 0, TAU);
+      c.arc(0, 0, (52 + 14 / k) * pulse, 0, TAU);
       c.stroke();
       c.setLineDash([]);
       c.lineDashOffset = 0;
@@ -1039,7 +1552,7 @@ window.WarFactoryUi = (function () {
     c.rect(-10, 52, 20, 20);
     c.fill();
     c.fillStyle = '#f6efdd';
-    c.font = '700 13px ' + CALLOUT_FONT;
+    c.font = '700 ' + 13 / k + 'px ' + CALLOUT_FONT;
     c.textAlign = 'center';
     c.textBaseline = 'middle';
     c.fillText(LEVEL_CHAR[f.level], 0, 63);
@@ -1048,7 +1561,7 @@ window.WarFactoryUi = (function () {
     const slots = slotsOf(f);
     if (slots.length) {
       const col = f.owner >= 0 ? playerColor(f.owner) : INK;
-      c.font = '700 11px ' + CALLOUT_FONT;
+      c.font = '700 ' + 11 / k + 'px ' + CALLOUT_FONT;
       for (let i = 0; i < slots.length; i++) {
         const cn = UNIT_CN[slots[i].type] || '';
         if (!cn) continue;
@@ -1058,12 +1571,12 @@ window.WarFactoryUi = (function () {
         c.rect(bx, 54, 16, 16);
         c.fill();
         c.strokeStyle = hexAlpha(col, 0.85);
-        c.lineWidth = 1.2 / zoom;
+        c.lineWidth = 1.2 / zoom / k;
         c.stroke();
         // 进化过的产线（二级起）多描一圈，和「只产初级」的厂区分开
         if (slots[i].tier > 1) {
           c.strokeStyle = hexAlpha(col, 0.95);
-          c.lineWidth = 2 / zoom;
+          c.lineWidth = 2 / zoom / k;
           c.beginPath();
           c.rect(bx - 1.5, 52.5, 19, 19);
           c.stroke();
@@ -1088,11 +1601,11 @@ window.WarFactoryUi = (function () {
           : hexAlpha('#a63a2e', 0.95);
       c.fillRect(-hw / 2, hy, hw * ratio, 6);
       c.strokeStyle = hexAlpha(INK, 0.55);
-      c.lineWidth = 1;
+      c.lineWidth = 1 / k;
       c.strokeRect(-hw / 2, hy, hw, 6);
       if (ratio < 0.999) {
         c.fillStyle = hexAlpha(INK, 0.8);
-        c.font = '600 11px ' + CALLOUT_FONT;
+        c.font = '600 ' + 11 / k + 'px ' + CALLOUT_FONT;
         c.textAlign = 'center';
         c.textBaseline = 'top';
         c.fillText(Math.round(f.hp) + ' / ' + Math.round(f.hpMax), 0, hy + 9);
@@ -1111,14 +1624,17 @@ window.WarFactoryUi = (function () {
       if (!r) continue;
       const col = f.owner >= 0 ? playerColor(f.owner) : INK;
       const sel = f.id === selFacId;
+      // 两端都按各自脚下的层错位：工厂站在坡上、旗插在坡的另一层，中间这条虚线才不会浮空
+      const fy = groundY(f.x, f.y);
+      const ry = groundY(r.x, r.y);
       c.save();
       c.strokeStyle = hexAlpha(col, sel ? 0.85 : 0.45);
       c.lineWidth = (sel ? 2.6 : 1.6) / zoom;
       c.setLineDash([10, 8]);
       c.lineDashOffset = sel ? -(t / 45) % 18 : 0; // 选中时流动，指示行进方向
       c.beginPath();
-      c.moveTo(f.x, f.y);
-      c.lineTo(r.x, r.y);
+      c.moveTo(f.x, fy);
+      c.lineTo(r.x, ry);
       c.stroke();
       c.setLineDash([]);
       c.lineDashOffset = 0;
@@ -1128,26 +1644,26 @@ window.WarFactoryUi = (function () {
       c.strokeStyle = hexAlpha(col, 0.9);
       c.lineWidth = 2 / zoom;
       c.beginPath();
-      c.moveTo(r.x, r.y);
-      c.lineTo(r.x, r.y - 30);
+      c.moveTo(r.x, ry);
+      c.lineTo(r.x, ry - 30);
       c.stroke();
       c.fillStyle = hexAlpha(col, 0.9);
       c.beginPath();
-      c.moveTo(r.x, r.y - 30);
-      c.lineTo(r.x + 18, r.y - 23);
-      c.lineTo(r.x, r.y - 16);
+      c.moveTo(r.x, ry - 30);
+      c.lineTo(r.x + 18, ry - 23);
+      c.lineTo(r.x, ry - 16);
       c.closePath();
       c.fill();
       c.strokeStyle = hexAlpha(col, sel ? 0.8 : 0.5);
       c.lineWidth = (sel ? 2.2 : 1.4) / zoom;
       c.beginPath();
-      c.arc(r.x, r.y, 13 * pulse, 0, TAU);
+      c.arc(r.x, ry, 13 * pulse, 0, TAU);
       c.stroke();
       c.beginPath();
-      c.moveTo(r.x - 5, r.y);
-      c.lineTo(r.x + 5, r.y);
-      c.moveTo(r.x, r.y - 5);
-      c.lineTo(r.x, r.y + 5);
+      c.moveTo(r.x - 5, ry);
+      c.lineTo(r.x + 5, ry);
+      c.moveTo(r.x, ry - 5);
+      c.lineTo(r.x, ry + 5);
       c.stroke();
 
       // 旗上标注工厂编号，便于分辨是哪个厂的集结地
@@ -1155,7 +1671,7 @@ window.WarFactoryUi = (function () {
       c.font = '600 11px ' + CALLOUT_FONT;
       c.textAlign = 'left';
       c.textBaseline = 'middle';
-      c.fillText('集' + f.id, r.x + 22, r.y - 23);
+      c.fillText('集' + f.id, r.x + 22, ry - 23);
       c.textBaseline = 'alphabetic';
       c.restore();
     }
@@ -1163,14 +1679,18 @@ window.WarFactoryUi = (function () {
 
   function drawLab(l, t) {
     const c = ctx;
+    // R = labSize × cell / 2；手绘外接圆半径 30，整体 ×(R/30)
+    const R = labR();
+    const k = R / 30;
     c.save();
-    c.translate(l.x, l.y);
+    c.translate(l.x, groundY(l.x, l.y)); // 与脚下那层地对齐
+    c.scale(k, k);
     const owned = l.owner >= 0;
     const col = owned ? playerColor(l.owner) : hexAlpha(INK, 0.7);
 
     // 六边形亭身
     c.strokeStyle = owned ? col : INK;
-    c.lineWidth = 2.6;
+    c.lineWidth = 2.6 / k;
     c.beginPath();
     for (let i = 0; i < 6; i++) {
       const a = (TAU / 6) * i - Math.PI / 6;
@@ -1184,7 +1704,7 @@ window.WarFactoryUi = (function () {
     // 内环 + 核心（归属后呼吸）
     const breath = owned ? 1 + Math.sin(t / 400) * 0.12 : 1;
     c.strokeStyle = hexAlpha(owned ? col : INK, 0.55);
-    c.lineWidth = 1.4;
+    c.lineWidth = 1.4 / k;
     c.beginPath();
     c.arc(0, 0, 15 * breath, 0, TAU);
     c.stroke();
@@ -1195,7 +1715,7 @@ window.WarFactoryUi = (function () {
 
     // 天线
     c.strokeStyle = INK;
-    c.lineWidth = 2;
+    c.lineWidth = 2 / k;
     c.beginPath();
     c.moveTo(0, -30);
     c.lineTo(0, -44);
@@ -1211,7 +1731,7 @@ window.WarFactoryUi = (function () {
       c.rect(22, -40, 16, 16);
       c.fill();
       c.fillStyle = '#f6efdd';
-      c.font = '700 11px ' + CALLOUT_FONT;
+      c.font = '700 ' + 11 / k + 'px ' + CALLOUT_FONT;
       c.textAlign = 'center';
       c.textBaseline = 'middle';
       c.fillText('研', 30, -31);
@@ -1219,17 +1739,18 @@ window.WarFactoryUi = (function () {
     }
 
     c.fillStyle = hexAlpha(INK, 0.6);
-    c.font = '12px ' + CALLOUT_FONT;
+    c.font = 12 / k + 'px ' + CALLOUT_FONT;
     c.textAlign = 'center';
     c.fillText('研 究 所', 0, 50);
     // 研究所血条：和工厂一样可被攻击，打光即由最后一击者接管
-    drawBuildingHpBar(c, 0, 58, l.hp, l.hpMax, 64);
+    drawBuildingHpBar(c, 0, 58, l.hp, l.hpMax, 64, k);
     c.restore();
   }
 
-  /** 建筑通用血条（世界坐标，以 (x,y) 为左上角基准） */
-  function drawBuildingHpBar(c, x, y, hp, hpMax, w) {
+  /** 建筑通用血条（世界坐标，以 (x,y) 为左上角基准）；k=当前建筑 scale，用于线宽/字号抵消 */
+  function drawBuildingHpBar(c, x, y, hp, hpMax, w, k) {
     if (hp == null || !(hpMax > 0)) return;
+    const s = k > 0 ? k : 1;
     const ratio = clamp(hp / hpMax, 0, 1);
     c.fillStyle = 'rgba(38,34,28,0.30)';
     c.fillRect(x - w / 2, y, w, 6);
@@ -1241,11 +1762,11 @@ window.WarFactoryUi = (function () {
           : hexAlpha('#a63a2e', 0.95);
     c.fillRect(x - w / 2, y, w * ratio, 6);
     c.strokeStyle = hexAlpha(INK, 0.55);
-    c.lineWidth = 1;
+    c.lineWidth = 1 / s;
     c.strokeRect(x - w / 2, y, w, 6);
     if (ratio < 0.999) {
       c.fillStyle = hexAlpha(INK, 0.8);
-      c.font = '600 11px ' + CALLOUT_FONT;
+      c.font = '600 ' + 11 / s + 'px ' + CALLOUT_FONT;
       c.textAlign = 'center';
       c.textBaseline = 'top';
       c.fillText(Math.round(hp) + ' / ' + Math.round(hpMax), x, y + 9);
@@ -1255,10 +1776,133 @@ window.WarFactoryUi = (function () {
 
   /* ================= 总部绘制 ================= */
 
+  /**
+   * 总部防卫表现：新索敌蓄能（聚能球 + 蓄能弧 + 锁定环）→ 蓄满后按冷却突突闪射线。
+   */
+  function drawHqDefense(t) {
+    if (!meta) return;
+    const c = ctx;
+    const range = (meta.consts && meta.consts.hqAtkRange) || 200;
+    const windupMs = (meta.consts && meta.consts.hqAtkWindupMs) || 1000;
+    const nowMs = Date.now();
+    for (const h of hqView) {
+      if (h.down) continue;
+      const col = playerColor(h.owner);
+      const hy = groundY(h.x, h.y);
+      c.save();
+      if (h.id === selHqId) {
+        c.strokeStyle = hexAlpha(col, 0.5);
+        c.lineWidth = 1.6 / zoom;
+        c.setLineDash([10, 8]);
+        c.lineDashOffset = -(t / 60) % 18;
+        c.beginPath();
+        c.arc(h.x, hy, range, 0, TAU);
+        c.stroke();
+        c.setLineDash([]);
+        c.lineDashOffset = 0;
+        c.fillStyle = hexAlpha(col, 0.05);
+        c.fill();
+      }
+      if (!h.atkId) {
+        c.restore();
+        continue;
+      }
+      let tgt = null;
+      if (h.atkId > 0) tgt = units.get(h.atkId);
+      else {
+        const fid = -h.atkId;
+        for (let i = 0; i < factoriesView.length; i++) {
+          if (factoriesView[i].id === fid) {
+            tgt = factoriesView[i];
+            break;
+          }
+        }
+      }
+      if (!tgt) {
+        c.restore();
+        continue;
+      }
+      const left = h.atkWindupAt ? Math.max(0, h.atkWindupMs - (nowMs - h.atkWindupAt)) : 0;
+      const prog = windupMs > 0 ? clamp(1 - left / windupMs, 0, 1) : 1;
+      const mx = h.x;
+      // 炮位随 hqSize：手绘城楼顶约在 -44（半径骨架 52）
+      const my = hy - hqR() * (44 / 52);
+      const ty = groundY(tgt.x, tgt.y);
+      const shotAge = h.fireAt ? nowMs - h.fireAt : 9999;
+      const shooting = shotAge >= 0 && shotAge < 160;
+      if (left > 0) {
+        c.strokeStyle = hexAlpha(col, 0.28 + 0.45 * prog);
+        c.lineWidth = (1.2 + 2 * prog) / zoom;
+        c.setLineDash([6, 7]);
+        c.beginPath();
+        c.moveTo(mx, my);
+        c.lineTo(tgt.x, ty);
+        c.stroke();
+        c.setLineDash([]);
+        const pulse = 0.85 + 0.15 * Math.sin(t / 45);
+        c.fillStyle = hexAlpha('#fff6e0', 0.25 + 0.45 * prog);
+        c.beginPath();
+        c.arc(mx, my, (4 + 9 * prog) * pulse, 0, TAU);
+        c.fill();
+        c.fillStyle = hexAlpha(col, 0.4 + 0.5 * prog);
+        c.beginPath();
+        c.arc(mx, my, 3 + 6 * prog, 0, TAU);
+        c.fill();
+        c.strokeStyle = hexAlpha('#ffe6a0', 0.55 + 0.45 * prog);
+        c.lineWidth = 3.2 / zoom;
+        c.beginPath();
+        c.arc(mx, my, 15, -Math.PI / 2, -Math.PI / 2 + prog * TAU);
+        c.stroke();
+        const rr = 28 - 16 * prog;
+        c.strokeStyle = hexAlpha(col, 0.5 + 0.45 * prog);
+        c.lineWidth = 2.2 / zoom;
+        c.beginPath();
+        c.arc(tgt.x, ty, rr, 0, TAU);
+        c.stroke();
+      } else if (shooting) {
+        const fade = 1 - shotAge / 160;
+        c.strokeStyle = hexAlpha(col, 0.35 + 0.4 * fade);
+        c.lineWidth = (6 * fade) / zoom;
+        c.beginPath();
+        c.moveTo(mx, my);
+        c.lineTo(tgt.x, ty);
+        c.stroke();
+        c.strokeStyle = hexAlpha('#fff8e8', 0.55 + 0.4 * fade);
+        c.lineWidth = (2.2 * fade) / zoom;
+        c.beginPath();
+        c.moveTo(mx, my);
+        c.lineTo(tgt.x, ty);
+        c.stroke();
+        c.fillStyle = hexAlpha('#fff6d0', 0.7 + 0.3 * fade);
+        c.beginPath();
+        c.arc(mx, my, 4 + 4 * fade, 0, TAU);
+        c.fill();
+      } else {
+        c.strokeStyle = hexAlpha(col, 0.22);
+        c.lineWidth = 1.1 / zoom;
+        c.setLineDash([3, 8]);
+        c.beginPath();
+        c.moveTo(mx, my);
+        c.lineTo(tgt.x, ty);
+        c.stroke();
+        c.setLineDash([]);
+        c.fillStyle = hexAlpha(col, 0.45);
+        c.beginPath();
+        c.arc(mx, my, 3.2, 0, TAU);
+        c.fill();
+      }
+      c.restore();
+    }
+  }
+
   function drawHq(h) {
     const c = ctx;
+    // R = hqSize × cell / 2；手绘按半径 52 铺，整体 ×(R/52)
+    const R = hqR();
+    const k = R / 52;
     c.save();
-    c.translate(h.x, h.y);
+    c.translate(h.x, groundY(h.x, h.y)); // 总部同样站在它占的那层地上
+    c.scale(k, k);
     const col = playerColor(h.owner);
     const down = h.down;
 
@@ -1268,12 +1912,12 @@ window.WarFactoryUi = (function () {
     c.ellipse(0, 18, 64, 22, 0, 0, TAU);
     c.fill();
     c.strokeStyle = down ? hexAlpha(INK, 0.3) : hexAlpha(col, 0.9);
-    c.lineWidth = 1.8 / zoom;
+    c.lineWidth = 1.8 / zoom / k;
     c.stroke();
 
     // 双层城楼
     c.strokeStyle = down ? hexAlpha(INK, 0.35) : hexAlpha(col, 0.9);
-    c.lineWidth = 2.8;
+    c.lineWidth = 2.8 / k;
     c.beginPath();
     c.moveTo(-46, 20);
     c.lineTo(-46, -14);
@@ -1290,7 +1934,7 @@ window.WarFactoryUi = (function () {
     c.stroke();
 
     // 檐（飞檐两条弧）
-    c.lineWidth = 2.4;
+    c.lineWidth = 2.4 / k;
     c.beginPath();
     c.moveTo(-58, -14);
     c.quadraticCurveTo(0, -30, 58, -14);
@@ -1302,7 +1946,7 @@ window.WarFactoryUi = (function () {
 
     // 主旗
     c.strokeStyle = hexAlpha(col, 0.95);
-    c.lineWidth = 2.4;
+    c.lineWidth = 2.4 / k;
     c.beginPath();
     c.moveTo(0, -40);
     c.lineTo(0, -74);
@@ -1331,7 +1975,7 @@ window.WarFactoryUi = (function () {
     c.arc(0, 2, 11, 0, TAU);
     c.fill();
     c.fillStyle = '#f6efdd';
-    c.font = '700 13px ' + CALLOUT_FONT;
+    c.font = '700 ' + 13 / k + 'px ' + CALLOUT_FONT;
     c.textAlign = 'center';
     c.textBaseline = 'middle';
     c.fillText('帅', 0, 3);
@@ -1339,10 +1983,10 @@ window.WarFactoryUi = (function () {
 
     // 名称 + 血条
     c.fillStyle = down ? hexAlpha(INK, 0.45) : hexAlpha(INK, 0.75);
-    c.font = '12px ' + CALLOUT_FONT;
+    c.font = 12 / k + 'px ' + CALLOUT_FONT;
     c.textAlign = 'center';
     c.fillText(down ? '总部（陷落）' : '总 部', 0, 92);
-    if (!down) drawBuildingHpBar(c, 0, 100, h.hp, h.hpMax, 84);
+    if (!down) drawBuildingHpBar(c, 0, 100, h.hp, h.hpMax, 84, k);
     c.restore();
   }
 
@@ -1367,549 +2011,706 @@ window.WarFactoryUi = (function () {
     return Math.max(0, Math.min(2, (tier | 0) - 1));
   }
 
-  /** 各兵种各阶的「身体半长 / 半宽」（设计坐标 px）：内部花纹与外部挂件都按它贴附 */
+  /**
+   * 各兵种各阶的「身体半长 / 半宽」（设计坐标 px）：所有部件都按它贴附。
+   *
+   * ⚠️ 必须接近正方形，且**同一兵种三阶的长宽比完全一致**：
+   *   ① 碰撞与命中判定是正方形（服务端 size 格见方 → 半径 r = size/2 格的圆判定），
+   *      画成长条会让「看到的」和「打得到的」对不上；
+   *   ② 世界尺寸 = span[tier] × tierScale = TIER_SIZE_MUL[tier] × span[0]，
+   *      纵向那一路还要再乘 (span[tier].y / span[tier].x)；这个比值一旦随阶漂移，
+   *      「三级包围盒 = 一级 2 倍」就会有一个方向达不到 2 倍。
+   */
   const BODY_SPAN = {
-    warrior: [[13, 9], [16, 11], [19, 13]],
-    shield: [[24, 21], [28, 23], [31, 26]],
-    ranger: [[16, 8], [19, 9], [22, 11]],
-    burst: [[14, 13], [17, 15], [21, 17]],
-    burn: [[12, 8], [14, 9], [16, 10]],
-    laser: [[17, 10], [20, 11], [23, 12]],
+    warrior: [[12, 11.5], [16, 15.33], [20, 19.17]],
+    shield: [[22, 21], [29, 27.7], [36, 34.38]],
+    ranger: [[13, 12], [17.5, 16.15], [22, 20.3]],
+    burst: [[15, 14], [20, 18.67], [25, 23.33]],
+    burn: [[12, 11.5], [16, 15.33], [20, 19.17]],
+    laser: [[14, 13], [18.5, 17.19], [23, 21.37]],
   };
-
-  /** 各兵种内部花纹的纹样轮换表（中级取第 1 道、高级再叠第 2 道；守势分支错开一位） */
-  const UNIT_PATTERNS = {
-    warrior: ['crest', 'hatch', 'ring'],
-    shield: ['ring', 'plate', 'crest'],
-    ranger: ['hatch', 'ring', 'crest'],
-    burst: ['plate', 'ring', 'hatch'],
-    burn: ['crest', 'hatch', 'plate'],
-    laser: ['ring', 'crest', 'hatch'],
-  };
-
-  /** 躯干内部花纹：ring 同心环 / crest 菱形徽 / hatch 甲片横纹 / plate 双道甲缝 */
-  function drawInnerPattern(c, kind, cx, cy, rx, ry, col) {
-    c.save();
-    c.strokeStyle = hexAlpha(col, 0.55);
-    c.lineWidth = 1.3;
-    if (kind === 'crest') {
-      c.beginPath();
-      c.moveTo(cx - rx, cy);
-      c.lineTo(cx, cy - ry);
-      c.lineTo(cx + rx, cy);
-      c.lineTo(cx, cy + ry);
-      c.closePath();
-      c.stroke();
-    } else if (kind === 'hatch') {
-      for (let i = -1; i <= 1; i++) {
-        c.beginPath();
-        c.moveTo(cx - rx * 0.85, cy + ry * i * 0.7);
-        c.lineTo(cx + rx * 0.85, cy + ry * i * 0.34);
-        c.stroke();
-      }
-    } else if (kind === 'plate') {
-      c.beginPath();
-      c.moveTo(cx - rx, cy - ry * 0.5);
-      c.lineTo(cx + rx, cy - ry * 0.18);
-      c.moveTo(cx - rx, cy + ry * 0.5);
-      c.lineTo(cx + rx, cy + ry * 0.18);
-      c.stroke();
-    } else {
-      c.beginPath();
-      c.ellipse(cx, cy, Math.max(2, rx), Math.max(2, ry), 0, 0, TAU);
-      c.stroke();
-    }
-    c.restore();
-  }
-
-  /** 单枚挂件（成串的穗子）：提绳 + 大坠 + 提绳 + 小坠（dir = ±1 决定朝哪一侧垂） */
-  function drawPendant(c, x, y, dir, col) {
-    c.save();
-    c.strokeStyle = hexAlpha(INK, 0.75);
-    c.lineWidth = 1.4;
-    c.beginPath();
-    c.moveTo(x, y);
-    c.lineTo(x, y + dir * 3);
-    c.moveTo(x, y + dir * 6.2);
-    c.lineTo(x, y + dir * 8);
-    c.stroke();
-    c.fillStyle = hexAlpha(col, 0.9);
-    c.beginPath();
-    c.arc(x, y + dir * 4.6, 2.2, 0, TAU);
-    c.fill();
-    c.beginPath();
-    c.arc(x, y + dir * 9.4, 1.4, 0, TAU);
-    c.stroke();
-    c.restore();
-  }
 
   /**
-   * 通用阶数装饰（所有兵种共用，保证规则一致）：
-   *   1 阶 → 不画（简陋）
-   *   2 阶 → 1 道内部花纹 + 左右各 1 枚挂件
-   *   3 阶 → 2 道内部花纹 + 左右各 2 枚挂件 + 一条阶层饰带
-   * 必须在兵种本体绘制之后调用（叠在本体之上）。
+   * 本体底层加厚（形状而非纹理）：tier>=2 时在本体之下铺一层阵营色方形托板。
+   * 托板按 BULK_BOX（本体主体的包络）**贴合外扩**，只露出一圈红边 ——
+   * 画大了会变成一滩色块把机体淹没（试过，不行）。
+   * ⚠️ 托板必须是方的：判定是正方形，底盘画成长条会让观感与判定对不上。
    */
-  function drawTierOrnament(c, type, tier, branch, col) {
+  /** 各兵种「本体主体」的包络 [x0, y0, x1, y1]（比例，相对 span）：武器/腿露在托板之外 */
+  const BULK_BOX = {
+    warrior: [-0.86, -0.86, 0.8, 0.86],
+    shield: [-0.92, -0.88, 0.94, 0.88],
+    ranger: [-0.78, -0.8, 0.64, 0.8],
+    burst: [-0.92, -0.86, 0.84, 0.86],
+    burn: [-0.84, -0.84, 0.7, 0.84],
+    laser: [-0.86, -0.82, 0.42, 0.82],
+  };
+
+  function drawBulk(c, type, tier, col) {
     const lv = detailLevel(tier);
     if (lv <= 0) return;
-    const spans = BODY_SPAN[type] || BODY_SPAN.warrior;
-    const span = spans[Math.min(spans.length - 1, lv)];
-    const spanX = span[0];
-    const spanY = span[1];
+    const span = (BODY_SPAN[type] || BODY_SPAN.warrior)[lv];
+    const sx = span[0], sy = span[1];
+    const g = 1 + lv * 0.05; // 越高级托板越厚
+    const bb = BULK_BOX[type] || BULK_BOX.warrior;
+    const cx = ((bb[0] + bb[2]) / 2) * sx * g;
+    const cy = ((bb[1] + bb[3]) / 2) * sy * g;
+    const hx = ((bb[2] - bb[0]) / 2) * sx * g;
+    const hy = ((bb[3] - bb[1]) / 2) * sy * g;
+    c.save();
+    c.fillStyle = hexAlpha(col, 0.85);
+    c.beginPath();
+    // 切角方形：只切掉四个角的一小刀，整体仍然是方的
+    c.moveTo(cx + hx, cy - hy * 0.5);
+    c.lineTo(cx + hx * 0.62, cy - hy);
+    c.lineTo(cx - hx * 0.62, cy - hy);
+    c.lineTo(cx - hx, cy - hy * 0.5);
+    c.lineTo(cx - hx, cy + hy * 0.5);
+    c.lineTo(cx - hx * 0.62, cy + hy);
+    c.lineTo(cx + hx * 0.62, cy + hy);
+    c.lineTo(cx + hx, cy + hy * 0.5);
+    c.closePath();
+    c.fill();
+    c.restore();
+  }
 
-    // 内部花纹：从躯干后段向中段铺开，档位越高道数越多
-    const kinds = UNIT_PATTERNS[type] || UNIT_PATTERNS.warrior;
-    const off = branch === 'B' ? 1 : 0;
-    for (let k = 0; k < lv; k++) {
-      drawInnerPattern(
-        c,
-        kinds[(k + off) % kinds.length],
-        -spanX * (0.45 - k * 0.3),
-        0,
-        Math.max(3, spanX * (0.4 - k * 0.1)),
-        Math.max(3, spanY * (0.5 - k * 0.12)),
-        col
+  /* ---------- 兵种造型：几何机械风 · 方形构图 ----------
+   *
+   * ⚠️ 硬约束：碰撞与命中判定用的是**正方形**（服务端 size 格见方 → 半径 r = size/2 格
+   *    的圆判定）。所以机体一律画成方形块，不画长条 / 细长剪影 —— 否则玩家眼里是长条，
+   *    实际挨打的却是一个方格子，观感与判定对不上。为此做了两件事：
+   *      ① BODY_SPAN 的半长 / 半宽压到接近 1:1（0.92~0.96），不再有「细长机身」；
+   *      ② 每一阶的长宽比**完全相同**，于是「三级包围盒 = 一级的 2 倍」在宽、高两个
+   *         方向同时成立（比例一旦随阶漂移，高级兵就会有一边长不到 2 倍）。
+   *      ③ 武器（炮管 / 喷臂 / 镜筒）一律**收在方框内**，最多探出一点点，
+   *         超长炮管那种「看着能打到人其实判定只有一格」的画法全部废弃。
+   *
+   * 统一语汇（机床加工出来的硬边零件，不是中世纪兵器、不用圆润笔触）：
+   *   硬边切角方块 / 折线液压杆 / 平行散热格栅 / 铆钉点阵 / 菱形能量核 / 带齿履带。
+   * 一律方头尖角（lineJoin miter + lineCap butt/square），每笔都是一个零件。
+   *
+   * 六种机体各有自己的骨架，剪影互不混淆（都是方盒子，靠内部零件区分）：
+   *   锐士   双足突击机甲 → 切角方胸甲 + Z 形双腿 + 前伸破甲棱
+   *   盾卫   履带重装堡垒 → 大方装甲块 + 上下双履带 + 正面层叠装甲板
+   *   游侠   三足炮塔平台 → 方形炮塔 + 短粗炮管 + 三根支撑腿 + 顶部观瞄
+   *   轰击   自行迫击炮车 → 方形车体 + 斜上扬炮管（收在方框内）+ 弹药架
+   *   燎原   喷火机甲     → 方形背包燃料罐（罐数 = 阶数，越密）+ 短喷臂 + 三角火舌
+   *   激光兵 光束发射车   → 方机箱 + 短镜筒 + 方环镜组（环数 = 阶数）+ 蓄能格
+   *
+   * 进化不是「同一张画放大」，而是真的多出结构件：
+   *   1 阶只留认得出型号的骨架；2 阶加散热格栅 / 液压支腿 / 加强环 / 稳定鳍；
+   *   3 阶再加推进器 / 副炮管 / 电池匣 / 副镜管 / 装甲裙板。
+   * 体型按 TIER_SIZE_MUL（1 / 1.5 / 2）放大，多出来的面积正好用来摆这些新部件。
+   */
+
+  /** 取某兵种某阶的设计半长 / 半宽（所有部件都按它定位） */
+  function spanOf(type, tier) {
+    const sp = BODY_SPAN[type] || BODY_SPAN.warrior;
+    return sp[Math.max(0, Math.min(2, (tier | 0) - 1))];
+  }
+
+  /** 矩形块面的四个角点（机械体大量使用，抽出来免得每行都写四遍坐标） */
+  function rbox(x0, y0, x1, y1) {
+    return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+  }
+
+  /** 装甲板：一串硬边点连成闭合块，先铺墨再勾边（方头尖角，一笔成形） */
+  function plate(c, pts, fill, strokeCol, w) {
+    c.beginPath();
+    c.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) c.lineTo(pts[i][0], pts[i][1]);
+    c.closePath();
+    if (fill) {
+      c.fillStyle = fill;
+      c.fill();
+    }
+    if (strokeCol) {
+      c.strokeStyle = strokeCol;
+      c.lineWidth = w || 2;
+      c.lineJoin = 'miter';
+      c.lineCap = 'butt';
+      c.stroke();
+    }
+  }
+
+  /** 结构件：液压杆 / 支腿 / 天线这类折线（方头，端点带一点伸出） */
+  function strut(c, pts, col, w) {
+    c.beginPath();
+    c.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) c.lineTo(pts[i][0], pts[i][1]);
+    c.strokeStyle = col;
+    c.lineWidth = w || 2;
+    c.lineJoin = 'miter';
+    c.lineCap = 'square';
+    c.stroke();
+  }
+
+  /** 散热格栅：沿一条线段铺 n 道垂直短栅（平行等距，机器味的关键） */
+  function vents(c, x0, y0, x1, y1, n, len, col, w) {
+    const dx = x1 - x0, dy = y1 - y0;
+    const d = Math.hypot(dx, dy) || 1;
+    const nx = (-dy / d) * len * 0.5;
+    const ny = (dx / d) * len * 0.5;
+    for (let i = 0; i < n; i++) {
+      const t = n <= 1 ? 0.5 : i / (n - 1);
+      const px = x0 + dx * t;
+      const py = y0 + dy * t;
+      strut(c, [[px - nx, py - ny], [px + nx, py + ny]], col, w);
+    }
+  }
+
+  /** 铆钉带：沿一条线段打 n 个实心点（面板接缝的固定件） */
+  function rivets(c, x0, y0, x1, y1, n, r, fill) {
+    c.fillStyle = fill || INK;
+    for (let i = 0; i < n; i++) {
+      const t = n <= 1 ? 0.5 : i / (n - 1);
+      c.beginPath();
+      c.arc(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, r, 0, TAU);
+      c.fill();
+    }
+  }
+
+  /** 菱形能量核 / 传感器（阵营色或兵种色的那一点"活着的光"） */
+  function gem(c, x, y, rx, ry, fill, strokeCol, w) {
+    plate(c, [[x, y - ry], [x + rx, y], [x, y + ry], [x - rx, y]], fill, strokeCol, w);
+  }
+
+  /** 履带：一条带齿的履带板（矩形带 + n 道横向齿） */
+  function tread(c, x0, y0, x1, y1, th, n, col, w) {
+    const dx = x1 - x0, dy = y1 - y0;
+    const d = Math.hypot(dx, dy) || 1;
+    const nx = (-dy / d) * th;
+    const ny = (dx / d) * th;
+    plate(c,
+      [[x0 + nx, y0 + ny], [x1 + nx, y1 + ny], [x1 - nx, y1 - ny], [x0 - nx, y0 - ny]],
+      hexAlpha(INK, 0.82),
+      INK,
+      w * 0.7
+    );
+    for (let i = 0; i < n; i++) {
+      const t = (i + 0.5) / n;
+      const px = x0 + dx * t;
+      const py = y0 + dy * t;
+      strut(c, [[px + nx * 0.92, py + ny * 0.92], [px - nx * 0.92, py - ny * 0.92]], col, w * 0.5);
+    }
+  }
+
+  /** 锐士：双足突击机甲 —— 切角方胸甲 + Z 形双腿 + 前伸破甲棱 + 背部推进器 */
+  function drawWarrior(c, tier, branch, col) {
+    const lv = detailLevel(tier);
+    const sp = spanOf('warrior', tier);
+    const sx = sp[0], sy = sp[1];
+    const acc = TYPE_ACCENT.warrior;
+    const w = 2.1 + lv * 0.4;
+
+    // ① 双腿：后方两侧的 Z 形液压支腿 + 矩形脚板（画在胸甲之前，只露腿）
+    for (const s of [-1, 1]) {
+      strut(c, [[sx * 0.02, s * sy * 0.34], [-sx * 0.44, s * sy * 0.7], [-sx * 0.2, s * sy * 0.92]], hexAlpha(INK, 0.85), w * 0.8);
+      plate(c, rbox(-sx * 0.38, s * sy * 0.86, -sx * 0.04, s * sy * 1.04), hexAlpha(INK, 0.72), INK, w * 0.5);
+    }
+
+    // ② 胸甲：切角方形（前缘略窄，看着正往前顶；整体仍是方块）
+    plate(c,
+      [
+        [sx * 0.74, -sy * 0.26],
+        [sx * 0.58, -sy * 0.74],
+        [-sx * 0.12, -sy * 0.8],
+        [-sx * 0.72, -sy * 0.58],
+        [-sx * 0.8, 0],
+        [-sx * 0.72, sy * 0.58],
+        [-sx * 0.12, sy * 0.8],
+        [sx * 0.58, sy * 0.74],
+        [sx * 0.74, sy * 0.26],
+      ],
+      hexAlpha(INK, 0.84),
+      INK,
+      w
+    );
+
+    // ③ 能量核：菱形（阵营色）
+    gem(c, -sx * 0.1, 0, sx * 0.26, sy * 0.44, hexAlpha(col, 0.55), INK, w * 0.55);
+
+    // ④ 破甲棱：向前伸出的短棱柱 + 尖头（撞击锥，只探出一点点）
+    plate(c,
+      [[sx * 0.7, -sy * 0.22], [sx * 0.94, -sy * 0.15], [sx * 0.94, sy * 0.15], [sx * 0.7, sy * 0.22]],
+      hexAlpha(INK, 0.88),
+      INK,
+      w * 0.75
+    );
+    plate(c,
+      [[sx * 0.92, -sy * 0.17], [sx * (1.12 + lv * 0.06), 0], [sx * 0.92, sy * 0.17]],
+      hexAlpha(acc, 0.9),
+      INK,
+      w * 0.5
+    );
+
+    // ⑤ 2 阶起：胸甲侧面的散热格栅 + 上下两块肩甲
+    if (lv >= 1) {
+      vents(c, -sx * 0.54, -sy * 0.4, -sx * 0.54, sy * 0.4, 3, sy * 0.56, hexAlpha(INK, 0.75), w * 0.5);
+      for (const s of [-1, 1]) {
+        plate(c,
+          [
+            [sx * 0.28, s * sy * 0.6],
+            [sx * 0.5, s * sy * 0.94],
+            [-sx * 0.14, s * sy * 1.0],
+            [-sx * 0.32, s * sy * 0.68],
+          ],
+          hexAlpha(col, 0.4),
+          INK,
+          w * 0.6
+        );
+      }
+    }
+
+    // ⑥ 3 阶：背部推进器（带喷口，朝后不朝外）+ 腰部装甲裙板 + 铆钉带
+    if (lv >= 2) {
+      for (const s of [-1, 1]) {
+        plate(c,
+          [
+            [-sx * 0.6, s * sy * 0.2],
+            [-sx * 0.98, s * sy * 0.3],
+            [-sx * 0.98, s * sy * 0.6],
+            [-sx * 0.6, s * sy * 0.54],
+          ],
+          hexAlpha(INK, 0.8),
+          INK,
+          w * 0.6
+        );
+        strut(c, [[-sx * 0.98, s * sy * 0.45], [-sx * 1.22, s * sy * 0.45]], hexAlpha(acc, 0.85), w * 0.5);
+      }
+      plate(c, rbox(-sx * 0.62, -sy * 0.5, -sx * 0.34, sy * 0.5), hexAlpha(col, 0.32), INK, w * 0.5);
+      rivets(c, -sx * 0.58, sy * 0.38, -sx * 0.06, sy * 0.38, 4, w * 0.32, hexAlpha(INK, 0.8));
+    }
+  }
+
+  /** 盾卫：履带重装堡垒 —— 大方装甲块 + 上下双履带 + 正面层叠装甲板 + 指挥塔 */
+  function drawShield(c, tier, branch, col) {
+    const lv = detailLevel(tier);
+    const sp = spanOf('shield', tier);
+    const sx = sp[0], sy = sp[1];
+    const acc = TYPE_ACCENT.shield;
+    const w = 2.3 + lv * 0.45;
+
+    // ① 上下两条履带（齿数随阶数增加）
+    for (const s of [-1, 1]) {
+      tread(c, -sx * 0.76, s * sy * 0.78, sx * 0.66, s * sy * 0.78, sy * 0.13, 5 + lv, INK, w);
+    }
+
+    // ② 主装甲块：切角大方块（整个机体就是一块方盾）
+    plate(c,
+      [
+        [sx * 0.88, -sy * 0.34],
+        [sx * 0.62, -sy * 0.76],
+        [-sx * 0.2, -sy * 0.82],
+        [-sx * 0.86, -sy * 0.62],
+        [-sx * 0.88, sy * 0.62],
+        [-sx * 0.2, sy * 0.82],
+        [sx * 0.62, sy * 0.76],
+        [sx * 0.88, sy * 0.34],
+      ],
+      hexAlpha(INK, 0.84),
+      INK,
+      w
+    );
+
+    // ③ 正面层叠装甲板：条数 = 阶数（1 / 2 / 3 道竖置板）
+    for (let i = 0; i <= lv; i++) {
+      const t = i / (lv + 1);
+      const px = sx * (0.56 - t * 0.3);
+      plate(c,
+        [[px, -sy * 0.68], [px + sx * 0.16, -sy * 0.52], [px + sx * 0.16, sy * 0.52], [px, sy * 0.68]],
+        hexAlpha(col, 0.34),
+        INK,
+        w * 0.6
       );
     }
 
-    // 外部挂件：左右各 lv 枚，沿身体长轴排开，挂点压在外缘上（穗子只探出一小截）
-    for (let side = -1; side <= 1; side += 2) {
-      for (let k = 0; k < lv; k++) {
-        drawPendant(c, spanX * (0.12 - k * 0.55), side * spanY * 0.86, side, col);
+    // ④ 指挥塔（方盒 + 观瞄菱形，压在机体中后部，不往外探）
+    plate(c, rbox(-sx * 0.46, -sy * 0.26, -sx * 0.06, sy * 0.26), hexAlpha(INK, 0.8), INK, w * 0.6);
+    gem(c, -sx * 0.26, 0, sx * 0.14, sy * 0.22, hexAlpha(acc, 0.85), INK, w * 0.45);
+
+    // ⑤ 2 阶起：上下裙板 + 前缘铆钉带
+    if (lv >= 1) {
+      for (const s of [-1, 1]) {
+        plate(c,
+          [
+            [-sx * 0.86, s * sy * 0.6],
+            [sx * 0.46, s * sy * 0.68],
+            [sx * 0.4, s * sy * 0.94],
+            [-sx * 0.86, s * sy * 0.88],
+          ],
+          hexAlpha(col, 0.3),
+          INK,
+          w * 0.55
+        );
       }
+      rivets(c, sx * 0.82, -sy * 0.44, sx * 0.82, sy * 0.44, 4, w * 0.3, hexAlpha(INK, 0.85));
     }
 
-    // 3 阶专属：一条贯穿躯干的阶层饰带
+    // ⑥ 3 阶：车尾副装甲塔（带散热格栅）+ 向后挑出的天线（朝后，不拉长纵向尺寸）
     if (lv >= 2) {
-      c.save();
-      c.strokeStyle = hexAlpha(col, 0.8);
-      c.lineWidth = 2;
-      c.beginPath();
-      c.moveTo(-spanX * 0.9, -spanY * 0.62);
-      c.lineTo(spanX * 0.95, -spanY * 0.3);
-      c.moveTo(-spanX * 0.9, spanY * 0.62);
-      c.lineTo(spanX * 0.95, spanY * 0.3);
-      c.stroke();
-      c.restore();
+      plate(c, rbox(-sx * 0.98, -sy * 0.34, -sx * 0.62, sy * 0.34), hexAlpha(INK, 0.86), INK, w * 0.6);
+      vents(c, -sx * 0.94, -sy * 0.22, -sx * 0.66, -sy * 0.22, 3, sy * 0.34, hexAlpha(INK, 0.7), w * 0.45);
+      vents(c, -sx * 0.94, sy * 0.22, -sx * 0.66, sy * 0.22, 3, sy * 0.34, hexAlpha(INK, 0.7), w * 0.45);
+      strut(c, [[-sx * 0.8, -sy * 0.34], [-sx * 1.12, -sy * 0.52]], INK, w * 0.5);
+      gem(c, -sx * 1.16, -sy * 0.54, sx * 0.08, sy * 0.12, hexAlpha(acc, 0.9), INK, w * 0.4);
     }
   }
 
-  function drawWarrior(c, tier, branch, col) {
-    const line = 2.5 + tier * 0.4;
-    c.strokeStyle = INK;
-    c.lineWidth = line;
-    const acc = TYPE_ACCENT.warrior;
-
-    if (tier === 1) {
-      c.beginPath();
-      c.moveTo(-10, 0); c.lineTo(8, -8); c.lineTo(14, 0); c.lineTo(8, 8);
-      c.closePath(); c.stroke();
-      c.fillStyle = acc;
-      c.beginPath(); c.arc(2, 0, 3, 0, TAU); c.fill();
-    }
-    if (tier === 2 && branch === 'A') {
-      c.beginPath();
-      c.moveTo(-12, 0); c.lineTo(10, -10); c.lineTo(18, 0); c.lineTo(10, 10);
-      c.closePath(); c.stroke();
-      c.beginPath();
-      c.moveTo(-8, -10); c.lineTo(-2, -6);
-      c.moveTo(-8, 10); c.lineTo(-2, 6);
-      c.stroke();
-      c.fillStyle = acc;
-      c.beginPath(); c.arc(2, 0, 3.5, 0, TAU); c.fill();
-    }
-    if (tier === 2 && branch === 'B') {
-      c.beginPath();
-      c.moveTo(-10, 0); c.lineTo(12, -6); c.lineTo(16, 0); c.lineTo(12, 6);
-      c.closePath(); c.stroke();
-      c.beginPath();
-      c.moveTo(-14, 0); c.lineTo(-22, -3);
-      c.moveTo(-14, 0); c.lineTo(-22, 3);
-      c.stroke();
-      c.fillStyle = acc;
-      c.beginPath(); c.arc(2, 0, 3, 0, TAU); c.fill();
-    }
-    if (tier === 3 && branch === 'A') {
-      c.beginPath();
-      c.moveTo(-14, 0); c.lineTo(12, -12); c.lineTo(22, 0); c.lineTo(12, 12);
-      c.closePath(); c.stroke();
-      c.fillStyle = '#6e2420';
-      c.fillRect(-4, -4, 8, 8);
-      c.beginPath();
-      c.moveTo(-10, -12); c.lineTo(-4, -8);
-      c.moveTo(-10, 12); c.lineTo(-4, 8);
-      c.stroke();
-      c.beginPath();
-      c.moveTo(10, 0); c.lineTo(26, 0);
-      c.stroke();
-    }
-    if (tier === 3 && branch === 'B') {
-      c.beginPath();
-      c.moveTo(-10, 0); c.lineTo(14, -5); c.lineTo(18, 0); c.lineTo(14, 5);
-      c.closePath(); c.stroke();
-      c.beginPath();
-      c.moveTo(-14, -8); c.lineTo(4, -14); c.lineTo(8, -8); c.closePath(); c.stroke();
-      c.beginPath();
-      c.moveTo(-14, 8); c.lineTo(4, 14); c.lineTo(8, 8); c.closePath(); c.stroke();
-      c.beginPath(); c.arc(-14, 0, 6, 0, TAU); c.stroke();
-      c.beginPath(); c.arc(-20, 0, 3, 0, TAU); c.stroke();
-      c.fillStyle = acc;
-      c.beginPath(); c.arc(2, 0, 3.5, 0, TAU); c.fill();
-    }
-
-    drawTierOrnament(c, 'warrior', tier, branch, col);
-  }
-
-  function drawShield(c, tier, branch, col) {
-    const line = 4 + tier * 0.4;
-    c.strokeStyle = '#33465c';
-    c.lineWidth = line;
-    const acc = TYPE_ACCENT.shield;
-
-    if (tier === 1) {
-      drawHexagon(c, 0, 0, 16);
-      drawHexagon(c, 0, 0, 24);
-      c.fillStyle = acc;
-      c.beginPath(); c.arc(6, 0, 4, 0, TAU); c.fill();
-      c.strokeStyle = INK;
-      c.lineWidth = 2;
-      c.beginPath(); c.moveTo(8, 0); c.lineTo(20, 0); c.stroke();
-    }
-    if (tier === 2 && branch === 'A') {
-      drawHexagon(c, 0, 0, 20);
-      drawHexagon(c, 0, 0, 28);
-      c.strokeStyle = INK;
-      c.lineWidth = 3;
-      c.beginPath(); c.moveTo(10, 0); c.lineTo(24, 0); c.stroke();
-      c.fillStyle = acc;
-      c.beginPath(); c.arc(6, 0, 4.5, 0, TAU); c.fill();
-    }
-    if (tier === 2 && branch === 'B') {
-      drawHexagon(c, 0, 0, 14);
-      drawHexagon(c, 0, 0, 22);
-      c.strokeStyle = INK;
-      c.lineWidth = 2;
-      c.beginPath();
-      c.moveTo(8, -3); c.lineTo(22, -3);
-      c.moveTo(8, 3); c.lineTo(22, 3);
-      c.stroke();
-      c.fillStyle = acc;
-      c.beginPath(); c.arc(6, 0, 4, 0, TAU); c.fill();
-    }
-    if (tier === 3 && branch === 'A') {
-      c.beginPath();
-      for (let i = 0; i < 8; i++) {
-        const a = (Math.PI / 4) * i;
-        const px = Math.cos(a) * 22;
-        const py = Math.sin(a) * 22;
-        i === 0 ? c.moveTo(px, py) : c.lineTo(px, py);
-      }
-      c.closePath(); c.stroke();
-      drawHexagon(c, 0, 0, 30);
-      c.strokeStyle = INK;
-      c.lineWidth = 4;
-      c.beginPath(); c.moveTo(12, 0); c.lineTo(28, 0); c.stroke();
-      c.fillStyle = acc;
-      c.beginPath(); c.arc(6, 0, 5, 0, TAU); c.fill();
-    }
-    if (tier === 3 && branch === 'B') {
-      drawHexagon(c, 0, 0, 16);
-      drawHexagon(c, 0, 0, 24);
-      c.fillStyle = '#2f4d6b';
-      c.beginPath();
-      c.moveTo(4, -4); c.lineTo(8, 0); c.lineTo(4, 4); c.lineTo(0, 0);
-      c.closePath(); c.fill();
-      c.strokeStyle = INK;
-      c.lineWidth = 2;
-      c.beginPath(); c.moveTo(8, 0); c.lineTo(28, 0); c.stroke();
-      c.beginPath(); c.arc(6, 0, 7, 0, TAU); c.stroke();
-      c.beginPath();
-      c.moveTo(8, -5); c.lineTo(24, -5);
-      c.moveTo(8, 5); c.lineTo(24, 5);
-      c.stroke();
-    }
-
-    drawTierOrnament(c, 'shield', tier, branch, col);
-  }
-
+  /** 游侠：三足炮塔平台 —— 方形炮塔 + 短粗炮管 + 三根支撑腿 + 顶部观瞄 */
   function drawRanger(c, tier, branch, col) {
-    const line = 2 + tier * 0.4;
-    c.strokeStyle = INK;
-    c.lineWidth = line;
+    const lv = detailLevel(tier);
+    const sp = spanOf('ranger', tier);
+    const sx = sp[0], sy = sp[1];
+    const acc = TYPE_ACCENT.ranger;
+    const w = 2.0 + lv * 0.4;
+    const muz = sx * (0.92 + lv * 0.06); // 炮口：只探出一点点（判定是方格，不画长炮管）
 
-    if (tier === 1) {
-      c.beginPath();
-      c.moveTo(-12, 0); c.lineTo(6, -7); c.lineTo(22, 0); c.lineTo(6, 7);
-      c.closePath(); c.stroke();
-      c.lineWidth = 3;
-      c.beginPath(); c.moveTo(6, 0); c.lineTo(24, 0); c.stroke();
+    // ① 三根支撑腿：后两条（±y）+ 前一条
+    for (const s of [-1, 1]) {
+      strut(c, [[-sx * 0.1, s * sy * 0.32], [-sx * 0.5, s * sy * 0.7], [-sx * 0.76, s * sy * 0.86]], hexAlpha(INK, 0.8), w * 0.7);
+      plate(c, rbox(-sx * 0.9, s * sy * 0.78, -sx * 0.62, s * sy * 0.96), hexAlpha(INK, 0.7), INK, w * 0.45);
     }
-    if (tier === 2 && branch === 'A') {
-      c.beginPath();
-      c.moveTo(-14, 0); c.lineTo(4, -8); c.lineTo(24, 0); c.lineTo(4, 8);
-      c.closePath(); c.stroke();
-      c.lineWidth = 4;
-      c.beginPath(); c.moveTo(8, 0); c.lineTo(28, 0); c.stroke();
-      c.fillStyle = '#4a453c';
-      c.beginPath(); c.arc(4, 0, 4, 0, TAU); c.fill();
-    }
-    if (tier === 2 && branch === 'B') {
-      c.beginPath();
-      c.moveTo(-12, 0); c.lineTo(6, -6); c.lineTo(20, 0); c.lineTo(6, 6);
-      c.closePath(); c.stroke();
-      c.beginPath();
-      c.moveTo(-4, -6); c.lineTo(2, -10);
-      c.moveTo(-4, 6); c.lineTo(2, 10);
-      c.stroke();
-      c.lineWidth = 3;
-      c.beginPath(); c.moveTo(6, 0); c.lineTo(24, 0); c.stroke();
-    }
-    if (tier === 3 && branch === 'A') {
-      c.beginPath();
-      c.moveTo(-16, 0); c.lineTo(2, -10); c.lineTo(26, 0); c.lineTo(2, 10);
-      c.closePath(); c.stroke();
-      c.lineWidth = 5;
-      c.beginPath(); c.moveTo(10, 0); c.lineTo(34, 0); c.stroke();
-      c.beginPath(); c.arc(4, 0, 6, 0, TAU); c.stroke();
-      c.beginPath();
-      c.moveTo(22, -4); c.lineTo(30, -6); c.lineTo(30, 6); c.lineTo(22, 4);
-      c.closePath(); c.stroke();
-    }
-    if (tier === 3 && branch === 'B') {
-      c.beginPath();
-      c.moveTo(-14, 0); c.lineTo(4, -7); c.lineTo(20, 0); c.lineTo(4, 7);
-      c.closePath(); c.stroke();
-      c.beginPath();
-      c.moveTo(-8, -8); c.lineTo(0, -12); c.lineTo(4, -7); c.stroke();
-      c.beginPath();
-      c.moveTo(-8, 8); c.lineTo(0, 12); c.lineTo(4, 7); c.stroke();
-      c.lineWidth = 2;
-      c.beginPath(); c.moveTo(8, 0); c.lineTo(32, 0); c.stroke();
-      c.fillStyle = INK;
-      c.beginPath();
-      c.moveTo(4, -3); c.lineTo(8, 0); c.lineTo(4, 3);
-      c.closePath(); c.fill();
-    }
+    strut(c, [[sx * 0.3, 0], [sx * 0.4, sy * 0.3], [sx * 0.36, sy * 0.6]], hexAlpha(INK, 0.8), w * 0.7);
+    plate(c, rbox(sx * 0.22, sy * 0.56, sx * 0.5, sy * 0.74), hexAlpha(INK, 0.7), INK, w * 0.45);
 
-    drawTierOrnament(c, 'ranger', tier, branch, col);
-  }
+    // ② 机身：方形炮塔平台（切角，占据整个方格）
+    plate(c,
+      [
+        [sx * 0.58, -sy * 0.3],
+        [sx * 0.42, -sy * 0.7],
+        [-sx * 0.34, -sy * 0.74],
+        [-sx * 0.72, -sy * 0.34],
+        [-sx * 0.72, sy * 0.34],
+        [-sx * 0.34, sy * 0.74],
+        [sx * 0.42, sy * 0.7],
+        [sx * 0.58, sy * 0.3],
+      ],
+      hexAlpha(INK, 0.84),
+      INK,
+      w
+    );
 
-  function drawBurst(c, tier, branch, col) {
-    const line = 3 + tier * 0.4;
-    c.strokeStyle = '#4a2c22';
-    c.lineWidth = line;
-    const acc = TYPE_ACCENT.burst;
+    // ③ 主炮管：粗后段 + 细前段 + 口部制退器（整体收在方框里）
+    plate(c, rbox(sx * 0.5, -sy * 0.18, muz * 0.74, sy * 0.18), hexAlpha(INK, 0.88), INK, w * 0.7);
+    plate(c, rbox(muz * 0.74, -sy * 0.12, muz, sy * 0.12), hexAlpha(INK, 0.9), INK, w * 0.55);
+    strut(c, [[muz - sx * 0.06, -sy * 0.24], [muz - sx * 0.06, sy * 0.24]], hexAlpha(acc, 0.9), w * 0.6);
 
-    if (tier === 1) {
-      c.beginPath(); c.arc(0, 0, 12, 0, TAU); c.stroke();
-      c.beginPath();
-      c.moveTo(8, -4); c.lineTo(22, -4);
-      c.moveTo(8, 4); c.lineTo(22, 4);
-      c.stroke();
-      c.fillStyle = acc;
-      c.beginPath(); c.arc(0, 0, 4, 0, TAU); c.fill();
-    }
-    if (tier === 2 && branch === 'A') {
-      c.beginPath(); c.arc(0, 0, 14, 0, TAU); c.stroke();
-      c.beginPath();
-      c.moveTo(10, -5); c.lineTo(26, -5);
-      c.moveTo(10, 5); c.lineTo(26, 5);
-      c.stroke();
-      c.fillStyle = acc;
-      c.beginPath(); c.arc(0, 0, 4.5, 0, TAU); c.fill();
-    }
-    if (tier === 2 && branch === 'B') {
-      c.beginPath(); c.arc(0, 0, 12, 0, TAU); c.stroke();
-      c.beginPath();
-      c.moveTo(8, -4); c.lineTo(24, -4);
-      c.moveTo(8, 0); c.lineTo(24, 0);
-      c.moveTo(8, 4); c.lineTo(24, 4);
-      c.stroke();
-      c.fillStyle = acc;
-      c.beginPath(); c.arc(0, 0, 4, 0, TAU); c.fill();
-    }
-    if (tier === 3 && branch === 'A') {
-      c.beginPath(); c.arc(0, 0, 16, 0, TAU); c.stroke();
-      c.beginPath(); c.arc(0, 0, 22, 0, TAU); c.stroke();
-      c.beginPath(); c.moveTo(12, 0); c.lineTo(30, 0); c.stroke();
-      c.fillStyle = acc;
-      c.beginPath(); c.arc(0, 0, 5, 0, TAU); c.fill();
-      c.beginPath();
-      c.moveTo(10, 0); c.lineTo(22, -4);
-      c.moveTo(10, 0); c.lineTo(22, 4);
-      c.stroke();
-    }
-    if (tier === 3 && branch === 'B') {
-      c.beginPath(); c.arc(0, 0, 14, 0, TAU); c.stroke();
-      c.beginPath();
-      c.moveTo(8, -5); c.lineTo(24, -5);
-      c.moveTo(8, -1); c.lineTo(24, -1);
-      c.moveTo(8, 1); c.lineTo(24, 1);
-      c.moveTo(8, 5); c.lineTo(24, 5);
-      c.stroke();
-      c.beginPath(); c.moveTo(10, 0); c.lineTo(28, 0); c.stroke();
-      c.fillStyle = INK;
-      c.beginPath();
-      c.moveTo(4, -3); c.lineTo(10, 0); c.lineTo(4, 3);
-      c.closePath(); c.fill();
-      c.fillStyle = acc;
-      c.beginPath(); c.arc(0, 0, 4, 0, TAU); c.fill();
-    }
+    // ④ 顶部观瞄：方盒 + 菱形镜片
+    plate(c, rbox(-sx * 0.34, -sy * 0.9, -sx * 0.04, -sy * 0.5), hexAlpha(INK, 0.78), INK, w * 0.55);
+    gem(c, -sx * 0.19, -sy * 0.7, sx * 0.12, sy * 0.14, hexAlpha(acc, 0.9), INK, w * 0.4);
 
-    drawTierOrnament(c, 'burst', tier, branch, col);
-  }
-
-  function drawBurn(c, tier, branch, col) {
-    const line = 3 + tier * 0.4;
-    c.strokeStyle = '#452a22';
-    c.lineWidth = line;
-
-    if (tier === 1) {
-      c.beginPath();
-      c.moveTo(-10, -6); c.lineTo(-4, 0); c.lineTo(-10, 6);
-      c.closePath(); c.stroke();
-      c.fillStyle = TYPE_ACCENT.burn;
-      c.beginPath();
-      c.moveTo(-4, -3); c.lineTo(14, 0); c.lineTo(-4, 3);
-      c.closePath(); c.fill();
-    }
-    if (tier === 2 && branch === 'A') {
-      c.beginPath();
-      c.moveTo(-12, -8); c.lineTo(-4, 0); c.lineTo(-12, 8);
-      c.closePath(); c.stroke();
-      c.fillStyle = TYPE_ACCENT.burn;
-      c.beginPath();
-      c.moveTo(-4, -4); c.lineTo(18, 0); c.lineTo(-4, 4);
-      c.closePath(); c.fill();
-      c.fillStyle = '#c07a2c';
-      c.beginPath(); c.arc(-2, 0, 3, 0, TAU); c.fill();
-    }
-    if (tier === 2 && branch === 'B') {
-      c.beginPath();
-      c.moveTo(-10, -6); c.lineTo(-4, 0); c.lineTo(-10, 6);
-      c.closePath(); c.stroke();
-      c.beginPath();
-      c.moveTo(-4, -2); c.lineTo(16, -2);
-      c.moveTo(-4, 2); c.lineTo(16, 2);
-      c.stroke();
-      c.beginPath(); c.arc(18, 0, 3, 0, TAU); c.stroke();
-      c.fillStyle = '#6b6f2a';
-      c.beginPath(); c.arc(-2, 0, 3, 0, TAU); c.fill();
-    }
-    if (tier === 3 && branch === 'A') {
-      c.beginPath();
-      c.moveTo(-12, -8); c.lineTo(-4, 0); c.lineTo(-12, 8);
-      c.closePath(); c.stroke();
-      c.fillStyle = TYPE_ACCENT.burn;
-      c.beginPath();
-      c.moveTo(-4, -4); c.lineTo(20, 0); c.lineTo(-4, 4);
-      c.closePath(); c.fill();
-      c.fillStyle = '#c07a2c';
-      c.beginPath();
-      c.moveTo(-4, -3); c.lineTo(14, 0); c.lineTo(-4, 3);
-      c.closePath(); c.fill();
-      c.beginPath(); c.arc(-2, 0, 7, 0, TAU); c.stroke();
-      c.save();
-      c.translate(8, 0);
-      c.rotate(Math.PI / 6);
-      c.fillStyle = TYPE_ACCENT.burn;
-      c.beginPath();
-      c.moveTo(-4, -3); c.lineTo(14, 0); c.lineTo(-4, 3);
-      c.closePath(); c.fill();
-      c.restore();
-    }
-    if (tier === 3 && branch === 'B') {
-      c.beginPath();
-      c.moveTo(-12, -8); c.lineTo(-4, 0); c.lineTo(-12, 8);
-      c.closePath(); c.stroke();
-      c.beginPath();
-      c.moveTo(-4, -3); c.lineTo(18, -3);
-      c.moveTo(-4, 3); c.lineTo(18, 3);
-      c.stroke();
-      c.fillStyle = '#6b6f2a';
-      c.beginPath(); c.arc(-2, 0, 4, 0, TAU); c.fill();
-      c.beginPath();
-      c.arc(20, -4, 2, 0, TAU);
-      c.arc(22, 4, 2, 0, TAU);
-      c.stroke();
-      c.beginPath();
-      c.moveTo(-4, -2); c.lineTo(20, -2);
-      c.moveTo(-4, 2); c.lineTo(20, 2);
-      c.stroke();
-      c.beginPath(); c.arc(22, 0, 4, 0, TAU); c.stroke();
-      c.beginPath(); c.arc(26, 0, 2, 0, TAU); c.stroke();
-    }
-
-    drawTierOrnament(c, 'burn', tier, branch, col);
-  }
-
-  /** 激光兵：长镜筒 + 聚光镜组（青色为光学部件）。阶数越高镜筒越长、镜环越多。 */
-  function drawLaser(c, tier, branch, col) {
-    const acc = TYPE_ACCENT.laser;
-    const line = 2 + tier * 0.4;
-    c.strokeStyle = INK;
-    c.lineWidth = line;
-
-    // 机座（守势分支更厚重）
-    const bulk = branch === 'B' ? 8 : 6;
-    c.beginPath();
-    c.moveTo(-11, -bulk);
-    c.lineTo(1, -bulk * 0.55);
-    c.lineTo(1, bulk * 0.55);
-    c.lineTo(-11, bulk);
-    c.closePath();
-    c.stroke();
-
-    // 镜筒：越高级越长
-    const barrel = 16 + (tier - 1) * 6;
-    c.lineWidth = line + (branch === 'B' ? 2 : 1);
-    c.beginPath();
-    c.moveTo(1, 0);
-    c.lineTo(barrel, 0);
-    c.stroke();
-
-    // 镜环：数量 = 阶数
-    for (let k = 1; k < tier; k++) {
-      c.lineWidth = line;
-      c.beginPath();
-      c.arc(1 + (barrel - 1) * (k / tier), 0, 2.4, 0, TAU);
-      c.stroke();
-    }
-    // 聚光镜
-    c.fillStyle = acc;
-    c.beginPath();
-    c.arc(barrel, 0, 2.6 + tier * 0.5, 0, TAU);
-    c.fill();
-
-    // 高阶：攻势加副管，守势加散热鳍
-    if (tier >= 3 && branch === 'A') {
-      c.lineWidth = line;
-      c.beginPath();
-      c.moveTo(1, -5);
-      c.lineTo(barrel - 4, -5);
-      c.stroke();
-      c.fillStyle = acc;
-      c.beginPath();
-      c.arc(barrel - 4, -5, 2.4, 0, TAU);
-      c.fill();
-    }
-    if (tier >= 2 && branch === 'B') {
-      c.lineWidth = line * 0.8;
-      for (let k = 0; k < 3; k++) {
-        const x = 4 + k * 5;
-        c.beginPath();
-        c.moveTo(x, -bulk * 0.5);
-        c.lineTo(x, -bulk * 0.5 - 6);
-        c.stroke();
+    // ⑤ 2 阶起：炮管加强环 ×2 + 车尾稳定鳍
+    if (lv >= 1) {
+      for (let i = 0; i < 2; i++) {
+        const rx = sx * (0.5 + i * 0.16);
+        strut(c, [[rx, -sy * 0.24], [rx, sy * 0.24]], hexAlpha(INK, 0.85), w * 0.5);
+      }
+      for (const s of [-1, 1]) {
+        plate(c,
+          [[-sx * 0.56, s * sy * 0.4], [-sx * 0.94, s * sy * 0.66], [-sx * 0.46, s * sy * 0.74]],
+          hexAlpha(col, 0.38),
+          INK,
+          w * 0.5
+        );
       }
     }
 
-    drawTierOrnament(c, 'laser', tier, branch, col);
+    // ⑥ 3 阶：电池匣（带散热格栅）+ 向后挑出的天线
+    if (lv >= 2) {
+      plate(c, rbox(-sx * 0.46, sy * 0.26, -sx * 0.08, sy * 0.66), hexAlpha(col, 0.34), INK, w * 0.5);
+      vents(c, -sx * 0.42, sy * 0.32, -sx * 0.42, sy * 0.6, 3, sx * 0.28, hexAlpha(INK, 0.7), w * 0.45);
+      strut(c, [[-sx * 0.3, -sy * 0.5], [-sx * 0.66, -sy * 0.78]], INK, w * 0.45);
+      gem(c, -sx * 0.7, -sy * 0.8, sx * 0.07, sy * 0.12, hexAlpha(acc, 0.9), INK, w * 0.38);
+    }
+  }
+
+  /** 轰击：自行迫击炮车 —— 方形车体 + 斜上扬炮管（收在方框内）+ 液压支腿 + 弹药架 */
+  function drawBurst(c, tier, branch, col) {
+    const lv = detailLevel(tier);
+    const sp = spanOf('burst', tier);
+    const sx = sp[0], sy = sp[1];
+    const acc = TYPE_ACCENT.burst;
+    const w = 2.2 + lv * 0.42;
+
+    // ① 履带 + 方形车体
+    tread(c, -sx * 0.68, sy * 0.66, sx * 0.56, sy * 0.66, sy * 0.14, 5 + lv, INK, w);
+    plate(c,
+      [
+        [sx * 0.78, -sy * 0.42],
+        [sx * 0.58, -sy * 0.74],
+        [-sx * 0.22, -sy * 0.8],
+        [-sx * 0.82, -sy * 0.46],
+        [-sx * 0.86, sy * 0.4],
+        [-sx * 0.26, sy * 0.68],
+        [sx * 0.46, sy * 0.58],
+      ],
+      hexAlpha(INK, 0.84),
+      INK,
+      w
+    );
+
+    // ② 上扬炮管：从耳轴斜向前上方，炮口落在方框的右上角内（不探出去）
+    const px0 = sx * 0.08, py0 = sy * 0.14;
+    const px1 = sx * (0.68 + lv * 0.06), py1 = -sy * (0.8 + lv * 0.06);
+    const dx = px1 - px0, dy = py1 - py0;
+    const d = Math.hypot(dx, dy) || 1;
+    const nx = -dy / d, ny = dx / d;
+    const th = sy * 0.18;
+    plate(c,
+      [
+        [px0 + nx * th, py0 + ny * th],
+        [px1 + nx * th, py1 + ny * th],
+        [px1 - nx * th, py1 - ny * th],
+        [px0 - nx * th, py0 - ny * th],
+      ],
+      hexAlpha(INK, 0.88),
+      INK,
+      w * 0.75
+    );
+    // 炮口制退器：口部两道横箍
+    strut(
+      c,
+      [[px1 + nx * th * 1.5, py1 + ny * th * 1.5], [px1 - nx * th * 1.5, py1 - ny * th * 1.5]],
+      hexAlpha(acc, 0.9),
+      w * 0.7
+    );
+    strut(
+      c,
+      [
+        [px1 - dx * 0.14 + nx * th * 1.2, py1 - dy * 0.14 + ny * th * 1.2],
+        [px1 - dx * 0.14 - nx * th * 1.2, py1 - dy * 0.14 - ny * th * 1.2],
+      ],
+      hexAlpha(INK, 0.8),
+      w * 0.5
+    );
+
+    // ③ 炮座配重块 + 能量核
+    plate(c, rbox(-sx * 0.8, -sy * 0.58, -sx * 0.3, sy * 0.16), hexAlpha(col, 0.4), INK, w * 0.55);
+    gem(c, -sx * 0.52, -sy * 0.2, sx * 0.16, sy * 0.2, hexAlpha(acc, 0.8), INK, w * 0.45);
+
+    // ④ 2 阶起：两条液压支腿（开炮时撑住车）+ 车尾弹药架
+    if (lv >= 1) {
+      strut(c, [[-sx * 0.6, sy * 0.28], [-sx * 0.88, sy * 0.68], [-sx * 0.7, sy * 0.92]], hexAlpha(INK, 0.82), w * 0.6);
+      strut(c, [[sx * 0.34, sy * 0.32], [sx * 0.58, sy * 0.72], [sx * 0.4, sy * 0.94]], hexAlpha(INK, 0.82), w * 0.6);
+      for (let i = 0; i < 2; i++) {
+        plate(c,
+          rbox(-sx * 0.66 + i * sx * 0.24, -sy * 0.86, -sx * 0.46 + i * sx * 0.24, -sy * 0.56),
+          hexAlpha(acc, 0.6),
+          INK,
+          w * 0.45
+        );
+      }
+    }
+
+    // ⑤ 3 阶：并排副炮管 + 防盾板 + 弹堆 + 车体散热格栅
+    if (lv >= 2) {
+      const th2 = th * 0.5;
+      const bx0 = px0 - dx * 0.1 + nx * th * 1.9, by0 = py0 - dy * 0.1 + ny * th * 1.9;
+      const bx1 = px1 - dx * 0.08 + nx * th * 1.9, by1 = py1 - dy * 0.08 + ny * th * 1.9;
+      plate(c,
+        [
+          [bx0 + nx * th2, by0 + ny * th2],
+          [bx1 + nx * th2, by1 + ny * th2],
+          [bx1 - nx * th2, by1 - ny * th2],
+          [bx0 - nx * th2, by0 - ny * th2],
+        ],
+        hexAlpha(INK, 0.85),
+        INK,
+        w * 0.5
+      );
+      plate(c,
+        [[sx * 0.24, -sy * 0.74], [sx * 0.56, -sy * 0.58], [sx * 0.5, sy * 0.16], [sx * 0.26, sy * 0.08]],
+        hexAlpha(col, 0.32),
+        INK,
+        w * 0.5
+      );
+      for (let i = 0; i < 3; i++) {
+        plate(c,
+          rbox(-sx * 0.68 + i * sx * 0.22, -sy * 0.62, -sx * 0.5 + i * sx * 0.22, -sy * 0.34),
+          hexAlpha(acc, 0.7),
+          INK,
+          w * 0.42
+        );
+      }
+      vents(c, -sx * 0.62, sy * 0.06, -sx * 0.62, sy * 0.4, 3, sx * 0.32, hexAlpha(INK, 0.7), w * 0.45);
+    }
+  }
+
+  /** 燎原：喷火机甲 —— 方形背包燃料罐（罐数 = 阶数，越高级越密）+ 短喷臂 + 三角火舌 */
+  function drawBurn(c, tier, branch, col) {
+    const lv = detailLevel(tier);
+    const sp = spanOf('burn', tier);
+    const sx = sp[0], sy = sp[1];
+    const fire = TYPE_ACCENT.burn;
+    const w = 2.0 + lv * 0.4;
+    const tanks = lv + 1;
+
+    // ① 双腿：后方两侧的细折线 + 脚板
+    for (const s of [-1, 1]) {
+      strut(c, [[-sx * 0.04, s * sy * 0.34], [-sx * 0.4, s * sy * 0.72], [-sx * 0.18, s * sy * 0.92]], hexAlpha(INK, 0.82), w * 0.7);
+      plate(c, rbox(-sx * 0.34, s * sy * 0.86, -sx * 0.02, s * sy * 1.02), hexAlpha(INK, 0.7), INK, w * 0.5);
+    }
+
+    // ② 背包燃料罐：一块方形背包里竖排的罐体（罐数 = 阶数 → 罐越密，背包始终是方的）
+    plate(c, rbox(-sx * 0.78, -sy * 0.76, -sx * 0.18, sy * 0.76), hexAlpha(INK, 0.7), INK, w * 0.55);
+    const bw = 0.52 / tanks;
+    for (let i = 0; i < tanks; i++) {
+      const tx = -sx * (0.76 + i * bw);
+      plate(c,
+        rbox(tx, -sy * 0.66, tx + sx * (bw - 0.08), sy * 0.66),
+        hexAlpha(col, 0.42),
+        INK,
+        w * 0.5
+      );
+      strut(c, [[tx + sx * (bw - 0.08) * 0.5, -sy * 0.58], [tx + sx * (bw - 0.08) * 0.5, sy * 0.58]], hexAlpha(fire, 0.55), w * 0.4);
+    }
+
+    // ③ 躯干：切角方块 + 菱形炉心
+    plate(c,
+      [
+        [sx * 0.64, -sy * 0.28],
+        [sx * 0.46, -sy * 0.7],
+        [-sx * 0.2, -sy * 0.78],
+        [-sx * 0.56, -sy * 0.42],
+        [-sx * 0.56, sy * 0.42],
+        [-sx * 0.2, sy * 0.78],
+        [sx * 0.46, sy * 0.7],
+        [sx * 0.64, sy * 0.28],
+      ],
+      hexAlpha(INK, 0.84),
+      INK,
+      w
+    );
+    gem(c, -sx * 0.04, 0, sx * 0.22, sy * 0.38, hexAlpha(fire, 0.5), INK, w * 0.5);
+
+    // ④ 喷臂 + 喷嘴（短，收在方框里）
+    const ax = sx * (0.68 + lv * 0.06);
+    strut(c, [[sx * 0.24, -sy * 0.14], [ax * 0.7, -sy * 0.28], [ax, -sy * 0.34]], hexAlpha(INK, 0.85), w * 0.75);
+    plate(c,
+      [
+        [ax - sx * 0.06, -sy * 0.48],
+        [ax + sx * 0.2, -sy * 0.44],
+        [ax + sx * 0.2, -sy * 0.2],
+        [ax - sx * 0.06, -sy * 0.24],
+      ],
+      hexAlpha(INK, 0.88),
+      INK,
+      w * 0.6
+    );
+
+    // ⑤ 火舌：朝前的三角瓣（瓣数 = 阶数，短，不拉长剪影）
+    const petals = lv + 1;
+    for (let i = 0; i < petals; i++) {
+      const t = petals === 1 ? 0 : (i / (petals - 1)) * 2 - 1;
+      const ly = -sy * (0.34 + t * 0.26);
+      const len = sx * (0.3 + lv * 0.05) * (1 - Math.abs(t) * 0.3);
+      plate(c,
+        [[ax + sx * 0.2, ly - sy * 0.1], [ax + sx * 0.2 + len, ly], [ax + sx * 0.2, ly + sy * 0.1]],
+        hexAlpha(fire, 0.78),
+        INK,
+        w * 0.4
+      );
+    }
+
+    // ⑥ 2 阶起：罐到喷臂的软管 + 背部散热格栅
+    if (lv >= 1) {
+      strut(
+        c,
+        [[-sx * 0.5, -sy * 0.34], [-sx * 0.2, -sy * 0.62], [sx * 0.16, -sy * 0.52], [sx * 0.26, -sy * 0.2]],
+        hexAlpha(fire, 0.6),
+        w * 0.45
+      );
+      vents(c, -sx * 0.42, sy * 0.2, -sx * 0.42, sy * 0.5, 3, sx * 0.28, hexAlpha(INK, 0.7), w * 0.4);
+    }
+
+    // ⑦ 3 阶：罐顶阀组 + 喷嘴冷却环
+    if (lv >= 2) {
+      for (let i = 0; i < tanks; i++) {
+        const tx = -sx * (0.76 + i * bw);
+        plate(c, rbox(tx, -sy * 0.92, tx + sx * (bw - 0.08), -sy * 0.72), hexAlpha(INK, 0.8), INK, w * 0.4);
+      }
+      strut(c, [[ax + sx * 0.02, -sy * 0.5], [ax + sx * 0.02, -sy * 0.18]], hexAlpha(fire, 0.8), w * 0.45);
+    }
+  }
+
+  /** 激光兵：光束发射车 —— 方机箱 + 短镜筒 + 方环镜组（环数 = 阶数）+ 蓄能格 + 白芒 */
+  function drawLaser(c, tier, branch, col) {
+    const lv = detailLevel(tier);
+    const sp = spanOf('laser', tier);
+    const sx = sp[0], sy = sp[1];
+    const acc = TYPE_ACCENT.laser;
+    const w = 2.0 + lv * 0.4;
+    const muz = sx * (0.86 + lv * 0.06);
+    const rings = lv + 1;
+
+    // ① 支腿：后方两侧的斜撑 + 脚板（画在机箱之前）
+    for (const s of [-1, 1]) {
+      strut(c, [[-sx * 0.28, s * sy * 0.36], [-sx * 0.6, s * sy * 0.74], [-sx * 0.46, s * sy * 0.92]], hexAlpha(INK, 0.8), w * 0.65);
+      plate(c, rbox(-sx * 0.58, s * sy * 0.86, -sx * 0.32, s * sy * 1.0), hexAlpha(INK, 0.72), INK, w * 0.45);
+    }
+
+    // ② 机箱：方盒 + 斜切前脸
+    plate(c, rbox(-sx * 0.8, -sy * 0.76, sx * 0.08, sy * 0.76), hexAlpha(INK, 0.82), INK, w);
+    plate(c,
+      [[sx * 0.08, -sy * 0.76], [sx * 0.36, -sy * 0.48], [sx * 0.36, sy * 0.48], [sx * 0.08, sy * 0.76]],
+      hexAlpha(col, 0.4),
+      INK,
+      w * 0.6
+    );
+
+    // ③ 镜筒：笔直朝前的两节短管
+    plate(c, rbox(sx * 0.34, -sy * 0.22, muz * 0.72, sy * 0.22), hexAlpha(INK, 0.88), INK, w * 0.7);
+    plate(c, rbox(muz * 0.72, -sy * 0.15, muz, sy * 0.15), hexAlpha(INK, 0.9), INK, w * 0.55);
+
+    // ④ 方环镜组：镜前一串同心方框（环数 = 阶数，越多 = 咬得越死）
+    for (let i = 0; i < rings; i++) {
+      const rx = muz - sx * (0.08 + i * 0.16);
+      const rr = sy * (0.4 - i * 0.09);
+      plate(c,
+        [[rx - rr * 0.5, -rr], [rx + rr * 0.5, -rr], [rx + rr * 0.5, rr], [rx - rr * 0.5, rr]],
+        hexAlpha(acc, 0.3),
+        hexAlpha(acc, 0.95),
+        w * 0.55
+      );
+    }
+    // 镜心：那一点冷白
+    plate(c, rbox(muz - sx * 0.05, -sy * 0.1, muz + sx * 0.05, sy * 0.1), '#eef6f4', INK, w * 0.35);
+
+    // ⑤ 白芒：镜前射出的细线（道数 = 阶数，短促，不拉长剪影）
+    const rays = lv + 1;
+    for (let i = 0; i < rays; i++) {
+      const t = rays === 1 ? 0 : (i / (rays - 1)) * 2 - 1;
+      strut(c, [[muz, 0], [muz + sx * (0.22 + lv * 0.05), t * sy * 0.24]], hexAlpha('#f0f8f6', 0.9), w * 0.45);
+    }
+
+    // ⑥ 2 阶起：机箱散热格栅 + 蓄能格（格数 = 阶数，越咬越亮）
+    if (lv >= 1) {
+      vents(c, -sx * 0.58, -sy * 0.42, -sx * 0.58, sy * 0.42, 3, sy * 0.5, hexAlpha(INK, 0.7), w * 0.45);
+      for (let i = 0; i < lv + 1; i++) {
+        plate(c,
+          rbox(-sx * 0.28 + i * sx * 0.16, sy * 0.68, -sx * 0.18 + i * sx * 0.16, sy * 0.94),
+          hexAlpha(acc, 0.75),
+          INK,
+          w * 0.4
+        );
+      }
+    }
+
+    // ⑦ 3 阶：副镜管（下方平行）+ 稳定支架 + 机箱铆钉带
+    if (lv >= 2) {
+      plate(c, rbox(sx * 0.34, sy * 0.3, muz * 0.72, sy * 0.5), hexAlpha(INK, 0.86), INK, w * 0.5);
+      strut(c, [[muz * 0.72, sy * 0.26], [muz * 0.72, sy * 0.54]], hexAlpha(acc, 0.9), w * 0.5);
+      strut(c, [[-sx * 0.18, sy * 0.62], [-sx * 0.4, sy * 1.0]], hexAlpha(INK, 0.8), w * 0.5);
+      plate(c, rbox(-sx * 0.52, sy * 0.94, -sx * 0.26, sy * 1.14), hexAlpha(INK, 0.72), INK, w * 0.45);
+      rivets(c, -sx * 0.66, -sy * 0.56, sx * 0.02, -sy * 0.56, 4, w * 0.3, hexAlpha(INK, 0.85));
+    }
   }
 
   /** 把某个兵种的本体画进给定上下文的当前变换里（c 传参而非直接用 ctx，便于静态预览复用） */
   function drawUnitBody(c, type, tier, branch, col) {
+    // 本体底层加厚：tier>=2 先铺一层阵营色「加厚剪影」（见 drawBulk）
+    drawBulk(c, type, tier, col);
     if (type === 'warrior') drawWarrior(c, tier, branch, col);
     else if (type === 'shield') drawShield(c, tier, branch, col);
     else if (type === 'ranger') drawRanger(c, tier, branch, col);
@@ -1931,6 +2732,10 @@ window.WarFactoryUi = (function () {
     const S = UNIT_VIS_SCALE;
     for (const u of units.values()) {
       const col = playerColor(u.oi);
+      // 整支部队连同它的底盘 / 选中框 / 血条一起抬到脚底下那层地上：一次 translate 搞定，
+      // 内部坐标一行都不用改，也就不存在「漏改一处就浮起来」。
+      c.save();
+      c.translate(0, groundY(u.x, u.y) - u.y);
       // 该单位的实际视觉倍率 = 全局缩放 × 兵种基础体型系数（锐士靠后者补足体量）。
       // 归属墨圈 / 选中圈 / 血条 / 本体都按它绘制，避免放大后的锐士「脚踩小圈」。
       const f = S * bodyScaleOf(u.type);
@@ -2034,6 +2839,7 @@ window.WarFactoryUi = (function () {
         c.fillText('×' + mul.toFixed(1), u.x, u.y - 30 * f);
         c.restore();
       }
+      c.restore(); // 与循环开头那次 translate 配对
       void myIdx;
     }
   }
@@ -2091,72 +2897,172 @@ window.WarFactoryUi = (function () {
   function drawBeams(t) {
     const c = ctx;
     if (!meta) return;
-    const maxMul = (meta.consts && meta.consts.laserMaxMul) || 5;
-    const windupMs = (meta.consts && meta.consts.laserWindupMs) || 800;
+    const K = (meta && meta.consts) || {};
+    const maxMul = K.laserMaxMul || 5;
+    const windupMs = K.laserWindupMs || 800;
+    // 激光的**大小**与**特效细节**都跟着实际伤害走：以 visBaseDmg（1.5）为基底，
+    // 伤害每比它翻一倍，大小系数多 visStepPct（5%）；细节按同样的「翻了几倍」逐级解锁。
+    // 四个系数都由服务端 data.js 的 laser 段下发（单一真源），缺省值只作兜底。
+    const visBase = K.laserVisBaseDmg > 0 ? K.laserVisBaseDmg : 1.5;
+    const visStep = K.laserVisStepPct > 0 ? K.laserVisStepPct : 0.05;
+    const visPer = K.laserVisDetailPer > 0 ? K.laserVisDetailPer : 1.6;
+    const visMax = K.laserVisDetailMax != null ? K.laserVisDetailMax : 3;
     for (const u of units.values()) {
       if (u.type !== 'laser' || !u.lk) continue;
       const tp = lockTargetPos(u);
       if (!tp) continue;
+      // 光束两端各站在自己脚下的那层地上：射手在坡上、目标在坡下时这条线才不会穿地
+      const uy0 = groundY(u.x, u.y);
+      const tpy = groundY(tp.x, tp.y);
       const col = playerColor(u.oi);
       const mul = Math.max(1, (u.lm || 100) / 100);
-      const heat = clamp((mul - 1) / Math.max(0.001, maxMul - 1), 0, 1); // 1 倍 → 0，5 倍 → 1
+      const heat = clamp((mul - 1) / Math.max(0.001, maxMul - 1), 0, 1); // 1 倍 → 0，满蓄能 → 1
+      const baseDmg = unitStatsOf('laser', u.tier || 1, u.branch).dmg || 1;
+      const dmg = baseDmg * mul; // 实际每次伤害
+      const dbl = Math.log2(Math.max(0.01, dmg / visBase)); // 比基底翻了几倍
+      const visMul = Math.max(0.7, 1 + dbl * visStep); // 大小系数
+      const detail = dbl <= 0 ? 0 : clamp(Math.floor(dbl / visPer), 0, visMax); // 细节层数
       const S = UNIT_VIS_SCALE;
       const mx = u.x + Math.cos(u.ang) * 15 * S;
-      const my = u.y + Math.sin(u.ang) * 15 * S;
+      const my = uy0 + Math.sin(u.ang) * 15 * S;
 
-      if (u.lw > 0) {
-        // —— 前摇：蓄能中
-        const prog = 1 - clamp(u.lw / windupMs, 0, 1);
+      const lwLeft =
+        u.lwAt != null ? Math.max(0, (u.lwMs || 0) - (Date.now() - u.lwAt)) : u.lw || 0;
+      u.lw = lwLeft;
+      if (lwLeft > 0) {
+        // —— 前摇：虚线瞄准 + 枪口聚能 + 蓄能弧 + 目标锁定环
+        const prog = windupMs > 0 ? 1 - clamp(lwLeft / windupMs, 0, 1) : 1;
+        const pulse = 0.88 + 0.12 * Math.sin(t / 40 + u.id);
         c.save();
-        c.strokeStyle = hexAlpha(col, 0.3 + 0.35 * prog);
-        c.lineWidth = 1.3;
+        c.strokeStyle = hexAlpha(col, 0.28 + 0.4 * prog);
+        c.lineWidth = 1.2 + 1.4 * prog;
         c.setLineDash([4, 6]);
         c.beginPath();
         c.moveTo(mx, my);
-        c.lineTo(tp.x, tp.y);
+        c.lineTo(tp.x, tpy);
         c.stroke();
         c.setLineDash([]);
-        // 枪口蓄能光点
-        c.fillStyle = hexAlpha('#eaf7ff', 0.45 + 0.5 * prog);
+        c.fillStyle = hexAlpha('#eaf7ff', 0.3 + 0.45 * prog);
         c.beginPath();
-        c.arc(mx, my, (2 + 4.5 * prog) * S, 0, TAU);
+        c.arc(mx, my, (3 + 6 * prog) * S * visMul * pulse, 0, TAU);
         c.fill();
-        // 目标处收拢的锁定环
-        c.strokeStyle = hexAlpha(TYPE_ACCENT.laser, 0.35 + 0.4 * prog);
-        c.lineWidth = 1.6;
+        c.fillStyle = hexAlpha(TYPE_ACCENT.laser, 0.45 + 0.5 * prog);
         c.beginPath();
-        c.arc(tp.x, tp.y, (19 - 9 * prog) * S, 0, TAU);
+        c.arc(mx, my, (1.6 + 3.2 * prog) * S * visMul, 0, TAU);
+        c.fill();
+        c.strokeStyle = hexAlpha('#eaf7ff', 0.55 + 0.4 * prog);
+        c.lineWidth = 2.4;
+        c.beginPath();
+        c.arc(mx, my, (10 + 2 * prog) * S * visMul, -Math.PI / 2, -Math.PI / 2 + prog * TAU);
+        c.stroke();
+        c.strokeStyle = hexAlpha(TYPE_ACCENT.laser, 0.35 + 0.45 * prog);
+        c.lineWidth = 1.8;
+        c.beginPath();
+        c.arc(tp.x, tpy, (22 - 11 * prog) * S * visMul, 0, TAU);
         c.stroke();
         c.restore();
         continue;
       }
 
       // —— 已锁定：持续光束（外层光晕 + 内层亮芯）
+      // 粗细先按「锁定越久倍率越高」增长，再乘阶数倍率与伤害系数：伤害越高的光束明显更粗
       const flick = 0.88 + 0.12 * Math.sin(t / 40 + u.id);
-      const w = (2.2 + heat * 4.4) * flick;
+      const w = (2.2 + heat * 4.4) * flick * beamScaleOf(u.tier || 1) * visMul;
+      const dx = tp.x - mx;
+      const dy = tpy - my;
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len;
+      const uy = dy / len;
       c.save();
       c.lineCap = 'round';
       c.strokeStyle = hexAlpha(TYPE_ACCENT.laser, 0.22 + heat * 0.34);
       c.lineWidth = w * 2.6;
       c.beginPath();
       c.moveTo(mx, my);
-      c.lineTo(tp.x, tp.y);
+      c.lineTo(tp.x, tpy);
       c.stroke();
       c.strokeStyle = hexAlpha('#f4fbff', 0.55 + heat * 0.4);
       c.lineWidth = w;
       c.beginPath();
       c.moveTo(mx, my);
-      c.lineTo(tp.x, tp.y);
+      c.lineTo(tp.x, tpy);
       c.stroke();
-      // 命中点的灼烧光斑
+
+      // 命中点的灼烧光斑（半径同样跟着伤害系数走）
+      const bigR = (9 + heat * 11) * visMul;
+      const coreR = (2.6 + heat * 5) * visMul;
       c.fillStyle = hexAlpha(TYPE_ACCENT.laser, 0.3 + heat * 0.25);
       c.beginPath();
-      c.arc(tp.x, tp.y, 9 + heat * 11, 0, TAU);
+      c.arc(tp.x, tpy, bigR, 0, TAU);
       c.fill();
       c.fillStyle = hexAlpha('#f4fbff', 0.5 + heat * 0.45);
       c.beginPath();
-      c.arc(tp.x, tp.y, 2.6 + heat * 5, 0, TAU);
+      c.arc(tp.x, tpy, coreR, 0, TAU);
       c.fill();
+
+      // —— 第 1 层细节：沿束身向两侧甩出的静电弧（层数越多，弧越多、甩得越远）
+      if (detail >= 1) {
+        const arcs = 2 + detail;
+        c.strokeStyle = hexAlpha(TYPE_ACCENT.laser, 0.16 + heat * 0.2);
+        c.lineWidth = Math.max(0.8, w * 0.3);
+        c.beginPath();
+        for (let i = 0; i < arcs; i++) {
+          const f0 = (i + 1) / (arcs + 1);
+          const px = mx + dx * f0;
+          const py = my + dy * f0;
+          const side = i % 2 ? 1 : -1;
+          const nx = -uy * side;
+          const ny = ux * side;
+          const amp = (6 + 10 * heat) * visMul * (0.55 + 0.45 * fxRnd(u.id, i));
+          const midF = amp + Math.sin(t / 90 + i * 1.7 + u.id) * amp * 0.25;
+          c.moveTo(px, py);
+          c.lineTo(px + nx * midF, py + ny * midF);
+          c.lineTo(px + nx * amp * 0.4 + ux * amp * 0.7, py + ny * amp * 0.4 + uy * amp * 0.7);
+        }
+        c.stroke();
+      }
+
+      // —— 第 2 层细节：沿光束向前推进的能量节点 + 目标处的十字光刺
+      if (detail >= 2) {
+        const nodes = detail; // 层数本身就是跑动的颗数：2 层 2 颗、3 层 3 颗
+        for (let i = 0; i < nodes; i++) {
+          const f = (t / 520 + i / nodes) % 1;
+          const px = mx + dx * f;
+          const py = my + dy * f;
+          const rr = (1.6 + heat * 2.4) * visMul;
+          c.fillStyle = hexAlpha('#dff4ff', 0.3 + heat * 0.35);
+          c.beginPath();
+          c.arc(px, py, rr, 0, TAU);
+          c.fill();
+        }
+        const flare = (12 + heat * 18) * visMul;
+        c.strokeStyle = hexAlpha(TYPE_ACCENT.laser, 0.26 + heat * 0.3);
+        c.lineWidth = Math.max(0.7, w * 0.22);
+        c.beginPath();
+        c.moveTo(tp.x - flare, tpy);
+        c.lineTo(tp.x + flare, tpy);
+        c.moveTo(tp.x, tpy - flare);
+        c.lineTo(tp.x, tpy + flare);
+        c.stroke();
+      }
+
+      // —— 第 3 层细节：命中点扩散的冲击环 + 溅出的火星
+      if (detail >= 3) {
+        const ring = (t / 700) % 1;
+        c.strokeStyle = hexAlpha(TYPE_ACCENT.laser, 0.4 * (1 - ring));
+        c.lineWidth = Math.max(0.8, w * 0.4 * (1 - ring * 0.6));
+        c.beginPath();
+        c.arc(tp.x, tpy, bigR + ring * 22 * visMul, 0, TAU);
+        c.stroke();
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * TAU + t / 900;
+          const d0 = bigR + (7 + fxRnd(u.id, i + 40) * 11) * visMul;
+          c.fillStyle = hexAlpha('#f4fbff', 0.22 + 0.3 * (1 - ring));
+          c.beginPath();
+          c.arc(tp.x + Math.cos(a) * d0, tpy + Math.sin(a) * d0, (0.9 + fxRnd(u.id, i) * 1.1) * visMul, 0, TAU);
+          c.fill();
+        }
+      }
       c.restore();
     }
   }
@@ -2234,11 +3140,14 @@ window.WarFactoryUi = (function () {
     for (const b of lastSnap.b) {
       const z = b[7] || 0;
       const arc = b[8] || 0;
+      const by = groundY(b[0], b[1]); // 飞行中的弹也贴着它脚下那层地（0 层就是原来的高度）
+      // 谁打的：兵种序号 + 阶数（老快照缺这两列时退回一阶）——弹体按它放大
+      const tier = b[10] || 1;
       // 抛射弹（轰击）：抬高本体 + 地面阴影 + 落点虚线圈，呈现越山抛物线观感
       if (arc && z > 0.5) {
-        drawArcShell(c, b[0], b[1], z, playerColor(b[2]), b[4] || 1, b[5] || 0, (b[6] || 0) * 97 + 3);
+        drawArcShell(c, b[0], by, z, playerColor(b[2]), b[4] || 1, b[5] || 0, (b[6] || 0) * 97 + 3, tier);
       } else {
-        drawBulletBody(c, b[0], b[1], playerColor(b[2]), b[3], b[4] || 1, b[5] || 0, (b[6] || 0) * 97 + 3);
+        drawBulletBody(c, b[0], by, playerColor(b[2]), b[3], b[4] || 1, b[5] || 0, (b[6] || 0) * 97 + 3, tier);
       }
     }
   }
@@ -2248,76 +3157,79 @@ window.WarFactoryUi = (function () {
    * 地面上画一团圆而淡的阴影（越高越大越淡）提示落点，再套一圈虚线把「将落在此处」标出来。
    * 这样即便它正飞越一道山脉，玩家也能一眼看出这是一发曲射炮、会落在哪。
    */
-  function drawArcShell(c, x, y, z, col, dx, dy, seed) {
+  function drawArcShell(c, x, y, z, col, dx, dy, seed, tier) {
     const rot = Math.atan2(dy, dx);
+    const k = bulletScaleOf(tier);
     // ① 地面阴影：越高越大、越淡
     const lift = clamp(z / 150, 0, 1);
     c.fillStyle = hexAlpha(INK, 0.16 + 0.14 * (1 - lift));
     c.beginPath();
-    c.ellipse(x, y, 5 + lift * 5, 3 + lift * 2.5, 0, 0, TAU);
+    c.ellipse(x, y, (5 + lift * 5) * k, (3 + lift * 2.5) * k, 0, 0, TAU);
     c.fill();
     // ② 落点虚线圈：提示这是抛射物、会落在这里（而非当前飞行位置）
     c.strokeStyle = hexAlpha(col, 0.4);
     c.lineWidth = 1.2;
     c.setLineDash([3, 4]);
     c.beginPath();
-    c.arc(x, y, 8.5, 0, TAU);
+    c.arc(x, y, 8.5 * k, 0, TAU);
     c.stroke();
     c.setLineDash([]);
     // ③ 抬升的弹体 + 抛射拖尾（拖尾略向上飘，强化「飞在天上」的感觉）
-    inkTrail(c, x, y - z, dx, dy, 24, 4, 0.4, INK);
-    inkBlobPath(c, x, y - z, 5.2, seed, { lobes: 8, jitter: 0.55, sx: 1.5, rot });
+    inkTrail(c, x, y - z, dx, dy, 24 * k, 4 * k, 0.4, INK);
+    inkBlobPath(c, x, y - z, 5.2 * k, seed, { lobes: 8, jitter: 0.55, sx: 1.5, rot });
     c.fillStyle = hexAlpha(INK, 0.9);
     c.fill();
     c.strokeStyle = hexAlpha(col, 0.4);
     c.lineWidth = 1.2;
     c.beginPath();
-    c.arc(x, y - z, 8, 0, TAU);
+    c.arc(x, y - z, 8 * k, 0, TAU);
     c.stroke();
   }
 
-  /** 单发弹丸的画法（抽出来是为了 docs 下的特效图谱页能一格一格核对形状） */
-  function drawBulletBody(c, x, y, col, kind, dx, dy, seed) {
+  /** 单发弹丸的画法（抽出来是为了 docs 下的特效图谱页能一格一格核对形状）。
+   *  进化后是同一套形状整体放大 —— 所有尺寸统一乘 `bulletScaleOf(tier)`。 */
+  function drawBulletBody(c, x, y, col, kind, dx, dy, seed, tier) {
     const rot = Math.atan2(dy, dx);
+    const k = bulletScaleOf(tier);
     if (kind === 2) {
       // 炮击弹：一大团墨 + 拖尾
-      inkTrail(c, x, y, dx, dy, 30, 4.6, 0.42, INK);
-      inkBlobPath(c, x, y, 5.4, seed, { lobes: 8, jitter: 0.55, sx: 1.5, rot });
+      inkTrail(c, x, y, dx, dy, 30 * k, 4.6 * k, 0.42, INK);
+      inkBlobPath(c, x, y, 5.4 * k, seed, { lobes: 8, jitter: 0.55, sx: 1.5, rot });
       c.fillStyle = hexAlpha(INK, 0.88);
       c.fill();
       c.strokeStyle = hexAlpha(col, 0.38);
       c.lineWidth = 1.3;
       c.setLineDash([3, 4]);
-      c.beginPath(); c.arc(x, y, 9.5, 0, TAU); c.stroke();
+      c.beginPath(); c.arc(x, y, 9.5 * k, 0, TAU); c.stroke();
       c.setLineDash([]);
     } else if (kind === 3) {
       // 燃烧弹：朱砂火星，火尾随个体种子飘
-      inkTrail(c, x, y, dx, dy, 16, 3.4, 0.5, '#c0492c');
-      inkBlobPath(c, x, y, 3.4, seed, { lobes: 7, jitter: 0.62, sx: 1.35, rot });
+      inkTrail(c, x, y, dx, dy, 16 * k, 3.4 * k, 0.5, '#c0492c');
+      inkBlobPath(c, x, y, 3.4 * k, seed, { lobes: 7, jitter: 0.62, sx: 1.35, rot });
       c.fillStyle = hexAlpha('#c0492c', 0.9);
       c.fill();
-      inkBlobPath(c, x - dx * 2.4, y - dy * 2.4 - 2.6, 2.1, seed + 7, { lobes: 6, jitter: 0.7, sy: 1.25 });
+      inkBlobPath(c, x - dx * 2.4 * k, y - dy * 2.4 * k - 2.6 * k, 2.1 * k, seed + 7, { lobes: 6, jitter: 0.7, sy: 1.25 });
       c.fillStyle = hexAlpha('#e0a03c', 0.5);
       c.fill();
     } else if (kind === 1) {
       // 近战挥击：一道带弧度的短墨痕（沿真实攻击方向，此前是写死的水平线）
       c.strokeStyle = hexAlpha(INK, 0.8);
-      c.lineWidth = 2.4;
+      c.lineWidth = 2.4 * k;
       c.lineCap = 'round';
       const na = rot + Math.PI / 2;
       c.beginPath();
-      c.moveTo(x - dx * 6, y - dy * 6);
-      c.quadraticCurveTo(x + Math.cos(na) * 3.2, y + Math.sin(na) * 3.2, x + dx * 6, y + dy * 6);
+      c.moveTo(x - dx * 6 * k, y - dy * 6 * k);
+      c.quadraticCurveTo(x + Math.cos(na) * 3.2 * k, y + Math.sin(na) * 3.2 * k, x + dx * 6 * k, y + dy * 6 * k);
       c.stroke();
     } else {
       // 普通弹丸：归属色墨晕（底）→ 沿弹道拉长的墨滴（上）→ 身后拖笔
       c.fillStyle = hexAlpha(col, 0.32);
-      inkBlobPath(c, x, y, 4.6, seed + 4, { lobes: 6, jitter: 0.66, sx: 1.4, rot });
+      inkBlobPath(c, x, y, 4.6 * k, seed + 4, { lobes: 6, jitter: 0.66, sx: 1.4, rot });
       c.fill();
-      inkBlobPath(c, x, y, 2.8, seed, { lobes: 7, jitter: 0.6, sx: 1.75, rot });
+      inkBlobPath(c, x, y, 2.8 * k, seed, { lobes: 7, jitter: 0.6, sx: 1.75, rot });
       c.fillStyle = hexAlpha(INK, 0.86);
       c.fill();
-      inkTrail(c, x, y, dx, dy, 21, 3, 0.36, INK);
+      inkTrail(c, x, y, dx, dy, 21 * k, 3 * k, 0.36, INK);
     }
   }
 
@@ -2407,7 +3319,7 @@ window.WarFactoryUi = (function () {
    */
   function drawSplatFx(c, e, age) {
     const fade = 1 - age;
-    const big = e.k === 2 || e.k === 4 ? 1.7 : e.k === 3 ? 1.25 : 1;
+    const big = (e.k === 2 || e.k === 4 ? 1.7 : e.k === 3 ? 1.25 : 1) * fxScaleOf(e.ty, e.ti);
     const grow = 1 - Math.pow(1 - age, 2);
     // e.col 只在 docs 特效图谱页用（那边的 meta 是空的，playerColor 会全落到墨色）
     const col = e.col || playerColor(e.oi);
@@ -2440,6 +3352,10 @@ window.WarFactoryUi = (function () {
         continue;
       }
       const fade = 1 - age;
+      // 特效都发生在**它中心那块地**上（中毒炸开、取旗、火龙第一口），
+      // 所以整撮跟着那一層抬一次就够了，内部照旧按原坐标画。
+      c.save();
+      c.translate(0, -liftAt(e.x, e.y));
       if (e.kind === 'splash') {
         // 阵亡墨溅
         c.fillStyle = hexAlpha(INK, 0.4 * fade);
@@ -2527,6 +3443,7 @@ window.WarFactoryUi = (function () {
           c.stroke();
         }
       }
+      c.restore();
     }
     // 右键行军标记
     for (let i = moveMarkers.length - 1; i >= 0; i--) {
@@ -2537,6 +3454,8 @@ window.WarFactoryUi = (function () {
         continue;
       }
       const col = playerColor(myPlayerIndex());
+      c.save();
+      c.translate(0, -liftAt(m.x, m.y)); // 标记是打在地上的，跟着那块地抬
       c.strokeStyle = hexAlpha(col, 0.8 * (1 - age));
       c.lineWidth = 2.4;
       c.beginPath();
@@ -2548,6 +3467,7 @@ window.WarFactoryUi = (function () {
       c.moveTo(m.x, m.y - 6);
       c.lineTo(m.x, m.y + 6);
       c.stroke();
+      c.restore();
     }
     // 右键锁定攻击目标标记（红圈 + 内准星，与移动标记区分）
     for (let i = attackMarkers.length - 1; i >= 0; i--) {
@@ -2558,6 +3478,8 @@ window.WarFactoryUi = (function () {
         continue;
       }
       const a = 1 - age;
+      c.save();
+      c.translate(0, -liftAt(m.x, m.y));
       c.strokeStyle = 'rgba(232,86,64,' + (0.9 * a).toFixed(3) + ')';
       c.lineWidth = 2.6;
       c.beginPath();
@@ -2570,6 +3492,7 @@ window.WarFactoryUi = (function () {
         c.lineTo(m.x + Math.cos(ang) * 18, m.y + Math.sin(ang) * 18);
       }
       c.stroke();
+      c.restore();
     }
     // 追击攻击命令的**常驻**指示（区别于上面 950ms 的点击反馈）：
     // 命令只要还活着就一直画 —— 目标身上一圈缓慢转动的虚线锁定环 + 四角准星，
@@ -2591,6 +3514,7 @@ window.WarFactoryUi = (function () {
       for (const it of ordered.values()) {
         const tp = targetInfoOf(it.kind, it.id);
         if (!tp) continue;
+        const tpy = groundY(tp.x, tp.y); // 目标站在它自己那层上
         // 被选中的执行部队 → 目标：细虚线（追击途中一眼看出目标在哪）
         c.save();
         c.setLineDash([5, 7]);
@@ -2599,15 +3523,15 @@ window.WarFactoryUi = (function () {
         c.beginPath();
         for (const u of it.chasers) {
           if (!selection.has(u.id)) continue;
-          c.moveTo(u.x, u.y);
-          c.lineTo(tp.x, tp.y);
+          c.moveTo(u.x, groundY(u.x, u.y));
+          c.lineTo(tp.x, tpy);
         }
         c.stroke();
         c.restore();
         // 目标身上的锁定环：虚线随时间转动 + 四角准星
         const rr = tp.r + 13;
         c.save();
-        c.translate(tp.x, tp.y);
+        c.translate(tp.x, tpy);
         c.rotate(spin * TAU);
         c.setLineDash([7, 6]);
         c.lineWidth = 2;
@@ -2636,6 +3560,8 @@ window.WarFactoryUi = (function () {
         continue;
       }
       const col = playerColor(myPlayerIndex());
+      c.save();
+      c.translate(0, -liftAt(m.x, m.y)); // 同上：圈是画在地上的
       c.strokeStyle = hexAlpha(col, 0.9 * (1 - age));
       c.lineWidth = 2.6;
       c.beginPath();
@@ -2644,6 +3570,7 @@ window.WarFactoryUi = (function () {
       c.beginPath();
       c.arc(m.x, m.y, 9 * (1 - age), 0, TAU);
       c.stroke();
+      c.restore();
     }
   }
 
@@ -2708,10 +3635,12 @@ window.WarFactoryUi = (function () {
 
   /** 一处弹痕的画法（age 0..1：先洇开一点，再双曲线淡出） */
   function drawGroundMark(c, m, age) {
-    const fade = (1 - age) * (1 - age); // 后段淡得更快，避免整图糊成一片灰
-    const grow = 1 + age * 0.4;
-    const col = m.col || playerColor(m.oi); // m.col 同 drawSplatFx，仅供效果图谱页
-    c.fillStyle = hexAlpha(INK, MARK_INK_ALPHA * fade);
+      const fade = (1 - age) * (1 - age); // 后段淡得更快，避免整图糊成一片灰
+      const grow = 1 + age * 0.4;
+      const col = m.col || playerColor(m.oi); // m.col 同 drawSplatFx，仅供效果图谱页
+      c.save();
+      c.translate(0, -liftAt(m.x, m.y)); // 弹痕是打在地上的，跟着那块地抬
+      c.fillStyle = hexAlpha(INK, MARK_INK_ALPHA * fade);
     inkBlobPath(c, m.x, m.y, m.r * grow, m.seed, { lobes: 8, jitter: 0.55, sy: 0.78 });
     c.fill();
     c.fillStyle = hexAlpha(col, MARK_TINT_ALPHA * fade);
@@ -2726,15 +3655,17 @@ window.WarFactoryUi = (function () {
       c.arc(m.x + Math.cos(a) * d, m.y + Math.sin(a) * d * 0.72, 0.8 + fxRnd(m.seed, k + 17) * 1.2, 0, TAU);
       c.fill();
     }
+    c.restore();
   }
 
   /** 记一处弹痕（kind 只影响大小：炮击最大、激光最小） */
-  function pushGroundMark(x, y, kind, oi, now, id) {
+  function pushGroundMark(x, y, kind, oi, now, id, type, tier) {
+    const k = fxScaleOf(type, tier); // 弹痕同样随进化变大：三级兵打出来的坑更大一块
     groundMarks.push({
       x,
       y,
       oi,
-      r: kind === 2 ? 7.5 : kind === 4 ? 4.2 : kind === 1 ? 3.4 : 5,
+      r: (kind === 2 ? 7.5 : kind === 4 ? 4.2 : kind === 1 ? 3.4 : 5) * k,
       seed: ((id || 0) * 71 + Math.round(x + y * 2)) % 997,
       born: now,
     });
@@ -2765,6 +3696,7 @@ window.WarFactoryUi = (function () {
       const seed = ((Math.round(f.x) * 13 + Math.round(f.y) * 29) % 997 + 997) % 997;
       const rr = f.r * grow;
       c.save();
+      c.translate(0, -liftAt(f.x, f.y)); // 火是贴地烧的：跟着它底下那块地一起抬
       // ① 焦土底
       c.fillStyle = hexAlpha('#3a2c22', 0.16 + 0.12 * life);
       inkBlobPath(c, f.x, f.y, rr * 1.02, seed, { lobes: 10, jitter: 0.42, sy: 0.8 });
@@ -2821,13 +3753,18 @@ window.WarFactoryUi = (function () {
       const tp = lockTargetPos(u);
       if (!tp) continue;
       // 落点与「目标身上」之间：服务端就是把火舌推进到目标边缘的
+      // 火舌横跨两层高度时最难画：射手站在自己那层上（lu），落点也落在它自己那层上。
+      // 做法是整道火先按射手抬一次（translate），落点单独补上「它那层 − 射手这层」的差。
+      const lu = liftAt(u.x, u.y);
       const ang = Math.atan2(tp.y - u.y, tp.x - u.x);
       const d = Math.hypot(tp.x - u.x, tp.y - u.y);
       const lx = u.x + Math.cos(ang) * d;
-      const ly = u.y + Math.sin(ang) * d;
+      const lRaw = u.y + Math.sin(ang) * d;
+      const ly = lRaw - liftAt(lx, lRaw) + lu;
       const len = Math.max(1, d);
       const seed = ((u.id * 131 + Math.round(t / 60)) % 997 + 997) % 997;
       c.save();
+      c.translate(0, -lu);
       c.lineCap = 'round';
       // ① 烟尾
       for (let i = 0; i < 2; i++) {
@@ -3733,7 +4670,10 @@ window.WarFactoryUi = (function () {
     if (st.burn) {
       // 燎原不点射：伤害按秒结算，所以这里列的是「秒伤 + 火场」而不是「每次伤害 + 攻速」
       const flameR = c.flameR || 52;
-      lines.push('火　焰　' + fmtStat(st.dmg) + ' / 秒（范围 ' + flameR + '）');
+      const flameEdge = c.flameEdgeMul == null ? 1 : c.flameEdgeMul;
+      lines.push(
+        '火　焰　' + fmtStat(st.dmg) + ' / 秒（范围 ' + flameR + (flameEdge < 1 ? '，越远越弱' : '') + '）'
+      );
       const tFire = fireTierInfo(c, u.tier);
       if (!tFire) {
         // 一级不留火场：把「怎么才能烧地」直接写在面板上
@@ -3761,6 +4701,7 @@ window.WarFactoryUi = (function () {
     if (st.laser) atk += ' × 锁定倍率';
     lines.push('攻　击　' + atk);
     lines.push('射　程　' + st.range);
+    if (st.minRange) lines.push('最小射程 ' + st.minRange + '（更近打不到）');
     lines.push(
       '攻　速　' + fmtStat(st.cd) + ' 秒 / 次（' +
         fmtStat(Math.round((1 / st.cd) * 100) / 100) + ' 次/秒）'
@@ -3962,6 +4903,7 @@ window.WarFactoryUi = (function () {
       r = labR() + 16;
       col = l.owner >= 0 ? playerColor(l.owner) : INK;
     }
+    y = groundY(x, y); // 跟着目标脚下那块地抬，查的框才不会浮在半空
     const c = ctx;
     c.save();
     c.strokeStyle = hexAlpha(col, 0.9);
@@ -4190,7 +5132,10 @@ window.WarFactoryUi = (function () {
       u.lk = row[12] || 0; // 锁定目标类别：0 无 / 1 单位 / 2 工厂 / 3 研究所 / 4 总部
       u.li = row[13] || 0; // 锁定目标 id
       u.lm = row[14] || 100; // 当前伤害倍率 ×100（100 = 1 倍）
-      u.lw = row[15] || 0; // 前摇剩余毫秒（>0 = 蓄能中，尚未开火）
+      // 前摇剩余 + 收到时刻：两帧之间本地倒计时，蓄能环连续走
+      u.lwMs = row[15] || 0;
+      u.lwAt = now;
+      u.lw = u.lwMs;
       // 追击攻击命令（玩家右键指定）：0 = 没有命令。命令只要还在（哪怕正在赶路、还没进射程）
       // 就一直下发，客户端据此在目标处常驻一个锁定指示 —— 命令一解除，指示随之消失。
       u.ok = row[16] || 0; // 命令目标类别：0 无 / 1 单位 / 2 工厂 / 3 研究所 / 4 总部
@@ -4269,8 +5214,11 @@ window.WarFactoryUi = (function () {
     if (meta && meta.hqs) {
       const byHid = {};
       for (const row of snap.hq || []) byHid[row[0]] = row;
+      const prevHq = {};
+      for (const ph of hqView) prevHq[ph.id] = ph;
       hqView = meta.hqs.map((h) => {
         const row = byHid[h.id];
+        const prev = prevHq[h.id];
         return {
           id: h.id,
           x: h.x,
@@ -4287,6 +5235,11 @@ window.WarFactoryUi = (function () {
           prodProg: row && row[7] != null ? row[7] : h.prodProg || 0,
           lines: row && row[8] != null ? row[8] : h.lines || 1,
           specs: row && row[9] ? row[9].map(specFromRow) : (h.specs || []).map(specFromObj),
+          atkId: row && row[10] != null ? row[10] : h.atkId || 0,
+          atkWindupMs: row && row[11] != null ? row[11] : h.atkWindupMs || 0,
+          lc: (row && row[12]) || [],
+          atkWindupAt: now,
+          fireAt: (prev && prev.fireAt) || 0,
         };
       });
     }
@@ -4334,10 +5287,14 @@ window.WarFactoryUi = (function () {
           ttl: 520,
         });
         // 炮击落点同样在地上留一块更大的弹痕
-        pushGroundMark(ev.x, ev.y, 2, ev.oi, now, Math.round(ev.x + ev.y));
+        // 炮击落点同样在地上留一块更大的弹痕（半径已随阶数长大，痕迹再跟着放大一档）
+        pushGroundMark(ev.x, ev.y, 2, ev.oi, now, Math.round(ev.x + ev.y), ev.ty, ev.ti);
       } else if (ev.t === 'spark') {
         // 子弹打在山体上：一个小墨点，提示「山挡住了弹道」
         effects.push({ kind: 'spark', x: ev.x, y: ev.y, born: now, ttl: 300 });
+      } else if (ev.t === 'hqatk') {
+        const hh = hqView.find((x) => x.id === ev.hid) || hqView.find((x) => x.owner === ev.oi);
+        if (hh) hh.fireAt = now;
       } else if (ev.t === 'shot') {
         // 开火：枪口喷焰（方向来自事件，10Hz 的快照推不出「哪一下是刚开的火」）
         const su = units.get(ev.uid);
@@ -4368,11 +5325,14 @@ window.WarFactoryUi = (function () {
           a: ev.a || 0,
           k: hk,
           oi: ev.oi,
+          // 谁打的（兵种 + 阶数）：命中墨花 / 弹痕按它放大（fxScaleOf）
+          ty: ev.ty || '',
+          ti: ev.ti || 1,
           seed: ((((ev.id || 0) * 53 + Math.round(ev.x * 3 + ev.y)) % 997) + 997) % 997,
           born: now,
           ttl: hk === 2 ? 560 : 430,
         });
-        pushGroundMark(ev.x, ev.y, hk, ev.oi, now, ev.id);
+        pushGroundMark(ev.x, ev.y, hk, ev.oi, now, ev.id, ev.ty, ev.ti);
       } else if (ev.t === 'flame') {
         // 火舌在落点「铺开一片火」：一团翻卷上冲的火焰（不是墨花）——
         // 燎原的火焰落地就该是这个样子，火场本体本身走快照的 fr，这里只演「刚点着」的那一下。
@@ -4694,7 +5654,35 @@ window.WarFactoryUi = (function () {
     if (!rect.width || !rect.height) return null;
     const mx = ((evt.clientX - rect.left) / rect.width) * VIEW_W;
     const my = ((evt.clientY - rect.top) / rect.height) * VIEW_H;
-    return { x: cam.x + mx, y: cam.y + my };
+    return { x: cam.x + mx, y: visualToWorldY(cam.x + mx, cam.y + my) };
+  }
+
+  /**
+   * 画面上的纵坐标 → 世界纵坐标（专门为了「点到的地方在有坡度时也能落到正确的格子里」）。
+   *
+   * 地面 y 被画到了 `y - liftAt(x,y)` 处，于是要找满足 `y - liftAt(x,y) = vy` 的那个 y，
+   * 也就是 `y = vy + L` 且这一格的抬升正好是 L。抬升只能取「层数 × HEIGHT_STEP」这几个值，
+   * 所以逐个候选试过去就行。
+   *
+   * 注意不能写成迭代式（反复 `y += liftAt(x, y)` 直到不动）：相邻两格抬升不同时它会在
+   * 两格之间来回抖，落点取决于起始值，在坡上点选就会飘。
+   */
+  function visualToWorldY(x, vy) {
+    if (!heightGrid) return vy;
+    const up = (heightLevels + LIFT_MTN_BOOST) * HEIGHT_STEP;
+    const dn = (heightLevels + LIFT_WAT_SINK) * HEIGHT_STEP;
+    let best = vy;
+    let bestAbs = Infinity;
+    for (let L = -dn; L <= up; L += HEIGHT_STEP) {
+      const y = vy + L;
+      if (liftAt(x, y) !== L) continue;
+      const a = Math.abs(L);
+      if (a < bestAbs) {
+        bestAbs = a;
+        best = y;
+      }
+    }
+    return best;
   }
 
   /**
@@ -4704,9 +5692,13 @@ window.WarFactoryUi = (function () {
   function unitAt(wx, wy, ownerIdx) {
     let best = null;
     let bestD = Infinity;
+    // 注意：wx/wy 是 eventWorldPos 反推出来的**地面**坐标；而玩家是照着画面点的，
+    // 画面上的兵比起地面坐标高一截 —— 所以要把点击点也挪到「画面那一层」再比，
+    // 否则站在高地上的兵会出现「明明点在身上却选不中」。
+    const wy2 = wy - liftAt(wx, wy);
     for (const u of units.values()) {
       if (ownerIdx != null && u.oi !== ownerIdx) continue;
-      const d = Math.hypot(u.x - wx, u.y - wy);
+      const d = Math.hypot(u.x - wx, groundY(u.x, u.y) - wy2);
       const tol = 24 * UNIT_VIS_SCALE * bodyScaleOf(u.type);
       if (d < tol && d < bestD) {
         bestD = d;
@@ -4795,12 +5787,15 @@ window.WarFactoryUi = (function () {
       evt.preventDefault();
     } else if (evt.button === 2) {
       // 右键分流（指令越具体越优先）：
-      //   ① 选中了部队、且点中敌 / 中立单位或建筑 → 锁定攻击目标；
-      //   ② 选中了本方工厂、点的是空地 → 设集结点；
-      //   ③ 其余 → 指挥选中部队移动。
-      if (selection.size > 0 && issueAttackOn(pos.x, pos.y)) {
+      //   ① 选中总部、点中敌方单位 / 中立或敌方工厂 → 切换总部防卫目标；
+      //   ② 选中了部队、且点中敌 / 中立单位或建筑 → 锁定攻击目标；
+      //   ③ 选中了本方工厂 / 总部、点的是空地 → 设集结点；
+      //   ④ 其余 → 指挥选中部队移动。
+      if (selHqId && issueHqAttackOn(pos.x, pos.y)) {
+        // 总部已切换攻击目标，不设集结点
+      } else if (selection.size > 0 && issueAttackOn(pos.x, pos.y)) {
         // 已锁定攻击目标，无需其他处理
-      } else if (selFacId) issueRally(pos.x, pos.y);
+      } else if (selFacId || selHqId) issueRally(pos.x, pos.y);
       else issueMove(pos.x, pos.y);
       evt.preventDefault();
     }
@@ -4867,11 +5862,12 @@ window.WarFactoryUi = (function () {
       //             → 他家部队 / 总部 / 工厂 / 研究所（只读查看，不出任何指令按钮）
       const u = ownUnitAt(pos.x, pos.y);
       const mine = myPlayerIndex();
+      const wy2 = pos.y - liftAt(pos.x, pos.y); // 与画面上的位置对齐后才判定
       const hq = mine >= 0
-        ? hqView.find((x) => !x.down && x.owner === mine && Math.hypot(x.x - pos.x, x.y - pos.y) < hqR() + 18)
+        ? hqView.find((x) => !x.down && x.owner === mine && Math.hypot(x.x - pos.x, groundY(x.x, x.y) - wy2) < hqR() + 18)
         : null;
       const f = mine >= 0
-        ? factoriesView.find((x) => Math.hypot(x.x - pos.x, x.y - pos.y) < 70 && x.owner === mine)
+        ? factoriesView.find((x) => Math.hypot(x.x - pos.x, groundY(x.x, x.y) - wy2) < 70 && x.owner === mine)
         : null;
       if (u) {
         clearPeek();
@@ -4897,9 +5893,9 @@ window.WarFactoryUi = (function () {
         // 不是自己的东西：只允许「点开看」，框选永远圈不到它们
         const hitU = unitAt(pos.x, pos.y, null);
         const foeU = hitU && hitU.oi !== mine ? hitU : null;
-        const foeHq = hqView.find((x) => x.owner !== mine && Math.hypot(x.x - pos.x, x.y - pos.y) < hqR() + 18);
-        const foeF = factoriesView.find((x) => x.owner !== mine && Math.hypot(x.x - pos.x, x.y - pos.y) < 70);
-        const foeL = labsView.find((x) => x.owner !== mine && Math.hypot(x.x - pos.x, x.y - pos.y) < labR() + 18);
+        const foeHq = hqView.find((x) => x.owner !== mine && Math.hypot(x.x - pos.x, groundY(x.x, x.y) - wy2) < hqR() + 18);
+        const foeF = factoriesView.find((x) => x.owner !== mine && Math.hypot(x.x - pos.x, groundY(x.x, x.y) - wy2) < 70);
+        const foeL = labsView.find((x) => x.owner !== mine && Math.hypot(x.x - pos.x, groundY(x.x, x.y) - wy2) < labR() + 18);
         if (foeU || foeHq || foeF || foeL) {
           selection.clear();
           selFacId = 0;
@@ -4925,12 +5921,21 @@ window.WarFactoryUi = (function () {
 
   let lastCmdAt = 0;
 
-  /** 给选中的工厂设置集结点：此后该厂每次产出的部队自动前往该点 */
+  /** 总部集结点在 Map 里的键（与工厂数字 id 区分） */
+  function hqRallyKey(id) {
+    return 'h' + id;
+  }
+
+  /** 给选中的工厂 / 总部设置集结点：此后该建筑每次产出的部队自动前往该点 */
   function issueRally(wx, wy) {
-    if (isSpectator || !selFacId) return;
-    const f = factoriesView.find((x) => x.id === selFacId);
-    if (!f || f.owner !== myPlayerIndex()) {
-      selFacId = 0;
+    if (isSpectator || (!selFacId && !selHqId)) return;
+    const isHq = !selFacId && Boolean(selHqId);
+    const b = isHq
+      ? hqView.find((x) => x.id === selHqId)
+      : factoriesView.find((x) => x.id === selFacId);
+    if (!b || b.owner !== myPlayerIndex() || (isHq && b.down)) {
+      if (isHq) selHqId = 0;
+      else selFacId = 0;
       return;
     }
     const now = Date.now();
@@ -4939,9 +5944,9 @@ window.WarFactoryUi = (function () {
     const x = Math.max(0, Math.min(WORLD_W, Math.round(wx)));
     const y = Math.max(0, Math.min(WORLD_H, Math.round(wy)));
     if (net && typeof net.sendRt === 'function') {
-      net.sendRt({ cmd: 'rally', fid: selFacId, x, y });
+      net.sendRt({ cmd: 'rally', fid: isHq ? 0 : selFacId, x, y });
       // 本地立即生效，避免等待一次服务端往返才看到标记
-      rallyById.set(selFacId, { x, y });
+      rallyById.set(isHq ? hqRallyKey(selHqId) : selFacId, { x, y });
       rallyFx.push({ x, y, born: now, ttl: 900 });
     }
   }
@@ -4959,6 +5964,45 @@ window.WarFactoryUi = (function () {
   }
 
   /**
+   * 选中总部后右键：点中敌方单位 / 中立或敌方工厂 → 切换防卫目标（不设集结点）。
+   * 命中合法目标返回 true。
+   */
+  function issueHqAttackOn(wx, wy) {
+    if (isSpectator || !selHqId) return false;
+    const mine = myPlayerIndex();
+    if (mine < 0) return false;
+    const hq = hqView.find((x) => x.id === selHqId && x.owner === mine && !x.down);
+    if (!hq) return false;
+    const wy2 = wy - liftAt(wx, wy);
+    const hitU = unitAt(wx, wy, null);
+    if (hitU && hitU.oi !== mine) {
+      sendHqAttack('u', hitU.id, wx, wy);
+      return true;
+    }
+    const foeF = factoriesView.find(
+      (x) =>
+        x.owner !== mine &&
+        Math.hypot(x.x - wx, groundY(x.x, x.y) - wy2) < factoryRadius() + 18
+    );
+    if (foeF) {
+      sendHqAttack('f', foeF.id, wx, wy);
+      return true;
+    }
+    return false;
+  }
+
+  function sendHqAttack(kind, id, wx, wy) {
+    const now = Date.now();
+    if (now - lastCmdAt < 110) return;
+    lastCmdAt = now;
+    if (typeof net !== 'undefined' && net && typeof net.sendRt === 'function') {
+      net.sendRt({ cmd: 'hqAttack', kind, id });
+      attackMarkers.push({ x: wx, y: wy, born: now, ttl: 950 });
+      pushHudHint('总部已切换攻击目标');
+    }
+  }
+
+  /**
    * 右键锁定攻击目标：玩家选中我方部队后，右键点中「敌 / 中立」单位或建筑，
    * 把该目标设为这些部队的手动攻击目标（服务端在攻击范围内优先打它，否则自动）。
    * 命中的是非己方目标才返回 true（由 onMouseDown 据此决定是否改走移动指令）。
@@ -4967,6 +6011,7 @@ window.WarFactoryUi = (function () {
     if (isSpectator || selection.size === 0) return false;
     const mine = myPlayerIndex();
     if (mine < 0) return false;
+    const wy2 = wy - liftAt(wx, wy); // 与画面上的位置对齐后才判定
     // 1) 点中的敌方 / 中立单位（任意归属，但非己方）
     const hitU = unitAt(wx, wy, null);
     if (hitU && hitU.oi !== mine) {
@@ -4975,21 +6020,21 @@ window.WarFactoryUi = (function () {
     }
     // 2) 点中的敌方 / 中立建筑（工厂 / 研究所 / 总部，含被占领后 owner===-1 的中立）
     const foeF = factoriesView.find(
-      (x) => x.owner !== mine && Math.hypot(x.x - wx, x.y - wy) < 70
+      (x) => x.owner !== mine && Math.hypot(x.x - wx, groundY(x.x, x.y) - wy2) < 70
     );
     if (foeF) {
       sendAttack('f', foeF.id, wx, wy);
       return true;
     }
     const foeL = labsView.find(
-      (x) => x.owner !== mine && Math.hypot(x.x - wx, x.y - wy) < labR() + 18
+      (x) => x.owner !== mine && Math.hypot(x.x - wx, groundY(x.x, x.y) - wy2) < labR() + 18
     );
     if (foeL) {
       sendAttack('l', foeL.id, wx, wy);
       return true;
     }
     const foeH = hqView.find(
-      (x) => !x.down && x.owner !== mine && Math.hypot(x.x - wx, x.y - wy) < hqR() + 18
+      (x) => !x.down && x.owner !== mine && Math.hypot(x.x - wx, groundY(x.x, x.y) - wy2) < hqR() + 18
     );
     if (foeH) {
       sendAttack('h', foeH.id, wx, wy);
@@ -5469,14 +6514,17 @@ window.WarFactoryUi = (function () {
     ctx.fillStyle = PAPER_DEEP;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.setTransform(kk, 0, 0, kk, -cam.x * kk, -cam.y * kk);
-    if (bgReady) ctx.drawImage(bgCanvas, 0, 0);
-    if (terrainReady) ctx.drawImage(terrainCanvas, 0, 0);
+    if (bgReady) ctx.drawImage(bgCanvas, 0, -BG_PAD);
+    if (terrainReady) ctx.drawImage(terrainCanvas, 0, -terrainOffY);
+    drawContours(); // 坡线 / 崖线：贴着地形、压在单位之下（线宽按屏幕像素补偿）
     drawGroundMarks(t); // 弹痕贴地：压在地形之上、单位/建筑之下
     drawFires(t); // 灼烧地形贴地：同样压在单位之下（踩在上面的人才看得清）
+    drawRangeRelief(); // 地势射程环：压在地形之上、单位/建筑之下（站得高打得远，画出来不说出来）
 
     for (const f of factoriesView) drawFactory(f, t);
     drawRallies(t);
     for (const h of hqView) drawHq(h);
+    drawHqDefense(t); // 总部防卫：索敌蓄能 + 突突开火闪射线
     for (const l of labsView) drawLab(l, t);
     drawUnits(t);
     drawFlameJets(t); // 火舌压在单位之上：喷出去的火挡在人前面
@@ -5861,6 +6909,37 @@ window.WarFactoryUi = (function () {
     bindButtons,
     previewUnitBody,
     previewFx,
+    /**
+     * 高低差换算（与 public 版同名、同语义，将来要跑校验脚本时可直接用）：
+     * 实体在画面上的位置比它的地面坐标高一截，凡是「按世界坐标量画面位置」的判断
+     * 都得先用 groundY / liftAt 对齐，否则会被随机地貌的高低差打爆。
+     */
+    heights: {
+      groundY,
+      liftAt,
+      step: HEIGHT_STEP,
+      /**
+       * 坡线 / 崖线的段数（与 public 版同名同语义，校验脚本直接对着数）：
+       * 「崖到底画没画出来」没法靠肉眼断言，只能数这两套线段。
+       */
+      contours: () => ({
+        cliff: contourCliff ? contourCliff.length / 4 : 0,
+        slope: contourSlope ? contourSlope.length / 4 : 0,
+        cliffAt: heightCliff,
+        terrace: heightTerrace,
+      }),
+      /** 找一个「崖与坡相邻」的落点，给测试/出图脚本把镜头对准那儿 */
+      spot: contourSpotNear,
+      /** 世界坐标处的高度层（真实层，与服务端 heightAtWorld 同口径） */
+      levelAt: hLevelAt,
+      /** 每 1 层高低差 = 多少像素射程（服务端没下发就按 1 格兜底） */
+      stepPx: reliefStepPx,
+      /**
+       * 地势射程环：某单位各方向「实际够得着」的距离（给
+       * scripts/warfactory-client-check.js 用 —— 环鼓向哪边是量出来的，不是看出来的）。
+       */
+      relief: (u, base) => Array.from(reliefRing(u, base || unitStatsOf(u.type, u.tier).range || 0)),
+    },
     /** 体型系数（docs 下的图谱页按它对预览图缩放，与游戏内一致） */
     scales: { vis: UNIT_VIS_SCALE, body: UNIT_BODY_SCALE },
   };

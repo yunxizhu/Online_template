@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>战争工厂 · 车体与炮塔分层预览</title>
+<style>
+  body {
+    margin: 0;
+    padding: 26px 30px 44px;
+    background: #efe6d0;
+    color: #2a2620;
+    font: 14px/1.7 "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  h1 { font-size: 20px; margin: 0 0 6px; letter-spacing: .5px; }
+  .sub { color: #6b6152; font-size: 13px; margin: 0 0 4px; }
+  hr.rule { border: 0; border-top: 1px solid rgba(42,38,32,.18); margin: 22px 0 18px; }
+  table { border-collapse: collapse; }
+  th, td { padding: 6px 10px; text-align: center; }
+  th { font-weight: 600; font-size: 12px; color: #6b6152; }
+  td.cell { border: 1px solid rgba(42,38,32,.14); background: #f6efdd; }
+  td.rowhead { text-align: right; color: #4a4438; font-size: 12px; white-space: nowrap; }
+  canvas { display: block; }
+  .note { margin-top: 16px; font-size: 12.5px; color: #5f574a; max-width: 760px; }
+  .fail { color: #a33; }
+</style>
+</head>
+<body>
+  <h1>车体与炮塔：两个角各转各的</h1>
+  <p class="sub">
+    每一格：车体（腿 / 履带 / 机箱）固定朝右（行进方向），炮塔（炮管 / 喷臂 / 镜筒）按列标注的角度单独转。
+    炮塔绕自己的座圈转，所以炮管根部钉在车上、只有炮口扫过去。
+  </p>
+
+  <div id="grid"></div>
+
+  <p class="note">
+    判据：车体角 <code>u.angle</code> 由移动产生（转向时炮塔跟着转同样的量，保持相对角）；
+    炮塔角 <code>u.turret</code> 由攻击产生，只在开火 / 咬住目标时改，车体不动。
+    没有目标后炮塔在约 0.9 秒内收回车体朝向 —— 不会僵在最后打过的方向上。
+  </p>
+
+  <script src="../public/games/warfactory/ui.js"></script>
+  <script>
+    (function () {
+      var Ui = window.WarFactoryUi;
+      var host = document.getElementById('grid');
+      function fail(msg) {
+        host.insertAdjacentHTML('beforeend', '<p class="fail">' + msg + '</p>');
+      }
+      if (!Ui || typeof Ui.drawUnitParts !== 'function') {
+        fail('未能加载 ui.js（drawUnitParts 不存在）。');
+        return;
+      }
+
+      var TYPES = [
+        ['warrior', '锐士'],
+        ['shield', '盾卫'],
+        ['ranger', '游侠'],
+        ['burst', '轰击'],
+        ['burn', '燎原'],
+        ['laser', '激光兵'],
+      ];
+      // 车体朝右（0°），炮塔相对车体转这些角度
+      var ANGLES = [0, 30, 60, 90, 135, 180, -90];
+      var OWNER = '#b03a2e';
+      var CELL = 132;
+      var DPR = Math.min(2, window.devicePixelRatio || 1);
+
+      function scaleOf(type, tier) {
+        var vis = (Ui.scales && Ui.scales.vis) || 1;
+        var body = (Ui.scales && Ui.scales.body && Ui.scales.body[type]) || 1;
+        var tierMul = (Ui.scales && Ui.scales.tier && Ui.scales.tier[type]) || null;
+        return vis * body * (tierMul ? tierMul(tier) : 1);
+      }
+
+      /** 画一格：车体朝右，炮塔转 rel 度 */
+      function drawCell(cv, type, tier, relDeg) {
+        var s = scaleOf(type, tier);
+        var c = cv.getContext('2d');
+        c.setTransform(DPR, 0, 0, DPR, 0, 0);
+        c.clearRect(0, 0, CELL, CELL);
+        // 纸底 + 淡淡的十字（标出车体朝向）
+        c.fillStyle = '#f6efdd';
+        c.fillRect(0, 0, CELL, CELL);
+        c.strokeStyle = 'rgba(42,38,32,.12)';
+        c.lineWidth = 1;
+        c.beginPath();
+        c.moveTo(CELL / 2 - 46, CELL / 2);
+        c.lineTo(CELL / 2 + 46, CELL / 2);
+        c.stroke();
+
+        c.save();
+        c.translate(CELL / 2, CELL / 2);
+        c.scale(s, s);
+        Ui.drawUnitParts(c, type, tier, 'A', OWNER, 'base');
+        c.restore();
+
+        c.save();
+        c.translate(CELL / 2, CELL / 2);
+        c.scale(s, s);
+        var pv = (Ui.turretPivot && Ui.turretPivot(type, tier)) || [0, 0];
+        c.translate(pv[0], pv[1]);
+        c.rotate((relDeg * Math.PI) / 180);
+        c.translate(-pv[0], -pv[1]);
+        Ui.drawUnitParts(c, type, tier, 'A', OWNER, 'turret');
+        c.restore();
+      }
+
+      var html = '<table>';
+      html += '<tr><th></th>';
+      for (var a = 0; a < ANGLES.length; a++) {
+        html += '<th>炮塔 ' + ANGLES[a] + '°</th>';
+      }
+      html += '</tr>';
+      for (var t = 0; t < TYPES.length; t++) {
+        for (var tier = 1; tier <= 3; tier++) {
+          html += '<tr><td class="rowhead">' + TYPES[t][1] + ' ' + tier + ' 阶</td>';
+          for (var k = 0; k < ANGLES.length; k++) {
+            html += '<td class="cell"><canvas width="' + CELL * DPR + '" height="' + CELL * DPR +
+              '" style="width:' + CELL + 'px;height:' + CELL + 'px" data-t="' + TYPES[t][0] +
+              '" data-tier="' + tier + '" data-a="' + ANGLES[k] + '"></canvas></td>';
+          }
+          html += '</tr>';
+        }
+      }
+      html += '</table>';
+      host.innerHTML = html;
+
+      var cvs = host.querySelectorAll('canvas');
+      for (var i = 0; i < cvs.length; i++) {
+        var cv = cvs[i];
+        drawCell(cv, cv.getAttribute('data-t'), Number(cv.getAttribute('data-tier')), Number(cv.getAttribute('data-a')));
+      }
+    })();
+  </script>
+</body>
+</html>

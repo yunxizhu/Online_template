@@ -386,6 +386,48 @@
   cursor: default;
 }
 
+/* 第 9 项：每条产线的「在场 n/上限 · 产速%」小字 */
+.wfp-lcnt {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: #6b5c42;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 名额占满 → 这条线停产，整行提示转成警示色 */
+.wfp-lcnt.is-full {
+  color: #8a2f22;
+  font-weight: 600;
+}
+
+/* 第 9 项：产线行里的「选兵」按钮 —— 比「进化」次一级，故意不共用 wfp-lbtn */
+.wfp-lpick {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border: 1px solid rgba(90, 74, 52, 0.5);
+  border-radius: 3px;
+  background: rgba(90, 74, 52, 0.08);
+  color: #5a4c38;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.wfp-lpick:hover:not(:disabled) {
+  border-color: rgba(160, 58, 44, 0.55);
+  background: rgba(160, 58, 44, 0.12);
+  color: #8a2f22;
+}
+
+.wfp-lpick:disabled {
+  border-color: rgba(90, 74, 52, 0.3);
+  background: rgba(90, 74, 52, 0.05);
+  color: #9b8f7c;
+  cursor: default;
+}
+
 /* ---- 选择器（选兵种）：插在触发它的按钮正下方 ---- */
 .wfp-picker {
   display: grid;
@@ -546,6 +588,216 @@
   color: #3c342a;
 }
 
+/*
+ * ============ 地形编辑器 ============
+ *
+ * 唤出方式：房间里按 Ctrl+Shift + ↑ ↓ ← →（见 public/js/ui.js 的热键）。
+ * 面板贴着地图下沿、压在指挥栏上方，一行两排：
+ *   上排 = 四个页签（地形 / 建筑 / 部队 / 地图）+ 右侧的暂停开关与退出；
+ *   下排 = 当前页签的工具条，按「组」横着排（组名 + 若干按钮）。
+ * 指挥栏照常在下边，不用让位 —— 编辑时要看的（小地图、我方概况）还在原处。
+ */
+#panel-warfactory:not([hidden]) .wf-editor {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: var(--wf-cmdbar-h);
+  z-index: 6;
+  padding: 7px 10px 8px;
+  border-top: 1px solid rgba(90, 74, 52, 0.5);
+  background: rgba(240, 232, 212, 0.96);
+  backdrop-filter: blur(3px);
+  box-shadow: 0 -6px 18px rgba(60, 48, 30, 0.14);
+}
+
+.wf-editor {
+  border-top: 1px solid rgba(90, 74, 52, 0.5);
+  background: #f0e8d4;
+  color: #3c342a;
+}
+
+.wfe-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.wfe-row-tab {
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px dashed rgba(90, 74, 52, 0.35);
+}
+
+.wfe-grow {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+
+/* 操作提示（也是保存 / 报错的回显位） */
+.wfe-tip {
+  max-width: 46vw;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: #7a6a4e;
+}
+
+.wfe-tip.is-warn {
+  color: #a03a2c;
+}
+
+.wfe-tab,
+.wfe-opt,
+.wfe-act {
+  padding: 3px 9px;
+  border: 1px solid rgba(90, 74, 52, 0.5);
+  border-radius: 4px;
+  background: rgba(252, 248, 238, 0.9);
+  color: #3c342a;
+  font-family: "STKaiti", "KaiTi", "Noto Serif SC", "SimSun", serif;
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.wfe-tab:hover,
+.wfe-opt:hover,
+.wfe-act:hover {
+  background: #fffdf6;
+  border-color: rgba(90, 74, 52, 0.8);
+}
+
+/* 当前选中的笔 / 形状 / 归属 …——一眼看出「现在拿的是什么」 */
+.wfe-tab.is-on,
+.wfe-opt.is-on {
+  border-color: rgba(160, 58, 44, 0.75);
+  background: rgba(160, 58, 44, 0.14);
+  color: #8a2f22;
+  font-weight: 600;
+}
+
+.wfe-opt-warn.is-on {
+  border-color: rgba(176, 54, 40, 0.85);
+  background: rgba(176, 54, 40, 0.2);
+}
+
+.wfe-opt-primary {
+  border-color: rgba(48, 96, 150, 0.7);
+  background: rgba(48, 96, 150, 0.14);
+  color: #23527f;
+  font-weight: 600;
+}
+
+.wfe-act {
+  font-weight: 600;
+}
+
+.wfe-act-ghost {
+  background: rgba(252, 248, 238, 0.4);
+  color: #6b5b40;
+}
+
+.wfe-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.wfe-glabel {
+  flex: 0 0 auto;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: #7a6a4e;
+}
+
+.wfe-opts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.wfe-input {
+  width: 148px;
+  padding: 3px 6px;
+  border: 1px solid rgba(90, 74, 52, 0.5);
+  border-radius: 4px;
+  background: #fffdf6;
+  color: #3c342a;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 已有地图列表：横向排，最多占一行，放不下就自己卷 */
+.wfe-maplist {
+  flex-wrap: nowrap;
+  max-width: 100%;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.wfe-map {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid rgba(90, 74, 52, 0.4);
+  border-radius: 4px;
+  background: rgba(252, 248, 238, 0.9);
+}
+
+.wfe-map.is-on {
+  border-color: rgba(48, 96, 150, 0.7);
+  background: rgba(48, 96, 150, 0.1);
+}
+
+.wfe-mapname {
+  max-width: 160px;
+  overflow: hidden;
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.wfe-mapmeta {
+  font-size: 10px;
+  color: #8b7a58;
+  white-space: nowrap;
+}
+
+.wfe-mapact {
+  padding: 1px 6px;
+  border: 1px solid rgba(90, 74, 52, 0.45);
+  border-radius: 3px;
+  background: rgba(252, 248, 238, 0.9);
+  color: #3c342a;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.wfe-mapact:hover {
+  background: #fffdf6;
+}
+
+.wfe-mapact.is-del:hover {
+  border-color: rgba(176, 54, 40, 0.8);
+  color: #a03a2c;
+}
+
+.wfe-empty {
+  font-size: 11px;
+  color: #8b7a58;
+}
+
 /* ============ 底部指挥栏：小地图 ｜ 单位粗览 ｜ 单位详情 ============ */
 
 /*
@@ -618,6 +870,25 @@
   letter-spacing: 1px;
 }
 
+/* 本局地貌主题（服务端每局随机抽一个，标在小地图标题后面） */
+.wcb-theme {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid rgba(120, 96, 62, 0.45);
+  border-radius: 999px;
+  background: rgba(120, 96, 62, 0.1);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: #7a5c34;
+  white-space: nowrap;
+}
+
+.wcb-theme[hidden] {
+  display: none;
+}
+
 .wcb-tip,
 .wcb-count {
   font-size: 11px;
@@ -635,6 +906,50 @@
   background: #f6efdd;
   cursor: pointer;
   touch-action: none;
+}
+
+/*
+ * 小地图图例：地形已灰化（只靠深浅分山 / 水），部队只分敌我（蓝 / 红），
+ * 光靠画面不好猜，所以就在小地图正下方摆一行对照色块。
+ * 色值与 ui.js 的 MINI_MTN / MINI_WATER / MINI_FRIEND / MINI_FOE 保持一致。
+ */
+.wcb-minilegend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #6a5c46;
+}
+
+.wml-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.wml-sw {
+  width: 9px;
+  height: 9px;
+  border: 1px solid rgba(90, 74, 52, 0.45);
+  border-radius: 2px;
+}
+
+.wml-mtn {
+  background: #55555a; /* 山体：深灰 */
+}
+
+.wml-water {
+  background: #9ea7ac; /* 水体：中灰偏冷 */
+}
+
+.wml-own {
+  background: #2f6fbf; /* 我方：蓝 */
+}
+
+.wml-foe {
+  background: #cf3b2c; /* 敌方：红 */
 }
 
 /* ---- 中：单位粗览 ---- */
@@ -718,6 +1033,71 @@
   display: block;
   height: 100%;
   background: #4a6b3a;
+}
+
+/* ---- 第 9 项：中栏「按产线列兵」的分组壳（一组一条产线，横跨整行）---- */
+.wov-lgrp {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 5px 5px 6px;
+  border: 1px solid rgba(90, 74, 52, 0.28);
+  border-radius: 3px;
+  background: rgba(244, 238, 222, 0.55);
+}
+
+.wov-lhead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wov-ltitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #3c342a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wov-lcnt {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: #6b5c42;
+  font-variant-numeric: tabular-nums;
+}
+
+.wov-lcnt.is-full {
+  color: #8a2f22;
+  font-weight: 600;
+}
+
+.wov-lall {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 1px solid rgba(90, 74, 52, 0.5);
+  border-radius: 3px;
+  background: rgba(90, 74, 52, 0.08);
+  color: #5a4c38;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.wov-lall:hover {
+  border-color: rgba(160, 58, 44, 0.55);
+  background: rgba(160, 58, 44, 0.12);
+  color: #8a2f22;
+}
+
+/* 组内的兵：继承外层网格的分列，间距略紧 */
+.wov-ltiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
+  gap: 4px;
 }
 
 .wov-hp.is-mid > i {
@@ -995,3 +1375,188 @@
   color: #8a2f22;
 }
 .wf-result-btn-primary:hover { background: rgba(160, 58, 44, 0.24); }
+
+/* ================= 战前选图 ================= */
+/*
+ * 开局停在这一屏：左半是当前这张图的预览（随机图也有预览，摇到满意为止），
+ * 右半是存档地图目录（点一下就换成它）。只有房主能按底下那两颗按钮。
+ */
+.wf-briefing {
+  position: absolute;
+  inset: 0;
+  z-index: 55;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(42, 38, 32, 0.5);
+  backdrop-filter: blur(3px);
+}
+.wf-briefing[hidden] { display: none; }
+
+.wfb-card {
+  width: min(880px, 94vw);
+  max-height: 92vh;
+  overflow: auto;
+  padding: 20px 22px 18px;
+  border: 1px solid rgba(90, 74, 52, 0.5);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #f6efdd 0%, #ece3cd 100%);
+  box-shadow: 0 14px 44px rgba(42, 38, 32, 0.4);
+  color: #3c342a;
+  font-family: "STKaiti", "KaiTi", "Noto Serif SC", "SimSun", serif;
+}
+
+.wfb-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px dashed rgba(90, 74, 52, 0.35);
+}
+.wfb-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: #8a2f22;
+}
+.wfb-sub {
+  font-size: 12px;
+  color: #7d6f58;
+}
+
+.wfb-body {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+}
+.wfb-col { display: flex; flex-direction: column; gap: 8px; }
+.wfb-preview { flex: 0 0 auto; width: 380px; }
+.wfb-list { flex: 1 1 auto; min-width: 0; }
+
+.wfb-colhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.wfb-coltitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: #4a4335;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.wfb-tag {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border: 1px solid rgba(90, 74, 52, 0.45);
+  border-radius: 999px;
+  background: rgba(252, 248, 238, 0.9);
+  font-size: 11px;
+  color: #6d6152;
+}
+
+.wfb-canvas {
+  width: 360px;
+  height: 360px;
+  border: 1px solid rgba(90, 74, 52, 0.45);
+  border-radius: 4px;
+  background: #f4ecd8;
+}
+.wfb-meta {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #6d6152;
+  min-height: 36px;
+}
+
+.wfb-acts {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.wfb-btn {
+  padding: 7px 14px;
+  border: 1px solid rgba(90, 74, 52, 0.45);
+  border-radius: 5px;
+  background: rgba(252, 248, 238, 0.92);
+  color: #4a4335;
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.wfb-btn:hover { background: rgba(90, 74, 52, 0.1); }
+.wfb-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.wfb-btn-primary {
+  border-color: rgba(160, 58, 44, 0.75);
+  background: rgba(160, 58, 44, 0.14);
+  color: #8a2f22;
+  font-weight: 600;
+}
+.wfb-btn-primary:hover { background: rgba(160, 58, 44, 0.24); }
+
+.wfb-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #7a6a4e;
+}
+
+/* 存档目录：每张图一小格 —— 缩略图 + 名字 + 人数/尺寸 */
+.wfb-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.wfb-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid rgba(90, 74, 52, 0.28);
+  border-radius: 5px;
+  background: rgba(252, 248, 238, 0.7);
+  cursor: pointer;
+}
+.wfb-item:hover { background: rgba(90, 74, 52, 0.08); }
+.wfb-item.is-on {
+  border-color: rgba(160, 58, 44, 0.6);
+  background: rgba(160, 58, 44, 0.1);
+}
+.wfb-thumb {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 56px;
+  border: 1px solid rgba(90, 74, 52, 0.35);
+  border-radius: 3px;
+  background: #f4ecd8;
+}
+.wfb-iname {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14px;
+  color: #3c342a;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.wfb-imeta {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: #7d6f58;
+}
+.wfb-empty {
+  padding: 18px 6px;
+  font-size: 12px;
+  color: #7a6a4e;
+  text-align: center;
+}
+
+/* 窄屏（手机 / 竖屏）：上下排，别硬塞两列 */
+@media (max-width: 760px) {
+  .wfb-body { flex-direction: column; }
+  .wfb-preview { width: 100%; }
+  .wfb-canvas { width: 100%; height: auto; aspect-ratio: 1 / 1; }
+}

@@ -308,6 +308,9 @@
               </div>
               <h3 class="room-members-title" data-i18n="room.members">房间成员</h3>
               <div id="member-list" class="room-player-grid"></div>
+              <p class="muted room-map-note" id="room-map-note" hidden>
+                <span data-i18n="room.mapLabel">地图</span>：<strong id="room-map-name" data-i18n="room.mapRandom">随机生成</strong>
+              </p>
               <div class="row room-actions">
                 <button id="btn-start" type="button" hidden data-i18n="room.start">开始游戏</button>
                 <button id="btn-edit-room" type="button" class="secondary" hidden data-i18n="room.edit">修改房间</button>
@@ -413,6 +416,10 @@
           <option value="7">7</option>
           <option value="8">8</option>
         </select>
+      </label>
+      <label id="room-map-wrap" hidden>
+        <span data-i18n="create.map">地图</span>
+        <select id="room-map"></select>
       </label>
       <label>
         <span data-i18n="create.roomName">房间名</span>

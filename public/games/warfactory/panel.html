@@ -46,12 +46,16 @@
           <span class="warfactory-legend-item"><i class="terr-swatch terr-water"></i><b>水域</b><em>不可通行</em></span>
           <span class="warfactory-legend-item"><i class="terr-swatch terr-mountain"></i><b>山地</b><em>不可通行，且有高度：挡住视线与弹道，山两侧互相看不见、打不到</em></span>
           <span class="warfactory-legend-item"><i class="terr-swatch terr-plain"></i><b>平原</b><em>一览无余</em></span>
+          <span class="warfactory-legend-item"><b>地图主题</b><em>每局开局随机抽一张手工设计的地图（标准战场 / 壁垒 / 群山 / 汪洋 / 超级平原 / 千湖泽国 / 裂谷 / 棋盘街区 / 环形山）：山是笔直长墙、湖是规整方圆，长墙按间距留有关口；本局抽到哪张，标在左下角小地图标题旁</em></span>
+          <span class="warfactory-legend-item"><b>进攻主路</b><em>每两个相邻玩家之间强制挖出上 / 中 / 下 3 条可通行大道，每条净宽 15 格以上（能并排走 7 个兵），任何地貌都不会只剩一条独木桥；路之间仍留着原有地形当分隔带</em></span>
+          <span class="warfactory-legend-item"><b>地势高低</b><em>山是高地、水是洼地，等高线越密坡越陡、粗深的一道是过不去的崖；选中自己的兵会在地图上画出它的<b>实际射程环</b>——朝低处鼓出去（打得远，画暖金）、朝高处被削掉（打得近，画冷灰），环里那圈细虚线是不考虑地势时的射程，用它当尺子比一比就知道自己占了多大便宜。全程没有数字标注，看图即得</em></span>
         </div>
         <div class="warfactory-legend warfactory-terrain-legend">
           <span class="warfactory-legend-title">交战</span>
           <span class="warfactory-legend-item"><b>不追击</b><em>敌人进入攻击范围才开火；跑出范围即停火，部队绝不自己追出去</em></span>
           <span class="warfactory-legend-item"><b>移动攻击</b><em>行军途中照常开火，边走边打（不必停下）</em></span>
           <span class="warfactory-legend-item"><b>索敌范围</b><em>= 自身攻击范围，更远的敌人当作看不见</em></span>
+          <span class="warfactory-legend-item"><b>规划路径</b><em>选中部队后按住 <b>Shift + 右键</b> 连续点地面 → 依次记下一串路点（画面上画出每段的行进线，路点带序号），松开 Shift 再右键点终点（或直接按回车）部队就按这条链依次走完；<b>Esc</b> 作废重来。绕开山水的走法与右键直走完全一致，中途路点只是「路过」，不会停下发呆</em></span>
           <span class="warfactory-legend-item"><b>锁定攻击</b><em>选中部队后右键点敌方 / 中立单位或建筑 → 下达追击命令：在射程内就直接打（哪怕旁边有更近的敌人），不在射程内就主动寻路赶上去，目标逃跑也一路追；右键别处（行军）/ 停止 / 目标阵亡才解除。执行中的部队与目标之间会有一条虚线指示</em></span>
           <span class="warfactory-legend-item"><b>唯一的友伤</b><em>只有燎原的灼烧地形会烧自己人：把火铺在自家部队脚下，掉血的是自己（一级燎原不留火场，所以只有二级起才烧得到自己）</em></span>
         </div>
@@ -68,12 +72,12 @@
         </div>
         <div class="warfactory-legend warfactory-terrain-legend">
           <span class="warfactory-legend-title">指挥栏</span>
-          <span class="warfactory-legend-item"><b>小地图</b><em>左下；点击或按住拖动即可把镜头跳到该处</em></span>
+          <span class="warfactory-legend-item"><b>小地图</b><em>左下；点击或按住拖动即可把镜头跳到该处。地形一律灰化，只靠深浅分辨：最浅是平原、中灰偏冷是水体、最深是山体；部队与建筑不分四方阵营色，只看敌我——<b>我方蓝、敌方红</b>（中立是墨灰），每个点外还套一圈同色光晕</em></span>
           <span class="warfactory-legend-item"><b>单位粗览</b><em>中栏；只列当前选中的部队，没选中时这一栏不显示（想看谁就点谁）</em></span>
           <span class="warfactory-legend-item"><b>侦察</b><em>他家的部队 / 工厂 / 总部 / 研究所也能左键点开看数据——只读，没有升级与指令按钮；框选永远只圈自己的部队</em></span>
           <span class="warfactory-legend-item"><b>单位详情</b><em>右栏；点部队看属性，点工厂看产能，点总部看血量与产能升级</em></span>
           <span class="warfactory-legend-item"><b>F2</b><em>全选我方所有部队（F 只选镜头内）</em></span>
-          <span class="warfactory-legend-item"><b>滚轮</b><em>在战场上滚动滚轮缩放视野；以鼠标所指位置为锚点，拉远看全局、推近看细节</em></span>
+          <span class="warfactory-legend-item"><b>滚轮</b><em>在战场上滚动滚轮缩放视野；以鼠标所指位置为锚点，拉远看全局、推近看细节。缩放范围很宽：最远能一直拉到整张地图装进可见区（边上留一圈空），最近能推到贴脸看细节</em></span>
           <span class="warfactory-legend-item"><b>中键平移</b><em>按住鼠标中键在战场上拖动，地图跟着手走（浏览器自带的「中键自动滚动」已屏蔽，中键只用来拖地图）</em></span>
           <span class="warfactory-legend-item"><b>空格</b><em>镜头立刻回到自家总部（总部没了则回自家工厂；缩放倍率不变）</em></span>
           <span class="warfactory-legend-item"><b>编队</b><em>Ctrl / Shift + 数字键 0-9：把当前选中的部队编入该编号（没选中则清空该编号）</em></span>
@@ -97,7 +101,7 @@
           <span class="warfactory-legend-item"><b>生产加速</b><em>点选总部 → 花 300 科技点点「加速生产」；每次在当前生产间隔上再减 1/15（复利），最多 20 级</em></span>
           <span class="warfactory-legend-item"><b>研究所</b><em>初始中立，与工厂一样有血量：打光即由「最后一击者」接管并满血</em></span>
           <span class="warfactory-legend-item"><b>研究产线</b><em>占下研究所后，可在面板里花 200 科技点点「开拓研究产线」（点击即生效，<b>每所最多 1 条</b>）；开拓后该所每 3 秒的产出从 +2 提到 +3</em></span>
-          <span class="warfactory-legend-item"><b>总部防卫</b><em>总部自带一门炮：射程 200、每 0.5 秒一发、伤害 20；开火前有明显前摇（炮位聚能、目标环收紧、蓄能弧走满一圈才打）</em></span>
+          <span class="warfactory-legend-item"><b>总部防卫</b><em>总部自带一门炮：新索敌先蓄能（聚能球 + 蓄能弧走满），蓄满后按冷却突突连射；换目标会重新蓄能</em></span>
           <span class="warfactory-legend-item"><b>总部</b><em>每人一座、不可易主；自带一条产线（默认产锐士、<b>不可进化</b>），被打光即总部陷落，本人出局</em></span>
         </div>
         <div class="warfactory-legend warfactory-terrain-legend">
@@ -106,7 +110,7 @@
           <span class="warfactory-legend-item"><b>总部面板</b><em>左键点选自己的总部 → 右侧详情栏：看总部产线（默认锐士）、开辟新产线、加速生产</em></span>
         </div>
         <p class="warfactory-help" data-i18n="warfactory.help">
-          部队只打攻击范围内的敌人、不自动追击，但移动中照常开火 · 工厂与研究所有血量：打光即由「最后一击者」接管，易主后恢复满血，中立建筑只有 1/3 血 · 每条产线产什么兵自己定：点工厂 / 总部花 300 开辟产线（先选兵种，最多合计 2 条）· 中高级工厂每条产线花 300 进化一阶（此后直接产该阶单位，每个兵种只有一条进化路线）· 总部默认产锐士且不可进化 · 左键框选部队 · 右键移动 · F 选取镜头内部队 / F2 全选我方部队 · 选中工厂 / 总部后右键设集结点 · 点总部花 300 加速生产（最多 20 级）· 点自家研究所花 200 开拓研究产线（产出 ×1.5）· WASD/方向键移动镜头 · 点击小地图跳转 · 总部被打爆即出局
+          部队只打攻击范围内的敌人、不自动追击，但移动中照常开火 · 工厂与研究所有血量：打光即由「最后一击者」接管，易主后恢复满血，中立建筑只有 1/3 血 · 每条产线产什么兵自己定：点工厂 / 总部花 300 开辟产线（先选兵种，最多合计 2 条）· 中高级工厂每条产线花 300 进化一阶（此后直接产该阶单位，每个兵种只有一条进化路线）· 总部默认产锐士且不可进化 · 左键框选部队 · 右键移动 · Shift+右键 依次点路点规划路径（回车出发 / Esc 取消） · F 选取镜头内部队 / F2 全选我方部队 · 选中工厂 / 总部后右键设集结点 · 点总部花 300 加速生产（最多 20 级）· 点自家研究所花 200 开拓研究产线（产出 ×1.5）· WASD/方向键移动镜头 · 点击小地图跳转 · 总部被打爆即出局
         </p>
       </div>
     </div>
@@ -124,6 +128,157 @@
     </div>
   </div>
 
+  <!--
+    ============ 地形编辑器 ============
+    唤出方式：房间里按 Ctrl+Shift + ↑ ↓ ← →（战争工厂专用，见 public/js/ui.js 的热键）。
+    服务端会用「占位电脑」把剩下的座位补满并立刻开局，然后停在 edit 阶段 ——
+    这里能涂地形、摆建筑与部队，最后把整张图存成 maps/warfactory/*.json。
+  -->
+  <div class="wf-editor" id="wf-editor" hidden>
+    <div class="wfe-row wfe-row-tab">
+      <button type="button" class="wfe-tab" data-wfe-tab="terrain">地形</button>
+      <button type="button" class="wfe-tab" data-wfe-tab="building">建筑</button>
+      <button type="button" class="wfe-tab" data-wfe-tab="unit">部队</button>
+      <button type="button" class="wfe-tab" data-wfe-tab="map">地图</button>
+      <span class="wfe-grow"></span>
+      <span class="wfe-tip" id="wfe-tip">左键涂抹 · 按住拖动连成一片 · 中键拖地图 · 滚轮缩放</span>
+      <button type="button" class="wfe-act" id="wfe-pause">继续</button>
+      <button type="button" class="wfe-act wfe-act-ghost" id="wfe-exit">退出编辑</button>
+    </div>
+
+    <div class="wfe-row wfe-row-body">
+      <!-- 地形：笔 / 粗细 / 形状 -->
+      <div class="wfe-group" data-wfe-pane="terrain">
+        <span class="wfe-glabel">笔</span>
+        <span class="wfe-opts">
+          <button type="button" class="wfe-opt" data-wfe-terr="0">平原</button>
+          <button type="button" class="wfe-opt" data-wfe-terr="2">山</button>
+          <button type="button" class="wfe-opt" data-wfe-terr="4">水</button>
+        </span>
+      </div>
+      <div class="wfe-group" data-wfe-pane="terrain">
+        <span class="wfe-glabel">粗细</span>
+        <span class="wfe-opts" id="wfe-sizes"></span>
+      </div>
+      <div class="wfe-group" data-wfe-pane="terrain">
+        <span class="wfe-glabel">形状</span>
+        <span class="wfe-opts">
+          <button type="button" class="wfe-opt" data-wfe-shape="circle">圆</button>
+          <button type="button" class="wfe-opt" data-wfe-shape="square">方</button>
+          <button type="button" class="wfe-opt" data-wfe-shape="diamond">菱</button>
+          <button type="button" class="wfe-opt" data-wfe-shape="box">框选</button>
+        </span>
+      </div>
+      <div class="wfe-group" data-wfe-pane="terrain">
+        <span class="wfe-glabel">整图</span>
+        <span class="wfe-opts">
+          <button type="button" class="wfe-opt wfe-opt-warn" id="wfe-fill-all" title="按当前笔刷把整张图填满（想全抹平就先选「平原」）">整图填充</button>
+          <button type="button" class="wfe-opt" id="wfe-heights">重算高低差</button>
+        </span>
+      </div>
+
+      <!-- 建筑：放什么 / 归属 / 删除 -->
+      <div class="wfe-group" data-wfe-pane="building">
+        <span class="wfe-glabel">放置</span>
+        <span class="wfe-opts">
+          <button type="button" class="wfe-opt" data-wfe-bkind="factory:1">初级厂</button>
+          <button type="button" class="wfe-opt" data-wfe-bkind="factory:2">中级厂</button>
+          <button type="button" class="wfe-opt" data-wfe-bkind="factory:3">高级厂</button>
+          <button type="button" class="wfe-opt" data-wfe-bkind="lab">研究所</button>
+          <button type="button" class="wfe-opt" data-wfe-bkind="hq">总部</button>
+        </span>
+      </div>
+      <div class="wfe-group" data-wfe-pane="building">
+        <span class="wfe-glabel">归属</span>
+        <span class="wfe-opts" id="wfe-bowner"></span>
+      </div>
+      <div class="wfe-group" data-wfe-pane="building">
+        <span class="wfe-glabel">删除</span>
+        <span class="wfe-opts">
+          <button type="button" class="wfe-opt wfe-opt-warn" id="wfe-bdel">删除模式</button>
+        </span>
+      </div>
+
+      <!-- 部队：兵种 / 阶数 / 归属 / 删除 -->
+      <div class="wfe-group" data-wfe-pane="unit">
+        <span class="wfe-glabel">兵种</span>
+        <span class="wfe-opts" id="wfe-utype"></span>
+      </div>
+      <div class="wfe-group" data-wfe-pane="unit">
+        <span class="wfe-glabel">阶数</span>
+        <span class="wfe-opts">
+          <button type="button" class="wfe-opt" data-wfe-utier="1">1</button>
+          <button type="button" class="wfe-opt" data-wfe-utier="2">2</button>
+          <button type="button" class="wfe-opt" data-wfe-utier="3">3</button>
+        </span>
+      </div>
+      <div class="wfe-group" data-wfe-pane="unit">
+        <span class="wfe-glabel">归属</span>
+        <span class="wfe-opts" id="wfe-uowner"></span>
+      </div>
+      <div class="wfe-group" data-wfe-pane="unit">
+        <span class="wfe-glabel">删除</span>
+        <span class="wfe-opts">
+          <button type="button" class="wfe-opt wfe-opt-warn" id="wfe-udel">删除模式</button>
+        </span>
+      </div>
+
+      <!-- 地图：保存 / 载入 / 删除 -->
+      <div class="wfe-group" data-wfe-pane="map">
+        <span class="wfe-glabel">存档</span>
+        <span class="wfe-opts">
+          <input type="text" class="wfe-input" id="wfe-name" maxlength="40" placeholder="地图名字" />
+          <button type="button" class="wfe-opt wfe-opt-primary" id="wfe-save">保存并下载</button>
+        </span>
+      </div>
+      <div class="wfe-group" data-wfe-pane="map">
+        <span class="wfe-glabel">已有地图</span>
+        <span class="wfe-opts wfe-maplist" id="wfe-maplist"></span>
+      </div>
+    </div>
+  </div>
+
+  <!--
+    ============ 战前选图 ============
+    开局先停在这里（服务端 phase='briefing'，对局一帧都不推进）：
+    房主从存档地图里挑一张，或者「不满意就再随机一张」，两边都带预览缩略图；
+    只有房主能点「就用这张」，其余人看着等。
+  -->
+  <div class="wf-briefing" id="wf-briefing" role="dialog" aria-label="战前选图" hidden>
+    <div class="wfb-card">
+      <div class="wfb-head">
+        <span class="wfb-title">战前 · 选择地图</span>
+        <span class="wfb-sub" id="wfb-sub">—</span>
+      </div>
+
+      <div class="wfb-body">
+        <!-- 左：当前这张图的预览（随机图也有 —— 摇到满意为止） -->
+        <section class="wfb-col wfb-preview">
+          <header class="wfb-colhead">
+            <span class="wfb-coltitle" id="wfb-cur-name">—</span>
+            <span class="wfb-tag" id="wfb-cur-mode">随机</span>
+          </header>
+          <canvas id="wfb-canvas" class="wfb-canvas" width="360" height="360" aria-label="当前地图预览"></canvas>
+          <div class="wfb-meta" id="wfb-cur-meta">—</div>
+          <div class="wfb-acts">
+            <button type="button" class="wfb-btn" id="wfb-reroll">再随机一张</button>
+            <button type="button" class="wfb-btn wfb-btn-primary" id="wfb-confirm">就用这张，开打</button>
+          </div>
+          <p class="wfb-hint" id="wfb-hint">—</p>
+        </section>
+
+        <!-- 右：存档地图目录（点一下就换成它，同样有预览） -->
+        <section class="wfb-col wfb-list">
+          <header class="wfb-colhead">
+            <span class="wfb-coltitle">存档地图</span>
+            <span class="wfb-tag" id="wfb-count">0</span>
+          </header>
+          <div class="wfb-items" id="wfb-items"></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
   <!-- ============ 底部指挥栏：对局状态 ｜ 小地图 ｜ 单位粗览 ｜ 单位详情 ============ -->
     <div class="warfactory-cmdbar">
       <!-- 对局状态（原来在地图上方那行，现在并进指挥栏顶沿，不占地图外的位置） -->
@@ -131,7 +286,7 @@
       <!-- 左：小地图 -->
       <section class="wcb-col wcb-mini">
         <header class="wcb-head">
-          <span class="wcb-title">小地图</span>
+          <span class="wcb-title">小地图<i class="wcb-theme" id="warfactory-theme" hidden></i></span>
           <span class="wcb-tip">点击/拖动跳转</span>
         </header>
         <canvas
@@ -141,6 +296,13 @@
           height="200"
           aria-label="小地图"
         ></canvas>
+        <!-- 地形已整体灰化，只靠深浅分三档；部队只分敌我两色 —— 这里给个对照 -->
+        <div class="wcb-minilegend" id="warfactory-minilegend">
+          <span class="wml-item"><i class="wml-sw wml-mtn"></i>山</span>
+          <span class="wml-item"><i class="wml-sw wml-water"></i>水</span>
+          <span class="wml-item"><i class="wml-sw wml-own"></i>我方</span>
+          <span class="wml-item"><i class="wml-sw wml-foe"></i>敌方</span>
+        </div>
       </section>
 
       <!-- 中：单位粗览（只列当前选中的部队；没选中就整段不显示） -->
@@ -162,7 +324,7 @@
           <!-- 未选中任何目标时：只留一行科技点 + 操作提示 -->
           <div class="warfactory-self" id="warfactory-self">
             <div class="wsl-line" id="wsl-tech">科 0</div>
-            <div class="wsl-line wsl-dim" id="wsl-hint">左键点选我方单位 / 工厂 / 总部查看详情 · 右键点敌 / 中立目标下达追击命令 · 滚轮缩放 · 中键拖动平移 · 空格回总部</div>
+            <div class="wsl-line wsl-dim" id="wsl-hint">左键点选我方单位 / 工厂 / 总部查看详情 · 右键移动 · Shift+右键 规划多点路径 · 右键点敌 / 中立目标下达追击命令 · 滚轮缩放 · 中键拖动平移 · 空格回总部</div>
           </div>
 
           <!-- 选中工厂 / 总部后：在详情栏内展示（不再浮在战场上） -->

@@ -1463,6 +1463,19 @@ button.secondary:hover {
   text-align: center;
 }
 
+/* 房间里那行「地图：xxx」——只在指定了地图文件的那局出现 */
+.room-map-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.86rem;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.room-map-note strong {
+  color: #ffe2a8;
+  font-weight: 650;
+}
+
 .room-observer-section {
   margin-top: 0.75rem;
 }

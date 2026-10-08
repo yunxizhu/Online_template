@@ -84,6 +84,10 @@
     gameModeWrap: document.getElementById('game-mode-wrap'),
     roomMax: document.getElementById('room-max'),
     maxPlayersWrap: document.getElementById('max-players-wrap'),
+    roomMap: document.getElementById('room-map'),
+    roomMapWrap: document.getElementById('room-map-wrap'),
+    roomMapNote: document.getElementById('room-map-note'),
+    roomMapName: document.getElementById('room-map-name'),
     roomName: document.getElementById('room-name'),
     roomAllowTrade: document.getElementById('room-allow-trade'),
     roomAllowTradeWrap: document.getElementById('room-allow-trade-wrap'),
@@ -3654,6 +3658,7 @@
     if (typeof syncEditRoomCoreLocks === 'function') {
       syncEditRoomCoreLocks();
     }
+    syncRoomMapWrap();
   }
 
   /** 按游戏人数范围填充「人数上限」下拉，不超出 min/max */
@@ -3679,6 +3684,101 @@
     } else {
       el.roomMax.value = String(hi);
     }
+  }
+
+  /* ---------------- 地图文件（战争工厂 · 地形编辑器存的那张） ---------------- */
+
+  /**
+   * 只有战争工厂能挑图：其余游戏开局都是当场生成的，这一栏对它们没意义。
+   * 列表从服务端 maps/warfactory/ 拉（map:list），第一项永远是「随机生成」。
+   */
+  let wfMapList = [];
+  let wfMapLoaded = false;
+  // 列表还没拉回来就要选中某张图（编辑已存在的房间时常见）：先记账，拉到再勾上
+  let wfMapPendingFile = null;
+
+  function supportsCustomMap(gameId) {
+    return String(gameId || '') === 'warfactory';
+  }
+
+  function requestWfMapList() {
+    if (!window.GameNet || typeof window.GameNet.emitRaw !== 'function') return;
+    window.GameNet.emitRaw('map:list', { gameType: 'warfactory' }, (res) => {
+      if (!res || !res.ok) return;
+      wfMapList = res.maps || [];
+      wfMapLoaded = true;
+      syncRoomMapOptions();
+      syncRoomMapNote();
+    });
+  }
+
+  /** 重铺「地图」下拉：随机生成 + 服务端里存着的每一张图 */
+  function syncRoomMapOptions() {
+    if (!el.roomMap) return;
+    const keep = el.roomMap.value;
+    el.roomMap.innerHTML = '';
+    const rand = document.createElement('option');
+    rand.value = '';
+    rand.textContent = t('create.mapRandom');
+    el.roomMap.appendChild(rand);
+    for (const m of wfMapList) {
+      const opt = document.createElement('option');
+      opt.value = m.file;
+      // 带上人数：拿一张 2 人图去开 4 人局，缺的那几个座位的总部是随机补的
+      opt.textContent = m.players
+        ? t('create.mapOption', { name: m.name || m.file, n: m.players })
+        : m.name || m.file;
+      el.roomMap.appendChild(opt);
+    }
+    if (wfMapList.length === 0) {
+      const none = document.createElement('option');
+      none.value = '';
+      none.textContent = t('create.mapEmpty');
+      none.hidden = true;
+      el.roomMap.appendChild(none);
+    }
+    const has = (v) => v && [...el.roomMap.options].some((o) => o.value === v);
+    // 列表回来之前用户没另外选过 → 落回挂着的那张；否则以用户当前选择为准
+    if (!keep && has(wfMapPendingFile)) el.roomMap.value = wfMapPendingFile;
+    else if (has(keep)) el.roomMap.value = keep;
+    else el.roomMap.value = '';
+    if (wfMapPendingFile && el.roomMap.value === wfMapPendingFile) wfMapPendingFile = null;
+  }
+
+  /** 建房 / 改房时用这一套：先决定这一栏显不显，再把下拉铺好 */
+  function syncRoomMapWrap() {
+    if (!el.roomMapWrap) return;
+    const g = selectedGameMeta();
+    const show = Boolean(g && supportsCustomMap(g.id));
+    el.roomMapWrap.hidden = !show;
+    if (show && !wfMapLoaded) requestWfMapList();
+    else if (show) syncRoomMapOptions();
+  }
+
+  /** 表单里当前选的那张图（'' = 随机生成） */
+  function selectedMapFile() {
+    if (!el.roomMap || !el.roomMapWrap || el.roomMapWrap.hidden) return null;
+    return el.roomMap.value || null;
+  }
+
+  function mapNameOf(file) {
+    const hit = wfMapList.find((m) => m.file === file);
+    return hit ? hit.name || hit.file : null;
+  }
+
+  /** 房间里那行「地图：xxx」（列表后到也没关系：先把文件名顶上，拉到再换成地图名） */
+  function syncRoomMapNote() {
+    if (!el.roomMapNote || !el.roomMapName) return;
+    const room = state.room;
+    const file = room && supportsCustomMap(room.gameType) ? room.mapFile : null;
+    if (!file) {
+      el.roomMapNote.hidden = true;
+      return;
+    }
+    // 列表还没拉到：先把文件名顶上，拉到之后自然换成地图名
+    el.roomMapName.textContent = mapNameOf(file) || file;
+    el.roomMapNote.hidden = false;
+    if (!wfMapLoaded) requestWfMapList();
   }
 
   function fillGameOptions(games) {
@@ -4625,6 +4725,9 @@
       t('room.turnThink', { time: formatTurnTime(room.turnTimeSec) });
     el.roomCode.textContent = room.id;
     el.roomPasswordBadge.hidden = !room.hasPassword;
+    // 这一局用的是哪张图（列表还没回来也先把文件名顶上）
+    if (supportsCustomMap(room.gameType)) syncRoomMapNote();
+    else if (el.roomMapNote) el.roomMapNote.hidden = true;
 
     el.memberList.innerHTML = '';
     const maxSlots = room.maxPlayers || (room.players || []).length || 0;
@@ -5957,6 +6060,20 @@
       }
     }
     if (el.roomName) el.roomName.value = room.name || '';
+    // 当前房间用的那张图（没有就是「随机生成」）
+    if (el.roomMap) {
+      const file = room.mapFile || '';
+      if (file && [...el.roomMap.options].some((o) => o.value === file)) {
+        el.roomMap.value = file;
+      } else if (file) {
+        // 列表还没到位：挂着，等 map:list 回来再勾
+        wfMapPendingFile = file;
+        requestWfMapList();
+      } else {
+        el.roomMap.value = '';
+        wfMapPendingFile = null;
+      }
+    }
     if (el.roomHasPassword) {
       el.roomHasPassword.checked = Boolean(room.hasPassword);
     }
@@ -6780,6 +6897,73 @@
     node.addEventListener('click', () => setJoinPanelOpen(false));
   });
 
+  /**
+   * 战争工厂 · 地形编辑器入口热键：房间里按 **Ctrl+Shift + ↑ ↓ ← →**（四个键按顺序各一遍）。
+   *
+   * 为什么要四个键的序列而不是一个：这组操作会替你把剩下的座位补满电脑、直接开一局，
+   * 属于「开发 / 制图作弊码」，误触的代价不小，普通按键序列太容易碰到。
+   *
+   * 为什么用捕获阶段 + stopPropagation：进了对局之后 warfactory 自己的 keydown 会吃掉
+   * 方向键（那是镜头平移），它注册在 window 的冒泡阶段；这里先用捕获拿到并掐断传播，
+   * 免得同时把镜头挪走。
+   */
+  const WF_EDIT_SEQ = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+  const WF_EDIT_SEQ_MS = 2500; // 按慢了就从头再来，别让半截序列一直挂着
+  let wfEditSeqAt = 0;
+  let wfEditSeqMs = 0;
+  document.addEventListener(
+    'keydown',
+    (ev) => {
+      if (!ev.ctrlKey || !ev.shiftKey || ev.altKey || ev.metaKey) {
+        wfEditSeqAt = 0;
+        return;
+      }
+      if (isTypingTargetSafe(ev.target)) return;
+      const now = Date.now();
+      if (wfEditSeqMs && now - wfEditSeqMs > WF_EDIT_SEQ_MS) wfEditSeqAt = 0;
+      if (ev.key !== WF_EDIT_SEQ[wfEditSeqAt]) {
+        wfEditSeqAt = ev.key === WF_EDIT_SEQ[0] ? 1 : 0;
+        wfEditSeqMs = wfEditSeqAt ? now : 0;
+        if (!wfEditSeqAt) return;
+        ev.preventDefault();
+        return;
+      }
+      wfEditSeqMs = now;
+      wfEditSeqAt += 1;
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (wfEditSeqAt < WF_EDIT_SEQ.length) {
+        if (wfEditSeqAt === 1) showToast('地形编辑器：再依次按 ↓ ← →');
+        return;
+      }
+      wfEditSeqAt = 0;
+      wfEditSeqMs = 0;
+      const room = state.room;
+      if (!room || room.gameType !== 'warfactory' || room.status !== 'waiting') {
+        showToast('地形编辑器要在「战争工厂」房间里、开局之前按');
+        return;
+      }
+      if (String(room.hostId) !== String(state.me && state.me.id)) {
+        showToast('只有房主可以打开地形编辑器');
+        return;
+      }
+      showToast('已补齐占位电脑，正在载入地形编辑器…');
+      if (window.GameNet && typeof window.GameNet.emitRaw === 'function') {
+        window.GameNet.emitRaw('room:startEditor', {
+          mapFile: room.mapFile || null,
+        });
+      }
+    },
+    true
+  );
+
+  // 输入框里打字不该触发上面的热键
+  function isTypingTargetSafe(node) {
+    if (!node || !node.tagName) return false;
+    const tag = String(node.tagName).toUpperCase();
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || node.isContentEditable === true;
+  }
+
   document.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Escape') return;
     if (nickEditing) return;
@@ -7146,6 +7330,8 @@
         el.roomMatchGames
           ? Number(el.roomMatchGames.value) || 5
           : undefined,
+      // 战争工厂：指定了地图文件就按它开局（'' = 随机生成）
+      mapFile: selectedMapFile(),
     };
 
     if (state.createModalMode === 'edit') {
@@ -7177,6 +7363,10 @@
           delete payload.password;
         }
         net.updateRoomSettings(payload);
+        // 换图走独立的 room:setMap（updateRoomSettings 只认房间字段）
+        if (supportsCustomMap(payload.gameType) && window.GameNet) {
+          window.GameNet.emitRaw('room:setMap', { mapFile: payload.mapFile || null });
+        }
         closeAllModals();
       } catch (err) {
         showToast(err.message || t('toast.updateRoomFail'));

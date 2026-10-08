@@ -252,6 +252,30 @@ function clearPlayerSeat(room, playerId) {
   return true;
 }
 
+/**
+ * 把一张地图文件挂到房间上（`room.mapFile`）。
+ *
+ * 建房时就要能指定「这局用哪张图」，而不是只能在等待阶段改 ——
+ * 于是抽出来给 createRoom 和 setRoomMap 共用：传 null 表示回到随机生成。
+ */
+function applyRoomMap(room, mapFile) {
+  const want = mapFile ? String(mapFile) : null;
+  if (!want) {
+    room.mapFile = null;
+    room.wfMap = null;
+    return { ok: true };
+  }
+  const game = getGame(room.gameType);
+  if (!game || !game.maps || typeof game.maps.readMap !== 'function') {
+    return { ok: false, error: '当前游戏不支持自定义地图' };
+  }
+  if (!game.maps.readMap(want)) return { ok: false, error: '地图不存在：' + want };
+  room.mapFile = want;
+  // 开局前才真正读盘：存盘与开局之间文件若被改动，用的是新内容
+  room.wfMap = null;
+  return { ok: true };
+}
+
 function publicRoomView(room) {
   const waiting = !room.status || room.status === 'waiting';
   const playing = room.status === 'playing';
@@ -284,6 +308,7 @@ function publicRoomView(room) {
       ? Number(room.matchGames) || DEFAULT_MATCH_GAMES
       : null,
     passiveHosted: Boolean(room.passiveHosted),
+    mapFile: room.mapFile || null,
     canJoin: waiting && playerCount < room.maxPlayers,
     canSpectate: (waiting || playing) && !over,
     playerNames: (room.players || [])
@@ -343,6 +368,7 @@ function fullRoomView(room) {
       ? Number(room.matchGames) || DEFAULT_MATCH_GAMES
       : null,
     passiveHosted: Boolean(room.passiveHosted),
+    mapFile: room.mapFile || null,
   };
 }
 
@@ -651,6 +677,7 @@ class RoomManager {
       passiveHost = false,
       operatorId = null,
       matchGames,
+      mapFile = null,
     } = {}
   ) {
     const player = this.players.get(playerId);
@@ -711,7 +738,15 @@ class RoomManager {
       // 隧道就绪并房主进房前：不进大厅列表、人员仍显示空闲、不广播房间
       pendingLobby: true,
       passiveHosted: Boolean(passiveHost),
+      // 指定地图文件（战争工厂的地形编辑器存的那张）；null = 照常随机生成
+      mapFile: null,
+      wfMap: null,
     };
+    const mapRes = applyRoomMap(room, mapFile);
+    if (!mapRes.ok) {
+      // 还没登记任何东西（下发坐落在这一句之后），退回去就当没建过
+      return mapRes;
+    }
 
     ensureTeamSeats(room);
     this.rooms.set(id, room);
@@ -1905,6 +1940,74 @@ class RoomManager {
     return true;
   }
 
+  /* ---------------- 开局 ---------------- */
+
+  /**
+   * 建一份新局面并挂到房间上（清场进 PLAYING 的那套留在 _beginGame，这里只管局面本身）。
+   * ⚠️ 调用方必须已经把 `room.wfMap`（可选）与 `room.editorMode` 摆好 ——
+   *    createGameState 是靠它们决定「随机生成」还是「按文件摆」的。
+   */
+  _createGame(room) {
+    const game = getGame(room.gameType);
+    if (!game) return { ok: false, error: '不支持的游戏类型' };
+    try {
+      room.game = game.createGameState(room);
+      if (typeof game.assignRandomWalls === 'function') {
+        game.assignRandomWalls(room.game);
+      }
+    } catch (err) {
+      return { ok: false, error: err.message || '开局失败' };
+    }
+    // 战前阶段：支持的游戏开局不直接开打，先停在 briefing 让房主挑地图。
+    // 地形编辑器那条路不走这里（它本来就要立刻停在 edit 阶段手工改图）。
+    if (!room.editorMode && typeof game.beginBriefing === 'function' && room.game) {
+      // 名字 / 人数从**已经读进来的那份地图**取（room.wfMap 是 loadMap 的结果）：
+      // 战前信息要显示「文件名即地图名」，光给 mapFile 不够。
+      const mf = room.wfMap || null;
+      game.beginBriefing(room.game, {
+        hostId: room.hostId || null,
+        mapFile: room.mapFile || null,
+        name: mf && mf.name ? String(mf.name) : null,
+        players: mf ? Number(mf.players) || 0 : 0,
+      });
+    }
+    return { ok: true, room, gameModule: game, game: room.game };
+  }
+
+  /**
+   * 清场 + 建 PostState + 初始化加载同步。startGame / startEditorGame 共用这一段。
+   * ⚠️ 调用方必须已经把 `room.wfMap`（可选）与 `room.editorMode` 摆好 ——
+   *    createGameState 是靠它们决定「随机生成」还是「按文件摆」的。
+   */
+  _beginGame(room) {
+    const built = this._createGame(room);
+    if (!built.ok) {
+      room.status = 'waiting';
+      room.playingStartedAt = null;
+      return built;
+    }
+    const created = built;
+
+    for (const p of room.players) {
+      if (!p) continue;
+      p.isHosted = false;
+    }
+    room.status = 'playing';
+    room.playingStartedAt = Date.now();
+    // 初始化资源加载同步跟踪（Bot 自动标记为已加载完成）
+    room._loadingReady = new Set();
+    room._loadingProgress = {};
+    for (const p of room.players || []) {
+      if (!p || p.left || p.offline) continue;
+      room._loadingProgress[p.id] = 0;
+      if (p.isBot) {
+        room._loadingReady.add(p.id);
+        room._loadingProgress[p.id] = 100;
+      }
+    }
+    return created;
+  }
+
   startGame(playerId) {
     const player = this.players.get(playerId);
     if (!player || !player.roomId) return { ok: false, error: '你不在房间中' };
@@ -1925,40 +2028,193 @@ class RoomManager {
         error: `需要满员 ${need} 人才能开始（当前 ${seated} 人，不含观战）`,
       };
     }
+    // 房主选好的地图文件：有就按它摆，没有就照旧随机生成
+    const applied = this._prepareMap(room);
+    if (!applied.ok) return applied;
+    room.editorMode = false;
+    room.editorOwnerId = null;
+    return this._beginGame(room);
+  }
 
+  /**
+   * 战前阶段的公共校验：房在对局中、局面还在选图阶段、（可选）说话的是房主。
+   * @returns {{ ok:true, room, game } | { ok:false, error:string }}
+   */
+  _briefing(playerId, opts = {}) {
+    const player = this.players.get(playerId);
+    if (!player || !player.roomId) return { ok: false, error: '你不在房间中' };
+    const room = this.getRoom(player.roomId);
+    if (!room) return { ok: false, error: '房间不存在' };
+    if (opts.hostOnly && room.hostId !== playerId) {
+      return { ok: false, error: '只有房主可以决定这一局的地图' };
+    }
+    if (!room.game || room.status !== 'playing') return { ok: false, error: '对局未开始' };
     const game = getGame(room.gameType);
-    if (!game) return { ok: false, error: '不支持的游戏类型' };
-
-    for (const p of room.players) {
-      if (!p) continue;
-      p.isHosted = false;
+    if (!game || !game.supportsBriefing || typeof game.endBriefing !== 'function') {
+      return { ok: false, error: '当前游戏没有战前选图' };
     }
-    room.status = 'playing';
-    room.playingStartedAt = Date.now();
-    try {
-      room.game = game.createGameState(room);
-      if (typeof game.assignRandomWalls === 'function') {
-        game.assignRandomWalls(room.game);
-      }
-    } catch (err) {
-      room.status = 'waiting';
-      room.playingStartedAt = null;
-      return { ok: false, error: err.message || '开局失败' };
-    }
+    if (room.game.phase !== 'briefing') return { ok: false, error: '选图阶段已结束' };
+    return { ok: true, room, game };
+  }
 
-    // 初始化资源加载同步跟踪（Bot 自动标记为已加载完成）
-    room._loadingReady = new Set();
-    room._loadingProgress = {};
-    for (const p of room.players || []) {
-      if (!p || p.left || p.offline) continue;
-      room._loadingProgress[p.id] = 0;
-      if (p.isBot) {
-        room._loadingReady.add(p.id);
-        room._loadingProgress[p.id] = 100;
-      }
-    }
+  /**
+   * 战前：地图目录（每张图带缩略图，文件名即地图名）。
+   * 房主以外的人也能看 —— 看得到才谈得上「这把打哪张」。
+   */
+  briefingMapList(playerId, maxSide) {
+    const got = this._briefing(playerId);
+    if (!got.ok) return got;
+    const maps = got.game.maps && typeof got.game.maps.listMapsDetailed === 'function'
+      ? got.game.maps.listMapsDetailed(maxSide || 56)
+      : [];
+    return {
+      ok: true,
+      maps,
+      current: got.room.mapFile || null,
+      // 顺手带上当前这份战前信息：客户端拿到目录的同时也知道「现在挑的是哪张」
+      briefing: got.room.game.briefing || null,
+      hostId: got.room.hostId || null,
+    };
+  }
 
-    return { ok: true, room, gameModule: game };
+  /**
+   * 战前：换一张地图。
+   * @param {string|null} mapFile 传 null 就是「随机生成一张」（再摇一次）；传文件名则是用它
+   * @returns 新的战前信息（含缩略图）／错误
+   */
+  briefingPickMap(playerId, mapFile) {
+    const got = this._briefing(playerId, { hostOnly: true });
+    if (!got.ok) return got;
+    const room = got.room;
+    const want = mapFile ? String(mapFile) : null;
+    let name = '';
+    let players = 0;
+    if (want) {
+      const loaded = got.game.maps.loadMap(want);
+      if (!loaded) return { ok: false, error: '地图不存在：' + want };
+      room.mapFile = want;
+      room.wfMap = loaded;
+      name = loaded.name || '';
+      players = Number(loaded.players) || 0;
+    } else {
+      // 随机：丢掉之前那张图，同时换个种子
+      room.mapFile = null;
+      room.wfMap = null;
+      room.mapSeed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
+    }
+    // ⚠️ 换图是「整个 game 对象换了一个新的」，新对象上的 briefingSeq 又从 0 起步。
+    // 客户端拿 seq 当「要不要重画预览」的依据，回退到 1 会让它以为没换过 → 在这里续上。
+    const prevSeq = Number(room.game && room.game.briefingSeq) || 0;
+    const built = this._createGame(room);
+    if (!built.ok) return built;
+    if (room.game) {
+      room.game.briefingSeq = Math.max(Number(room.game.briefingSeq) || 0, prevSeq + 1);
+    }
+    return { ok: true, room, briefing: room.game.briefing || null };
+  }
+
+  /** 房主拍板：用当前这张图正式开打（退出战前 → 起开局倒计时） */
+  briefingConfirm(playerId) {
+    const got = this._briefing(playerId, { hostOnly: true });
+    if (!got.ok) return got;
+    got.game.endBriefing(got.room.game);
+    return { ok: true, room: got.room };
+  }
+
+  /**
+   * 地形编辑器入口：绕过「必须满员」直接开局，空缺座位用**占位电脑**补齐。
+   *
+   * 这些电脑只用来把人数凑够（`editorDummy: true`，战争工厂已接入真正的 AI、
+   * 但编辑器里**绝不**调它们思考）—— 它们不会出兵、不会产线、纯粹为了保证
+   * 「2 人房按 2 人、4 人房按 4 人」去摆总部 / 研究所 / 出生位置。
+   * 开局立刻停在 edit 阶段（详见 index.js 的 setPaused）。
+   */
+  startEditorGame(playerId, opts = {}) {
+    const player = this.players.get(playerId);
+    if (!player || !player.roomId) return { ok: false, error: '你不在房间中' };
+
+    const room = this.getRoom(player.roomId);
+    if (!room) return { ok: false, error: '房间不存在' };
+    if (room.hostId !== playerId) return { ok: false, error: '只有房主可以打开地形编辑器' };
+    if (room.status !== 'waiting') return { ok: false, error: '对局已开始' };
+    if (room.gameType !== 'warfactory') return { ok: false, error: '只有战争工厂支持地形编辑器' };
+
+    const need = Math.max(2, Number(room.maxPlayers) || 2);
+    const list = room.players || [];
+    while (list.length < need) list.push(null);
+    const seatNames = ['一一', '二二', '三三', '四四', '五五', '六六', '七七', '八八'];
+    let placed = 0;
+    for (let i = 0; i < need; i++) {
+      if (isSeatedPlayer(list[i])) continue;
+      list[i] = {
+        id: `wfdummy_${room.id}_${i}_${Date.now()}`,
+        name: `${seatNames[i] || `电脑${i + 1}`}(占位)`,
+        tag: null,
+        ready: true,
+        isBot: true,
+        // 与普通 bot 的区别：它不接 AI，也不参与「房里还有几个真人」之类的判断
+        editorDummy: true,
+        botDifficulty: null,
+        botDifficultyLabel: '占位',
+        botSeatIndex: i,
+        sessionId: null,
+      };
+      placed += 1;
+    }
+    ensureTeamSeats(room);
+    // 没指定地图 → 从一张空的新地图开始画（后面玩家自己涂）；指定了 → 读进来接着改
+    const want = opts.mapFile != null ? opts.mapFile : room.mapFile;
+    if (want) {
+      const applied = this._prepareMap(room, want);
+      if (!applied.ok) return applied;
+    } else {
+      const wf = getGame('warfactory');
+      if (!wf || typeof wf.blankMap !== 'function') return { ok: false, error: '当前版本不支持地形编辑器' };
+      room.wfMap = wf.blankMap(need);
+    }
+    room.editorMode = true;
+    room.editorOwnerId = playerId;
+    if (!room.wfMap) return { ok: false, error: '地形编辑器初始化失败' };
+    const out = this._beginGame(room);
+    if (out.ok) out.filledBots = placed;
+    return out;
+  }
+
+  /**
+   * 把 `room.mapFile` 读成 `room.wfMap`（createGameState 认的是后者）。
+   * @param {string|null} [file] 显式指定要读哪张图（startEditorGame 用）
+   */
+  _prepareMap(room, file) {
+    const want = file !== undefined ? file : room.mapFile;
+    if (!want) {
+      room.wfMap = null;
+      return { ok: true };
+    }
+    const game = getGame(room.gameType);
+    if (!game || !game.maps || typeof game.maps.loadMap !== 'function') {
+      room.wfMap = null;
+      return { ok: false, error: '当前游戏不支持自定义地图' };
+    }
+    const loaded = game.maps.loadMap(want);
+    if (!loaded) {
+      room.wfMap = null;
+      return { ok: false, error: '地图文件不存在或已损坏：' + want };
+    }
+    room.wfMap = loaded;
+    return { ok: true };
+  }
+
+  /** 房主选图（房间尚未开局时）：传 null 表示回到随机生成 */
+  setRoomMap(playerId, mapFile) {
+    const player = this.players.get(playerId);
+    if (!player || !player.roomId) return { ok: false, error: '你不在房间中' };
+    const room = this.getRoom(player.roomId);
+    if (!room) return { ok: false, error: '房间不存在' };
+    if (room.hostId !== playerId) return { ok: false, error: '只有房主可以选择地图' };
+    if (room.status !== 'waiting') return { ok: false, error: '对局已开始，无法换图' };
+    const applied = applyRoomMap(room, mapFile);
+    if (!applied.ok) return applied;
+    return { ok: true, room, mapFile: room.mapFile };
   }
 
   /**

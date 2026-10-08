@@ -26,49 +26,103 @@ function run(g, ms) {
   const n = Math.round(ms / 100);
   for (let i = 0; i < n; i++) { clock += 100; T.step(g, 0.1, clock); }
 }
+/**
+ * 产线有「在场越多越慢」的独立乘区：第 k+1 支需要 1 / (1 - k * slowPerUnit) 个周期。
+ * 所有「几个周期能产几支」的期望值都从这里推导，不要写死数字（data.js 随时会改）。
+ */
+function cyclesToMake(n) {
+  let c = 0;
+  for (let k = 0; k < n; k++) c += 1 / Math.max(1e-6, 1 - k * T.consts.LINE_SLOW_PER_UNIT);
+  return c;
+}
+function madeInCycles(cycles) {
+  let n = 0;
+  while (n < T.consts.LINE_UNIT_CAP && cyclesToMake(n + 1) <= cycles) n += 1;
+  return n;
+}
 
-console.log('\n[A] 工厂数量与对称（人均 4 初 / 2 中 / 1 高，2/3/4 人全覆盖）');
+console.log('\n[A] 工厂/研究所布局（门口 2 初 + 中场 2 初/2 中/1 高；所=门口1+中场1，2/3/4 人）');
 {
-  // 人均布局：总数 = 7 × 人数；其中 初级=4×人数、中级=2×人数、高级=1×人数
-  const expect = (c) => ({ total: 7 * c, low: 4 * c, mid: 2 * c, high: c });
+  // 人均：工厂 7（门口2初 + 中场2初+2中+1高）；研究所 2（门口1 + 中场1）
+  const expect = (c) => ({ total: 7 * c, low: 4 * c, mid: 2 * c, high: c, labs: 2 * c });
   for (const c of [2, 3, 4]) {
     const g = wf.createGameState(room(c));
     g.phase = 'playing'; g.phaseEndsAt = 0;
     const C = T.consts;
     const e = expect(c);
     ok(g.factories.length === C.NEUTRAL_FACTORIES.length, `${c}人：工厂数 = ${g.factories.length}（与常量一致）`);
-    ok(g.factories.length === e.total, `${c}人：共 ${e.total} 座（人均 7）`);
+    ok(g.factories.length === e.total, `${c}人：共 ${e.total} 座工厂（人均 7）`);
     const by = (l) => g.factories.filter((f) => f.level === l).length;
     ok(
       by(1) === e.low && by(2) === e.mid && by(3) === e.high,
       `${c}人：初级 ${by(1)} / 中级 ${by(2)} / 高级 ${by(3)}（应 ${e.low}/${e.mid}/${e.high}）`
     );
-    // 点对称配对：每座厂都能找到「绕世界中心 180°」的同级孪生厂
+    // 每家总部射程内恰好 2 座初级厂
+    let doorOk = 0;
+    for (const hq of g.hqs) {
+      const near = g.factories.filter(
+        (f) => f.level === 1 && Math.hypot(f.x - hq.x, f.y - hq.y) <= C.HQ_ATK_RANGE
+      );
+      if (near.length === 2) doorOk++;
+    }
+    ok(doorOk === c, `${c}人：每家门口恰好 2 座可被总部打到的初级厂（${doorOk}/${c}）`);
+    // 研究所：总数 + 每家总部旁恰好 1 座
+    ok(g.labs.length === e.labs && g.labs.length === C.LABS.length, `${c}人：研究所 ${g.labs.length} 座（应 ${e.labs}）`);
+    let labDoor = 0;
+    for (const hq of g.hqs) {
+      const near = g.labs.filter((l) => Math.hypot(l.x - hq.x, l.y - hq.y) <= C.HQ_R + C.LAB_R + 80);
+      if (near.length === 1) labDoor++;
+    }
+    ok(labDoor === c, `${c}人：每家总部旁恰好 1 座研究所（${labDoor}/${c}）`);
+    // C_N 轨道配对（N = 人数）：每座厂都能找到「绕世界中心每转 360°/N」的同级孪生厂
+    const twinAt = (f, k) => {
+      const p = T.rotateAround(f.x, f.y, k, c);
+      return g.factories.find((x) => Math.abs(x.x - p.x) < 2 && Math.abs(x.y - p.y) < 2);
+    };
     let pairOk = 0;
     for (const f of g.factories) {
-      const m = g.factories.find(
-        (x) => Math.abs(x.x - (C.WORLD_W - f.x)) < 1 && Math.abs(x.y - (C.WORLD_H - f.y)) < 1 && x.level === f.level
-      );
-      if (m) pairOk++;
+      let all = true;
+      for (let k = 1; k < c; k++) {
+        const m = twinAt(f, k);
+        if (!m || m.level !== f.level) all = false;
+      }
+      if (all) pairOk++;
     }
-    ok(pairOk === e.total, `${c}人：每座厂都有 180° 点对称的孪生厂（${pairOk}/${e.total}）`);
-    // 孪生厂兵种一致
+    ok(pairOk === e.total, `${c}人：每座厂都有绕中心 ${Math.round(360 / c)}° 的孪生厂（${pairOk}/${e.total}）`);
+    // 同轨道的孪生厂兵种一致
     let sameType = 0;
     for (const f of g.factories) {
-      const m = g.factories.find((x) => Math.abs(x.x - (C.WORLD_W - f.x)) < 1 && Math.abs(x.y - (C.WORLD_H - f.y)) < 1);
-      if (m && m.specs[0].type === f.specs[0].type) sameType++;
+      let all = f.specs[0] != null;
+      for (let k = 1; k < c; k++) {
+        const m = twinAt(f, k);
+        if (!m || !m.specs[0] || m.specs[0].type !== f.specs[0].type) all = false;
+      }
+      if (all) sameType++;
     }
     ok(sameType === e.total, `${c}人：孪生厂开局兵种一致（${sameType}/${e.total}）`);
     ok(new Set(g.factories.map((f) => f.specs[0].type)).size >= 5, `${c}人：覆盖多种兵种：${new Set(g.factories.map((f) => f.specs[0].type)).size} 种`);
-    // 间距
+    // 中场厂彼此间距（门口两座并排故意更近，不计入）
+    const doorIds = new Set();
+    for (const hq of g.hqs) {
+      g.factories
+        .filter((f) => f.level === 1 && Math.hypot(f.x - hq.x, f.y - hq.y) <= C.HQ_ATK_RANGE)
+        .forEach((f) => doorIds.add(f.id));
+    }
     let minD = Infinity;
-    for (let i = 0; i < g.factories.length; i++)
-      for (let j = i + 1; j < g.factories.length; j++)
+    for (let i = 0; i < g.factories.length; i++) {
+      for (let j = i + 1; j < g.factories.length; j++) {
+        if (doorIds.has(g.factories[i].id) && doorIds.has(g.factories[j].id)) continue;
         minD = Math.min(minD, Math.hypot(g.factories[i].x - g.factories[j].x, g.factories[i].y - g.factories[j].y));
-    ok(minD > 400, `${c}人：最近两厂间距 ${Math.round(minD)}px`);
+      }
+    }
+    ok(minD > 400, `${c}人：中场最近两厂间距 ${Math.round(minD)}px`);
+    // 中场厂离研究所的间距（门口厂/所本来就贴着总部，另算）
     let minLab = Infinity;
-    for (const f of g.factories) for (const l of g.labs) minLab = Math.min(minLab, Math.hypot(f.x - l.x, f.y - l.y));
-    ok(minLab > 400, `${c}人：离研究所最近 ${Math.round(minLab)}px`);
+    for (const f of g.factories) {
+      if (doorIds.has(f.id)) continue;
+      for (const l of g.labs) minLab = Math.min(minLab, Math.hypot(f.x - l.x, f.y - l.y));
+    }
+    ok(minLab > 400, `${c}人：中场厂离研究所最近 ${Math.round(minLab)}px`);
   }
 }
 
@@ -199,8 +253,16 @@ console.log('\n[F] 快照 / 全量状态下发产线');
   ok(Array.isArray(rowF[9]) && rowF[9].length === 2, '快照下发 2 条产线配置');
   ok(rowF[9][1][0] === 5 && rowF[9][1][1] === 2 && rowF[9][1][2] === 0, '第二条线＝激光兵 / 二级（无分支）（' + JSON.stringify(rowF[9][1]) + '）');
   const rowH = snap.hq.find((r) => r[0] === g.hqs[0].id);
-  ok(rowH.length === 12, '总部快照 12 列（末两列＝攻击目标 / 前摇剩余）');
+  ok(rowH.length === 13, '总部快照 13 列（末列＝每条线的在场兵数）');
   ok(Array.isArray(rowH[9]) && rowH[9][0][0] === 0, '总部快照第一条线＝锐士');
+  ok(
+    Array.isArray(rowH[12]) && rowH[12].length === rowH[9].length,
+    '总部快照下发每条线的在场兵数（' + JSON.stringify(rowH[12]) + '）'
+  );
+  ok(
+    Array.isArray(rowF[10]) && rowF[10].length === rowF[9].length,
+    '工厂快照下发每条线的在场兵数（' + JSON.stringify(rowF[10]) + '）'
+  );
   const st = wf.publicGameState(g);
   const pf = st.factories.find((x) => x.id === f.id);
   ok(pf.specs.length === 2 && pf.specs[1].type === 'laser' && pf.specs[1].tier === 2, '全量状态携带每条产线（' + JSON.stringify(pf.specs[1]) + '）');
@@ -228,9 +290,53 @@ console.log('\n[G] 多产线产能仍随条数倍增');
   const n1 = count(1);
   const n2 = count(2);
   const n3 = count(3);
-  ok(n1 === 3, '单线 3 个周期产 3 支（' + n1 + '）');
-  ok(n2 >= 5, '双线同期约 2 倍（' + n2 + ' 支）');
+  // 期望值不再写死：每条线独立受「在场越多越慢」乘区影响（3 周期 → madeInCycles(3) 支）
+  const per = madeInCycles(3);
+  ok(n1 === per, `单线 3 个周期产 ${per} 支（${n1}）`);
+  ok(n2 === per * 2, '双线同期约 2 倍（' + n2 + ' 支 / 期望 ' + per * 2 + '）');
   ok(n3 === n2, '产线上限 2：手改 lines=3 也会被夹回 2（' + n3 + '）');
+}
+
+console.log('\n[H] 每条产线各自封顶（名额与减速乘区）');
+{
+  const C = T.consts;
+  // 乘区曲线：0 兵 100%、1 兵 90% …… 满员归零
+  ok(Math.abs(T.lineSpeedMul(0) - 1) < 1e-6, '0 个兵：产速 100%');
+  ok(Math.abs(T.lineSpeedMul(1) - (1 - C.LINE_SLOW_PER_UNIT)) < 1e-6, `1 个兵：产速 ${Math.round((1 - C.LINE_SLOW_PER_UNIT) * 100)}%`);
+  // ⚠️ 别写死「归零」：逐兵减速是 data.js 的 lines.slowPerUnit（现为 0，即不减速）
+  const capMul = C.LINE_SLOW_PER_UNIT * C.LINE_UNIT_CAP >= 1 ? 0 : Math.max(0, 1 - C.LINE_UNIT_CAP * C.LINE_SLOW_PER_UNIT);
+  ok(T.lineSpeedMul(C.LINE_UNIT_CAP) === capMul, `满 ${C.LINE_UNIT_CAP} 个兵：产速 ${Math.round(capMul * 100)}%`);
+  ok(T.lineSpeedMul(C.LINE_UNIT_CAP + 5) === capMul, '超过名额也不会变成负产速');
+
+  // 单线跑满：最终一定停在上限，且不再增加
+  const g = wf.createGameState(room(2));
+  g.phase = 'playing'; g.phaseEndsAt = 0;
+  g.units.length = 0;
+  const f = g.factories[0];
+  T.damageFactory(g, f, f.hp + 1, 0);
+  f.rally = null;
+  f.lines = 1;
+  f.prog = [];
+  f.prodProg = 0;
+  let clock = Date.now();
+  const steps = Math.round((T.consts.PRODUCE_MS * 30) / 100);
+  for (let i = 0; i < steps; i++) { clock += 100; T.updateProduction(g, 0.1, clock); }
+  const n = T.garrisonOf(g, f.id, 0);
+  ok(n === C.LINE_UNIT_CAP, `长跑 30 个周期后单线停在名额上：${n}/${C.LINE_UNIT_CAP}`);
+  const snap = wf.snapshot(g);
+  const rowF = snap.f.find((r) => r[0] === f.id);
+  ok(rowF[10].length === 1 && rowF[10][0] === C.LINE_UNIT_CAP, '快照里的该线在场数同步为 ' + rowF[10][0]);
+  ok(
+    g.units.filter((u) => u.homeFac === f.id).every((u) => (u.lineIdx || 0) === 0),
+    '该线产出的兵都带着自己的产线号'
+  );
+  // 阵亡让出名额后能补产（只剩最后一档产速，所以要多等一会儿）
+  const victim = g.units.find((u) => u.homeFac === f.id && (u.lineIdx || 0) === 0);
+  victim.dead = true;
+  const back = Math.round((T.consts.PRODUCE_MS / Math.max(0.01, T.lineSpeedMul(C.LINE_UNIT_CAP - 1))) / 100) +
+    Math.round(T.consts.PRODUCE_MS / 100);
+  for (let i = 0; i < back; i++) { clock += 100; T.updateProduction(g, 0.1, clock); }
+  ok(T.garrisonOf(g, f.id, 0) === C.LINE_UNIT_CAP, '阵亡空出名额后能补回来（' + T.garrisonOf(g, f.id, 0) + '）');
 }
 
 console.log('\n合计：✓ ' + pass + '  ✗ ' + fail);

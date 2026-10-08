@@ -1176,6 +1176,15 @@ window.GameNet = (function () {
     ensureSocket().emit('game:rtInput', payload || {});
   }
 
+  /**
+   * 通用的一条下行指令（地形编辑器自用）：
+   * map:list / map:save / map:delete / room:startEditor / room:setMap / wf:edit。
+   * 走 ack 回调拿结果（socket.io 的第三个参数）。
+   */
+  function emitRaw(name, payload, ack) {
+    ensureSocket().emit(String(name || ''), payload || {}, ack);
+  }
+
   function getLocalOrigin() {
     return localOrigin;
   }
@@ -1331,6 +1340,7 @@ window.GameNet = (function () {
     sendChat,
     sendAction,
     sendRt,
+    emitRaw,
     setHosted,
     getLocalOrigin,
     getCurrentUrl,

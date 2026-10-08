@@ -910,6 +910,15 @@ function startRealtimeLoop(room) {
         /* ignore */
       }
     },
+    // 地形编辑器的分片下发：**只发被改动的那几格**。全量地形图有八万多个字符，
+    // 涂一笔重发一次整套会把带宽打满，也不可能 60fps。
+    broadcastTerrain: (payload) => {
+      try {
+        io.to(room.id).emit('wf:terrain', payload);
+      } catch (_) {
+        /* ignore */
+      }
+    },
   });
 }
 
@@ -2285,6 +2294,7 @@ io.on('connection', (socket) => {
       peacefulDev: data.peacefulDev,
       easyStart: data.easyStart,
       matchGames: data.matchGames,
+      mapFile: data.mapFile || null,
       passiveHost: wantPassive && Boolean(operatorId),
       operatorId,
     });
@@ -3022,6 +3032,175 @@ io.on('connection', (socket) => {
     // 开局：先发送 game:loading，等所有人资源加载完成后再发 game:started
     mqttNotifyRoomStatusNow();
     emitGameLoading(result.room);
+  });
+
+  /**
+   * ---- 地形编辑器（战争工厂专用）----
+   * 入口是「房间里 Ctrl+Shift + 上/下/左/右」这组热键（客户端 public/js/ui.js）。
+   * 它跟普通开局的区别：不用满员（缺位用占位电脑补齐）、按地图文件摆图（没有就给一张白图）、
+   * 开局立刻停在 edit 阶段（服务端不推进任何一帧）。
+   */
+  socket.on('room:startEditor', (data = {}) => {
+    const result = rooms.startEditorGame(socket.id, { mapFile: data && data.mapFile });
+    if (!result.ok) {
+      socket.emit('room:error', { message: result.error });
+      return;
+    }
+    emitRoomUpdate(result.room);
+    mqttNotifyRoomStatusNow();
+    emitGameLoading(result.room);
+  });
+
+  socket.on('map:list', (data = {}, ack) => {
+    const mod = getGame((data && data.gameType) || 'warfactory');
+    const maps = mod && mod.maps ? mod.maps.listMaps() : [];
+    const current = rooms.getPlayer(socket.id);
+    const room = current && current.roomId ? rooms.getRoom(current.roomId) : null;
+    if (typeof ack === 'function') {
+      ack({
+        ok: true,
+        maps,
+        selected: room ? room.mapFile || null : null,
+      });
+    }
+  });
+
+  socket.on('map:delete', (data = {}, ack) => {
+    const mod = getGame((data && data.gameType) || 'warfactory');
+    if (!mod || !mod.maps) {
+      if (typeof ack === 'function') ack({ ok: false, error: '当前游戏不支持自定义地图' });
+      return;
+    }
+    const res = mod.maps.removeMap(data && data.file);
+    if (!res.ok) {
+      if (typeof ack === 'function') ack(res);
+      return;
+    }
+    // 房间正指着这张图的话，一并退回随机生成
+    const me = rooms.getPlayer(socket.id);
+    const room = me && me.roomId ? rooms.getRoom(me.roomId) : null;
+    if (room && room.mapFile === res.file) {
+      room.mapFile = null;
+      room.wfMap = null;
+      emitRoomUpdate(room);
+    }
+    if (typeof ack === 'function') ack(res);
+  });
+
+  socket.on('map:save', (data = {}, ack) => {
+    const reply = (r) => {
+      if (typeof ack === 'function') ack(r);
+      else if (!r.ok) socket.emit('room:error', { message: r.error });
+    };
+    const player = rooms.getPlayer(socket.id);
+    if (!player || !player.roomId) return reply({ ok: false, error: '你不在房间中' });
+    const room = rooms.getRoom(player.roomId);
+    if (!room || !room.game || room.game.type !== 'warfactory') {
+      return reply({ ok: false, error: '当前不在地形编辑器里' });
+    }
+    if (!room.game.editor || room.game.editorOwnerId !== socket.id) {
+      return reply({ ok: false, error: '只有编辑者本人可以保存地图' });
+    }
+    const mod = getGame(room.gameType);
+    if (!mod || typeof mod.exportCurrentMap !== 'function') {
+      return reply({ ok: false, error: '当前版本不支持保存地图' });
+    }
+    const obj = mod.exportCurrentMap(room.game);
+    const name = String((data && data.name) || '').trim();
+    if (name) obj.name = name.slice(0, 40);
+    obj.players = room.game.players.length;
+    // 传了 file 就往这个文件里写（' overwrite' 决定能不能盖）；**传了 null 就是改名字另存**，
+    // 这时别再退回「上一次存过的文件名」，否则改名会变成给旧文件存一个新副本。
+    const hasFile = Boolean(data) && Object.prototype.hasOwnProperty.call(data, 'file');
+    const fileHint = hasFile ? data.file : room.game.mapFile || null;
+    const res = mod.maps.writeMap(obj, fileHint, {
+      overwrite: Boolean(data && data.overwrite),
+    });
+    if (!res.ok) return reply(res);
+    // 记下「这局编辑的是哪张图」：下次点保存默认还是它（不再另起 xxx-2）
+    room.game.mapFile = res.file;
+    reply({ ok: true, file: res.file, name: obj.name, json: res.json });
+  });
+
+  socket.on('room:setMap', (data = {}) => {
+    const result = rooms.setRoomMap(socket.id, (data && data.mapFile) || null);
+    if (!result.ok) {
+      socket.emit('room:error', { message: result.error });
+      return;
+    }
+    emitRoomUpdate(result.room);
+  });
+
+  /* ---------------- 战前选图（briefing）---------------- */
+  /*
+   * 开局不直接开打：先停在 briefing 阶段，房主在战前面板里挑一张存档地图、
+   * 或者「不满意就再随机一张」，确认之后才起倒计时。
+   * 三条通道都只改房主那张桌子上的局面，非房主能看目录但不能拍板（rooms.js 里校验）。
+   */
+
+  socket.on('briefing:list', (data = {}, ack) => {
+    const reply = (r) => {
+      if (typeof ack === 'function') ack(r);
+      else if (!r.ok) socket.emit('room:error', { message: r.error });
+    };
+    const res = rooms.briefingMapList(socket.id, Number(data && data.maxSide) || 56);
+    reply(res);
+  });
+
+  socket.on('briefing:pick', (data = {}, ack) => {
+    const reply = (r) => {
+      if (typeof ack === 'function') ack(r);
+      else if (!r.ok) socket.emit('room:error', { message: r.error });
+    };
+    const file = data && data.mapFile ? String(data.mapFile) : null;
+    const res = rooms.briefingPickMap(socket.id, file);
+    if (!res.ok) return reply(res);
+    // ⚠️ 换图是「整个 game 对象换了一个」：老循环下一拍会发现 room.game 不再是自己
+    // 那份（startLoop 里的 cur !== game 判据）并自杀，所以这里必须重新起一次。
+    startRealtimeLoop(res.room);
+    // 全量下发一次：新地形 / 新建筑 / 新的战前信息都在这份里，客户端据此重画预览
+    emitGameState(res.room);
+    emitRoomUpdate(res.room);
+    reply({ ok: true, briefing: res.briefing || null });
+  });
+
+  socket.on('briefing:confirm', (data = {}, ack) => {
+    const reply = (r) => {
+      if (typeof ack === 'function') ack(r);
+      else if (!r.ok) socket.emit('room:error', { message: r.error });
+    };
+    const res = rooms.briefingConfirm(socket.id);
+    if (!res.ok) return reply(res);
+    // 阶段变了（briefing → countdown）：立刻广播，别等下一次全量（≤1Hz）
+    emitGameState(res.room);
+    reply({ ok: true });
+  });
+
+  // 编辑指令：**不走 game:rtInput** —— 那条通道有「每人每秒 12 条」的限速，
+  // 涂抹一笔几百格，正常地很快就撞上限了。
+  socket.on('wf:edit', (data = {}) => {
+    const player = rooms.getPlayer(socket.id);
+    if (!player || !player.roomId) return;
+    const room = rooms.getRoom(player.roomId);
+    if (!room || room.status !== 'playing' || !room.game) return;
+    if (!room.game.editor || room.game.editorOwnerId !== socket.id) return;
+    const mod = getGame(room.gameType);
+    if (!mod || typeof mod.applyEditorCommand !== 'function') return;
+    let changed = false;
+    try {
+      changed = mod.applyEditorCommand(room.game, data);
+    } catch (err) {
+      console.error('[warfactory] edit failed:', err && err.message);
+      return;
+    }
+    if (!changed) return;
+    const op = String((data && data.op) || '');
+    // 建筑 / 单位的增删挂在这上面：对局是停着的，tick 恒返回 false，只有这条路能
+    // 催主循环补发一次全量状态（≤1Hz，见 startLoop）。
+    if (op === 'building' || op === 'unit') room.game._editDirty = true;
+    // 只有「阶段变了」（暂停 / 继续 / 重算高低差）必须立刻刷新 meta ——
+    // 客户端据此决定还显不显示面板。
+    if (op === 'pause' || op === 'recalcHeights') emitGameState(room);
   });
 
   socket.on('game:loadingProgress', (data = {}) => {

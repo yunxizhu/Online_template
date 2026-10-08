@@ -25,6 +25,25 @@ function room(count) {
   return { players };
 }
 
+/**
+ * 第 9 项：一条产线造满 n 支要消耗几个「周期」（1 周期 = PRODUCE_MS）。
+ * 在场 k 个兵时这条线只剩 (1 - k × LINE_SLOW_PER_UNIT) 的产速，所以是越造越慢：
+ * 前几支各 1 个周期，第 10 支要吃 10 个周期。
+ * 测试里所有「N 个周期出几支」的期望值都由它推，不写死 —— 否则改 data.js 就会误报。
+ */
+function cyclesToMake(n) {
+  let c = 0;
+  for (let k = 0; k < n; k++) c += 1 / Math.max(1e-6, 1 - k * C.LINE_SLOW_PER_UNIT);
+  return c;
+}
+
+/** 给定周期内这条线实际能造出几支（超过 LINE_UNIT_CAP 就停） */
+function madeInCycles(cycles) {
+  let n = 0;
+  while (n < C.LINE_UNIT_CAP && cyclesToMake(n + 1) <= cycles) n += 1;
+  return n;
+}
+
 /** 手动时钟推进（step 的第三个参数即「当前时刻」） */
 function makeClock() {
   const state = { now: 1000 };
@@ -76,9 +95,21 @@ ok(
 ok(startUnits.every((u) => u.maxTier === 1), '总部亲兵不可进化（maxTier=1）');
 ok(
   g.factories.filter((f) => f.level === 3).length === 2 &&
-    g.factories.filter((f) => f.level === 2).length === 4,
-  '地图含 2 座高级 + 4 座中级中立工厂'
+    g.factories.filter((f) => f.level === 2).length === 4 &&
+    g.factories.filter((f) => f.level === 1).length === 4,
+  '地图含 2 高 + 4 中 + 4 初级（每家门口 2 座初级）'
 );
+// 每家总部正前方恰好 2 座初级厂，且都在防卫射程内（开局总部就能打）
+{
+  const range = C.HQ_ATK_RANGE;
+  for (let i = 0; i < g.hqs.length; i++) {
+    const hq = g.hqs[i];
+    const near = g.factories.filter(
+      (f) => f.level === 1 && Math.hypot(f.x - hq.x, f.y - hq.y) <= range
+    );
+    ok(near.length === 2, `玩家${i} 总部射程内恰好 2 座初级厂（实为 ${near.length}）`);
+  }
+}
 ok(
   g.factories.every((f) => Array.isArray(f.specs) && f.specs.length === 1 && f.specs[0].tier === 1),
   '每座工厂开局 1 条一级产线'
@@ -164,17 +195,18 @@ ok(
   '丢掉全部研究所后：不再产出且结算进度清零'
 );
 
-// 5. 研究所可被攻击：打光血量 → 最后一击者接管并满血
+// 5. 研究所可被攻击：打光血量 → 累计消耗血量最多者接管并满血
 g.labs[1].owner = -1;
 const l1 = g.labs[1];
 const l1Hp0 = l1.hp;
+g.now = 1000;
 __test.damageLab(g, l1, 100, 1);
 ok(l1.hp === l1Hp0 - 100, '研究所受到伤害后掉血');
 __test.damageLab(g, l1, l1.hp + 1, 1);
-ok(l1.owner === 1, '研究所血打光后归最后一击者');
+ok(l1.owner === 1, '研究所血打光后归累计伤害最高者');
 ok(l1.hp === l1.hpMax, '研究所易主后血量恢复满');
 
-// 6. 工厂可被攻击：打光血量 → 最后一击者得厂 + 满血 + 开始产兵
+// 6. 工厂可被攻击：打光血量 → 累计消耗最多者得厂 + 满血 + 开始产兵
 // 取「离双方总部最远」的初级中立厂：开局部队站在厂边就打，目标厂离总部太近会被顺手打残（踩过坑）。
 const hqDist = (b) => Math.min(...g.hqs.map((h) => Math.hypot(h.x - b.x, h.y - b.y)));
 const f1 = g.factories.filter((f) => f.level === 1).sort((a, b) => hqDist(b) - hqDist(a))[0];
@@ -196,19 +228,86 @@ const f1Hp0 = f1.hp;
 clock.run(g, 6000);
 ok(f1.hp < f1Hp0, `单位自动攻击射程内的工厂（${f1Hp0} → ${Math.round(f1.hp)}）`);
 __test.damageFactory(g, f1, f1.hp + 1, 0);
-ok(f1.owner === 0, '血打光后归最后一击者所有');
+ok(f1.owner === 0, '血打光后归累计伤害最高者所有');
 ok(f1.hp === f1.hpMax, '归属权变化后血量恢复满');
 ok(g.players[0].captured >= 1, '占领数记入统计');
 
-// 7. 该厂持续产兵：无兵力上限（旧规则在初级 4 / 中级 6 / 高级 9 处截断）
+// 6b. 累计伤害最高者得厂（最后一击者未必是赢家）+ 1 分钟未攻击则账本清空
+{
+  const fx = g.factories.filter((f) => f.level === 1 && f.id !== f1.id).sort((a, b) => hqDist(b) - hqDist(a))[0];
+  fx.owner = -1;
+  fx.hp = 100;
+  fx.hpMax = C.FACTORY_HP;
+  fx.dmgBook = Object.create(null);
+  g.now = 5000;
+  __test.damageFactory(g, fx, 70, 0); // p0 累计 70
+  __test.damageFactory(g, fx, 20, 1); // p1 累计 20
+  __test.damageFactory(g, fx, fx.hp + 1, 1); // p1 补刀，但总伤 20+30=50 < 70
+  ok(fx.owner === 0, `补刀方不是赢家：累计更高的 p0 得厂（实为 p${fx.owner}）`);
+  ok(fx.hp === fx.hpMax, '易主后满血');
+
+  // 伤害遗忘：打一点后停手超过 forgetMs，账本清空，后手打满的人拿走
+  const fy = g.factories.filter((f) => f.level === 1 && f.id !== f1.id && f.id !== fx.id)[0];
+  fy.owner = -1;
+  fy.hp = 100;
+  fy.hpMax = C.FACTORY_HP;
+  fy.dmgBook = Object.create(null);
+  g.now = 10000;
+  __test.damageFactory(g, fy, 80, 0);
+  g.now = 10000 + C.DAMAGE_FORGET_MS + 100;
+  __test.updateFactories(g, 0.1, g.now); // 触发 prune
+  __test.damageFactory(g, fy, fy.hp + 1, 1);
+  ok(fy.owner === 1, '停手超过遗忘时间后，旧账本清空，后手打光者得厂');
+}
+
+// 6c. 工厂维修：己方每兵在外缘+repairRange 内提供 repairHpPerSec
+{
+  f1.hp = f1.hpMax - 200;
+  const healers = g.units.filter((u) => u.ownerIdx === 0 && !u.dead).slice(0, 3);
+  for (const u of healers) {
+    u.x = f1.x + C.FACTORY_R + 10;
+    u.y = f1.y;
+  }
+  const hpBefore = f1.hp;
+  g.now = (g.now || 0) + 1000;
+  __test.updateFactories(g, 1.0, g.now); // 1 秒
+  const expectHeal = healers.length * C.REPAIR_HP_PER_SEC;
+  ok(
+    Math.abs(f1.hp - (hpBefore + expectHeal)) < 0.01,
+    `3 兵维修 1 秒回 ${expectHeal} 血（${hpBefore} → ${f1.hp.toFixed(1)}）`
+  );
+  // 站在维修圈外不回血
+  f1.hp = f1.hpMax - 100;
+  for (const u of healers) {
+    u.x = f1.x + C.REPAIR_RANGE + 40;
+    u.y = f1.y;
+  }
+  const hp2 = f1.hp;
+  __test.updateFactories(g, 1.0, g.now + 1000);
+  ok(f1.hp === hp2, '维修圈外的友军不提供维修');
+}
+
+// 7. 该厂持续产兵：不再有旧的「初级 4 / 中级 6 / 高级 9」截断，
+//    改成每条产线自己在场名额（LINE_UNIT_CAP）封顶，且越接近满额越慢。
 // 产兵间隔由 PRODUCE_MS 决定（现为 20 秒/支），推进时长必须按间隔推导而不是写死秒数
 const produceMs = C.PRODUCE_MS;
-clock.run(g, produceMs * 6 + 1000); // 6 个周期
-const garrison = __test.garrisonOf(g, f1.id, 0);
-ok(garrison > 4, `初级厂不再在旧上限 4 处截断（6 个周期 ${garrison} 支）`);
-clock.run(g, produceMs * 5); // 累计 11 个周期
+const cyc6 = 6;
+clock.run(g, produceMs * cyc6 + 1000); // 6 个周期
+  const garrison = __test.garrisonOf(g, f1.id, 0);
+  const expect6 = madeInCycles(cyc6);
+  ok(
+    Math.abs(garrison - expect6) <= 1,
+    `${cyc6} 个周期产出 ${garrison} 支（按「在场越多越慢」推算应为 ${expect6} 支）`
+  );
+  ok(garrison >= madeInCycles(4), `产能没被卡在旧的 4 / 6 / 9 上（${garrison} 支）`);
+// 再推到「造满名额」所需的时间（第 10 支要 10 个周期，所以这里得给足）
+clock.run(g, produceMs * (cyclesToMake(C.LINE_UNIT_CAP) - cyc6) + produceMs);
 const garrison2 = __test.garrisonOf(g, f1.id, 0);
 ok(garrison2 > 9, `继续生产并超过旧最高上限 9（${garrison} → ${garrison2}）`);
+ok(
+  garrison2 === C.LINE_UNIT_CAP,
+  `最终停在这条线的名额上限 ${C.LINE_UNIT_CAP}（实为 ${garrison2}）—— 满额即停产`
+);
 const facUnits = g.units.filter((u) => u.homeFac === f1.id && u.ownerIdx === 0);
 ok(facUnits.every((u) => u.maxTier === 1), '初级厂出厂单位进化上限为初级');
 ok(
@@ -288,6 +387,61 @@ function findFlatSpot(game, gap) {
   }
   return { x: 1200, y: 200 };
 }
+
+/**
+ * 找一块**整片**半径 rPx 内都可站立的空地（火场 / 站位类用例用）。
+ * findFlatSpot 只验了一条水平线上的三个点；而地图主题是每局随机抽的，
+ * 「某点能站」不代表「它周围也能站」—— 单位一旦落在山/水上会被 nearestPassable 挪走，
+ * 写死的相对站位（例如「火场外 125px」）就可能被挪进火里，用例时红时绿。
+ * 这里改成整片圆盘都验一遍，从根上消除这类抖动。
+ */
+function findOpenDisc(game, rPx) {
+  const blocks = [...game.factories, ...game.labs, ...game.hqs];
+  const TC = C.TERR_CELL;
+  const okAt = (x, y) => __test.canStand(game, x, y, 16) && !__test.losBlocked(game, x, y, x + 1, y);
+  const discOpen = (x, y) => {
+    for (let dy = -rPx; dy <= rPx; dy += TC / 2) {
+      for (let dx = -rPx; dx <= rPx; dx += TC / 2) {
+        if (dx * dx + dy * dy > rPx * rPx) continue;
+        if (!okAt(x + dx, y + dy)) return false;
+      }
+    }
+    return true;
+  };
+  for (const far of [420, 300, 200, 120, 0]) {
+    for (let y = 300; y < 5200; y += 120) {
+      for (let x = 300; x < 8200; x += 120) {
+        let clear = true;
+        for (const b of blocks) {
+          if (Math.hypot(b.x - x, b.y - y) < far + rPx) {
+            clear = false;
+            break;
+          }
+        }
+        if (!clear) continue;
+        for (const u of game.units) {
+          if (!u.dead && Math.hypot(u.x - x, u.y - y) < 340) {
+            clear = false;
+            break;
+          }
+        }
+        if (!clear) continue;
+        if (discOpen(x, y)) return { x, y };
+      }
+    }
+  }
+  return null;
+}
+
+/** 一段路径是否全程可站（用于「移动攻击」这种既要走位又要开火的用例） */
+function pathStandable(game, ax, ay, bx, by, r) {
+  const steps = Math.max(2, Math.ceil(Math.hypot(bx - ax, by - ay) / (C.TERR_CELL / 2)));
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    if (!__test.canStand(game, ax + (bx - ax) * t, ay + (by - ay) * t, r)) return false;
+  }
+  return true;
+}
 const spot = findFlatSpot(g, 60);
 const fac3 = { id: 999, owner: 0, level: 3 };
 const fighter = __test.spawnUnit(g, fac3, 'shield', spot.x, spot.y);
@@ -365,31 +519,28 @@ ok(g.players[0].kills >= 1 || !victim.dead, '击杀记入统计');
   gm.phase = 'playing';
   gm.phaseEndsAt = 0;
   gm.units.length = 0;
-  const sm = findFlatSpot(gm, 200);
+  // 场地要一整片都能站（findFlatSpot 只验了一条线上的三个点）；
+  // 落点除了「能站 + 仍在射程内」，还要求**沿途能走** —— 地图主题每局随机，
+  // 只验终点的话中间卡一道山脊就会「原地挪 14px」然后判失败。
+  const sm = findOpenDisc(gm, 200) || findFlatSpot(gm, 200);
   // 用游侠当主角：射程 200 足够长，走位过程中敌人始终留在攻击范围内
   const runner = __test.spawnUnit(gm, { id: 7101, owner: 0, level: 1 }, 'ranger', sm.x, sm.y);
   const dummy = __test.spawnUnit(gm, { id: 7102, owner: 1, level: 1 }, 'shield', sm.x + 40, sm.y);
   dummy.maxHp = 1e6;
   dummy.hp = 1e6; // 别让它被打死，全程留在射程内
-  // 落点要同时满足：可站立 + 全程仍在攻击范围内（reach = 200 + 10）
   let dst = null;
-  for (const dy of [60, -60, 90, -90]) {
-    const c = { x: sm.x, y: sm.y + dy };
-    if (Math.hypot(c.x - dummy.x, c.y - dummy.y) > runner.range + dummy.r) continue;
-    if (!__test.canStand(gm, c.x, c.y, runner.r)) continue;
-    dst = c;
-    break;
-  }
-  if (!dst) {
-    for (const dx of [60, -60, 90, -90]) {
-      const c = { x: sm.x + dx, y: sm.y };
+  for (const d of [60, -60, 90, -90, 120, -120]) {
+    for (const axis of [0, 1]) {
+      const c = axis ? { x: sm.x + d, y: sm.y } : { x: sm.x, y: sm.y + d };
       if (Math.hypot(c.x - dummy.x, c.y - dummy.y) > runner.range + dummy.r) continue;
       if (!__test.canStand(gm, c.x, c.y, runner.r)) continue;
+      if (!pathStandable(gm, sm.x, sm.y, c.x, c.y, runner.r)) continue;
       dst = c;
       break;
     }
+    if (dst) break;
   }
-  ok(Boolean(dst), '移动攻击用例选到落点（离敌人 >26px 仍在射程内）');
+  ok(Boolean(dst), '移动攻击用例选到落点（沿途可走、离敌人 >26px 仍在射程内）');
   if (dst) {
     runner.moveX = dst.x;
     runner.moveY = dst.y;
@@ -474,12 +625,14 @@ ok(
   `快照携带研究所血量行（含「已开拓研究产线数」，实为 ${snap.lb && snap.lb[0] ? snap.lb[0].length : '—'} 列）`
 );
 ok(
-  Array.isArray(snap.f) && snap.f[0].length === 10 && Array.isArray(snap.f[0][9]),
-  `快照工厂行携带产线数与各产线配置（10 列，实为 ${snap.f[0].length}）`
+  Array.isArray(snap.f) && snap.f[0].length === 11 && Array.isArray(snap.f[0][9]) &&
+    Array.isArray(snap.f[0][10]),
+  `快照工厂行携带产线数 / 各产线配置 / 各产线在场兵数（11 列，实为 ${snap.f[0].length}）`
 );
 ok(
-  Array.isArray(snap.hq) && snap.hq[0].length === 12 && Array.isArray(snap.hq[0][9]),
-  `快照总部行携带产能等级 / 生产进度 / 产线配置 / 防卫前摇（12 列，实为 ${snap.hq[0].length}）`
+  Array.isArray(snap.hq) && snap.hq[0].length === 13 && Array.isArray(snap.hq[0][9]) &&
+    Array.isArray(snap.hq[0][12]),
+  `快照总部行携带产能等级 / 生产进度 / 产线配置 / 防卫前摇 / 各产线在场兵数（13 列，实为 ${snap.hq[0].length}）`
 );
 ok(Array.isArray(snap.rp) && snap.rp.length === g.players.length, '快照携带科技点');
 ok(
@@ -535,14 +688,14 @@ for (const n of [3, 4]) {
       minD = Math.min(minD, Math.hypot(pois[i][0] - pois[j][0], pois[i][1] - pois[j][1]));
     }
   }
-  ok(minD > C.CAPTURE_R * 2, `${n} 人局建筑间距 > 2×占领半径（${Math.round(minD)}）`);
+  ok(minD > C.FACTORY_R * 2, `${n} 人局建筑互不叠压（最近 ${Math.round(minD)}px）`);
   ok(
     gn.hqs.length === n && gn.units.filter((u) => u.ownerIdx === 0).length === C.START_ROSTER.length,
     `${n} 人局总部与开局部队正确`
   );
 }
 
-// 15. 激光兵：持续光束锁定，锁定越久伤害越高（最高 5 倍），换目标有前摇
+// 15. 激光兵：持续光束锁定，锁定越久伤害越高（上限见 data.laser.maxMul），换目标有前摇
 {
   const cl = makeClock();
   const gl = createGameState(room(2));
@@ -567,11 +720,15 @@ for (const n of [3, 4]) {
       const bx = ax + 60;
       const dx = ax + 20;
       const dy = ay + 60;
-      if (!freeAt(bx, ay) || !freeAt(dx, dy)) continue;
+      const ex = ax + 25; // 比 t1 更近的落点：用来验「更近的敌人抢不走锁定」
+      // 所有落点**都要**空着：只验后两个的话，激光自己可能落在山/水上被挪走，
+      // 挪完离 t2 反而更近 → 锁定到错误的目标，用例时红时绿。
+      if (!freeAt(ax, ay) || !freeAt(bx, ay) || !freeAt(ex, ay) || !freeAt(dx, dy)) continue;
       if (blocks2.some((b) => Math.hypot(b[0] - ax, b[1] - ay) < 400)) continue;
       if (__test.losBlocked(gl, ax, ay, bx, ay)) continue;
+      if (__test.losBlocked(gl, ax, ay, ex, ay)) continue;
       if (__test.losBlocked(gl, ax, ay, dx, dy)) continue;
-      spot = { x: ax, y: ay, bx, dx, dy };
+      spot = { x: ax, y: ay, bx, dx, dy, ex };
     }
   }
   ok(Boolean(spot), '找得到一块互相通视的平地摆激光用例');
@@ -591,6 +748,28 @@ for (const n of [3, 4]) {
     `激光兵基础伤害低、射速快（${laser.dmg} / ${laser.cdMax}s），成长压在锁定倍率上`
   );
   ok(__test.laserMul(laser, 999999) === 1, '未锁定时倍率恒为 1');
+
+  // ⚠️ rampMs 是「+1 倍的周期」而不是「爬满用时」：前摇结束后每持续 rampMs，倍率 +1。
+  //    这条是防止有人改成「翻倍」或「一个周期吃满」。
+  {
+    const probe = { laser: true, lockStart: 1000 }; // ⚠️ 别用 0：0 = 「未锁定」会被判成 1 倍
+    const W = C.LASER_WINDUP_MS;
+    const R = C.LASER_RAMP_MS;
+    const at = (ms) => __test.laserMul(probe, 1000 + W + ms);
+    const cap = C.LASER_MAX_MUL;
+    ok(Math.abs(at(0) - 1) < 1e-9, `前摇结束瞬间是 1 倍（实测 ${at(0).toFixed(3)}）`);
+    ok(Math.abs(at(R) - 2) < 1e-6, `持续 1 个 rampMs → 2 倍（实测 ${at(R).toFixed(3)}）`);
+    ok(Math.abs(at(R * 2) - 3) < 1e-6, `持续 2 个 rampMs → 3 倍（实测 ${at(R * 2).toFixed(3)}）`);
+    ok(Math.abs(at(R * 3) - 4) < 1e-6, `持续 3 个 rampMs → 4 倍（实测 ${at(R * 3).toFixed(3)}）`);
+    // 吃满是 (maxMul − 1) 个周期，不是 1 个周期
+    ok(at(R) < cap - 1e-6, `一个 rampMs 还没吃满（${at(R).toFixed(2)} < ${cap}）`);
+    const tFull = R * (cap - 1);
+    ok(
+      Math.abs(at(tFull) - cap) < 1e-6,
+      `约 ${Math.round(tFull)}ms（${cap - 1} 个周期）吃满 ${cap} 倍（实测 ${at(tFull).toFixed(3)}）`
+    );
+    ok(at(tFull + R * 5) <= cap + 1e-9, '再久也不会超过上限');
+  }
 
   // 前摇内不造成伤害：推进到「前摇还剩 ~100ms」的时刻（前摇时长从 consts 读，用户会改）
   const probe1 = Math.floor(Math.max(50, C.LASER_WINDUP_MS - 100) / 50) * 50;
@@ -613,10 +792,45 @@ for (const n of [3, 4]) {
     `开火时倍率在 1..上限之间（${mulStart.toFixed(2)} / 上限 ${C.LASER_MAX_MUL}）`
   );
 
-  // 锁定足够久 → 倍率封顶
-  cl.run(gl, Math.max(6000, C.LASER_RAMP_MS + 1000));
+  // 锁定足够久 → 倍率封顶（吃满用时 = (maxMul − 1) × rampMs + windupMs，别写死秒数）
+  cl.run(gl, Math.max(6000, C.LASER_RAMP_MS * (C.LASER_MAX_MUL - 1) + C.LASER_WINDUP_MS + 1000));
   ok(laser.lockMul >= C.LASER_MAX_MUL - 0.01, `持续锁定后倍率封顶到 ${laser.lockMul.toFixed(2)} 倍`);
   ok(laser.lockMul <= C.LASER_MAX_MUL + 1e-6, `倍率不会超过上限 ${C.LASER_MAX_MUL} 倍`);
+
+  // 锁定是「死咬」的：更近的敌人进圈也抢不走锁定，蓄能不被打断（激光站得住的前提）
+  const t3 = __test.spawnUnit(gl, { id: 903, owner: 1, level: 2 }, 'shield', spot.ex, spot.y);
+  t3.moveX = null;
+  t3.moveY = null;
+  t3.maxHp = 1e6;
+  t3.hp = 1e6;
+  const heldId = laser.lockId;
+  cl.run(gl, 2000);
+  ok(
+    laser.lockId === heldId,
+    `锁定死咬：更近的敌人（${t3.id}，${Math.round(Math.hypot(spot.ex - spot.x, 0))}px）也抢不走锁定（仍锁 ${heldId}）`
+  );
+  ok(
+    laser.lockMul >= C.LASER_MAX_MUL - 0.01,
+    `更近的敌人进圈不打断蓄能，倍率维持封顶 ${laser.lockMul.toFixed(2)} 倍`
+  );
+
+  // 目标离开攻击范围 → 解锁并改派（唯一的自动解锁条件之一）
+  // ⚠️ 只断言「不再咬着原来那个」：解锁后有没有**立刻**咬上别的，取决于那一局随机地形里
+  // 剩下两个靶子被推到了哪儿（实测会时有时无），断言 lockId>0 会让用例时红时绿。
+  const held = gl.units.find((u) => u.id === heldId);
+  const worldW = trl.cols * trl.cell;
+  const push = held.x < worldW / 2 ? 900 : -900; // 往地图内侧推，别推出世界外
+  held.x += push;
+  let reLocked = false;
+  for (let i = 0; i < 30 && !reLocked; i++) {
+    cl.run(gl, 100);
+    if (laser.lockId !== heldId) reLocked = true;
+  }
+  ok(reLocked, `目标离开攻击范围 → 解锁（lockId ${heldId} → ${laser.lockId}）`);
+  // 拖回来让它重新咬住一个目标，下面的「击杀换锁」用例才有靶子
+  held.x -= push;
+  for (let i = 0; i < 30 && laser.lockId <= 0; i++) cl.run(gl, 100);
+  ok(laser.lockId > 0, `目标回到射程内 → 重新咬住 ${laser.lockId}`);
 
   // 击杀当前目标 → 立刻换锁，并重新进入前摇、倍率归 1
   const curId = laser.lockId;
@@ -645,7 +859,8 @@ for (const n of [3, 4]) {
   // 快照携带锁定状态
   const snapL = snapshot(gl);
   const rowL = snapL.u.find((r) => r[0] === laser.id);
-  ok(rowL.length === 18, `单位快照携带 18 列（含 4 列锁定状态 + 2 列追击命令，实为 ${rowL.length}）`);
+  // 末列（第 20 列）是炮塔角：车体角 / 炮塔角各占一列（见 smoke/turret.js §5）
+  ok(rowL.length === 20, `单位快照携带 20 列（含 4 列锁定状态 + 2 列追击命令 + 产线序号 + 炮塔角，实为 ${rowL.length}）`);
   ok(rowL[12] >= 1 && rowL[12] <= 4 && rowL[13] === laser.lockId, '快照下发锁定类别与目标 id');
   ok(rowL[14] >= 100 && rowL[14] <= C.LASER_MAX_MUL * 100, `快照下发倍率 ×100（${rowL[14]}）`);
   ok(
@@ -731,11 +946,15 @@ for (const n of [3, 4]) {
     const tr = g.terrain;
     let cell = null;
     for (let r = 1; r < tr.rows - 1 && !cell; r++) {
-      for (let c = 1; c < tr.cols - 1; c++) {
-        if (tr.grid[r][c] === C.TT_MOUNTAIN && tr.grid[r][c - 1] !== C.TT_MOUNTAIN && tr.grid[r][c + 1] !== C.TT_MOUNTAIN) {
-          cell = [c, r];
-          break;
-        }
+      for (let c = 4; c < tr.cols - 4; c++) {
+        // ⚠️ 选点必须「左平右深」：左边一格是能站的平地（脱困方向），右边连着至少 3 格山
+        //    （指令指向山体深处）。早先只要求「左右都不是山」，于是随机地形有一半概率
+        //    让最近可通行点正好落在指令那一侧 —— 脱困被误判成「沿指令穿山」，用例时红时绿。
+        if (tr.grid[r][c] !== C.TT_MOUNTAIN) continue;
+        if (tr.grid[r][c - 1] === C.TT_MOUNTAIN || tr.grid[r][c - 1] === C.TT_WATER) continue;
+        if (tr.grid[r][c + 1] !== C.TT_MOUNTAIN || tr.grid[r][c + 2] !== C.TT_MOUNTAIN) continue;
+        cell = [c, r];
+        break;
       }
     }
     if (cell) {
@@ -993,8 +1212,16 @@ for (const n of [3, 4]) {
     const n1 = countFac(1);
     const n2 = countFac(C.FAC_MAX_LINES);
     const nOver = countFac(C.FAC_MAX_LINES + 2); // 手改超限也要被夹回上限
-    ok(n1 === 3, `单产线 3 个周期产出 3 支（实为 ${n1}）`);
-    ok(n2 >= 5, `${C.FAC_MAX_LINES} 条产线同时间产出约 ${C.FAC_MAX_LINES} 倍（实为 ${n2} 支）`);
+    // 第 9 项：在场越多的线越慢，所以 3 个周期造不满 3 支 —— 期望值按衰减表推。
+    const expect3 = madeInCycles(3);
+    ok(
+      Math.abs(n1 - expect3) <= 1,
+      `单产线 3 个周期产出 ${n1} 支（在场越多越慢，推算 ${expect3} 支）`
+    );
+    ok(
+      Math.abs(n2 - C.FAC_MAX_LINES * expect3) <= C.FAC_MAX_LINES,
+      `${C.FAC_MAX_LINES} 条产线同时间产出约 ${C.FAC_MAX_LINES} 倍（实为 ${n2} 支）`
+    );
     ok(n2 > n1 * 1.5, `产线数直接决定产能（${n1} → ${n2}）`);
     ok(nOver === n2, `手改产线数超过上限会被夹回（${nOver} = ${n2}）`);
   }
@@ -1083,10 +1310,13 @@ for (const n of [3, 4]) {
     gf.phase = 'playing';
     gf.phaseEndsAt = 0;
     gf.units.length = 0; // 清场：这一组只关心火场本身
-    const cx = 1400;
-    const cy = 1400;
+    // 场地必须**整片**可站：写死坐标（旧版 1400,1400）在随机地貌下可能落在水/山上，
+    // 单位会被 nearestPassable 挪走，于是「火场外 125px」那条被挪进火里，用例时红时绿。
     const T2 = C.FIRE_TIERS[1]; // 二级：基准火场
     const T3 = C.FIRE_TIERS[2]; // 三级：更大 / 更久 / 更疼
+    const fs = findOpenDisc(gf, T3.r + 140) || { x: 1400, y: 1400 };
+    const cx = fs.x;
+    const cy = fs.y;
     const foe = __test.spawnUnit(gf, { id: 1, owner: 1, level: 1 }, 'shield', cx + 20, cy);
     const mate = __test.spawnUnit(gf, { id: 1, owner: 0, level: 1 }, 'shield', cx - 20, cy);
     const out = __test.spawnUnit(gf, { id: 1, owner: 1, level: 1 }, 'shield', cx + T3.r + 60, cy);
@@ -1254,13 +1484,50 @@ for (const n of [3, 4]) {
       ok(Math.abs(two - C.STATS.burn.dmg * 2) < 1e-6, `两口火 = 两份伤害（实测 ${two}）`);
     }
 
+    // ---- 范围伤害衰减：离落点越远越低，外沿只剩 flameEdgeMul，出了半径就打不到 ----
+    // （此时燎原还是一级：不留火场，掉血全是火舌打的，读数干净）
+    {
+      const R = C.FLAME_R;
+      const edge = C.FLAME_EDGE_MUL == null ? 1 : C.FLAME_EDGE_MUL;
+      const foeX = foe.x;
+      const foeY = foe.y;
+      // gap = 目标最近边缘到落点的距离（自己压在落点上 = 0）
+      const at = (gap) => {
+        foe.x = foeX;
+        foe.y = foeY;
+        foe.hp = C.STATS.shield.hp;
+        __test.sprayFlame(gb, burner, foeX + gap + foe.r, foeY, 61000 + Math.round(gap));
+        return C.STATS.shield.hp - foe.hp;
+      };
+      const full = at(0);
+      const mid = at(R * 0.5);
+      const rim = at(R * 0.98);
+      const out = at(R + 40);
+      const dmg1 = C.STATS.burn.dmg;
+      ok(Math.abs(full - dmg1) < 1e-6, `压在落点上吃满伤（${full.toFixed(2)} / 一口 ${dmg1}）`);
+      ok(
+        Math.abs(mid - dmg1 * (1 + (edge - 1) * 0.5)) < 1e-6,
+        `半程处掉到 ${mid.toFixed(2)}（满伤与外沿的中点）`
+      );
+      ok(
+        Math.abs(rim - dmg1 * edge) < dmg1 * 0.05,
+        `火舌外沿只剩 ${rim.toFixed(2)}（≈ 满伤 × ${edge}）`
+      );
+      ok(out === 0, '出了火舌半径就一点都烧不到');
+      ok(full > mid && mid > rim && rim > out, '伤害随离中心的距离单调变低');
+      foe.x = foeX;
+      foe.y = foeY;
+      foe.hp = C.STATS.shield.hp;
+    }
+
     // ---- 攻击节拍：每 cd 秒喷一口（一级不留火场，所以这段时间掉的血全是火舌打的）----
     {
       const hp0 = foe.hp;
       run(20); // 1 秒
       const hits = (hp0 - foe.hp) / C.STATS.burn.dmg;
       const expect = 1 / C.STATS.burn.cd; // 每秒理论口数
-      ok(hits >= Math.floor(expect) && hits <= Math.ceil(expect), `1 秒内喷了 ${hits} 口（cd ${C.STATS.burn.cd} 秒 / 次）`);
+      // ⚠️ 容差 1e-6：除法会把「正好 2 口」算成 1.9999999999999998，直接比 >= 会误报
+      ok(hits >= Math.floor(expect) - 1e-6 && hits <= Math.ceil(expect) + 1e-6, `1 秒内喷了 ${hits} 口（cd ${C.STATS.burn.cd} 秒 / 次）`);
     }
 
     // 二级：开始在地上留下火场（基准大小）
@@ -1401,13 +1668,18 @@ for (const n of [3, 4]) {
     for (const [type, tier] of cases) shoot(type, tier, s18.x, s18.y);
     const seen = new Set();
     let sawBullet = false;
-    for (let t = 0; t < 3000 && seen.size < cases.length; t += 50) {
+    // ⚠️ dt 取 0.005 秒（不是常用的 0.05）：锐士/盾卫/游侠的弹速写到了 9999px/s，
+    //    按 0.05 步进一帧就飞完 500px —— 射程才 180px，弹同帧就命中并被清理，
+    //    循环里根本看不到弹体。缩小步进让它飞两三帧，才验得到「弹体带兵种与阶数」。
+    let clock18 = 40000;
+    for (let i = 0; i < 1200 && seen.size < cases.length; i++) {
       for (const u of gd.units) {
         u.scanAt = 0;
         u.moveX = null;
         u.moveY = null;
       }
-      __test.step(gd, 0.05, 40000 + t);
+      clock18 += 5;
+      __test.step(gd, 0.005, clock18);
       for (const b of gd.bullets) {
         sawBullet = true;
         ok(Boolean(b.type) && b.tier >= 1 && b.tier <= 3, `弹体带兵种与阶数（${b.type} ${b.tier} 阶）`);
@@ -1421,7 +1693,370 @@ for (const n of [3, 4]) {
     const snap18 = snapshot(gd);
     const row18 = snap18.b[0];
     ok(row18 && row18.length === 11, `弹体快照 11 列（末两列＝兵种序号 + 阶数，实为 ${row18 ? row18.length : '?'}）`);
+
+    // ---- 子弹「效果」也要跟进化一起变大：开火 / 命中 / 炮击落地三类事件都得带上射手兵种与阶数 ----
+    // （客户端据此把枪口焰、命中墨花、弹痕按同一套倍率放大；缺这两列就只能画成一阶那么大）
+    {
+      const seenTy = new Map(); // 事件类别 → Set(兵种:阶数)
+      const note = (t, e) => {
+        if (!seenTy.has(t)) seenTy.set(t, new Set());
+        seenTy.get(t).add(`${e.ty}:${e.ti}`);
+      };
+      let clock19 = 40000;
+      for (let i = 0; i < 2000; i++) {
+        for (const u of gd.units) {
+          u.scanAt = 0;
+          u.moveX = null;
+          u.moveY = null;
+        }
+        clock19 += 5;
+        gd.events.length = 0;
+        __test.step(gd, 0.005, clock19);
+        for (const e of gd.events) {
+          if (e.t === 'shot' || e.t === 'hit' || e.t === 'boom') note(e.t, e);
+        }
+      }
+      // hit 只在弹体真的撞上目标那一帧才推（这个场景里可能被总部防卫先清场），所以只要求
+      // 「只要发了就必须带」，不要求一定发；shot / boom 每轮都有。
+      const must = ['shot', 'boom'];
+      for (const t of ['shot', 'hit', 'boom']) {
+        const set = seenTy.get(t) || new Set();
+        if (must.includes(t)) ok(set.size > 0, `${t} 事件真发出来了（用于按阶放大特效）`);
+        let allTagged = true;
+        for (const key of set) {
+          const [ty, ti] = key.split(':');
+          if (!ty || !(Number(ti) >= 1 && Number(ti) <= 3)) allTagged = false;
+        }
+        ok(allTagged, `${t} 事件自带射手兵种与阶数（${[...set].join(' / ') || '本轮未发'}）`);
+      }
+    }
   }
+
+  // ---- 抛射弹在场时，其它弹必须照常推进（updateBullets 里曾把 continue 写成 return）----
+  {
+    const ge = createGameState({ players: room(2).players });
+    ge.phase = 'playing';
+    ge.phaseEndsAt = 0;
+    ge.units.length = 0;
+    ge.bullets.length = 0;
+    const spot = findFlatSpot(ge, 60);
+    const now0 = 50000;
+    // 排在数组前面的抛射弹（arc）：只要天上还挂着一发，本帧就不能就此收工
+    ge.bullets.push({
+      id: ge.nextBulletId++,
+      x: spot.x,
+      y: spot.y,
+      z: 0,
+      vx: 100,
+      vy: 0,
+      dmg: 1,
+      ownerIdx: 0,
+      ownerId: 'p0',
+      shooterId: 0,
+      type: 'burst',
+      tier: 1,
+      kind: 'shell',
+      splash: 40,
+      tx: spot.x + 400,
+      ty: spot.y,
+      sx: spot.x,
+      sy: spot.y,
+      flightDur: 3000,
+      flightT: 0,
+      peak: 100,
+      arc: true,
+      targetId: 0,
+      born: now0,
+      dead: false,
+    });
+    // 排在它后面的直射弹
+    ge.bullets.push({
+      id: ge.nextBulletId++,
+      x: spot.x,
+      y: spot.y,
+      vx: 0,
+      vy: 120,
+      dmg: 1,
+      ownerIdx: 0,
+      ownerId: 'p0',
+      shooterId: 0,
+      type: 'warrior',
+      tier: 1,
+      kind: 'bullet',
+      splash: 18,
+      tx: spot.x,
+      ty: spot.y + 500,
+      targetId: 0,
+      born: now0,
+      dead: false,
+    });
+    __test.step(ge, 0.1, now0 + 100);
+    const straight = ge.bullets.find((b) => b.kind === 'bullet');
+    ok(
+      straight && straight.y > spot.y + 1,
+      `天上挂着抛射弹时直射弹照常推进（y ${Math.round(spot.y)} → ${straight ? Math.round(straight.y) : '已消失'}）`
+    );
+    // 打完的弹必须当帧清出数组：不然 bullets 只增不减，快照还一直往下发
+    if (straight) straight.dead = true;
+    __test.step(ge, 0.1, now0 + 200);
+    ok(!ge.bullets.some((b) => b.dead), '已命中的弹当帧就被清出数组（不会越积越多）');
+  }
+
+  // ---- 轰击：溅射半径随阶数长大、伤害随离落点的距离衰减 ----
+  {
+    const gi = createGameState({ players: room(2).players });
+    gi.phase = 'playing';
+    gi.phaseEndsAt = 0;
+    gi.units.length = 0;
+    gi.bullets.length = 0;
+    const spot = findFlatSpot(gi, 60);
+    const now0 = 70000;
+
+    // ① 溅射半径跟着阶数长：1 / 2 / 3 阶分别 30 / 45 / 60px（data.js 里是「格」）
+    const gunner = __test.spawnUnit(gi, { id: 8101, owner: 0, level: 3 }, 'burst', spot.x, spot.y);
+    const r1 = gunner.splash;
+    __test.promoteUnit(gi, gunner);
+    const r2 = gunner.splash;
+    __test.promoteUnit(gi, gunner);
+    const r3 = gunner.splash;
+    ok(r1 === C.STATS.burst.splash, `一级溅射半径 = ${r1}px（与 data.js 一致）`);
+    ok(r2 > r1 && r3 > r2, `溅射半径随阶数变大（${r1} → ${r2} → ${r3}）`);
+
+    // ② 距离衰减：中心吃满 → 外沿只剩 burstEdgeMul（口径同火舌）
+    const edge = C.BURST_EDGE_MUL == null ? 1 : C.BURST_EDGE_MUL;
+    const foe = __test.spawnUnit(gi, { id: 8102, owner: 1, level: 1 }, 'shield', spot.x, spot.y);
+    const dmg3 = C.EVOLVED.burst['3'].dmg;
+    let seq = 0;
+    // gap = 目标最近边缘到落点的距离（自己压在落点上 = 0）
+    const boom = (gap) => {
+      foe.hp = foe.maxHp;
+      foe.x = spot.x + gap + foe.r;
+      foe.y = spot.y;
+      __test.explodeShell(
+        gi,
+        { dead: false, ownerIdx: 0, shooterId: 0, dmg: dmg3, splash: r3 },
+        spot.x,
+        spot.y,
+        now0 + ++seq,
+        true // 抛射弹越山落点：溅射不受山体遮挡（挡了就没法测衰减）
+      );
+      return foe.maxHp - foe.hp;
+    };
+    const full = boom(0);
+    const mid = boom(r3 * 0.5);
+    const rim = boom(r3 * 0.98);
+    const out = boom(r3 + 40);
+    ok(Math.abs(full - dmg3) < 1e-6, `压在落点上吃满伤（${full.toFixed(2)} / 一发 ${dmg3}）`);
+    ok(Math.abs(mid - dmg3 * (1 + (edge - 1) * 0.5)) < 1e-6, `半程处掉到 ${mid.toFixed(2)}`);
+    ok(Math.abs(rim - dmg3 * edge) < dmg3 * 0.05, `溅射外沿只剩 ${rim.toFixed(2)}（≈ 满伤 × ${edge}）`);
+    ok(out === 0, '出了溅射半径就一点都炸不到');
+    ok(full > mid && mid > rim && rim > out, '炮弹伤害随离落点的距离单调变低');
+  }
+
+  // ---- 轰击的最小射击半径：贴脸的目标既索不到、也打不出去（被近身必死）----
+  {
+    const gj = createGameState({ players: room(2).players });
+    gj.phase = 'playing';
+    gj.phaseEndsAt = 0;
+    gj.units.length = 0;
+    gj.bullets.length = 0;
+    // 场上的建筑统统改成己方：否则轰击会去打中立工厂，「一发都打不出去」根本测不出来
+    for (const f of gj.factories) f.owner = 0;
+    for (const l of gj.labs) l.owner = 0;
+    for (const h of gj.hqs) h.owner = 0;
+    const spot = findFlatSpot(gj, 60);
+    const now0 = 80000;
+    const gunner = __test.spawnUnit(gj, { id: 8201, owner: 0, level: 3 }, 'burst', spot.x, spot.y);
+    const foe = __test.spawnUnit(gj, { id: 8202, owner: 1, level: 1 }, 'shield', spot.x, spot.y);
+    const MINR1 = gunner.minRange;
+    ok(MINR1 === C.STATS.burst.minRange, `一级最小射击半径 = ${MINR1}px（与 data.js 一致）`);
+    __test.promoteUnit(gj, gunner);
+    __test.promoteUnit(gj, gunner);
+    const MINR = gunner.minRange;
+    ok(MINR === C.EVOLVED.burst['3'].minRange, `最小射击半径跟着阶数走（${MINR1} → ${MINR}px）`);
+    ok(MINR > 0 && MINR < gunner.range, `最小射击半径夹在 0 与射程之间（${MINR} < ${gunner.range}）`);
+
+    // ① 贴脸（中心距远小于最小射程）→ 索敌直接跳过它
+    foe.x = gunner.x + MINR * 0.4;
+    foe.y = gunner.y;
+    const picked = __test.findTarget(gj, gunner);
+    ok(!(picked && picked.kind === 'u' && picked.id === foe.id), '贴脸的敌人不会进轰击的索敌列表');
+    gj.bullets.length = 0;
+    __test.step(gj, 0.1, now0);
+    ok(gj.bullets.length === 0, '进了最小射击半径，轰击一发都打不出去');
+
+    // ② 拉到最小射程之外 → 恢复正常开火。
+    // ⚠️ 炮塔有角速度：不是「下一拍立刻开炮」，而是转到位（aimTol 内）才打，
+    //    所以这里给足 2 秒（20 拍）再看有没有炮弹 —— 判的是「会不会开火」不是「多快」。
+    foe.x = gunner.x + MINR + 60;
+    foe.y = gunner.y;
+    let shellAt = -1;
+    for (let i = 0; i < 20 && shellAt < 0; i++) {
+      __test.step(gj, 0.1, now0 + 100 + i * 100);
+      if (gj.bullets.some((b) => b.kind === 'shell')) shellAt = i;
+    }
+    ok(
+      shellAt >= 0,
+      `拉出最小射程后照样开炮（${shellAt < 0 ? '2 秒内' : (shellAt + 1) * 0.1 + 's 后'}打出 ${gj.bullets.filter((b) => b.kind === 'shell').length} 发）`
+    );
+    // 射程外的老远目标同样打不到（最小射程不该把「够不着」变成「够得着」）
+    gj.bullets.length = 0;
+    foe.x = gunner.x + gunner.range + 200;
+    __test.step(gj, 0.1, now0 + 200);
+    ok(gj.bullets.length === 0, '射程之外的目标本来就打不到（最小射程没把射程撑大）');
+  }
+
+  // ---- 高速弹不许「一步跨过目标」----
+  // 锐士/盾卫弹速 9999，TICK_MS=100 → dt=0.1 时一帧飞 1000px、被切成 16 小步（62px/步），
+  // 而命中半径只有十几 px。只判「这一步走完停在圆内」会整发跨过去（实测 110px 外 0% 命中）。
+  {
+    const gh = createGameState({ players: room(2).players });
+    gh.phase = 'playing';
+    gh.phaseEndsAt = 0;
+    gh.units.length = 0;
+    gh.bullets.length = 0;
+    const tr = gh.terrain;
+    // 找一条 ≥ 20 格（200px）的空走廊：射线中途撞山会被判成打空，那是另一条规则
+    let spot = null;
+    for (let r = 2; r < tr.rows - 2 && !spot; r++) {
+      for (let c = 2; c + 20 < tr.cols; c++) {
+        let ok = true;
+        for (let k = 0; k <= 20; k++) {
+          const v = tr.grid[r][c + k];
+          if (v === C.TT_MOUNTAIN || v === C.TT_WATER) ok = false;
+        }
+        if (ok) {
+          spot = { x: (c + 0.5) * tr.cell, y: (r + 0.5) * tr.cell };
+          break;
+        }
+      }
+    }
+    if (spot) {
+      const a = __test.spawnUnit(gh, { id: 1, owner: 0, level: 1 }, 'warrior', spot.x, spot.y);
+      const d = Math.round(a.range * 0.8); // 射程内但不贴脸（贴脸本来就能打中）
+      const b = __test.spawnUnit(gh, { id: 1, owner: 1, level: 1 }, 'shield', spot.x + d, spot.y);
+      const hp0 = b.hp;
+      let now = 70000;
+      for (let i = 0; i < 40 && b.hp >= hp0; i++) {
+        a.scanAt = 0;
+        b.scanAt = 0;
+        a.moveX = null;
+        a.moveY = null;
+        b.moveX = null;
+        b.moveY = null;
+        now += 100;
+        __test.step(gh, 0.1, now); // 真实帧率：dt = 0.1
+      }
+      ok(b.hp < hp0, `dt=0.1 下 ${d}px 处的目标照样打得中（高速弹按线段判命中）`);
+    }
+  }
+
+  // ---- stop / move 要把「正在啃的建筑」一起解锁 ----
+  {
+    const gs = createGameState({ players: room(2).players });
+    gs.phase = 'playing';
+    gs.phaseEndsAt = 0;
+    gs.units.length = 0;
+    const spot = findFlatSpot(gs, 60);
+    const u = __test.spawnUnit(gs, { id: 1, owner: 0, level: 1 }, 'warrior', spot.x, spot.y);
+    const fac = gs.factories[0];
+    u.targetFac = fac ? fac.id : 1;
+    u.targetHq = 1;
+    setPlayerInput(gs, 'p0', { cmd: 'stop', ids: [u.id] }, 60000);
+    ok(u.targetFac === 0 && u.targetHq === 0, '停止指令连「正在打的建筑」一起解锁');
+    u.targetFac = fac ? fac.id : 1;
+    setPlayerInput(gs, 'p0', { cmd: 'move', ids: [u.id], x: spot.x + 100, y: spot.y }, 60100);
+    ok(u.targetFac === 0, '行军指令同样解锁（否则一路走一路还在啃那栋楼）');
+  }
+}
+
+/* ==========================================================================
+   [19] 第 9 项：每条产线最多同时在场 N 个兵 · 每多一个该线产速 -10%（独立乘区）
+   ========================================================================== */
+console.log('\n[19] 产线名额：在场上限 ' + C.LINE_UNIT_CAP + ' · 逐兵减速 ' + Math.round(C.LINE_SLOW_PER_UNIT * 100) + '%');
+{
+  const cap = C.LINE_UNIT_CAP;
+  const mulOf = __test.lineSpeedMul;
+  ok(Math.abs(mulOf(0) - 1) < 1e-9, '0 个在场 → 满速 100%');
+  ok(Math.abs(mulOf(1) - (1 - C.LINE_SLOW_PER_UNIT)) < 1e-9, `1 个在场 → ${Math.round((1 - C.LINE_SLOW_PER_UNIT) * 100)}%`);
+  // ⚠️ 别写死 0.5 / 0：逐兵减速是 data.js 的 lines.slowPerUnit，改它这里就得跟着走
+  const halfMul = Math.max(0, 1 - (cap / 2) * C.LINE_SLOW_PER_UNIT);
+  ok(Math.abs(mulOf(cap / 2) - halfMul) < 1e-9, `半数名额 → ${Math.round(halfMul * 100)}%`);
+  ok(mulOf(cap) === (C.LINE_SLOW_PER_UNIT * cap >= 1 ? 0 : Math.max(0, 1 - cap * C.LINE_SLOW_PER_UNIT)), `满 ${cap} 个 → ${Math.round(mulOf(cap) * 100)}%`);
+  ok(mulOf(cap + 5) === mulOf(cap), '超过名额也不会变成负产速');
+
+  // 独立乘区：不被别人的进度影响，只跟自己这条线的在场数走
+  const gi = createGameState(room(2));
+  gi.phase = 'playing'; // 只有对战中才会走生产（倒计时阶段 step 直接返回）
+  gi.phaseEndsAt = 0;
+  const facI = gi.factories.find((f) => f.owner < 0) || gi.factories[0];
+  facI.owner = 0;
+  facI.hp = facI.hpMax = C.FACTORY_HP;
+  const src = { id: facI.id, owner: 0, level: 1 };
+  const countLine = (g, fid, line) =>
+    g.units.filter((u) => !u.dead && u.homeFac === fid && (u.lineIdx || 0) === line).length;
+  /** 给这条线铺满名额（直接按配额人工补人，省去等生产的时间） */
+  const fill = (n, line) => {
+    for (let i = countLine(gi, facI.id, line); i < n; i++) {
+      const u = __test.spawnUnit(gi, src, 'warrior', facI.x + 90 + i * 6, facI.y + (line ? 40 : 0));
+      if (u) u.lineIdx = line;
+    }
+  };
+  const stepMs = (ms) => {
+    let left = ms;
+    let t = 1e6;
+    while (left > 0) {
+      t += 50;
+      __test.step(gi, 0.05, t);
+      left -= 50;
+    }
+  };
+
+  // ---- 一条线：铺满后彻底停产 ----
+  fill(cap, 0);
+  ok(countLine(gi, facI.id, 0) === cap, `这条线现在正好 ${cap} 个在场兵`);
+  stepMs(C.PRODUCE_MS * 2);
+  ok(countLine(gi, facI.id, 0) === cap, '名额满了 → 这段时间一个也没多产出来');
+
+  // ---- 让出一个名额 → 按 10% 的慢速补回来 ----
+  const victim = gi.units.find((u) => u.homeFac === facI.id && (u.lineIdx || 0) === 0);
+  victim.dead = true;
+  // 只剩 10% 产能 → 补一个人要吃 PRODUCT_MS / 0.1 的时间（按数据推导，不写死）
+  stepMs(Math.ceil(C.PRODUCE_MS / Math.max(0.01, mulOf(cap - 1))) + C.PRODUCE_MS);
+  ok(countLine(gi, facI.id, 0) === cap, '阵亡让出名额 → 慢慢补回到满额，然后重新停产');
+
+  // ---- 多条线各自名额独立 ----
+  while (facI.specs.length < 2) facI.specs.push({ type: 'ranger', tier: 1, branch: '', lineIdx: 1 });
+  while (facI.prog.length < 2) facI.prog.push(0);
+  facI.lines = 2;
+  fill(cap, 1);
+  const before2 = countLine(gi, facI.id, 0) + countLine(gi, facI.id, 1);
+  stepMs(C.PRODUCE_MS);
+  ok(
+    countLine(gi, facI.id, 0) === cap && countLine(gi, facI.id, 1) === cap,
+    `两条线各自封顶到 ${cap}（合计 ${before2} → ${countLine(gi, facI.id, 0) + countLine(gi, facI.id, 1)}）`
+  );
+
+  // ---- 快照：每座建筑把「各线在场数」一并下发（客户端据此显示 n/上限）----
+  const si = snapshot(gi);
+  const frow = si.f.find((r) => r[0] === facI.id);
+  ok(frow && frow.length === 11, `工厂快照 11 列（末列＝各产线在场兵数，实为 ${frow ? frow.length : '?'}）`);
+  const aliveRow = frow[frow.length - 1];
+  ok(
+    Array.isArray(aliveRow) && aliveRow.length === 2 && aliveRow[0] === cap && aliveRow[1] === cap,
+    `两条线各记 ${cap} 个在场兵（实际 ${aliveRow}）`
+  );
+  const hrow = si.hq.find((r) => r[0] === gi.hqs[0].id);
+  ok(hrow && hrow.length === 13, `总部快照 13 列（末列＝各产线在场兵数，实为 ${hrow ? hrow.length : '?'}）`);
+  const hqLine = hrow ? hrow[hrow.length - 1] : null;
+  ok(
+    Array.isArray(hqLine) && hqLine[0] >= C.START_ROSTER.length && hqLine[0] <= cap,
+    `总部那条线记着 ${hqLine ? hqLine[0] : '?'} 支：开局亲兵 ${C.START_ROSTER.length} 支同样占名额，之后补产到上限 ${cap}`
+  );
+  // 末列（第 20 列）是炮塔角，产线序号在第 19 列 —— 车体角 / 炮塔角各占一列（见 smoke/turret.js §5）
+  ok(si.u[0].length === 20, `单位快照 20 列（末列＝炮塔角，实为 ${si.u[0].length}）`);
+  const inLine = si.u.filter((r) => r[11] === facI.id);
+  ok(inLine.length > 0 && inLine.every((r) => r[18] === 0 || r[18] === 1), '每支部队都带着自己的产线序号');
 }
 
 console.log(failed ? `\n失败 ${failed} 项` : '\n全部通过');

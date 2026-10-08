@@ -43,12 +43,11 @@ function buildGame() {
   g.phaseEndsAt = 0;
   g.units.length = 0;
 
-  g.factories[0].owner = 0;
-  g.factories[1].owner = 0;
-  g.factories[2].owner = 1;
-  g.labs[0].owner = 0;
-  g.labs[1].owner = 0;
-  g.labs[2].owner = 1;
+  // ⚠️ 中立建筑的数量跟着人数走（2 人局实测 14 厂 / 2 所），别写死「至少要三座」：
+  //    研究所只有两座时 labs[2] 是 undefined，直接赋值会把整页生成脚本打死。
+  const own = (list, order) => order.forEach((o, i) => { if (list[i]) list[i].owner = o; });
+  own(g.factories, [0, 0, 1, 1]);
+  own(g.labs, [0, 1, 1, 0]);
   for (const f of g.factories) f.hp = f.hpMax;
   g.hqs[0].hp = Math.round(g.hqs[0].hpMax * 0.8);
   g.hqs[1].hp = Math.round(g.hqs[1].hpMax * 0.31);

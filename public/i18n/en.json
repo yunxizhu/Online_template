@@ -136,7 +136,9 @@
     "bot": "Computer",
     "tunnelLink": "Tunnel link",
     "copyTunnel": "Copy",
-    "tunnelHint": "Share this link so others can open it and join this room"
+    "tunnelHint": "Share this link so others can open it and join this room",
+    "mapLabel": "Map",
+    "mapRandom": "Random"
   },
   "bot": {
     "addTitle": "Add Computer",
@@ -225,7 +227,11 @@
     "hintSgsIdentity": "Sanguosha identity: 5/8 players, lord revealed.",
     "hintRange": "{label}: {min}–{max} players",
     "hintBlaster": "Blaster: 2–4 players real-time; WASD to move, mouse aim + left click to shoot; bullets bounce off walls forever until they hit someone (including you); 3 HP each; last one standing wins the round; points system (+3 survive, +1 per elimination), 3–11 rounds.",
-    "gameOption": "{label} ({min}–{max})"
+    "gameOption": "{label} ({min}–{max})",
+    "map": "Map",
+    "mapRandom": "Random",
+    "mapEmpty": "No saved maps",
+    "mapOption": "{name} ({n} players)"
   },
   "join": {
     "title": "Join by code",
