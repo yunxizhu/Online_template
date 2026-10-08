@@ -43,21 +43,19 @@ window.WarFactoryUi = (function () {
    * 同一份高度必须喂给三处，否则会出现「脚下的地和脚不是同一层」：
    *   地形挤出用 liftCell(row,col)，实体锚点用 groundY(x,y)，命中判定也用 groundY(x,y)。
    */
-  const HEIGHT_STEP = 18; // 每相差 1 层，纵向错开多少世界像素（格边长 40；崖面≈层差×此值，加厚才读得出断崖）
-  // 坡线 / 崖线的墨色与粗细（**屏幕像素**，画的时候除以 zoom 补偿 —— 拉到最远也看得见）
-  // ⚠️ 两套线的「语气」必须相反：崖 = 冷墨实线（这儿是断的）；坡 = 暖金细线（这儿走得上去）。
-  const CONTOUR_CLIFF = 'rgba(36,28,20,0.78)';
-  const CONTOUR_CLIFF_W = 4.6; // 崖沿线加粗：东西向只有这条线承载「过不去」
-  const CONTOUR_CLIFF_HI = 'rgba(255,250,236,0.38)';
-  const CONTOUR_SLOPE = 'rgba(198,164,98,0.30)';
-  const CONTOUR_SLOPE_W = 0.9;
-  // ⚠️ 挤出是「由远到近逐行画、近行盖远行」，单格抬升一旦超过一个地形格（40px），
-  //    低处会被整片吃掉（水面直接消失）。所以山/水的额外视觉层最多 3 / 2 层，
-  //    「更高 / 更深」靠的是立面与山冠，不是继续加 lift。
-  const LIFT_MTN_BOOST = 3; // 山体额外拔高的视觉层数（一眼看出它立着）
-  const LIFT_WAT_SINK = 2; // 水面额外下沉的视觉层数（凹在洼地里）
-  const MTN_CROWN_K = 1.25; // 山的南缘再向上叠一座山冠：高度 = 格边长 × 这个值（再按格抖 ±25%）
-  const REPAINT_PAD_UP = 4; // 局部重绘往上多留几行：山冠会向上溢出这么多，留少了会残留旧笔触
+  const HEIGHT_STEP = 18; // 每相差 1 层，纵向错开多少世界像素（实体跟着抬，纯粹为了「站在坡上」的观感）
+  // 断崖线：**全图唯一的强调色**，只用来标「这儿过不去」。
+  // 线宽是**屏幕像素**（画的时候除以 zoom 补偿）—— 拉到最远也还是同样粗。
+  //
+  // ⚠️ 极简原则（2026-10-09）：以前这里有三套线（等高 / 崖 / 坡），叠在一起互相干扰，
+  //    把「能不能走」这条最关键的信息淹掉了。现在只剩崖线一种 ——
+  //    坡道是整片金色块（色块比线醒目得多），等高由色阶表达，都不需要线。
+  const CONTOUR_CLIFF = '#2b2118';
+  const CONTOUR_CLIFF_W = 2.6; // 屏幕像素
+  // 山/水的额外视觉层：山拔高、水下沉，让它们的**位置**也带上高低感。
+  // 注意这只是整体位移（不画立面、不画山冠），所以给多给少都不会把图弄脏。
+  const LIFT_MTN_BOOST = 3; // 山体额外拔高的视觉层数
+  const LIFT_WAT_SINK = 2; // 水面额外下沉的视觉层数
   const RIM_STEPS = 2; // 地图最南沿那圈「沙盘厚度」折合几层
   const BG_PAD = 96; // 背景画布上下各留这么多世界像素，给抬起/下沉的地块当底纸
   /*
@@ -470,10 +468,18 @@ window.WarFactoryUi = (function () {
   let heightLevels = 3; // 层数（下发后以服务端 consts.heightLevels 为准）
   let heightCliff = 2; // 层差 ≥ 此值 = 崖（过不去）—— 服务端下发的 height.cliffAt
   let heightTerrace = 2; // 台地档位间隔（层）
+  // 坡道掩码（服务端下发）：1 = 这一格是**挖出来的坡**。
+  // 坡是「无视上下高低差也能移动」的那种地形 —— 要画成**成片**的一整条地带，
+  // 而不是一条线（线在满屏地图上认不出来，实测每簇只有几格）。
+  let rampGrid = null;
   // 坡与崖的边界线（世界坐标里已经算好抬升；每段 4 个数 x1,y1,x2,y2）。
   // 单独存一份是为了**按下发时的屏幕粗细重画** —— 烘进地形贴图会被缩放抹平。
   let contourCliff = null;
   let contourSlope = null;
+  // 等高层分界线：每跨**一层**就画一条极淡的界（崖线之外另有一套）。
+  // 作用是让「这块地到底比旁边高几层」在任何缩放下都能数出来 ——
+  // 崖线只告诉你「过不去」，坡线只告诉你「能走」，只有等高线能告诉你「高多少」。
+  let contourBand = null;
 
   // ---- 高低差：层 → 视觉抬升（像素）----
   // 三个入口必须同源，否则会出现「地块抬了、站在上面的兵没抬」。
@@ -788,12 +794,9 @@ window.WarFactoryUi = (function () {
   /**
    * 地形编辑器用的「局部重绘」：只重建这几行，不为涂一笔把八万格整张重画一遍。
    *
-   * paintTerrain 的每一笔都只落在**自己这一行 ± 一小截**（高光/阴影带最多向下溢出
-   * 约 SH 像素），但它要读上下邻居（外轮廓要先知道邻居是不是同类），所以这里
-   * 上下各多留几行一起重画：留少了，新旧交界处会露出一道半透明的重复笔触。
-   * ⚠️ 往上要多留 REPAINT_PAD_UP 行 —— 山的南缘会再向上叠一座山冠（最高约 1.3 格），
-   *    加上山体本身的抬升，笔触能往上溢出两格多；只留两行的话旧山冠会残留在新图上面。
-   * 裁剪框正好是这几行的行带再加上那一点溢出 —— 只擦这么多、也只画这么多。
+   * paintTerrain 的每一笔都只落在**自己这一行**（极简版纯色块，不向上溢出），
+   * 但它要读上下邻居（分界线要先知道邻居是不是同类），所以这里上下各多留 1 行。
+   * 裁剪框正好是这几行的行带 —— 只擦这么多、也只画这么多。
    *
    * @param {number} a 脏行首行（含）
    * @param {number} b 脏行末行（含）
@@ -803,10 +806,12 @@ window.WarFactoryUi = (function () {
     const g = terrainCanvas.getContext('2d');
     if (!g) return;
     const CELL = TERRAIN_CELL;
-    const r0 = Math.max(0, (a | 0) - REPAINT_PAD_UP);
-    const r1 = Math.min(terrainGH - 1, (b | 0) + 2);
+    // 极简版每格只铺纯色、不向上溢出（旧版的山冠会往上盖一格多），
+    // 所以只需往上留 1 行给「本格与北邻的分界线」。
+    const r0 = Math.max(0, (a | 0) - 1);
+    const r1 = Math.min(terrainGH - 1, (b | 0) + 1);
     const yTop = r0 * CELL;
-    const yBot = (r1 + 1) * CELL + Math.max(4, Math.round(CELL * 0.2));
+    const yBot = (r1 + 1) * CELL + 2;
     g.save();
     g.translate(0, terrainOffY); // 与 setTerrainGrid 同一套坐标：0 层落在 y=0
     g.beginPath();
@@ -830,24 +835,35 @@ window.WarFactoryUi = (function () {
    *
    * 顺手把共线的相邻段并成一长段（台地边界大多是整条直线），八万格收下来也就千把段。
    */
+  /**
+   * 收「断崖线」一套边界段。
+   *
+   * ⚠️ 极简原则：以前这里收三套（等高 / 崖 / 坡），现在**只收崖**。
+   *    - 坡道：已是整片金色色块，再叠线只会把它压脏
+   *    - 等高：高度改由色阶表达，线是多余的「说不清是什么」的痕迹
+   *
+   * 单独存一份（不烘进地形贴图）是为了按 `1 / zoom` 补线宽 ——
+   * 贴图的线宽是世界像素，拉远会被缩放抹平（实测 z=0.09 时每层只剩 0.16 屏幕像素）。
+   */
   function buildContours() {
     contourCliff = null;
     contourSlope = null;
+    contourBand = null;
     if (!heightGrid || !terrainGrid) return;
     const CELL = TERRAIN_CELL;
     const gh = terrainGH;
     const gw = terrainGW;
     const cliff = [];
-    const slope = [];
-    const push = (isCliff, seg) => (isCliff ? cliff : slope).push(seg);
     /**
-     * 这一段边界画成「崖」还是「坡」。
+     * 这一段边界是不是「断崖」。
      *
      * 除了层差，**地形本身也算隔断**：只要有一侧是山或水，那儿就过不去（服务端
-     * 也是这么判的），必须画成崖线 —— 否则山脚下一圈会被画成淡坡线，读起来像能走。
-     * 于是淡坡线只剩真正的坡口，线本身就等于「这儿走得上去」。
+     * 也是这么判的）。坡道格不算 —— 坡是「无视高低差也能走」的地形。
      */
     const isCliffEdge = (ra, ca, rb, cb, a, b) => {
+      const pa = rampGrid && rampGrid[ra * gw + ca] === 1;
+      const pb = rampGrid && rampGrid[rb * gw + cb] === 1;
+      if (pa || pb) return false; // 坡是通路
       if (Math.abs(a - b) >= heightCliff) return true;
       const ta = terrainGrid[ra][ca];
       const tb = terrainGrid[rb][cb];
@@ -863,15 +879,18 @@ window.WarFactoryUi = (function () {
           prev = null;
           continue;
         }
-        const isCliff = Math.abs(a - b) >= heightCliff;
+        if (!isCliffEdge(r, c, r - 1, c, a, b)) {
+          prev = null;
+          continue;
+        }
         const y = r * CELL - liftCell(r, c);
         const x1 = c * CELL;
-        const seg = { x1, y1: y, x2: x1 + CELL, y2: y, cliff: isCliff };
-        if (prev && prev.cliff === isCliff && Math.abs(prev.y1 - y) < 0.01 && Math.abs(prev.x2 - x1) < 0.01) {
+        const seg = { x1, y1: y, x2: x1 + CELL, y2: y };
+        if (prev && Math.abs(prev.y1 - y) < 0.01 && Math.abs(prev.x2 - x1) < 0.01) {
           prev.x2 = seg.x2;
         } else {
           prev = seg;
-          push(isCliff, seg);
+          cliff.push(seg);
         }
       }
     }
@@ -885,20 +904,22 @@ window.WarFactoryUi = (function () {
           prev = null;
           continue;
         }
-        const isCliff = Math.abs(a - b) >= heightCliff;
+        if (!isCliffEdge(r, c, r, c - 1, a, b)) {
+          prev = null;
+          continue;
+        }
         const x = c * CELL;
         const y1 = r * CELL - liftCell(r, c);
-        const seg = { x1: x, y1, x2: x, y2: y1 + CELL, cliff: isCliff };
-        if (prev && prev.cliff === isCliff && Math.abs(prev.x1 - x) < 0.01 && Math.abs(prev.y2 - y1) < 0.01) {
+        const seg = { x1: x, y1, x2: x, y2: y1 + CELL };
+        if (prev && Math.abs(prev.x1 - x) < 0.01 && Math.abs(prev.y2 - y1) < 0.01) {
           prev.y2 = seg.y2;
         } else {
           prev = seg;
-          push(isCliff, seg);
+          cliff.push(seg);
         }
       }
     }
     contourCliff = packSegs(cliff);
-    contourSlope = packSegs(slope);
   }
 
   function packSegs(list) {
@@ -934,20 +955,27 @@ window.WarFactoryUi = (function () {
   }
 
   /**
-   * 找一个「崖线和坡线挨在一起」的世界坐标（给测试与出图脚本用）：
-   * 镜头对准这儿，一屏里才同时看得见「过不去的崖」和「走得上去的坡」，好比对两套画法。
+   * 找一个「断崖线旁边有坡道格」的世界坐标（给测试与出图脚本用）：
+   * 镜头对准这儿，一屏里能同时看到「过不去的崖」和「走得上去的坡」。
    * 找不到（整图只有一种边界）返回 null。
    */
   function contourSpotNear(radius) {
     const R = radius || 700;
-    if (!contourCliff || !contourSlope) return null;
+    if (!contourCliff || !rampGrid) return null;
+    const span = Math.max(1, Math.round(R / TERRAIN_CELL));
     for (let i = 0; i < contourCliff.length; i += 4) {
       const ax = (contourCliff[i] + contourCliff[i + 2]) / 2;
       const ay = (contourCliff[i + 1] + contourCliff[i + 3]) / 2;
-      for (let j = 0; j < contourSlope.length; j += 4) {
-        const bx = (contourSlope[j] + contourSlope[j + 2]) / 2;
-        const by = (contourSlope[j + 1] + contourSlope[j + 3]) / 2;
-        if (Math.abs(ax - bx) <= R && Math.abs(ay - by) <= R) return { x: ax, y: ay };
+      const cr = Math.min(terrainGH - 1, Math.max(0, Math.floor(ay / TERRAIN_CELL)));
+      const cc = Math.min(terrainGW - 1, Math.max(0, Math.floor(ax / TERRAIN_CELL)));
+      for (let dr = -span; dr <= span; dr++) {
+        for (let dc = -span; dc <= span; dc++) {
+          const rr = cr + dr;
+          const c2 = cc + dc;
+          if (rr < 0 || c2 < 0 || rr >= terrainGH || c2 >= terrainGW) continue;
+          if (rampGrid[rr * terrainGW + c2] !== 1) continue;
+          return { x: ax, y: ay };
+        }
       }
     }
     return null;
@@ -960,8 +988,18 @@ window.WarFactoryUi = (function () {
    * 崖（层差 ≥ cliffAt）画粗、画深：那是过不去的断崖；
    * 坡（层差 = 1）画细、画淡：那是从这儿能走上去的斜坡。
    */
+  /**
+   * 断崖线（画在地形贴图之上、单位之下）。
+   *
+   * ⚠️ 极简原则下这里**只画一种线**：断崖。
+   *    坡道已经是整片金色块，不需要再叠线（叠了反而把它压脏）；
+   *    等高层界也去掉了 —— 高度改由色阶表达（见 paintTerrain 的 C_HIGH/C_HIGHER 等），
+   *    再加一层淡线只会让地图多出一层「说不清是什么」的痕迹。
+   *
+   * 线宽除以 zoom ⇒ 屏幕上恒定粗细，拉到最远也还看得见。
+   */
   function drawContours() {
-    if (!contourCliff && !contourSlope) return;
+    if (!contourCliff) return;
     const x0 = cam.x - 4;
     const x1 = cam.x + VIEW_W + 4;
     const y0 = cam.y - 4;
@@ -969,21 +1007,9 @@ window.WarFactoryUi = (function () {
     ctx.save();
     ctx.lineCap = 'butt';
     ctx.lineJoin = 'miter';
-    if (contourSlope) {
-      ctx.strokeStyle = CONTOUR_SLOPE;
-      ctx.lineWidth = CONTOUR_SLOPE_W / zoom;
-      if (segsPath(contourSlope, x0, y0, x1, y1)) ctx.stroke();
-    }
-    if (contourCliff) {
-      ctx.strokeStyle = CONTOUR_CLIFF;
-      ctx.lineWidth = CONTOUR_CLIFF_W / zoom;
-      if (segsPath(contourCliff, x0, y0, x1, y1)) ctx.stroke();
-      // 崖沿再压一道偏冷的高光：崖顶那一线是「受光的棱」，一眼把高的一侧点出来
-      ctx.strokeStyle = CONTOUR_CLIFF_HI;
-      ctx.lineWidth = 1.6 / zoom;
-      ctx.translate(0, -2.4 / zoom);
-      if (segsPath(contourCliff, x0, y0, x1, y1)) ctx.stroke();
-    }
+    ctx.strokeStyle = CONTOUR_CLIFF;
+    ctx.lineWidth = CONTOUR_CLIFF_W / zoom;
+    if (segsPath(contourCliff, x0, y0, x1, y1)) ctx.stroke();
     ctx.restore();
   }
 
@@ -1186,6 +1212,18 @@ window.WarFactoryUi = (function () {
       } else {
         heightGrid = null; // 没下发（比如旧服务端）→ 全图按 0 层，仍是原来那张俯视图
       }
+      // 坡道：服务端亲手挖出来的「无视高低差也能走」的地形，逐格 '0'/'1'。
+      // ⚠️ 必须用服务端下发的这一份，**不能**按「层差=1」自己反推 ——
+      //    反推会把台地之间并非坡道的相邻格也染上色（实测多到 10%），
+      //    画出来一堆假坡；而且客户端口径与服务端一旦漂移，
+    //    就会出现「画着是金色、实际走不通」—— 那比不画更糟。
+      if (terr.ramps && terr.ramps.length >= rows * cols) {
+        const rg = new Uint8Array(rows * cols);
+        for (let i = 0; i < rows * cols; i++) rg[i] = terr.ramps.charCodeAt(i) === 49 ? 1 : 0;
+        rampGrid = rg;
+      } else {
+        rampGrid = null; // 旧服务端没有这一项 → 不画坡带（退回原来的表现）
+      }
       setTerrainGrid(grid, cols, rows);
       return ok;
     } catch (err) {
@@ -1233,361 +1271,186 @@ window.WarFactoryUi = (function () {
    * 类型：0 平原（留白）/ 2 山地（不可通行 + 遮挡视线弹道）/ 4 水域（不可通行，不遮挡）。
    * 沼泽已移除。
    */
+  /**
+   * 地形绘制 —— 极简版（2026-10-09 重写）。
+   *
+   * ⚠️ 为什么整段重写：此前这里堆到 **49 个笔触 / 34 种颜色**（山体 9 色 + 山冠 3 色
+   *    + 水 7 色 + 崖 8 色 + 坡 5 色），全挤在一张 8 万格的地图上。
+   *    结果是「每一格都画了一堆东西」，而玩家真正要读的只有三件事：
+   *      ① 能不能走（山 / 水挡路）
+   *      ② 高低差（高地 / 低地）
+   *      ③ 哪里能上下（坡道）
+   *    装饰性笔触（山冠、水波、崖齿、投影、刻痕、人字纹…）互相叠加后互相干扰，
+   *    把这三条真正重要的信息淹掉了 —— 就是「很丑 + 可分辨性很差 + 乱七八糟」。
+   *
+   * 新的原则：**每格一个纯色 + 只画必要边界**。
+   *   - 不画任何渐变、山冠、水波、齿、投影、刻痕、纹理
+   *   - 边界线只画「断崖」一种（这才是唯一必须提醒「过不去」的地方）
+   *   - 高度靠**色阶**表达（高地暖、低地冷），不靠位移与立面堆叠
+   */
   function paintTerrain(g, grid, gw, gh, CELL, band) {
     const at = (r, c) => (r < 0 || r >= gh || c < 0 || c >= gw ? -1 : grid[r][c]);
+    /**
+     * 坡道格 = 服务端 carveRamps 亲手挖出来的坡（terrain.ramps）。
+     * 口径与服务端一致：坡是「无视上下高低差也能移动」的那种地形。
+     * 不按「层差=1」反推 —— 反推会把并非坡道的相邻格也染上色，
+     * 且客户端与服务端口径一旦漂移，就会出现「画成金色、实际走不通」。
+     */
+    const isRampCell = (r, c) => {
+      if (!rampGrid || r < 0 || r >= gh || c < 0 || c >= gw) return false;
+      return rampGrid[r * gw + c] === 1;
+    };
+
     // 局部重绘（地形编辑器涂抹时用）：只重画 band 那几行。
-    // 每一行的笔触都只落在「自己那一格 ± 一格左右」，所以调用方把那一段先擦干净、
-    // 再重画这几行即可 —— 不必为了涂一笔把八万格整张重建一遍。
-    // 外面多留 2 行余量（重画的这几行要读上下邻居），细节见 repaintTerrainRows。
     const r0 = band ? Math.max(0, band.r0 | 0) : 0;
     const r1 = band ? Math.min(gh - 1, band.r1 | 0) : gh - 1;
-    const SH = Math.max(4, Math.round(CELL * 0.2)); // 高光 / 阴影带的宽度
 
-    // 山（越深越暗，与宣纸拉开对比，一眼看出「走不了」）
-    const MTN_FILL = 'rgba(86,80,68,0.74)';
-    const MTN_EDGE = 'rgba(40,36,28,0.90)';
-    const MTN_HI = 'rgba(255,250,232,0.46)';
-    const MTN_DARK = 'rgba(34,30,24,0.46)';
-    const MTN_SHADOW = 'rgba(30,26,20,0.30)'; // 落到地面上的外投影
-    const MTN_PEAK = 'rgba(52,46,36,0.62)';
-    const MTN_TOP = 'rgba(158,150,132,0.74)'; // 山体顶面渐变的上半（受光）
-    const MTN_BOT = 'rgba(50,44,34,0.84)'; // 下半（背光）：与上半拉开，山才有体积
-    // 山冠（山的南缘向上再叠的那座山头）：左半受光、右半背光，中间一条脊线
-    const CROWN_LIT = 'rgba(150,142,124,0.72)';
-    const CROWN_DARK = 'rgba(44,38,28,0.80)';
-    const CROWN_SNOW = 'rgba(255,252,240,0.44)'; // 山尖那一线受光的亮边
-    // 水（冷色，与暖色的山区分开）—— 越往下越深，读起来是「凹下去的深坑」
-    const WAT_FILL = 'rgba(58,88,112,0.66)';
-    const WAT_TOP = 'rgba(78,110,134,0.60)'; // 水面渐变的上半（靠岸那侧稍浅、有反光）
-    const WAT_EDGE = 'rgba(30,56,78,0.90)';
-    const WAT_SH = 'rgba(18,40,60,0.52)'; // 上/左内缘：凹陷阴影
-    const WAT_HI = 'rgba(226,240,250,0.34)'; // 下/右内缘：受光的对岸
-    const WAT_WAVE = 'rgba(236,246,252,0.46)';
+    /* ---- 调色板：每个语义只有 1~2 个色，不再为同一件事准备一堆色 ---- */
+    // 地形（能不能走）：山=深褐（不可走）、水=青灰（不可走）、平原=纸色（可走）
+    const C_MTN = '#6b6154';
+    const C_WAT = '#8fa6b0';
+    // 高度（高低差）：靠**色阶**表达。高地偏暖亮、低地偏冷暗。
+    // 这是唯一在所有缩放下都可靠的高低提示 —— 挤出位移在最远视角只剩 ~1.6 屏幕像素。
+    const C_HIGH = '#efe0bd'; // 0 层（基准平原）
+    const C_HIGHER = '#e6c98d'; // +1~+2 层（高地）
+    const C_LOWER = '#cdd6d9'; // −1 层（洼地）
+    const C_LOWEST = '#b8c6cd'; // −2~−3 层（深洼）
+    // 坡道：整片暖金，一眼认出「这儿能上下」
+    const C_RAMP = '#f0b429';
+    // 断崖边线：全图唯一的强调色，只用来标「过不去」
+    const C_CLIFF = '#2b2118';
 
-    // ---- 立体感的关键：层 → 本地坐标系里的抬升量（与实体的 groundY 同源）----
-    const liftOf = (r, c) => liftCell(r, c);
-    // 空地顶面几乎不按层铺色：台地只有 0/±2/±3 几档，每档一块大色会把地图切成黄/灰色斑。
-    // 高低改由挤出立面 + 加厚崖线表达；顶面只留极淡一点，避免完全死平。
-    const plainFill = (r, c) => {
-      if (!heightGrid) return null;
+    /** 某一格该铺什么底色（纯色，无渐变） */
+    const baseColor = (r, c) => {
+      const t = at(r, c);
+      if (t === 2) return C_MTN; // 山
+      if (t === 4) return C_WAT; // 水
+      if (isRampCell(r, c)) return C_RAMP; // 坡道：最优先 —— 「能上下」比高度更重要
       const lv = hLevel(r, c);
-      if (!lv) return null;
-      return lv > 0
-        ? 'rgba(255,250,232,' + (0.028 * lv).toFixed(3) + ')'
-        : 'rgba(58,66,78,' + (0.030 * -lv).toFixed(3) + ')';
-    };
-    // 立面（台阶朝着观察者的那一面）：比顶面深一号 —— 这就是「坡」被看见的那一面
-    const WALL_MTN = 'rgba(40,34,26,0.88)'; // 山的峭壁：压到最暗，配凿痕读成「爬不上去」
-    const WALL_WAT = 'rgba(30,58,80,0.78)';
-    const BANK_FACE = 'rgba(70,58,40,0.82)'; // 水岸的土壁：坑沿那一圈，一看就下不去
-    // 坡：落差只有 1 层 → 一层**渐变**的暖色，顶上偏亮、底下淡到透明 ——
-    // 于是它和下面那层地自然连成一片，看着是「斜下去的地面」而不是「一道坎」。
-    // （早先是一整块纯色，加上等高线，读起来就像个隔断 —— 坡必须画成连续的。）
-    const SLOPE_FACE = 'rgba(150,130,94,0.34)'; // 坡肩（受光那条窄带）与渐变中段共用的基色
-    const SLOPE_TOP = 'rgba(206,184,138,0.46)'; // 渐变顶：坡肩受光
-    const SLOPE_END = 'rgba(150,130,94,0.00)'; // 渐变底：彻底融进下一层地面
-    const SLOPE_LIP = 'rgba(255,250,232,0.22)';
-    // 崖：落差 ≥ cliff（或山缘 / 水岸）→ 压到很暗，再补崖沿高光 + 竖向凿痕 + 崖脚暗边，
-    // 三样凑出「这儿是断的，绕坡走」的观感（立面随 HEIGHT_STEP 加厚）
-    const CLIFF_FACE = 'rgba(38,30,22,0.82)';
-    const CLIFF_LIP = 'rgba(255,250,236,0.42)';
-    const CLIFF_GROOVE = 'rgba(22,16,12,0.42)';
-    const CLIFF_FOOT = 'rgba(18,12,8,0.52)';
-    const RIM_K = RIM_STEPS * HEIGHT_STEP; // 地图南边缘那圈「厚度」（看着像一块切好的沙盘）
-
-    const line = (x1, y1, x2, y2) => {
-      g.beginPath();
-      g.moveTo(x1, y1);
-      g.lineTo(x2, y2);
-      g.stroke();
+      if (lv >= 1) return C_HIGHER;
+      if (lv <= -2) return C_LOWEST;
+      if (lv === -1) return C_LOWER;
+      return C_HIGH;
     };
 
     /**
-     * 山的南缘向上再叠一座山冠 —— 山脉这才「拔地而起」，而不是一块被抬高的灰方块。
-     *
-     * 只画在「本格是山、南邻不是山」的那一圈：山块内部不叠，否则整片会变成瓦片堆。
-     * 笔触只往上溢出（遮住北邻的地面 = 山挡住后面，正是要的），往下绝不越界 ——
-     * 南邻那一行后画，本来就该盖住山脚。
+     * (ra,ca) ↔ (rb,cb) 之间是不是断崖（过不去）。判据与服务端 cliffBetween 同口径：
+     *   ① 层差 ≥ cliffAt
+     *   ② 一侧是可通行地形、另一侧是山/水（**只在交界那条边上成立**）
+     *   ③ 坡道格参与时不成立 —— 坡是「无视高低差也能走」的地形
      */
-    const crownAt = (g2, r, c, yTop) => {
-      const cr = cellRng((r ^ 0x5f3a) >>> 0, c);
-      const h = CELL * MTN_CROWN_K * (0.72 + cr() * 0.52);
-      const x = c * CELL;
-      const base = yTop + CELL * 0.55; // 扎根在山顶偏下，看着是从山体里长出来的
-      const px = x + CELL * (0.34 + cr() * 0.32); // 山尖偏一点，不要整排都对称
-      g2.fillStyle = CROWN_DARK; // 背光的右半
-      g2.beginPath();
-      g2.moveTo(x - 0.5, base);
-      g2.lineTo(px, base - h);
-      g2.lineTo(x + CELL + 0.5, base);
-      g2.closePath();
-      g2.fill();
-      g2.fillStyle = CROWN_LIT; // 受光的左半
-      g2.beginPath();
-      g2.moveTo(x - 0.5, base);
-      g2.lineTo(px, base - h);
-      g2.lineTo(px - CELL * 0.14, base);
-      g2.closePath();
-      g2.fill();
-      g2.strokeStyle = MTN_EDGE; // 脊线
-      g2.lineWidth = 1.6;
-      g2.beginPath();
-      g2.moveTo(x - 0.5, base);
-      g2.lineTo(px, base - h);
-      g2.lineTo(x + CELL + 0.5, base);
-      g2.stroke();
-      g2.strokeStyle = CROWN_SNOW; // 山尖那一线受光
-      g2.lineWidth = 1.4;
-      g2.beginPath();
-      g2.moveTo(px, base - h);
-      g2.lineTo(px - CELL * 0.17, base - h * 0.4);
-      g2.stroke();
+    const cliffSide = (ra, ca, rb, cb) => {
+      if (isRampCell(ra, ca) || isRampCell(rb, cb)) return false;
+      const ta = at(ra, ca);
+      const tb = at(rb, cb);
+      const aSolid = ta === 2 || ta === 4;
+      const bSolid = tb === 2 || tb === 4;
+      if (aSolid !== bSolid) return true; // ② 可通行 ↔ 山水的交界
+      if (aSolid) return false; // 山↔山、水↔水：同一块地形内部，不画线
+      return Math.abs(hLevel(ra, ca) - hLevel(rb, cb)) >= heightCliff; // ①
     };
 
-    // ① 逐格挤出：**由远到近**（行号小 = 远处）逐行画，后画的行盖住前一行露出的部分，
-    //    相邻两行相差一层就露出一段南向立面 —— 高低差就是这么看见的。
-    //    同一段连续的「地形类型 + 层 + 南邻层」合并成一笔，82 万格也不用画 82 万次。
+    // ① 逐格铺纯色。合并「同色连续段」成一笔，八万格也不用画八万次。
     for (let r = r0; r <= r1; r++) {
-      const lastRow = r + 1 >= gh;
       let c = 0;
       while (c < gw) {
-        const t = grid[r][c];
-        const lv = liftOf(r, c);
-        const sf = lastRow ? -RIM_K : liftOf(r + 1, c);
+        const col = baseColor(r, c);
         let c1 = c;
-        while (c1 + 1 < gw && grid[r][c1 + 1] === t && liftOf(r, c1 + 1) === lv) {
-          const sf2 = lastRow ? -RIM_K : liftOf(r + 1, c1 + 1);
-          if (sf2 !== sf) break;
+        while (c1 + 1 < gw && baseColor(r, c1 + 1) === col) c1++;
+        const x = c * CELL;
+        const w = (c1 - c + 1) * CELL;
+        g.fillStyle = col;
+        g.fillRect(x, r * CELL, w, CELL + 0.6); // 多半像素，避免相邻格之间漏白线
+        c = c1 + 1;
+      }
+    }
+
+    // ② 断崖边线：只画「这一侧过不去」的地方。
+    //
+    //   判据与寻路完全一致（cliffBetween）：层差 ≥ cliffAt，或一侧是山/水。
+    //   坡道格不画线 —— 坡是能走的，画线反而是错的。
+    //
+    // ⚠️ 「一侧是山/水」必须精确到**那一侧**：只有「本格可通行、南邻是山/水」
+    //    或「本格是山/水、南邻可通行」才算断崖。
+    //    早先写成 `blocks = 本格是山或水`，于是**水体内部每格都成立** ——
+    //    每格下沿各画一条，整片湖面变成百叶窗（就是「乱七八糟」的典型）。
+    //    山/水**内部**的格子之间当然不可通行，但那属于「这块地形本身」，
+    //    用底色表达就够了，不需要再画线。
+    //
+    //   为什么只画「南向」这一侧：挤出面只朝观察者（南）露出，
+    //   其余方向的落差被本格自己挡住，硬画只会多出一堆莫名其妙的线。
+    g.strokeStyle = C_CLIFF;
+    g.lineWidth = 3;
+    for (let r = r0; r <= r1; r++) {
+      const last = r + 1 >= gh;
+      let c = 0;
+      while (c < gw) {
+        const here = last ? false : cliffSide(r, c, r + 1, c);
+        // 合并连续同判定的横段
+        let c1 = c;
+        while (c1 + 1 < gw) {
+          if (cliffSide(r, c1 + 1, r + 1, c1 + 1) !== here) break;
           c1++;
         }
-        const x0 = c * CELL;
-        const w = (c1 - c + 1) * CELL;
-        const yTop = r * CELL - lv;
-        // 山 / 水的顶面也走渐变，不再是纯色块：山「上亮下暗」= 受光的体积，
-        // 水「上浅下深」= 越往坑里越暗。纯色块读起来是一片贴在纸上的色，没有高、也没有深。
-        let fill = null;
-        if (t === 2) {
-          const gm = g.createLinearGradient(0, yTop, 0, yTop + CELL);
-          gm.addColorStop(0, MTN_TOP);
-          gm.addColorStop(0.55, MTN_FILL);
-          gm.addColorStop(1, MTN_BOT);
-          fill = gm;
-        } else if (t === 4) {
-          const gw3 = g.createLinearGradient(0, yTop, 0, yTop + CELL);
-          gw3.addColorStop(0, WAT_TOP);
-          gw3.addColorStop(1, WAT_FILL);
-          fill = gw3;
-        } else {
-          fill = plainFill(r, c);
-        }
-        if (fill) {
-          g.fillStyle = fill;
-          g.fillRect(x0, yTop, w, CELL + 0.6); // 多半个像素，免得相邻两格之间留白线
-        }
-        // 南向立面：本格底边到「南邻顶面」之间那段落差（>0 才露得出来）
-        const yBot = yTop + CELL;
-        const ySouth = (r + 1) * CELL - sf;
-        if (ySouth > yBot + 0.4) {
-          const wallH = ySouth - yBot;
-          // 落几层？判崖一律用**真实高度层**（与服务端 cliffBetween 同口径），
-          // 不用带山/水加成的视觉抬升 —— 否则画出来的崖和实际过不去的地方对不上。
-          const dropL = hLevel(r, c) - hLevel(r + 1, c);
-          // 山缘 / 水岸一律按「过不去」画：那是地形本身的边界（不可通行），
-          // 哪怕两侧的坡地高度只差 1 层，也必须是壁，不能画成能走上去的坡。
-          const isEdge = t === 2 || (t !== 4 && at(r + 1, c) === 4);
-          const isCliff = dropL >= heightCliff || isEdge;
-          const bank = t !== 2 && t !== 4 && at(r + 1, c) === 4;
-          let face = CLIFF_FACE;
-          if (t === 2) face = WALL_MTN;
-          else if (t === 4) face = WALL_WAT;
-          else if (bank) face = BANK_FACE;
-          else if (isCliff) face = CLIFF_FACE;
-          else {
-            // 坡：整面走渐变（顶亮 → 底透明），不留纯色块 —— 纯色块就是「一道坎」的由来
-            const grd = g.createLinearGradient(0, yBot, 0, ySouth);
-            grd.addColorStop(0, SLOPE_TOP);
-            grd.addColorStop(0.5, SLOPE_FACE);
-            grd.addColorStop(1, SLOPE_END);
-            face = grd;
-          }
-          g.fillStyle = face;
-          g.fillRect(x0, yBot, w, wallH);
-          if (t !== 4) {
-            if (isCliff) {
-              // 崖沿：加厚受光棱 —— 断崖「厚度」主要靠这条 + 立面高度读出来
-              g.fillStyle = CLIFF_LIP;
-              g.fillRect(x0, yBot, w, Math.min(5.2, wallH * 0.42));
-              // 岩壁竖纹：一道道凿出来的竖沟，越往下越暗（山体本身也吃这套）
-              const cr = cellRng(r, c);
-              g.fillStyle = t === 2 ? 'rgba(24,20,14,0.40)' : CLIFF_GROOVE;
-              const gstep = Math.max(5, CELL * 0.2);
-              for (let gx = x0 + cr() * gstep; gx < x0 + w - 1; gx += gstep) {
-                const gw2 = 1.4 + cr() * 1.8;
-                g.fillRect(gx, yBot + 4.2, gw2, Math.max(3, (wallH - 4.2) * (0.55 + cr() * 0.4)));
-              }
-              // 崖脚：再压一道最暗的，把「高」和「低」彻底切开
-              g.fillStyle = CLIFF_FOOT;
-              g.fillRect(x0, ySouth - Math.min(5.0, wallH * 0.4), w, Math.min(5.0, wallH * 0.4));
-            } else {
-              // 坡：主面已在上面用渐变铺好（连续、无横向硬边），
-              // 这里只在坡肩压一条窄暖带 + 一道亮边，把「从这儿开始往下走」点出来 ——
-              // 与崖那种「深 + 凿痕 + 崖脚」的立面截然不同，两套一眼可分。
-              g.fillStyle = SLOPE_FACE;
-              g.fillRect(x0, yBot, w, Math.min(2.2, wallH * 0.45));
-              g.fillStyle = SLOPE_LIP;
-              g.fillRect(x0, yBot, w, Math.min(1.2, wallH * 0.3));
-            }
-          }
-        }
-        // 山的南缘：顶面之上再叠一座山冠 —— 山脉这才「拔地而起」，
-        // 而不是一块被抬高了的灰方块。（画在这一行里：它会遮住北邻的地面 = 山挡住后面，
-        // 又会被南邻那一行盖住山脚 = 前面的地挡住山根，遮挡关系天然是对的。）
-        if (t === 2) {
-          for (let cc = c; cc <= c1; cc++) {
-            if (at(r + 1, cc) === 2) continue; // 山块内部不叠，只有朝南的那一圈拔起来
-            crownAt(g, r, cc, r * CELL - lv);
-          }
+        if (here) {
+          const x = c * CELL;
+          const w = (c1 - c + 1) * CELL;
+          g.beginPath();
+          g.moveTo(x, r * CELL + CELL);
+          g.lineTo(x + w, r * CELL + CELL);
+          g.stroke();
         }
         c = c1 + 1;
       }
     }
 
-    // ② 只在与异类相接的边上画轮廓与明暗：整片地形只有外缘有线，内部是干净的一整块
+    // ③ 地形外缘：山/水 与其它地形**相接的那几条边**画一条细线。
+    //
+    // ⚠️ 只画「外缘」，不画每一格的上/下沿 —— 否则整片水面会被画成横条纹
+    //    （上一版就是这个问题：极简之前我逐格画上下沿，结果水域像百叶窗）。
+    //    判据就是「这一侧和邻格不同类」，没有邻格就越界，不画。
+    g.strokeStyle = 'rgba(70,60,48,0.40)';
+    g.lineWidth = 1.5;
     for (let r = r0; r <= r1; r++) {
-      for (let c = 0; c < gw; c++) {
-        const t = grid[r][c];
-        if (t !== 2 && t !== 4) continue;
-        const x = c * CELL;
-        const y = r * CELL - liftOf(r, c); // 山顶/水面整体跟着这一层抬起来
-        const up = at(r - 1, c);
-        const dn = at(r + 1, c);
-        const lf = at(r, c - 1);
-        const rt = at(r, c + 1);
-
-        if (t === 2) {
-          g.strokeStyle = MTN_EDGE;
-          g.lineWidth = 2;
-          if (up !== 2) line(x, y, x + CELL, y);
-          if (dn !== 2) line(x, y + CELL, x + CELL, y + CELL);
-          if (lf !== 2) line(x, y, x, y + CELL);
-          if (rt !== 2) line(x + CELL, y, x + CELL, y + CELL);
-          // ③ 凸起：上/左受光提亮、下/右背光压暗
-          if (up !== 2) {
-            g.fillStyle = MTN_HI;
-            g.fillRect(x + 2, y + 2, CELL - 4, SH * 0.5);
-          }
-          if (lf !== 2) {
-            g.fillStyle = MTN_HI;
-            g.fillRect(x + 2, y + 2, SH * 0.5, CELL - 4);
-          }
-          if (dn !== 2) {
-            g.fillStyle = MTN_DARK;
-            g.fillRect(x, y + CELL - SH, CELL, SH);
-          }
-          if (rt !== 2) {
-            g.fillStyle = MTN_DARK;
-            g.fillRect(x + CELL - SH, y, SH, CELL);
-          }
-          // 右下外侧再拖一道投影 → 山是「立起来」的。
-          // 投影要拖得够长（两格多）：山越高影子越长，这是「高」最直观的一条线索
-          if (dn === 0) {
-            const gsh = g.createLinearGradient(0, y + CELL, 0, y + CELL + SH * 2.6);
-            gsh.addColorStop(0, MTN_SHADOW);
-            gsh.addColorStop(1, 'rgba(30,26,20,0)');
-            g.fillStyle = gsh;
-            g.fillRect(x + 2, y + CELL, CELL - 2, SH * 2.6);
-          }
-          if (rt === 0) {
-            const gsh = g.createLinearGradient(x + CELL, 0, x + CELL + SH * 2.6, 0);
-            gsh.addColorStop(0, MTN_SHADOW);
-            gsh.addColorStop(1, 'rgba(30,26,20,0)');
-            g.fillStyle = gsh;
-            g.fillRect(x + CELL, y + 2, SH * 2.6, CELL - 2);
-          }
-        } else {
-          g.strokeStyle = WAT_EDGE;
-          g.lineWidth = 2;
-          if (up !== 4) line(x, y, x + CELL, y);
-          if (dn !== 4) line(x, y + CELL, x + CELL, y + CELL);
-          if (lf !== 4) line(x, y, x, y + CELL);
-          if (rt !== 4) line(x + CELL, y, x + CELL, y + CELL);
-          // ④ 下沉：上/左压暗、下/右提亮（与山相反）。
-          // 上/左那条暗带就是「岸壁投在水里的影子」—— 坑越深影子越长，
-          // 所以这里比山那侧压得更宽（×1.9），一眼读出「水面是凹在岸里的」。
-          if (up !== 4) {
-            g.fillStyle = WAT_SH;
-            g.fillRect(x, y, CELL, SH * 1.9);
-          }
-          if (lf !== 4) {
-            g.fillStyle = WAT_SH;
-            g.fillRect(x, y, SH * 1.9, CELL);
-          }
-          if (dn !== 4) {
-            g.fillStyle = WAT_HI;
-            g.fillRect(x, y + CELL - SH * 0.5, CELL, SH * 0.5);
-          }
-          if (rt !== 4) {
-            g.fillStyle = WAT_HI;
-            g.fillRect(x + CELL - SH * 0.5, y, SH * 0.5, CELL);
-          }
-        }
-      }
-    }
-
-    // ③ 山体内部点缀稀疏的峰形：只在「八邻皆山」的深处画，且抽稀 ——
-    //    既说明这是山，又不会变成一格一个的碎点
-    for (let r = Math.max(1, r0); r <= gh - 2 && r <= r1; r++) {
-      for (let c = 1; c < gw - 1; c++) {
-        if (grid[r][c] !== 2) continue;
-        let deep = true;
-        for (let dr = -1; dr <= 1 && deep; dr++) {
-          for (let dc = -1; dc <= 1; dc++) {
-            if (at(r + dr, c + dc) !== 2) {
-              deep = false;
-              break;
-            }
-          }
-        }
-        if (!deep) continue;
-        const cr = cellRng(r, c);
-        if (cr() > 0.3) continue;
-        const x = c * CELL;
-        const y = r * CELL - liftOf(r, c);
-        const cx = x + CELL * (0.3 + cr() * 0.4);
-        const cy = y + CELL * 0.52;
-        const w = CELL * (0.46 + cr() * 0.2);
-        const h = CELL * (0.5 + cr() * 0.28);
-        g.fillStyle = MTN_PEAK;
-        g.beginPath();
-        g.moveTo(cx - w / 2, cy + h / 2);
-        g.lineTo(cx, cy - h / 2);
-        g.lineTo(cx + w / 2, cy + h / 2);
-        g.closePath();
-        g.fill();
-      }
-    }
-
-    // ⑤ 水波：按「连续横段」画，一笔跨过整段水面（每两行一组，间距约一格半）
-    g.strokeStyle = WAT_WAVE;
-    g.lineWidth = 1.6;
-    // 起点要保持原来的奇偶相位：整兄弟是一行隔一行画的，局部重画时跳一行就会整段错位
-    const rWaveStart = r0 + (r0 % 2);
-    for (let r = rWaveStart; r <= r1; r += 2) {
       let c = 0;
       while (c < gw) {
-        if (grid[r][c] !== 4) {
-          c++;
-          continue;
-        }
+        const t = at(r, c);
+        const solid = t === 2 || t === 4;
+        // 合并连续同类段，避免逐格起笔
         let c1 = c;
-        while (c1 + 1 < gw && grid[r][c1 + 1] === 4) c1++;
-        const x0 = c * CELL;
-        const x1 = (c1 + 1) * CELL;
-        if (c1 - c >= 2 && x1 - x0 > CELL) {
-          const yy = r * CELL + CELL * 0.5 - liftOf(r, c);
+        while (c1 + 1 < gw) {
+          const t2 = at(r, c1 + 1);
+          if ((t2 === 2 || t2 === 4) !== solid) break;
+          c1++;
+        }
+        if (solid) {
+          const x = c * CELL;
+          const w = (c1 - c + 1) * CELL;
           g.beginPath();
-          g.moveTo(x0 + 12, yy);
-          g.quadraticCurveTo((x0 + x1) / 2, yy - 6, x1 - 12, yy);
+          // 上沿：仅当北邻不同类（越界也不画）
+          const up = at(r - 1, c);
+          if (up !== t) {
+            g.moveTo(x, r * CELL);
+            g.lineTo(x + w, r * CELL);
+          }
+          // 下沿：仅当南邻不同类
+          const dn = at(r + 1, c);
+          if (dn !== t) {
+            g.moveTo(x, r * CELL + CELL);
+            g.lineTo(x + w, r * CELL + CELL);
+          }
+          // 左端：仅当西邻不同类
+          const lf = at(r, c - 1);
+          if (lf !== t) {
+            g.moveTo(x, r * CELL);
+            g.lineTo(x, r * CELL + CELL);
+          }
+          // 右端：仅当东邻不同类
+          const rt = at(r, c1 + 1);
+          if (rt !== t) {
+            g.moveTo(x + w, r * CELL);
+            g.lineTo(x + w, r * CELL + CELL);
+          }
           g.stroke();
         }
         c = c1 + 1;
@@ -9785,7 +9648,8 @@ window.WarFactoryUi = (function () {
        */
       contours: () => ({
         cliff: contourCliff ? contourCliff.length / 4 : 0,
-        slope: contourSlope ? contourSlope.length / 4 : 0,
+        // 坡道格数（极简版坡靠色块表达，这里给测试/诊断用）
+        rampCells: rampGrid ? rampGrid.reduce((a, v) => a + v, 0) : 0,
         cliffAt: heightCliff,
         terrace: heightTerrace,
       }),

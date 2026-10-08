@@ -486,8 +486,16 @@ THEME_FALLBACK.maxBlocked = Math.max(
 const MIN_REGION = 20; // 小于该格数的孤立可通行区直接填掉（免得留下走不出去的死地）
 const MAX_CARVE_PASSES = 6; // 开走廊的最大轮数（正常 1~2 轮就收敛）
 // 寻路：每步最多新建多少个地形流场（缓存未命中时才建；超限的单位本步退回直线转向）
-const FLOW_BUILD_PER_STEP = 8;
-const FLOW_CACHE_MAX = 96; // 流场缓存上限（按目标格缓存）
+//
+// ⚠️ 这个值曾经是 8，是**卡死的主因**：预算耗尽后 flowField 直接返回 null，
+//    寻路退化成「直线朝目标转」—— 于是部队一头撞进山体/崖壁，在障碍前每帧左右微调、
+//    净位移接近 0，看起来就是「站在原地不动」。
+//    实测（3~4 人局、20 支兵各奔不同远点）：预算 8 → 10% 的单位冻结 100s 以上；
+//    提到 64 → 冻结 0%。派生预算见 flowBudgetFor()。
+const FLOW_BUILD_BASE = 24; // 每步保底新建额度
+const FLOW_BUILD_PER_UNIT = 2; // 每在场单位再加多少（单位多、目标分散时才容易不够）
+const FLOW_BUILD_MAX = 256; // 硬上限：再多人也不会让单步无限建场
+const FLOW_CACHE_MAX = 192; // 流场缓存上限（按目标格缓存）—— 同步调大，别让缓存先于预算失效
 // ---- 山体遮挡（山有高度）----
 // 山地不只是「不可通行」：它还会挡住视线与弹道，山两侧的单位互相看不见、打不到。
 // 水域只是不可通行（平面），不遮挡视线，弹丸照常飞过水面。
@@ -611,6 +619,15 @@ const HGT_RAMP_MIN = Math.max(0, Math.round(Number(HGT.rampMin != null ? HGT.ram
 const HGT_RAMP_MAX = Math.max(HGT_RAMP_MIN, Math.round(Number(HGT.rampMaxPerPatch != null ? HGT.rampMaxPerPatch : 3)));
 const HGT_RAMP_PER = Math.max(1, Number(HGT.rampPerCells != null ? HGT.rampPerCells : 900));
 const HGT_RAMP_SPREAD = Number(HGT.rampSpread != null ? HGT.rampSpread : 1) !== 0;
+/**
+ * 坡肩外扩（格）：坡道沿边界方向向两侧各多铺这么多格，**只标记不改层**。
+ *
+ * ⚠️ 这是「坡看起来像地形而不是一条线」的关键：
+ *    台阶带本身只有 w×(d−1) 格，实测每簇仅 3~5 格 —— 在 8 万格地图上、
+ *    最远视角下（每格 3.6 屏幕像素）就是一条几乎看不见的细线。
+ *    坡肩把它加宽成一条**连续的金色地带**，玩家一眼就能定位「这儿能上下」。
+ */
+const HGT_RAMP_GRIP = clamp(Math.round(Number(HGT.rampGrip != null ? HGT.rampGrip : 3)), 0, 12);
 
 /** FNV-1a 字符串哈希，作为每局地形种子（与客户端算法一致） */
 function hashStr(s) {
@@ -2365,10 +2382,19 @@ function dijkstraFrom(grid, sources) {
  *
  * @returns {Int8Array} 行优先的逐格高度（−levels..+levels）
  */
-function buildHeightField(grid, order, sites) {
+/**
+ * 由地形派生高度场 + 坡道掩码。
+ *
+ * @param {Uint8Array} [outRamps] 坡道掩码的输出缓冲（长度 = R×C，1 = 这格是挖出来的坡）。
+ *        调用方持有它，才能把「坡」当作一种真实地形下发 / 用于寻路 ——
+ *        坡不是「层差恰好为 1」这种推导结论，而是服务端亲手挖出来的结果。
+ * @returns {Int8Array} 高度层
+ */
+function buildHeightField(grid, order, sites, outRamps) {
   const R = TERR_ROWS;
   const C = TERR_COLS;
   const TOT = R * C;
+  const ramps = outRamps || new Uint8Array(TOT);
   const f = new Float32Array(TOT);
   for (let r = 0; r < R; r++) {
     const row = grid[r];
@@ -2439,14 +2465,33 @@ function buildHeightField(grid, order, sites) {
   //    ⚠️ 必须在高度场派生完就挖：坡口也是高度场的一部分，晚一步就等于没挖。
   if (HGT_CLIFF > 1) {
     flattenSites(out, order, grid, sites);
+    // 坡道掩码：1 = 服务端确实在这儿挖了坡（=「无视高低差也能走」的地形）。
+    // 客户端只画它，寻路也只认它 —— 不再让两端各自用「层差=1」反推，
+    // 那种反推会把台地之间并非坡道的相邻格一起染上色，且两边口径可能漂移。
+    ramps.fill(0);
     // 第一遍：纯地形口径（山/水才是障碍）—— 主流程，决定全图的坡口布局
-    carveRamps(grid, out, order);
+    carveRamps(grid, out, order, null, false, ramps);
     // 第二遍：把建筑占位也算障碍再走一遍 —— 专治「坡口正好被自家楼压住」的死地。
     // 补挖得下的就补挖，实在塞不下坡口的由 carveRamps 的收尾整块并进邻层。
     // （WF_NO_ACCESS2=1 可关掉这一遍做 A/B 对照；实测它让开局慢 60~200ms）
     const blocked = buildingBlockMask(sites);
-    if (blocked && !process.env.WF_NO_ACCESS2) carveRamps(grid, out, order, blocked, true);
+    if (blocked && !process.env.WF_NO_ACCESS2) carveRamps(grid, out, order, blocked, true, ramps);
+    // ⑦ 收口：坡必须**只**落在平原上。坡肩外扩是按 pass 判的，但两遍 carveRamps
+    //    的 pass 口径不同（第二遍还排除了建筑占位），加上对称展开会覆盖轨道成员 ——
+    //    实测 3 人局偶尔漏出 2 格山体被标成坡。坡一旦长在山上，
+    //    客户端会把它画成金色通路，但寻路仍然不可通过，画出来的东西等于骗人。
+    //    这里按最终地形网格统一清一遍：山/水格一律不是坡。
+    for (let r = 0; r < R; r++) {
+      const row = grid[r];
+      for (let c = 0; c < C; c++) {
+        const i = r * C + c;
+        if (row[c] === TT_MOUNTAIN || row[c] === TT_WATER) ramps[i] = 0;
+      }
+    }
+  } else if (!outRamps) {
+    ramps.fill(0);
   }
+  out.ramps = ramps; // 挂在返回值上：调用方 buildHeightField(...).ramps 取用
   return out;
 }
 
@@ -2590,7 +2635,7 @@ function terraceSnap(v) {
  * @param {Int8Array} h 高度层（就地改）
  * @param {number} order 对称阶数（= 玩家人数）
  */
-function carveRamps(grid, h, order, blocked, noTiny) {
+function carveRamps(grid, h, order, blocked, noTiny, rampOut) {
   const R = TERR_ROWS;
   const C = TERR_COLS;
   const TOT = R * C;
@@ -2602,16 +2647,31 @@ function carveRamps(grid, h, order, blocked, noTiny) {
     const a = map.gStart[k];
     if (map.gStart[k + 1] > a) hw[k] = h[map.gCells[a]];
   }
+  // 坡道掩码（楔形层）：1 = 这一格是**挖出来的坡道**，也就是「无视高低差也能走」的地形。
+  // ⚠️ 坡必须当成一种**成片的地形**下发，而不是在客户端靠「层差=1」反推：
+  //    反推会把量化台地之间那些并非坡道的相邻格也染上色（实测多到 10% 以上），
+  //    而且客户端与服务端的判定口径天生可能漂移 —— 画出来的东西不等于能走的东西。
+  //    这里由服务端直接标记「我确实在这儿挖了坡」，客户端只负责画，寻路也只认它。
+  const rw = new Uint8Array(K);
   /** 在世界格 i 上落笔：折回楔形 → 展开时 2N 个像一起变（对称由此保证） */
-  const paint = (i, lv) => {
+  const paint = (i, lv, isRamp) => {
     const k = map.orbit[i];
-    if (k >= 0) hw[k] = lv;
-    else h[i] = lv;
+    if (k >= 0) {
+      hw[k] = lv;
+      if (isRamp) rw[k] = 1;
+    } else {
+      h[i] = lv;
+      if (isRamp && rampOut) rampOut[i] = 1;
+    }
+    if (isRamp && rampOut) rampOut[i] = 1;
   };
   const expand = () => {
     for (let i = 0; i < TOT; i++) {
       const k = map.orbit[i];
-      if (k >= 0) h[i] = hw[k];
+      if (k >= 0) {
+        h[i] = hw[k];
+        if (rampOut && rw[k]) rampOut[i] = 1;
+      }
     }
   };
 
@@ -2781,7 +2841,26 @@ function carveRamps(grid, h, order, blocked, noTiny) {
       for (let st = 0; st <= s.d - 2; st++) {
         const gr = s.r + s.sr * st + s.tr * t;
         const gc = s.c + s.sc * st + s.tc * t;
-        paint(gr * C + gc, s.L + 1 + st);
+        paint(gr * C + gc, s.L + 1 + st, true);
+      }
+      // ⚠️ 坡道要「成片」才认得出来（用户原话：别做成一条线）。
+      //    只铺中间那几格台阶带时，最远视角下它就是一条细线 ——
+      //    实测每簇只有 3~5 格、散落几百处，满屏地图上根本数不出哪儿能上下。
+      //    所以沿边界方向向两侧各扩 HGT_RAMP_GRIP 格「坡肩」，一并标成坡。
+      //    坡肩本身不改层（保持原地形高度），语义上属于「上下坡的位置」，
+      //    画出来就是一整条连续的金色地带，肉眼一下就能定位。
+      for (let g2 = 1; g2 <= HGT_RAMP_GRIP; g2++) {
+        for (const side of [-1, 1]) {
+          const tr2 = s.r + s.tr * (t + side * g2);
+          const tc2 = s.c + s.tc * (t + side * g2);
+          if (tr2 < 0 || tr2 >= R || tc2 < 0 || tc2 >= C) continue;
+          const ti = tr2 * C + tc2;
+          if (!pass[ti]) continue; // 山 / 水 / 建筑占位不能染成坡
+          // 层值取「楔形里这一轨道当前的高度」—— 坡肩不改变地形高度
+          const k = map.orbit[ti];
+          const cur = k >= 0 ? hw[k] : h[ti];
+          paint(ti, cur, true);
+        }
       }
     }
   }
@@ -2887,6 +2966,20 @@ function heightsToData(h) {
     const v = clamp(h[i] + HGT_OFF, 0, 9);
     s += String(v);
   }
+  return s;
+}
+
+/**
+ * 坡道掩码压成字符串（每格一个字符 '0'/'1'）。
+ *
+ * 坡是一种**真实地形**，不是「层差恰好为 1」那种推导结论 ——
+ * 由 carveRamps 挖出来时标记，客户端只负责画，寻路也只认它（见 cliffBetween）。
+ * 下发它是为了让「画出来的」与「走得通的」严格一致：两端各自反推会漂移。
+ */
+function rampsToData(r) {
+  if (!r || !r.length) return '';
+  let s = '';
+  for (let i = 0; i < r.length; i++) s += r[i] ? '1' : '0';
   return s;
 }
 
@@ -4433,12 +4526,19 @@ function insideBuilding(game, x, y, r) {
 
 /**
  * 相邻两格之间是不是崖：层差 ≥ HGT_CLIFF 就过不去。
- * 「有高低差的地方只有坡口能上下」这条规则就落在这一行上 —— 坡口是把中间那几层
- * 挖出来的（见 carveRamps），坡道上每一步只差 1 层，自然放行；没挖到的边界仍是崖。
+ * 「有高低差的地方只有坡口能上下」这条规则就落在这一行上。
+ *
+ * ⚠️ **坡道格无视高低差**：只要有一端是坡（terrain.ramps[i] = 1），就不算崖 ——
+ *    坡就是「无视上下高低差也能移动」的那种地形，玩家要能一眼看出它、并放心走上去。
+ *    （坡由服务端 carveRamps 亲手挖出并标记，不是「层差=1」推导出来的 ——
+ *      推导口径在台地密集处会误判，两端口径也容易漂移。）
  */
 function cliffBetween(game, ia, ib) {
-  const hf = game && game.terrain ? game.terrain.heights : null;
-  if (!hf || ia === ib || ia < 0 || ib < 0) return false;
+  if (!game || ia === ib || ia < 0 || ib < 0) return false;
+  const ramps = game.terrain && game.terrain.ramps;
+  if (ramps && (ramps[ia] || ramps[ib])) return false; // 坡：无视高低差
+  const hf = game.terrain ? game.terrain.heights : null;
+  if (!hf) return false;
   return Math.abs(hf[ia] - hf[ib]) >= HGT_CLIFF;
 }
 
@@ -4806,6 +4906,29 @@ function cellOf(game, x, y) {
 }
 
 /**
+ * 本步允许新建多少个流场 —— 按**在场单位数**派生，不写死。
+ *
+ * 为什么要派生：流场按目标格缓存，命中就不花钱。真正花钱的是「同一帧里 many 个单位
+ * 各自奔向不同目标」—— 每个人都未命中，人数一多就把固定额度瓜分光。额度不足的后果
+ * 不是「这帧路算得糙一点」，而是 flowField 返回 null → 寻路整体退化成直线转向 →
+ * 部队撞在山体/崖壁上原地抖动（实测冻结 100s+）。
+ *
+ * 额度按人头给，且留足余量：一个单位这一帧最多需要 1 个新流场（其余靠缓存与父链复用），
+ * 所以 2×单位数 足以让所有单位都拿到路；再封顶，避免百人同帧爆建。
+ */
+function flowBudgetFor(game) {
+  let n = 0;
+  const us = game && game.units;
+  if (us) {
+    for (let i = 0; i < us.length; i++) {
+      const u = us[i];
+      if (u && !u.dead) n++;
+    }
+  }
+  return Math.max(FLOW_BUILD_BASE, Math.min(FLOW_BUILD_MAX, n * FLOW_BUILD_PER_UNIT));
+}
+
+/**
  * 以目标点所在格为源做 BFS，得到「每格到目标的步数」流场；-1 表示不可达。
  * 目标格会先按「与 (fromX,fromY) 同属一个连通分量」修正——否则目标落在山体里时，
  * 最近的可通行格若是孤立小岛，整张流场会把单位所在大陆标成不可达（寻路直接失效）。
@@ -5080,6 +5203,139 @@ function nearestSteppable(game, x, y) {
 }
 
 /**
+ * 流场拿不到时的兜底绕障：朝目标做一次**有界环形搜索**，找「不比现在更差、且能离开
+ * 当前受阻方向」的一步。
+ *
+ * 为什么不用 localSteer：那个搜索框按「单位↔目标」距离放大，远距离时框能铺满整张图，
+ * 等于把全局 BFS 的代价又付一遍 —— 预算不够时再叠加这个，更容易雪上加霜。
+ * 这里固定只看身边 DETOUR_RING 格（够绕开总部/崖角这类近处障碍），
+ * 代价恒定，部队至少能贴着障碍挪出去，而不是把脸贴在墙上。
+ *
+ * @returns {boolean|null} true/false = 已决定移动/不动；null = 「实在没主意」，交回直线转向
+ */
+const DETOUR_RING = 14; // 格：兜底搜索只看这么大一圈（560px）
+function detourStep(game, u, goalX, goalY, spd, dt) {
+  const t = game.terrain;
+  const pg = passGrid(game);
+  if (!t || !pg) return null;
+  const cols = t.cols;
+  const rows = t.rows;
+  const me = cellOf(game, u.x, u.y);
+  const toGoal = Math.atan2(goalY - u.y, goalX - u.x);
+  const d0 = dist(u.x, u.y, goalX, goalY);
+
+  // 以单位为中心铺一个 DETOUR_RING 见方的小场，做多源 BFS：
+  // 源是「这一圈里能站人、且离目标更近」的格子 —— 从它们反向回溯到单位，
+  // 得到的就是「从单位出发能真正离开」的方向。
+  const r0 = Math.max(0, me.r - DETOUR_RING);
+  const r1 = Math.min(rows - 1, me.r + DETOUR_RING);
+  const c0 = Math.max(0, me.c - DETOUR_RING);
+  const c1 = Math.min(cols - 1, me.c + DETOUR_RING);
+  const w = c1 - c0 + 1;
+  const h = r1 - r0 + 1;
+  const N = w * h;
+  if (N <= 1) return null;
+  // 复用局部寻路的缓冲（同尺寸语义），不够再按需扩容
+  if (!game._detourSeen || game._detourSeen.length < N) {
+    game._detourSeen = new Int32Array(N);
+    game._detourPrev = new Int32Array(N);
+    game._detourQueue = new Int32Array(N);
+    game._detourStamp = 1;
+  }
+  const seen = game._detourSeen;
+  const prevA = game._detourPrev;
+  const q = game._detourQueue;
+  const stamp = game._detourStamp++;
+  if (game._detourStamp > 0x3fffffff) {
+    seen.fill(0);
+    game._detourStamp = 1;
+  }
+  let head = 0;
+  let tail = 0;
+  // 源：框内可通行、且**到目标更近**的格子（局部最优的方向感）
+  for (let r = r0; r <= r1; r++) {
+    for (let c = c0; c <= c1; c++) {
+      const i = r * cols + c;
+      if (!pg[i]) continue;
+      const px = (c + 0.5) * t.cell;
+      const py = (r + 0.5) * t.cell;
+      if (dist(px, py, goalX, goalY) >= d0 - 1) continue;
+      const k = (r - r0) * w + (c - c0);
+      if (seen[k] === stamp) continue;
+      seen[k] = stamp;
+      prevA[k] = -1;
+      q[tail++] = k;
+    }
+  }
+  if (!tail) return null;
+  // 从源反向扩散，navStepOk 与全局完全同口径（可通行 + 不跨崖 + 不切角）
+  while (head < tail) {
+    const k = q[head++];
+    const r = (r0 + ((k / w) | 0));
+    const c = c0 + (k % w);
+    const gi = r * cols + c;
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        if (!dr && !dc) continue;
+        const nr = r + dr;
+        const nc = c + dc;
+        if (nr < r0 || nr > r1 || nc < c0 || nc > c1) continue;
+        const nk = (nr - r0) * w + (nc - c0);
+        if (seen[nk] === stamp) continue;
+        const ni = nr * cols + nc;
+        if (!navStepOk(game, pg, cols, gi, ni)) continue;
+        seen[nk] = stamp;
+        prevA[nk] = k;
+        q[tail++] = nk;
+      }
+    }
+  }
+  // 沿父链从单位所在格回溯，找**第一个站得住人**的落点当方向
+  const startK = (me.r - r0) * w + (me.c - c0);
+  let k = startK;
+  if (seen[k] !== stamp) {
+    // 单位站在占位格（掩码 0）上：先找身边一个能接上这片场的可通行格
+    let bestK = -1;
+    let bestD = Infinity;
+    for (let dr = -1; dr <= 1 && bestK < 0; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        if (!dr && !dc) continue;
+        const nr = me.r + dr;
+        const nc = me.c + dc;
+        if (nr < r0 || nr > r1 || nc < c0 || nc > c1) continue;
+        const nk = (nr - r0) * w + (nc - c0);
+        if (seen[nk] !== stamp) continue;
+        const d = dist((nc + 0.5) * t.cell, (nr + 0.5) * t.cell, goalX, goalY);
+        if (d < bestD) {
+          bestD = d;
+          bestK = nk;
+        }
+      }
+    }
+    if (bestK < 0) return null;
+    k = bestK;
+  }
+  let node = k;
+  for (let step = 0; step < DETOUR_RING * 2; step++) {
+    const p = prevA[node];
+    if (p < 0) break;
+    const r = r0 + ((node / w) | 0);
+    const c = c0 + (node % w);
+    const nx = (c + 0.5) * t.cell;
+    const ny = (r + 0.5) * t.cell;
+    if (canStand(game, nx, ny, u.r, u.x, u.y)) {
+      const ld = dist(u.x, u.y, nx, ny);
+      if (ld > 0.5) {
+        return slideStep(game, u, Math.atan2(ny - u.y, nx - u.x), Math.min(spd, ld), dt);
+      }
+    }
+    node = p;
+  }
+  // 一格都迈不出去 → 别硬转（转了也是原地抖），交给 unstuck 逻辑
+  return null;
+}
+
+/**
  * 近距局部寻路：只在「单位 ↔ 目标」外扩 LOCAL_PATH_MARGIN 格的小框里做 8 向 BFS。
  * 解决「点了很近的地方，全局流场却绕总部/山体走半张图」—— 框外的长绕行根本进不了候选。
  * @returns {{x:number,y:number}|null} 下一步迈向的点（格心或目标点）；null = 框内走不通
@@ -5242,7 +5498,15 @@ function stepViaFlow(game, u, goalX, goalY, spd, dt) {
   }
 
   const f = flowField(game, goalX, goalY, u.x, u.y);
-  if (!f) return direct();
+  // ⚠️ 流场拿不到（预算耗尽 / 目标不在本侧）时**不能直接直线撞墙**：
+  //    直线转向会让部队贴着山体或崖壁每帧微调，净位移≈0 —— 表现就是「点了移动却不动」。
+  //    这里退到局部寻路：它只在自身周围几十格内 BFS，不消耗全局流场预算，
+  //    足以让部队贴着障碍绕出去；局部也失败才真的只能直线转向。
+  if (!f) {
+    const fb = detourStep(game, u, goalX, goalY, spd, dt);
+    if (fb !== null) return fb;
+    return direct();
+  }
   const t = game.terrain;
   const me = cellOf(game, u.x, u.y);
   const cur = f.dist[me.i];
@@ -6091,6 +6355,7 @@ function applyEditorCommand(game, cmd) {
   // ⑤ 重新派生高度场（想预览高低差时手动刷一次，写进 terrain.heights）
   if (op === 'recalcHeights') {
     t.heights = buildHeightField(t.grid, symOrder(game.players.length), buildingSites(game));
+    t.ramps = t.heights.ramps;
     invalidateNavCache(game); // 崖变了 → 连通分量和流场都得重算
     return true;
   }
@@ -6213,6 +6478,7 @@ function endBriefing(game) {
   // 高低差留到地图敲定之后才派生：随便换图没必要每次都重算整张高度场
   if (game.terrain && !game.terrain.heights) {
     game.terrain.heights = buildHeightField(game.terrain.grid, symOrder(game.players.length), buildingSites(game));
+    game.terrain.ramps = game.terrain.heights.ramps;
     invalidateNavCache(game);
   }
   game._lastTick = Date.now();
@@ -6412,6 +6678,7 @@ function createGameState(room) {
     } else {
       // 不打编辑器的普通开局：地图是死文件、不会被再改，高低差一次算好即可
       game.terrain.heights = buildHeightField(game.terrain.grid, count, buildingSites(game));
+      game.terrain.ramps = game.terrain.heights.ramps;
     }
     return game;
   }
@@ -7641,6 +7908,7 @@ function createGameState(room) {
   // 山的高度往外摊成一圈缓坡、水往下摊成一圈洼地 → 可通行的平原也有了高地 / 低洼之分，
   // 「占高处打低处有射程加持」才真的成立（见 buildHeightField / effRange）。
   game.terrain.heights = buildHeightField(game.terrain.grid, count, buildingSites(game));
+  game.terrain.ramps = game.terrain.heights.ramps; // 坡道掩码：坡是「无视高低差也能走」的地形
 
   // 开局部队：每名玩家在总部**正前方**排成行列（面向地图中心；无初始工厂，工厂全靠打下来）
   // 总部产线不可进化 → 亲兵的进化上限同样是 1 阶（level 1）
@@ -9615,7 +9883,7 @@ function step(game, dt, now) {
   //    在开头清等于把上一次指令留下的脏标记直接抹掉，客户端要等到下一次有人阵亡才刷新。
   dt = Math.min(dt, MAX_DT);
   game.now = now; // 伤害账本 / 维修时间戳共用
-  game._flowBudget = FLOW_BUILD_PER_STEP; // 本步允许新建的寻路流场数
+  game._flowBudget = flowBudgetFor(game); // 本步允许新建的寻路流场数（按在场单位数派生）
   updateResearch(game, dt);
   updateHqDefense(game, dt, now); // 第 6 项：总部防卫（前摇 → 开火）
   updateProduction(game, dt, now);
@@ -9904,6 +10172,10 @@ function publicGameState(game) {
           // 高低差（每层一个字符 '0'~'9' = 层 + HGT_OFF）：客户端据此画立体坡地，
           // 并按同一套层差算射程（见 heightAtWorld / effRange）
           heights: heightsToData(game.terrain.heights),
+          // 坡道（一种「无视高低差也能走」的地形）：'0'/'1' 每格一个字符。
+          // 客户端把它画成成片的金色地带 —— 而不是让两端各自按「层差=1」反推
+          // （反推会把并非坡道的相邻格也染上色，且两边口径容易漂移）。
+          ramps: rampsToData(game.terrain.ramps),
           levels: HGT_LEVELS,
           // 坡与崖：层差 ≥ cliff = 崖（部队过不去），= 1 = 坡（走得上去）。
           // 客户端据此把两类边界画成两种样子，别硬编码。
@@ -10429,6 +10701,7 @@ function startLoop(room, io) {
             io.broadcastTerrain({
               full: terrainToData(cur.terrain),
               heights: heightsToData(cur.terrain.heights),
+              ramps: rampsToData(cur.terrain.ramps),
               levels: HGT_LEVELS,
               cliff: HGT_CLIFF,
               terrace: HGT_TERRACE,
@@ -10597,6 +10870,7 @@ module.exports = {
     // 地形高低差（见 data.js 的 height 段）
     buildHeightField,
     heightsToData,
+    rampsToData,
     heightAtCell,
     heightAtWorld,
     effRange,

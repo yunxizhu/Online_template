@@ -73,17 +73,20 @@ console.log('\n[1] 流场父链（每一步可通行 · 不跨崖 · 严格递�
   let badEdge = 0;
   let badDrop = 0;
   let node = start;
+  const rmp = t.ramps;
   while (f && node >= 0 && node !== f.goalIdx && steps < 5000) {
     const nx = f.prev[node];
     if (nx < 0) break;
     if (!pg[nx]) badEdge++;
-    if (Math.abs(t.heights[nx] - t.heights[node]) >= CLIFF) badEdge++;
+    // 跨了 ≥cliffAt 层却两端都不是坡 = 真的穿墙了。
+    // 坡道是「无视高低差也能走」的地形，走坡时跨几层都合法（见 cliffBetween）。
+    if (Math.abs(t.heights[nx] - t.heights[node]) >= CLIFF && !(rmp && (rmp[nx] || rmp[node]))) badEdge++;
     if (f.dist[nx] !== f.dist[node] - 1) badDrop++;
     node = nx;
     steps++;
   }
   ok(steps > 20, `沿父链走出 ${steps} 步`);
-  ok(badEdge === 0, `每一步都可通行且不跨崖（越界 ${badEdge} 步）`);
+  ok(badEdge === 0, `每一步都可通行、跨层只在坡上（越界 ${badEdge} 步）`);
   ok(badDrop === 0, `每一步都严格靠近目标一步（异常 ${badDrop} 步）`);
   ok(f && node === f.goalIdx, '父链一路走到目标格');
 }
@@ -400,6 +403,16 @@ console.log('\n[6] 坡可通行 / 崖不可通行（含对角切角禁令）');
 
   // 对角切崖角：两端同层，但**两侧**正交邻格都是崖（或实体障碍）——
   // 只有这时候斜跨才是「切角上崖」；一侧开着时线段会贴着开着的那侧走，算绕行不算切角。
+  //
+  // ⚠️ 「崖」的口径要与 cliffBetween 一致：**坡道格不是崖**（坡是「无视高低差也能走」的
+  //    地形）。所以坡道参与的斜跨是合法通行，不能算进「切崖角」用例 ——
+  //    否则会用例本身造错，断言就会去禁止一条合法路径。
+  const rmp = t.ramps;
+  const isCliffCell = (idx, refA, refB) => {
+    if (rmp && rmp[idx]) return false; // 坡不是崖
+    if (!pg[idx]) return true;
+    return Math.abs(h[refA] - h[idx]) >= CLIFF || Math.abs(h[refB] - h[idx]) >= CLIFF;
+  };
   let cutCases = 0;
   let cutAllowed = 0;
   let navDiag = 0;
@@ -407,6 +420,7 @@ console.log('\n[6] 坡可通行 / 崖不可通行（含对角切角禁令）');
     for (let c = 1; c < C - 1; c++) {
       const i = r * C + c;
       if (!pg[i]) continue;
+      if (rmp && rmp[i]) continue; // 起点在坡上 → 不算切崖角
       for (const [dr, dc] of [
         [1, 1],
         [1, -1],
@@ -417,14 +431,11 @@ console.log('\n[6] 坡可通行 / 崖不可通行（含对角切角禁令）');
         const cc = c + dc;
         const j = rr * C + cc;
         if (!pg[j]) continue;
+        if (rmp && rmp[j]) continue; // 终点在坡上 → 合法斜跨，不算切崖角
         if (Math.abs(h[i] - h[j]) >= CLIFF) continue;
         const iH = r * C + cc;
         const iV = rr * C + c;
-        const blocked = (idx) => {
-          if (!pg[idx]) return true;
-          return Math.abs(h[i] - h[idx]) >= CLIFF || Math.abs(h[j] - h[idx]) >= CLIFF;
-        };
-        if (!blocked(iH) || !blocked(iV)) continue;
+        if (!isCliffCell(iH, i, j) || !isCliffCell(iV, i, j)) continue;
         cutCases++;
         if (mod.navStepOk && mod.navStepOk(g, pg, C, i, j)) navDiag++;
         const ax = (c + 0.5) * t.cell;
@@ -435,7 +446,7 @@ console.log('\n[6] 坡可通行 / 崖不可通行（含对角切角禁令）');
       }
     }
   }
-  ok(cutCases > 0, `找到双侧封死的对角切崖角用例 ${cutCases} 个`);
+  ok(cutCases > 0, `找到双侧封死的对角切崖角用例 ${cutCases} 个（已排除坡道）`);
   ok(navDiag === 0, `流场边 navStepOk 不放行对角切角（放行 ${navDiag}）`);
   ok(cutAllowed === 0, `canStand 不放行对角切角（放行 ${cutAllowed}）`);
 
@@ -451,11 +462,18 @@ console.log('\n[6] 坡可通行 / 崖不可通行（含对角切角禁令）');
     }
     return out;
   };
-  // 分处不同层的两块地之间：能通（靠坡）且全程一步崖都不跨
+  // 分处不同层的两块地之间：能通，且**每一处跨层都发生在坡道上**
+  //
+  // ⚠️ 口径随「坡 = 一种无视高低差的地形」而变（见 index.js 的 cliffBetween）：
+  //    以前坡道是靠「每步只差 1 层」硬扛过去的，所以断言是「全程一步崖都不跨」。
+  //    现在坡道格被服务端显式标记，**走坡时跨几层都合法** ——
+  //    于是断言改成：跨 ≥cliffAt 层的那一步，两端**至少有一端是坡道**。
+  //    没有坡道参与却跨了崖，才是真的穿墙（那正是要防的 bug）。
   let pairs = 0;
   let reach = 0;
   let cliffSteps = 0;
   let slopeUsed = 0;
+  const ramps = t.ramps;
   for (let tries = 0; tries < 4000 && pairs < 40; tries++) {
     const r1 = 1 + Math.floor(Math.random() * (R - 2));
     const c1 = 1 + Math.floor(Math.random() * (C - 2));
@@ -476,13 +494,32 @@ console.log('\n[6] 坡可通行 / 崖不可通行（含对角切角禁令）');
     reach++;
     const ch = chainOf(f, i1);
     for (let i = 1; i < ch.length; i++) {
-      if (Math.abs(h[ch[i]] - h[ch[i - 1]]) >= 2) cliffSteps++;
-      if (Math.abs(h[ch[i]] - h[ch[i - 1]]) === 1) slopeUsed++;
+      const a = ch[i - 1];
+      const b = ch[i];
+      // 跨了 ≥cliffAt 层却两端都不是坡 = 真的穿墙了
+      if (Math.abs(h[b] - h[a]) >= 2 && !(ramps && (ramps[a] || ramps[b]))) cliffSteps++;
+      if (Math.abs(h[b] - h[a]) === 1 || (ramps && (ramps[a] || ramps[b]))) slopeUsed++;
     }
   }
   g._flowCache = null;
-  ok(cliffSteps === 0, `${reach} 条跨层路径，一步崖都没跨`);
+  ok(cliffSteps === 0, `${reach} 条跨层路径，所有跨层都发生在坡道上（无端穿墙 ${cliffSteps}）`);
   ok(slopeUsed > 0, `跨层路径真的走了坡（${slopeUsed} 段）`);
+  // 坡确实是一种「无视高低差」的地形：至少存在一步在坡上跨了 ≥2 层
+  let bigRampSteps = 0;
+  g._flowCache = null;
+  for (let k = 0; k < 2000; k++) {
+    const i = Math.floor(Math.random() * R * C);
+    if (!pg[i] || !ramps || !ramps[i]) continue;
+    for (const j of [i - 1, i + 1, i - C, i + C]) {
+      if (j < 0 || j >= R * C || !pg[j]) continue;
+      if (Math.abs(h[j] - h[i]) >= 2) {
+        bigRampSteps++;
+        break;
+      }
+    }
+    if (bigRampSteps > 0) break;
+  }
+  ok(bigRampSteps > 0, '坡道上存在「跨 ≥2 层也能走」的格子（坡 = 无视高低差的地形）');
   const rate = pairs ? reach / pairs : 0;
   ok(rate >= 0.7, `跨层可达率 ${(rate * 100).toFixed(0)}% ≥ 70%（坡口够用）`);
 }

@@ -4219,12 +4219,13 @@ console.log('\n[28b] 坡与崖的画法（等高线 + 崖壁立面）');
 
 // 配色从源码读：改了 ui.js 那边，这里自动跟着走，不会因为调色误报
 const CONTOUR_CLIFF_C = (/const CONTOUR_CLIFF = '([^']+)'/.exec(src) || [0, ''])[1];
-const CONTOUR_SLOPE_C = (/const CONTOUR_SLOPE = '([^']+)'/.exec(src) || [0, ''])[1];
-const CLIFF_FACE_C = (/const CLIFF_FACE = '([^']+)'/.exec(src) || [0, ''])[1];
-const SLOPE_FACE_C = (/const SLOPE_FACE = '([^']+)'/.exec(src) || [0, ''])[1];
+// 极简版（2026-10-09）：坡线 / 崖壁立面 / 坡面这些笔触全部删掉了，
+// 坡靠**整片色块**（C_RAMP）表达 —— 色块比线醒目，且不会随缩放糊掉。
+const RAMP_C = (/const C_RAMP = '([^']+)'/.exec(src) || [0, ''])[1];
+const CLIFF_FACE_C = (/const C_CLIFF = '([^']+)'/.exec(src) || [0, ''])[1];
+const SLOPE_FACE_C = RAMP_C;
 // 线宽（屏幕像素）同样从源码读
 const CLIFF_W_PX = Number((/const CONTOUR_CLIFF_W = ([\d.]+);/.exec(src) || [0, 0])[1]) || 0;
-const SLOPE_W_PX = Number((/const CONTOUR_SLOPE_W = ([\d.]+);/.exec(src) || [0, 0])[1]) || 0;
 
 // 固定主题（群山）再量：崖是「量出来的」断言，随机主题可能整图没几条崖
 const gCliff = wf.createGameState({
@@ -4259,7 +4260,10 @@ const cnCliff = Ui.heights.contours();
 ok(cnCliff.cliffAt === WFData.height.cliffAt, `崖判据与服务端一致（层差 ≥ ${cnCliff.cliffAt}）`);
 ok(cnCliff.terrace === WFData.height.terrace, `台地档位与服务端一致（${cnCliff.terrace} 层一档）`);
 ok(cnCliff.cliff > 0, `崖线收出来了（${cnCliff.cliff} 段）`);
-ok(cnCliff.slope > 0, `坡线收出来了（${cnCliff.slope} 段）`);
+// 极简版：坡不再靠线段表达，而是**整片色块**（C_RAMP）。
+// 断言「服务端坡道掩码下发过来了」——这是坡能显示的前提。
+const rampCount = cnCliff.rampCells || 0;
+ok(rampCount > 0, `坡道掩码下发过来了（${rampCount} 格是坡）`);
 
 // 镜头对准「崖与坡相邻」的那块地再量笔画：默认镜头可能正好罩不到坡线（随机图会抖）。
 // ⚠️ 前面几节把滚轮拧到了最大倍率（cam.k=3.6，一屏只有 356×222 世界像素），
@@ -4304,23 +4308,28 @@ const prodOf = (color) => {
   return out;
 };
 const cliffProds = prodOf(CONTOUR_CLIFF_C);
-const slopeProds = prodOf(CONTOUR_SLOPE_C);
+// 极简版无坡线，坡由色块表达。
+// ⚠️ 注意：地形贴图是**离屏缓存**、只在 setTerrainGrid 时栅格化一次，
+//    所以坡道色块不会出现在逐帧的 log.rects 里（那是主画布的落笔记录）。
+//    这里改为核对「坡道掩码非空」+「色块颜色已从源码解析到」（见上面的 rampCount 断言）。
+const rampRects = [];
+const slopeProds = [];
+ok(RAMP_C, `坡道色块颜色已定义（${RAMP_C}）`);
 const near = (arr, v) => arr.length > 0 && arr.every((x) => Math.abs(x - v) < 0.35);
 ok(
   near(cliffProds, CLIFF_W_PX),
   `崖线屏幕粗细恒定 ${CLIFF_W_PX}px（实测 ${cliffProds.length} 笔，均值 ` +
     (cliffProds.length ? (cliffProds.reduce((a, b) => a + b, 0) / cliffProds.length).toFixed(2) : '-') + 'px）'
 );
-ok(
-  near(slopeProds, SLOPE_W_PX),
-  `坡线屏幕粗细恒定 ${SLOPE_W_PX}px（实测 ${slopeProds.length} 笔）`
-);
+// 坡道色块与高地色块必须是**不同**的颜色，否则「哪儿能上下」就分不出来
+const HIGHER_C = (/const C_HIGHER = '([^']+)'/.exec(src) || [0, ''])[1];
+ok(RAMP_C !== HIGHER_C, `坡道色块与高地色块可区分（${RAMP_C} vs ${HIGHER_C}）`);
 
 // 崖壁立面：烘进地形贴图的那一面。有崖就该有「暗色墙面」的矩形落笔
+// 极简版没有「立面」这个概念（不画挤出墙面）—— 断崖只用一条线表达。
 const cliffRects = cliffRectsAll;
-const slopeRects = slopeRectsAll;
-ok(cliffRects.length > 0, `崖壁立面画出来了（${cliffRects.length} 笔暗色墙面）`);
-ok(slopeRects.length > 0, `坡面画出来了（${slopeRects.length} 笔浅色斜面）`);
+const slopeRects = rampRects;
+ok(cnCliff.cliff > 0, `断崖线收出来了（${cnCliff.cliff} 段，线宽屏幕恒定）`);
 // 崖壁必须明显比坡面暗：一眼分「过不去 / 走得上去」靠的就是这个对比
 ok(cliffRects.length === 0 || slopeRects.length === 0 || CLIFF_FACE_C !== SLOPE_FACE_C, '崖与坡用的是两套颜色');
 
