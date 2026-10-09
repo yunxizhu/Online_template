@@ -1592,7 +1592,8 @@ button.secondary:hover {
 }
 
 .room-player-slot .btn-add-bot,
-.room-player-slot .btn-remove-bot {
+.room-player-slot .btn-remove-bot,
+.room-player-slot .btn-to-spectator {
   font-size: 0.68rem;
   padding: 0.2rem 0.5rem;
   border-radius: 4px;
@@ -1605,7 +1606,8 @@ button.secondary:hover {
 }
 
 .room-player-slot .btn-add-bot:hover,
-.room-player-slot .btn-remove-bot:hover {
+.room-player-slot .btn-remove-bot:hover,
+.room-player-slot .btn-to-spectator:hover {
   background: rgba(100, 80, 40, 0.6);
   border-color: rgba(220, 190, 130, 0.55);
 }

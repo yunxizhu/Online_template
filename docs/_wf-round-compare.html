@@ -1,0 +1,20 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>地形平滑验收</title>
+<style>body{background:#222;color:#eee;font:13px/1.5 system-ui,sans-serif;margin:0;padding:16px}
+h1{font-size:16px}.row{display:flex;gap:14px;flex-wrap:wrap}.cell{background:#111;padding:8px;border:1px solid #444}img{max-width:420px;image-rendering:pixelated}
+table{border-collapse:collapse;margin:10px 0}td,th{border:1px solid #555;padding:4px 10px;text-align:right}.b{color:#7f7}.r{color:#f88}</style></head><body>
+<h1>地形平滑（3×3 多数滤波）验收</h1>
+<p>旧「圆角」(corner) 填凹口会把 3 边凹角换成 5 边凸点，<b class="r">拉长边界 +15~30%</b>（更碎，与「圆滑」相反）。
+新默认（majority）削凸尖 + 填凹洞且<b class="b">缩短边界</b>、面积守恒。同底图逐格对比。</p>
+<div class="row">
+  <div class="cell"><div>未平滑</div><img src="_wf-round-off.png"></div>
+  <div class="cell"><div>平滑（majority,默认）</div><img src="_wf-round-on1.png"></div>
+  <div class="cell"><div>差异（品红=改动格）</div><img src="_wf-round-diff.png"></div>
+</div>
+<h3>多种子量化（R/C=264）</h3><table><tr><th>seed</th><th>面积变化 maj / corner</th><th>周长变化 maj / corner（✓=更短/更圆滑）</th></tr><tr><td>1791539239263</td><td>maj -1.88% / corner -1.88%</td><td>maj 0.19% ≈ / corner 15.83% ✗</td></tr><tr><td>1791539240000</td><td>maj -0.45% / corner -1.18%</td><td>maj -1.86% ✓ / corner 26.15% ✗</td></tr><tr><td>1791539200000</td><td>maj -0.37% / corner -1.09%</td><td>maj -4.33% ✓ / corner 25.34% ✗</td></tr><tr><td>1791539300000</td><td>maj -0.74% / corner -0.51%</td><td>maj -2.03% ✓ / corner 29.61% ✗</td></tr></table>
+<h3>开关</h3><ul>
+<li><code>WF_NO_ROUND=1</code> 关闭平滑做 A/B。</li>
+<li><code>WF_ROUND_PASSES=N</code> 轮数（默认 1；多数滤波 1 轮即够）。</li>
+<li><code>WF_ROUND_MODE=corner</code> 退回旧「单格翻转」对照（不推荐：拉长边界）。</li>
+</ul>
+<h3>边界说明</h3><p>本平滑只改服务端类型网格轮廓；客户端崖线（ui.js 18px 单侧崖面）未动。崖线台阶的直角来自高度场量化（buildHeightField 的 ±1 层并入邻档），属另一系统。</p>
+</body></html>

@@ -51,7 +51,7 @@ const HQ_R_PX = (WFData.buildings.hqSize * GRID_PX) / 2; // 总部碰撞半径�
 const FAC_R_PX = (WFData.buildings.factorySize * GRID_PX) / 2; // 工厂碰撞半径（60px）
 const LAB_R_PX = (WFData.buildings.labSize * GRID_PX) / 2; // 研究所碰撞半径（30px）
 const HQ_DEF_R_PX = WFData.hqDefense.range * GRID_PX; // 总部防卫射程（300px）
-const WORLD_PX = 11520; // 与 index.js 的 WORLD_W 同值（世界是正方形）
+const WORLD_PX = 10560; // 与 index.js 的 WORLD_W 同值（世界是正方形）
 
 /* ---------------- 地形：能不能站 + 高不高（高地战术） ----------------
  * 高低差是**射程**也是**墙**：
@@ -129,6 +129,77 @@ const RETREAT_D = 520; // 后撤距离：够退出一轮交火，又不至于跑
 
 function dist(ax, ay, bx, by) {
   return Math.hypot(ax - bx, ay - by);
+}
+
+/**
+ * 惰性拿到 index.js 的寻路工具（须在 think 时调用，避免与 index 顶层 require bot 循环依赖）。
+ * 只读缓存 / 连通分量，不主动新建流场（那是单位每步的预算）。
+ */
+function wfNav() {
+  try {
+    const mod = require('./index.js');
+    return mod && mod.__test ? mod.__test : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * 行军距离（世界像素）：同连通分量走可达路径估计；隔崖 / 不同分量 → Infinity。
+ *
+ * ⚠️ 旧口径一律欧氏 `dist`，会把崖后建筑当成「很近」—— probe 25s 才拉黑，扩张窗口白扔。
+ *    优先吃流场缓存里的真实代价；没命中则同分量欧氏 × PATH_STRETCH（略罚绕坡）。
+ */
+const PATH_STRETCH = 1.35;
+
+function marchDist(game, ax, ay, bx, by) {
+  const eu = dist(ax, ay, bx, by);
+  const nav = wfNav();
+  if (!nav || !game || !game.terrain || typeof nav.compLabels !== 'function') {
+    return eu * PATH_STRETCH;
+  }
+  let cb;
+  try {
+    cb = nav.compLabels(game);
+  } catch (_) {
+    return eu * PATH_STRETCH;
+  }
+  if (!cb || !cb.lab) return eu * PATH_STRETCH;
+
+  const cellOf = nav.cellOf;
+  const nearestPassable = nav.nearestPassable;
+  let from = cellOf(game, ax, ay);
+  let to = cellOf(game, bx, by);
+  let ca = cb.lab[from.i];
+  let ct = cb.lab[to.i];
+  if (ca < 0 && typeof nearestPassable === 'function') {
+    const np = nearestPassable(game, ax, ay);
+    if (np) {
+      from = cellOf(game, np.x, np.y);
+      ca = cb.lab[from.i];
+    }
+  }
+  if (ct < 0 && typeof nearestPassable === 'function') {
+    const np = nearestPassable(game, bx, by, ca >= 0 ? ca : null, { noScan: true });
+    if (np) {
+      to = cellOf(game, np.x, np.y);
+      ct = cb.lab[to.i];
+    }
+  }
+  if (ca < 0 || ct < 0 || ca !== ct) return Infinity;
+
+  // 流场缓存命中：dist 是边代价（约等于格长），× cell → 世界像素
+  const cache = game._flowCache;
+  if (cache && typeof cache.values === 'function') {
+    const cell = game.terrain.cell || GRID_PX;
+    for (const field of cache.values()) {
+      if (!field || !field.dist) continue;
+      if (field.goalIdx !== to.i) continue;
+      const d = field.dist[from.i];
+      if (Number.isFinite(d) && d >= 0) return d * cell;
+    }
+  }
+  return eu * PATH_STRETCH;
 }
 
 /** 单位每秒伤害（dps）。激光兵基础 dmg 极低，蓄能倍率高，这里给个保守当量 */
@@ -330,24 +401,25 @@ function pickPosture(game, oi, stance, state, tNow) {
  * ⚠️ 是「一小股」：真人快攻是为了拖慢对面，不是把自己送掉。主力照常发育 / 压制，
  * 所以骚扰股有硬上限（25% / 至多 8 个），而且至少要给主力留 HARASS_KEEP 个兵。
  *
- * ⚠️⚠️ 还有一条更硬的：**拿不下的目标不许去**。派一股去啃 5000 血的满血厂，
- * 既拆不掉又被回防吃掉 —— 实测这个判据加上之前（35% 大股、随便挑最近的敌方建筑）
- * 强度分 12934 → 11890；加上之后回到 12930。挑目标还偏好**离敌方总部远**的外围厂
- * （回防成本高）。
- *
- * ⚠️⚠️ 实测（seed=103 整局插桩）：**99 次进入 harass 判定、0 次真正派出** ——
- * 中期 `n` 只有 4~5 人（40~50 dps），70 秒只能打出 2800~3500，够不着工厂的 5000 血，判据恒假。
- * 别再靠「降低 HARASS_MIN_UNITS」激活它：改成 7/4 后实测结果与未改动**逐位相同**。
- * 也别放开判据 / 放大股：35%·14 人 → 11890，kb −1590、kh1 −975、kh2 −709，全是负的。
+ * ⚠️⚠️ **拿不下的目标不许去**（满血厂硬啃 = 白送）：实测放开后强度分 12934 → 11890。
+ * 旧实现却用「软配额 4~5 人 × KILL_SECONDS=70」去验 5000 血 —— 中期恒假，
+ * seed=103 插桩 **99 次判定 / 0 次派出**。修法：
+ *   ① 软配额起步，不够拆就**逐人扩到 hardCap**（仍 ≤ HARASS_MAX、仍给主力留 KEEP）；
+ *   ② 小股围拆时限用 HARASS_KILL_SECONDS（略宽于主力总攻的 70s）；
+ *   ③ 不可达（隔崖）直接跳过；残血目标更容易过关。
+ * 仍禁止：放大股到 35%/14、降低 HARASS_MIN_UNITS（A/B 已否决）。
  */
+/** 骚扰股围拆时限：比主力总攻 KILL_SECONDS 略宽，让 6~8 人小队够得着满血厂/所 */
+const HARASS_KILL_SECONDS = 95;
+
 function pickHarass(game, oi, units, myPow) {
   if (!units || units.length < HARASS_MIN_UNITS) return null;
-  const n = Math.min(
-    HARASS_MAX_UNITS,
-    Math.max(4, Math.round(units.length * HARASS_RATIO)),
-    units.length - HARASS_KEEP
+  const hardCap = Math.min(HARASS_MAX_UNITS, units.length - HARASS_KEEP);
+  if (hardCap < 4) return null;
+  const softN = Math.min(
+    hardCap,
+    Math.max(4, Math.round(units.length * HARASS_RATIO))
   );
-  if (n < 4) return null;
   let cx = 0;
   let cy = 0;
   for (const u of units) {
@@ -371,22 +443,26 @@ function pickHarass(game, oi, units, myPow) {
   const scoredC = [];
   for (const c of cands) {
     if (enemyPowerNear(game, oi, c.x, c.y, 600) > myPow * 0.5) continue;
+    const pathD = marchDist(game, cx, cy, c.x, c.y);
+    if (!Number.isFinite(pathD)) continue; // 隔崖 / 不同分量：去了也摸不到
     const hpRatio = c.ref.hp != null && c.ref.hpMax ? c.ref.hp / c.ref.hpMax : 1;
     const outer = 1 + (foeHq ? dist(foeHq.x, foeHq.y, c.x, c.y) : 0) / 6000;
     scoredC.push({
       c,
-      s: (c.w * (1 + (1 - hpRatio) * 1.6) * outer) / (1 + dist(cx, cy, c.x, c.y) / 3000),
+      s: (c.w * (1 + (1 - hpRatio) * 1.6) * outer) / (1 + pathD / 3000),
     });
   }
   scoredC.sort((a, b) => b.s - a.s);
-  // ⚠️ 只踢「这一股真能在 KILL_SECONDS 内拆掉」的目标 —— 拿不下的硬啃 = 白送一队兵
+  // 只踢「扩编后仍能在 HARASS_KILL_SECONDS 内拆掉」的目标
   for (const it of scoredC) {
-    const squad = units
-      .slice()
-      .sort((p, q) => dist(p.x, p.y, it.c.x, it.c.y) - dist(q.x, q.y, it.c.x, it.c.y))
-      .slice(0, n);
-    if (armyDps(squad) * KILL_SECONDS >= (it.c.ref.hp != null ? it.c.ref.hp : 5000)) {
-      return { target: it.c, units: squad };
+    const hp = it.c.ref.hp != null ? it.c.ref.hp : 5000;
+    const byDist = (p, q) =>
+      dist(p.x, p.y, it.c.x, it.c.y) - dist(q.x, q.y, it.c.x, it.c.y);
+    for (let n = softN; n <= hardCap; n++) {
+      const squad = units.slice().sort(byDist).slice(0, n);
+      if (armyDps(squad) * HARASS_KILL_SECONDS >= hp) {
+        return { target: it.c, units: squad };
+      }
     }
   }
   return null;
@@ -437,13 +513,18 @@ function rankTargets(game, oi, stance, state, tNow) {
   // 经济缺口越大，研究所越香（没有科技点就开不了第二条产线，兵力永远封顶）
   const hunger = Math.max(0, wantLabs - labsOwned);
 
-  const wHq = stance === 'endgame' ? 120 : stance === 'skirmish' ? 55 : 22;
-  const wFacE = stance === 'endgame' ? 40 : stance === 'skirmish' ? 70 : 50;
+  // 收官权重：总部必须压过「清对面厂」。旧值 120/40 时优势方会一直刷厂拖到超时（seed=7）。
+  const foePowRank = maxEnemyPower(game, oi);
+  const crushing =
+    stance === 'endgame' && foePowRank > 0 && myPow > foePowRank * 1.5;
+  const wHq =
+    stance === 'endgame' ? (crushing ? 280 : 200) : stance === 'skirmish' ? 55 : 22;
+  const wFacE = stance === 'endgame' ? (crushing ? 12 : 22) : stance === 'skirmish' ? 70 : 50;
   const wFacN = stance === 'develop' ? 80 : stance === 'skirmish' ? 50 : 30;
   // ⚠️ 后期别再为研究所分心：缺所时 wLabE 会飙到 105，配上距离折扣能把敌总部比下去，
   // 于是全军在半个地图上来回拉练（实测 seed=112：h:2 ↔ l:2 每 100 秒换一次，
   // 「集结点到齐比例」永远凑不满、committed 被反复清空 → 56 个兵打不掉 10000 血）。
-  const wLabE = 15 + hunger * 45;
+  const wLabE = stance === 'endgame' ? 10 : 15 + hunger * 45;
   const wLabN = stance === 'develop' ? 95 : 18 + hunger * 60;
 
   for (const h of game.hqs) {
@@ -469,19 +550,28 @@ function rankTargets(game, oi, stance, state, tNow) {
     cands.push({ kind: 'l', id: l.id, x: l.x, y: l.y, w: l.owner === -1 ? wLabN : wLabE, ref: l });
   }
 
-  // 到手时间用的行军速度 / 拆楼 dps（与分兵评估同口径）
+  // 到手时间用的行军速度 / 拆楼 dps（与分兵评估同口径；MARCH_SPD 定义见下方分兵段）
   const marchSpd = 55;
   const myDps = Math.max(6, armyDps(alive));
 
   for (const c of cands) {
-    const dArmy = dist(ax, ay, c.x, c.y);
-    const dHq = dist(hx, hy, c.x, c.y);
+    // 行军用路径距离（隔崖 → Infinity）；总部距离仍用欧氏做「门口扩张」微偏
+    const dArmy = marchDist(game, ax, ay, c.x, c.y);
+    const dHq = marchDist(game, hx, hy, c.x, c.y);
+    if (!Number.isFinite(dArmy) && !Number.isFinite(dHq)) {
+      // 暂不可达：极低分但不抹掉（抹掉会让粘锁目标从列表蒸发 → 全军改道）
+      c.score = 0.01;
+      c.eta = Infinity;
+      continue;
+    }
+    const dArmySafe = Number.isFinite(dArmy) ? dArmy : 1e9;
+    const dHqSafe = Number.isFinite(dHq) ? dHq : dArmySafe;
     // 路程看兵在哪（主力）；总部距离只留一点「门口安全扩张」偏向。
     // 前中期几乎全听兵力；打敌总部时总部距离略加重（别为了近厂永远不去推家）。
     let d;
-    if (c.kind === 'h') d = 0.65 * dArmy + 0.35 * dHq;
-    else if (stance === 'develop' || stance === 'skirmish') d = 0.9 * dArmy + 0.1 * dHq;
-    else d = 0.8 * dArmy + 0.2 * dHq;
+    if (c.kind === 'h') d = 0.65 * dArmySafe + 0.35 * dHqSafe;
+    else if (stance === 'develop' || stance === 'skirmish') d = 0.9 * dArmySafe + 0.1 * dHqSafe;
+    else d = 0.8 * dArmySafe + 0.2 * dHqSafe;
 
     // 守军折扣：目标周围 700 内敌军比我全军还强 → 不去送
     const guard = enemyPowerNear(game, oi, c.x, c.y, 700);
@@ -515,7 +605,9 @@ function rankTargets(game, oi, stance, state, tNow) {
     //   近处易拿的反而更好（扩张窗口花在路上就是纯亏）。
     //   总部拆得久，参考时长远一点，免得中后局永远不敢推家。
     const eta = d / marchSpd + hp / myDps;
-    const etaRef = c.kind === 'h' ? (stance === 'endgame' ? 100 : 140) : 45;
+    // 收官抬高总部 etaRef：远距离拆家不再被「近处敌厂」轻易压分
+    const etaRef =
+      c.kind === 'h' ? (stance === 'endgame' ? (crushing ? 200 : 160) : 140) : 45;
     // 指数 >1：特别远时跌得更狠；eta = etaRef 时约半价
     const reach = 1 / (1 + Math.pow(eta / etaRef, 1.35));
     c.score = c.w * reach * mul * hpMul * sticky * nearMul;
@@ -523,15 +615,101 @@ function rankTargets(game, oi, stance, state, tNow) {
   }
 
   cands.sort((a, b) => b.score - a.score);
-  // 拉黑名单：啃不动的目标一段时间内不再考虑（见 think 里的僵持检测）
-  if (state && state.blocked && cands.length > 2) {
-    return cands.filter((c) => !(state.blocked[targetKey(c)] > tNow));
+  // 拉黑目标；保留极低分候选供粘锁回退
+  let out = cands.filter((c) => c.score > 0);
+  if (state && state.blocked && out.length > 2) {
+    out = out.filter((c) => !(state.blocked[targetKey(c)] > tNow));
   }
-  return cands;
+  return out;
 }
 
+/** 主攻目标硬锁时长：锁定期间不因打分抖动换目标（逛街根因之一） */
+const TARGET_LOCK_MS = 55000;
+
+function resolveTargetRef(game, kind, id) {
+  if (!game) return null;
+  if (kind === 'h') {
+    const h = (game.hqs || []).find((x) => x && x.id === id && !x.down);
+    return h || null;
+  }
+  if (kind === 'f') {
+    return (game.factories || []).find((x) => x && x.id === id) || null;
+  }
+  if (kind === 'l') {
+    return (game.labs || []).find((x) => x && x.id === id) || null;
+  }
+  return null;
+}
+
+/**
+ * 选主攻目标。带硬锁：一旦选定，TARGET_LOCK_MS 内只要目标还在、没被 probe 拉黑、
+ * 也没被我方占领，就继续打 —— 分数浮动不得换道（否则全军走出去又走回来）。
+ *
+ * ⚠️ 收官（endgame）锁厂/所过死也会蠢：优势方一直清对面的厂，总部满血拖到超时。
+ *    收官时非总部目标只短锁；血还很厚就让位给打分（通常是敌总部）。
+ */
 function pickTarget(game, oi, stance, state, tNow) {
-  return rankTargets(game, oi, stance, state, tNow)[0] || null;
+  const list = rankTargets(game, oi, stance, state, tNow);
+
+  if (state && state.lockTarget && tNow < (state.lockUntil || 0)) {
+    const k = state.lockTarget;
+    const blocked = state.blocked && state.blocked[k] > tNow;
+    if (!blocked) {
+      const colon = k.indexOf(':');
+      const kind = k.slice(0, colon);
+      const id = Number(k.slice(colon + 1));
+      const ref = resolveTargetRef(game, kind, id);
+      // 厂/所已被我占领 → 解锁重选；总部推掉也会 ref=null
+      const mine = ref && kind !== 'h' && ref.owner === oi;
+      if (ref && !mine) {
+        const hpRatio = ref.hpMax ? ref.hp / ref.hpMax : 1;
+        const lockAge = tNow - (state.lockAt || tNow);
+        // 收官：非总部短锁；血还厚就放行去拆家（12s / 残血可续打完）
+        const endgameRelease =
+          stance === 'endgame' &&
+          kind !== 'h' &&
+          hpRatio > 0.55 &&
+          lockAge > 12000;
+        if (!endgameRelease) {
+          // 发育/拉锯，或收官锁总部/残血厂所：续锁
+          if (stance !== 'endgame' || kind === 'h' || hpRatio <= 0.55) {
+            state.lockUntil = tNow + TARGET_LOCK_MS;
+          }
+          const fromList = list.find((c) => c.kind === kind && Number(c.id) === id);
+          if (fromList) return fromList;
+          return {
+            kind,
+            id,
+            x: ref.x,
+            y: ref.y,
+            w: 1,
+            ref,
+            score: 1,
+            eta: 0,
+          };
+        }
+      }
+    }
+    state.lockTarget = null;
+    state.lockUntil = 0;
+    state.lockAt = 0;
+  }
+
+  let pick = list[0] || null;
+  // 收官：总部分不太差就强制拆家（防残厂 nearMul 拐走整队）
+  if (stance === 'endgame' && pick && pick.kind !== 'h') {
+    const hqPick = list.find((c) => c.kind === 'h');
+    if (hqPick && hqPick.score >= pick.score * 0.5) pick = hqPick;
+  }
+  if (pick && state) {
+    const k = targetKey(pick);
+    if (state.lockTarget !== k) {
+      state.lockTarget = k;
+      state.lockUntil = tNow + TARGET_LOCK_MS;
+      state.lockAt = tNow;
+    }
+  }
+  return pick;
 }
 
 /* ---------------- 僵持检测：啃不动就换目标 ---------------- */
@@ -547,13 +725,15 @@ const PROBE_REACH_R = 700; // 「有兵真正摸到目标」的判据
  * 到 1094 秒总部被打爆时仍是一座厂都没拿下 —— 而对手同期已经拿了 4 座。
  * 真人早换目标了。
  *
- * 判据（两条都要满足才算卡住）：
+ * 判据（未出击时）：
  *   ① 一个兵都没摸到目标 PROBE_REACH_R 内；
- *   ② 目标血量一点没掉。
- * 只要有任一条有进展就重新计时。卡住 → 拉黑，让 pickTarget 挑下一个。
+ *   ② 目标血量一点没掉；
+ *   ③ 最近距离也没有在缩短（没在赶路）。
+ * 有进展就重新计时。卡住 → 拉黑。
  *
- * 只在「真的在打」的时候判（已发动总攻 / 前中期）—— 否则「故意在集结点等集结」
- * 会被误判成够不着，把敌总部也拉黑了。
+ * ⚠️⚠️ **已出击（committed）绝不因「还没摸到」拉黑**——
+ * 远距离中立厂步行常要 40~70s，旧逻辑 25s 盲黑 = 快走到了突然换目标、
+ * 全军折返回家门口的集结点，看起来极其蠢。死磕改由 crush / 距离不缩短 处理。
  */
 function updateProbe(game, oi, state, tNow, committed, stance) {
   if (!state.target) {
@@ -577,28 +757,42 @@ function updateProbe(game, oi, state, tNow, committed, stance) {
     return;
   }
   const hp = ref.hp != null ? ref.hp : null;
+  let minD = Infinity;
+  for (const u of unitsOf(game, oi)) {
+    const d = dist(u.x, u.y, ref.x, ref.y);
+    if (d < minD) minD = d;
+  }
+  if (!Number.isFinite(minD)) minD = null;
+
   if (state.probe && state.probe.k === k) {
-    const reached = unitsOf(game, oi).some(
-      (u) => dist(u.x, u.y, ref.x, ref.y) <= PROBE_REACH_R
-    );
+    const reached = minD != null && minD <= PROBE_REACH_R;
     const bled = hp != null && state.probe.hp != null && hp < state.probe.hp - 1;
-    if (reached || bled) {
-      state.probe.at = tNow; // 有进展 → 重新计时
+    // 还在靠近目标（净靠近 ≥40px）= 赶路有进展，必须续命
+    const approaching =
+      minD != null &&
+      state.probe.minD != null &&
+      minD < state.probe.minD - 40;
+    if (reached || bled || approaching) {
+      state.probe.at = tNow;
       state.probe.hp = hp;
+      if (minD != null) state.probe.minD = minD;
       return;
     }
-    // ⚠️ 别给「赶路中」加宽限（试过：40s + 赶路时长 + 30s → 16 局净胜从 12:2 掉到 4:11）。
-    // 这套机器人赢在**灵活换目标**：啃不动就 40 秒换一个，把全图的厂一所抢下来；
-    // 一旦允许它为一个目标死磕三四分钟，就等于把扩张窗口全送掉。
+    if (minD != null) {
+      state.probe.minD = Math.min(state.probe.minD != null ? state.probe.minD : minD, minD);
+    }
+
+    // 已出击：只允许「血也不掉、人也不靠近」的真僵持在很久以后由 crush 收场，这里不拉黑
+    if (committed) return;
+
     if (tNow - state.probe.at > PROBE_MS) {
       if (!state.blocked) state.blocked = {};
       state.blocked[k] = tNow + PROBE_BLOCK_MS;
       state.probe = null;
-      // 别把候选全拉黑了：黑到只剩一两个就整体清空，宁可回头再啃
       if (Object.keys(state.blocked).length >= 3) state.blocked = {};
     }
   } else {
-    state.probe = { k, at: tNow, hp };
+    state.probe = { k, at: tNow, hp, minD };
   }
 }
 
@@ -607,7 +801,7 @@ function updateProbe(game, oi, state, tNow, committed, stance) {
 const MARCH_SPD = 55; // 与 think 里赶路宽限同口径（px/s）
 const PRONG_SEP = 1200; // 两条线的目标至少隔这么远，否则就是同一场仗
 const PRONG_MAX_ETA = 200; // 这一股预计超过这么久还拿不下来 → 这条线不值得开
-const PRONG_STICK_MS = 22000; // 分兵目标粘性：半路改道比分错一次更亏
+const PRONG_STICK_MS = 40000; // 分兵目标粘性：半路改道比分错一次更亏（加长防撤编召回）
 
 function buildingHp(target) {
   return target && target.ref && target.ref.hp != null ? target.ref.hp : 3000;
@@ -617,13 +811,18 @@ function buildingHp(target) {
  * 一股兵拆掉这座建筑要多久：按「谁先走到谁先开火」积分，不是全员到齐再打。
  * 全军叠在出生点时，这就是「行军 + 拆楼」；已经有人围着打时，eta 会明显短于后到的人。
  */
-function captureEta(units, target) {
+function captureEta(units, target, game) {
   if (!units || !units.length || !target) return Infinity;
   const arrivals = units
-    .map((u) => ({
-      t: dist(u.x, u.y, target.x, target.y) / MARCH_SPD,
-      dps: unitDps(u),
-    }))
+    .map((u) => {
+      const d = game
+        ? marchDist(game, u.x, u.y, target.x, target.y)
+        : dist(u.x, u.y, target.x, target.y);
+      return {
+        t: Number.isFinite(d) ? d / MARCH_SPD : Infinity,
+        dps: unitDps(u),
+      };
+    })
     .sort((a, b) => a.t - b.t);
   let dps = 0;
   let left = buildingHp(target);
@@ -643,7 +842,7 @@ function captureEta(units, target) {
 }
 
 /** 全军串行：拿完一座，人从那座走到下一座再拆（扩张窗口浪费在路上的那条对照基线） */
-function sequentialEta(units, targets) {
+function sequentialEta(units, targets, game) {
   if (!units || !units.length || !targets.length) return { makespan: Infinity, first: Infinity, times: [] };
   let cx = 0;
   let cy = 0;
@@ -661,11 +860,16 @@ function sequentialEta(units, targets) {
     let bi = 0;
     let bd = Infinity;
     for (let i = 0; i < left.length; i++) {
-      const d = dist(cx, cy, left[i].x, left[i].y);
+      const d = game
+        ? marchDist(game, cx, cy, left[i].x, left[i].y)
+        : dist(cx, cy, left[i].x, left[i].y);
       if (d < bd) {
         bd = d;
         bi = i;
       }
+    }
+    if (!Number.isFinite(bd)) {
+      return { makespan: Infinity, first: Infinity, times: finish };
     }
     const c = left.splice(bi, 1)[0];
     t += bd / MARCH_SPD + buildingHp(c) / dps;
@@ -748,11 +952,11 @@ function assignProngUnits(units, targets) {
   return groups;
 }
 
-function prongMakespan(groups) {
+function prongMakespan(groups, game) {
   let m = 0;
   const times = [];
   for (const g of groups) {
-    const e = captureEta(g.units, g.target);
+    const e = captureEta(g.units, g.target, game);
     times.push(e);
     if (e > m) m = e;
   }
@@ -822,14 +1026,14 @@ function pickProngs(game, oi, stance, state, units, tNow) {
     }
     const groups = assignProngUnits(units, targets);
     if (groups.some((g) => g.units.length < minN)) return null;
-    const par = prongMakespan(groups);
+    const par = prongMakespan(groups, game);
     if (par.times.some((e) => !Number.isFinite(e) || e > PRONG_MAX_ETA)) return null;
-    const seq = sequentialEta(units, targets);
+    const seq = sequentialEta(units, targets, game);
     // 主目标取价值更高的那座（不是地理更近的那座）
     const primary = targets[0].score >= targets[1].score ? targets[0] : targets[1];
-    const tAllFirst = captureEta(units, primary);
+    const tAllFirst = captureEta(units, primary, game);
     const gPri = groups.find((g) => g.target === primary) || groups[0];
-    const tParFirst = captureEta(gPri.units, primary);
+    const tParFirst = captureEta(gPri.units, primary, game);
     const delay = tParFirst / Math.max(1, tAllFirst);
     // 并行拿下两座要明显快于串行；主目标最多拖到 1.7 倍（抽太多就变成两路都啃不动）
     if (!(par.makespan * 1.06 < seq.makespan && delay <= 1.7)) return null;
@@ -837,14 +1041,32 @@ function pickProngs(game, oi, stance, state, units, tNow) {
   };
 
   let best = null;
-  // 粘性：上一轮那对目标还在软列表里，优先沿用（避免 0.7s 一思考就改道）
+  // 粘性：上一轮那对目标优先沿用；评估偶然失败时也强行分兵，禁止撤编把人召回集结点
   if (state && Array.isArray(state.prongKeys) && tNow - (state.prongAt || 0) < PRONG_STICK_MS) {
     const kept = [];
     for (const k of state.prongKeys) {
-      const c = soft.find((s) => targetKey(s) === k);
+      let c = soft.find((s) => targetKey(s) === k);
+      if (!c) c = list.find((s) => targetKey(s) === k);
+      if (!c) {
+        const colon = k.indexOf(':');
+        const kind = k.slice(0, colon);
+        const id = Number(k.slice(colon + 1));
+        const ref = resolveTargetRef(game, kind, id);
+        if (ref && !(kind !== 'h' && ref.owner === oi)) {
+          c = { kind, id, x: ref.x, y: ref.y, w: 1, ref, score: 1 };
+        }
+      }
       if (c) kept.push(c);
     }
-    if (kept.length >= 2) best = scorePair(kept.slice(0, 2));
+    if (kept.length >= 2) {
+      best = scorePair(kept.slice(0, 2));
+      if (!best) {
+        const groups = assignProngUnits(units, kept.slice(0, 2));
+        if (!groups.some((g) => g.units.length < minN)) {
+          best = { groups, gain: 1, delay: 1 };
+        }
+      }
+    }
   }
   if (!best) {
     for (let i = 0; i < soft.length; i++) {
@@ -918,7 +1140,21 @@ function pickStage(game, oi, target) {
   const off = Math.min(STAGE_OFF, d * 0.5);
   // 站高一点：射程随层差 +1 格/层，站在高台上打洼地里的敌人是白捡的射程。
   // 只挪 120~240px、且不许比原地离目标远 150px 以上（绕远路去爬高不划算）。
-  return highGround(game, best.x + ux * off, best.y + uy * off, target.x, target.y, [120, 240], 150);
+  const raw = highGround(
+    game,
+    best.x + ux * off,
+    best.y + uy * off,
+    target.x,
+    target.y,
+    [120, 240],
+    150
+  );
+  // 量化到 120px 网格：highGround 每帧微抖会让「去集结点」指令坐标一直变 → 部队原地改道逛街
+  const q = 120;
+  return {
+    x: Math.round(raw.x / q) * q,
+    y: Math.round(raw.y / q) * q,
+  };
 }
 
 /**
@@ -1609,8 +1845,37 @@ function assignUnits(game, oi, stance, target, threats, def, stage, committed, s
       // 中立无人守：行军就是扩张，别在前压点空等半支军队
       splitMarch(game, target, mobile, cmds);
     } else if (stage) {
-      // 还没凑够人：先到前压集结点会合（移动途中照常自动索敌开火）
-      cmds.push({ cmd: 'move', x: Math.round(stage.x), y: Math.round(stage.y), ids: mobile.map((u) => u.id) });
+      // 还没凑够人：先到前压集结点会合。
+      // ⚠️ 人已经在野外（离目标比离总部更近）时，集结点往往还在家门口——
+      //    再下「去集结点」= 快打到中立厂却折返回家，禁止。
+      let nearer = 0;
+      let atField = 0;
+      let sumT = 0;
+      let sumH = 0;
+      for (const u of mobile) {
+        const dt = dist(u.x, u.y, target.x, target.y);
+        const dh = dist(u.x, u.y, hq.x, hq.y);
+        sumT += dt;
+        sumH += dh;
+        if (dt <= FIELD_R) atField += 1;
+        if (dt + 120 < dist(u.x, u.y, stage.x, stage.y)) nearer += 1;
+      }
+      const fielded =
+        mobile.length > 0 && sumT / mobile.length + 500 < sumH / mobile.length;
+      if (
+        atField >= 2 ||
+        nearer >= Math.max(3, Math.ceil(mobile.length * 0.35)) ||
+        fielded
+      ) {
+        splitMarch(game, target, mobile, cmds);
+      } else {
+        cmds.push({
+          cmd: 'move',
+          x: Math.round(stage.x),
+          y: Math.round(stage.y),
+          ids: mobile.map((u) => u.id),
+        });
+      }
     } else {
       splitMarch(game, target, mobile, cmds);
     }
@@ -1661,28 +1926,73 @@ function think(game, playerId, difficulty, state, now) {
     const need = needDps(game, oi, target);
     if (state.committed === sk && state.commitAt != null) {
       // 已经压上去了：只要「还在赶路」或「战场上还有兵」就继续推。
-      // ⚠️ 这里绝不能再用「离集结点多远」判——大部队一开拔，集结点附近就空了，
-      //    会被判成「人没到齐」而原地召回，来回拉锯、整局零进展（实测过的坑）。
+      // ⚠️ 绝不能用「离集结点多远」召回——大部队一开拔集结点就空，会走出去又走回来。
       const marchSec = state.marchSec || 0;
       const elapsed = (tNow - state.commitAt) / 1000;
       const field = alive.filter((u) => dist(u.x, u.y, target.x, target.y) <= FIELD_R);
       const fieldDps = armyDps(field);
-      const crushed = elapsed > marchSec && fieldDps < need * 0.3 && alive.length < 12;
-      if (crushed) state.committed = null;
-      else committed = true;
+      // 收紧 crush：必须超时很久、前线一个人都没有、且残兵极少，才允许撤编
+      const crushed =
+        elapsed > marchSec + 40 &&
+        field.length === 0 &&
+        fieldDps < need * 0.15 &&
+        alive.length < 8;
+      if (crushed) {
+        state.committed = null;
+        state.commitAt = null;
+      } else {
+        committed = true;
+      }
     } else {
-      state.committed = null;
+      if (state.committed && state.committed !== sk) {
+        state.committed = null;
+        state.commitAt = null;
+      }
+      // 已有兵力比集结点更靠近目标 / 已摸到前线 → 视为已出击，禁止召回逛街
+      let advancing = false;
+      if (alive.length) {
+        let nearer = 0;
+        let atField = 0;
+        for (const u of alive) {
+          const dt = dist(u.x, u.y, target.x, target.y);
+          if (dt <= FIELD_R) atField += 1;
+          if (stage) {
+            if (dt + 120 < dist(u.x, u.y, stage.x, stage.y)) nearer += 1;
+          }
+        }
+        advancing = atField >= 2 || nearer >= Math.max(3, Math.ceil(alive.length * 0.35));
+      }
       const sr = stage ? strikeReady(game, oi, target, stage, posture) : null;
-      if (sr && sr.ready) {
+      // 中立无人守 / 厂·所：直接出击，不必召回集结点空等（换目标时召回 = 逛街）
+      // 敌总部：集结够了再上；但 endgame 已具备拆家条件时直接压，别先把前线兵召回舞台。
+      const freeExpand = target.ref && target.ref.owner < 0;
+      const softPush = target.kind === 'f' || target.kind === 'l';
+      const endgameHq = stance === 'endgame' && target.kind === 'h';
+      if ((sr && sr.ready) || advancing || freeExpand || softPush || endgameHq) {
         state.committed = sk;
-        state.commitAt = tNow;
-        // 赶路宽限：从集结点走到目标的时间 + 20 秒接战时间
-        state.marchSec = dist(stage.x, stage.y, target.x, target.y) / 55 + 20;
+        // 换目标重新起算赶路宽限；同目标保持原 commitAt
+        if (state._commitSk !== sk) {
+          state.commitAt = tNow;
+          state._commitSk = sk;
+        } else if (state.commitAt == null) {
+          state.commitAt = tNow;
+        }
+        {
+          const from = stage || myHq(game, oi) || target;
+          const md = marchDist(game, from.x, from.y, target.x, target.y);
+          state.marchSec =
+            (Number.isFinite(md)
+              ? md
+              : dist(from.x, from.y, target.x, target.y) * PATH_STRETCH) /
+              55 +
+            20;
+        }
         committed = true;
       }
     }
   } else {
     state.committed = null;
+    state.commitAt = null;
   }
 
   const cmds = [];
@@ -1725,12 +2035,13 @@ module.exports = {
   think,
   decideBotAction,
   // 供测试 / 调试
-  _internal: {
+    _internal: {
     detectStance,
     rankTargets,
     pickTarget,
     armyCentroid,
     pickProngs,
+    pickHarass,
     detectThreats,
     homeDefense,
     pickTech,
@@ -1743,5 +2054,6 @@ module.exports = {
     enemyPowerNear,
     unitScore,
     unitDps,
+    marchDist,
   },
 };

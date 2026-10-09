@@ -88,6 +88,10 @@
     roomMapWrap: document.getElementById('room-map-wrap'),
     roomMapNote: document.getElementById('room-map-note'),
     roomMapName: document.getElementById('room-map-name'),
+    roomTheme: document.getElementById('room-theme'),
+    roomThemeWrap: document.getElementById('room-theme-wrap'),
+    roomThemeNote: document.getElementById('room-theme-note'),
+    roomThemeName: document.getElementById('room-theme-name'),
     roomName: document.getElementById('room-name'),
     roomAllowTrade: document.getElementById('room-allow-trade'),
     roomAllowTradeWrap: document.getElementById('room-allow-trade-wrap'),
@@ -119,8 +123,10 @@
     observerList: document.getElementById('observer-list'),
     observerSection: document.getElementById('observer-section'),
     btnStart: document.getElementById('btn-start'),
+    btnFillBots: document.getElementById('btn-fill-bots'),
     btnEditRoom: document.getElementById('btn-edit-room'),
     btnInviteLobby: document.getElementById('btn-invite-lobby'),
+    addBotTitle: document.getElementById('add-bot-title'),
     btnMenuGameRules: document.getElementById('btn-menu-game-rules'),
     btnLeave: document.getElementById('btn-leave'),
     roomTunnelShare: document.getElementById('room-tunnel-share'),
@@ -226,6 +232,7 @@
     passivePublicUrl: '',
     roomSeatMoveFrom: null,
     addBotSeatIndex: null,
+    addBotFillAll: false,
     roomCtxTarget: null,
     chatChannel: 'all',
     chatAll: [],
@@ -3659,6 +3666,7 @@
       syncEditRoomCoreLocks();
     }
     syncRoomMapWrap();
+    syncRoomThemeWrap();
   }
 
   /** 按游戏人数范围填充「人数上限」下拉，不超出 min/max */
@@ -3766,6 +3774,65 @@
     return hit ? hit.name || hit.file : null;
   }
 
+  /** 战争工厂地貌主题清单（来自 listGames 下发的 game.themes） */
+  function warfactoryThemes() {
+    const g = (state.games || []).find((x) => x && x.id === 'warfactory');
+    return Array.isArray(g && g.themes) ? g.themes : [];
+  }
+
+  function themeNameOf(key) {
+    if (!key) return t('create.themeRandom');
+    const hit = warfactoryThemes().find((x) => x.key === key);
+    return hit ? hit.name || hit.key : key;
+  }
+
+  /** 重铺「地图主题」下拉：随机 + 各主题配方 */
+  function syncRoomThemeOptions() {
+    if (!el.roomTheme) return;
+    const keep = el.roomTheme.value;
+    el.roomTheme.innerHTML = '';
+    const rand = document.createElement('option');
+    rand.value = '';
+    rand.textContent = t('create.themeRandom');
+    el.roomTheme.appendChild(rand);
+    for (const th of warfactoryThemes()) {
+      const opt = document.createElement('option');
+      opt.value = th.key;
+      opt.textContent = th.name || th.key;
+      if (th.desc) opt.title = th.desc;
+      el.roomTheme.appendChild(opt);
+    }
+    if ([...el.roomTheme.options].some((o) => o.value === keep)) {
+      el.roomTheme.value = keep;
+    } else {
+      el.roomTheme.value = '';
+    }
+    syncRoomThemeEnabled();
+  }
+
+  /** 选了自定义地图文件时主题无效（地图文件自带地形） */
+  function syncRoomThemeEnabled() {
+    if (!el.roomTheme) return;
+    const customMap = Boolean(selectedMapFile());
+    el.roomTheme.disabled = customMap;
+    if (customMap) el.roomTheme.title = t('create.themeHint');
+    else el.roomTheme.title = '';
+  }
+
+  function syncRoomThemeWrap() {
+    if (!el.roomThemeWrap) return;
+    const g = selectedGameMeta();
+    const show = Boolean(g && supportsCustomMap(g.id));
+    el.roomThemeWrap.hidden = !show;
+    if (show) syncRoomThemeOptions();
+  }
+
+  function selectedThemeKey() {
+    if (!el.roomTheme || !el.roomThemeWrap || el.roomThemeWrap.hidden) return null;
+    if (el.roomTheme.disabled) return null;
+    return el.roomTheme.value || null;
+  }
+
   /** 房间里那行「地图：xxx」（列表后到也没关系：先把文件名顶上，拉到再换成地图名） */
   function syncRoomMapNote() {
     if (!el.roomMapNote || !el.roomMapName) return;
@@ -3779,6 +3846,18 @@
     el.roomMapName.textContent = mapNameOf(file) || file;
     el.roomMapNote.hidden = false;
     if (!wfMapLoaded) requestWfMapList();
+  }
+
+  /** 房间里那行「主题：xxx」（自定义地图时隐藏） */
+  function syncRoomThemeNote() {
+    if (!el.roomThemeNote || !el.roomThemeName) return;
+    const room = state.room;
+    if (!room || !supportsCustomMap(room.gameType) || room.mapFile) {
+      el.roomThemeNote.hidden = true;
+      return;
+    }
+    el.roomThemeName.textContent = themeNameOf(room.theme || '');
+    el.roomThemeNote.hidden = false;
   }
 
   function fillGameOptions(games) {
@@ -4726,8 +4805,13 @@
     el.roomCode.textContent = room.id;
     el.roomPasswordBadge.hidden = !room.hasPassword;
     // 这一局用的是哪张图（列表还没回来也先把文件名顶上）
-    if (supportsCustomMap(room.gameType)) syncRoomMapNote();
-    else if (el.roomMapNote) el.roomMapNote.hidden = true;
+    if (supportsCustomMap(room.gameType)) {
+      syncRoomMapNote();
+      syncRoomThemeNote();
+    } else {
+      if (el.roomMapNote) el.roomMapNote.hidden = true;
+      if (el.roomThemeNote) el.roomThemeNote.hidden = true;
+    }
 
     el.memberList.innerHTML = '';
     const maxSlots = room.maxPlayers || (room.players || []).length || 0;
@@ -4737,12 +4821,14 @@
       (room.observers || []).some(
         (o) => o && String(o.id) === String(state.me.id)
       );
+    // 房主在观战席仍保留房主权限（加电脑 / 开局 / 改房）
     const isHost =
-      state.me &&
-      String(room.hostId) === String(state.me.id) &&
-      !isSpectator;
+      state.me && String(room.hostId) === String(state.me.id);
     const teamRoom =
       room.gameType === 'lasidao' && room.gameMode === 'h2h';
+    const gameMetaForRoom =
+      (state.games || []).find((g) => g && g.id === room.gameType) || null;
+    const supportsBot = Boolean(gameMetaForRoom && gameMetaForRoom.supportsBot);
 
     function fillRoomSlot(slot, p, teamKey, slotIdx) {
       if (p) {
@@ -4768,19 +4854,38 @@
         slot.appendChild(nick);
         slot.appendChild(status);
 
-        if (p.isBot && isHost && room.status !== 'playing') {
+        if (room.status !== 'playing' && !p.left) {
           const actions = document.createElement('div');
           actions.className = 'slot-actions';
-          const btnRemove = document.createElement('button');
-          btnRemove.type = 'button';
-          btnRemove.className = 'btn-remove-bot';
-          btnRemove.textContent = t('room.removeBot');
-          btnRemove.addEventListener('click', (ev) => {
-            ev.stopPropagation();
-            if (net.removeBot) net.removeBot(slotIdx);
-          });
-          actions.appendChild(btnRemove);
-          slot.appendChild(actions);
+          let hasAction = false;
+          if (p.isBot && isHost) {
+            const btnRemove = document.createElement('button');
+            btnRemove.type = 'button';
+            btnRemove.className = 'btn-remove-bot';
+            btnRemove.textContent = t('room.removeBot');
+            btnRemove.addEventListener('click', (ev) => {
+              ev.stopPropagation();
+              if (net.removeBot) net.removeBot(slotIdx);
+            });
+            actions.appendChild(btnRemove);
+            hasAction = true;
+          }
+          if (isMe && !p.isBot) {
+            const btnSpec = document.createElement('button');
+            btnSpec.type = 'button';
+            btnSpec.className = 'btn-to-spectator';
+            btnSpec.textContent =
+              t('room.toSpectator') !== 'room.toSpectator'
+                ? t('room.toSpectator')
+                : '移到观战席';
+            btnSpec.addEventListener('click', (ev) => {
+              ev.stopPropagation();
+              if (net.moveToSpectator) net.moveToSpectator();
+            });
+            actions.appendChild(btnSpec);
+            hasAction = true;
+          }
+          if (hasAction) slot.appendChild(actions);
         }
       } else {
         const empty = document.createElement('span');
@@ -4788,9 +4893,6 @@
         empty.textContent = t('room.emptySeat');
         slot.appendChild(empty);
 
-        const gameMeta =
-          (state.games || []).find((g) => g && g.id === room.gameType) || null;
-        const supportsBot = Boolean(gameMeta && gameMeta.supportsBot);
         if (isHost && room.status !== 'playing' && supportsBot) {
           const actions = document.createElement('div');
           actions.className = 'slot-actions';
@@ -4911,10 +5013,12 @@
       li.dataset.speakerKey = memberSpeakerKey(o);
       const isMe = state.me && o.id === state.me.id;
       const isPassiveServer = Boolean(o.passiveHost);
+      const hostHere = String(o.id) === String(room.hostId);
       const left = document.createElement('span');
       left.innerHTML =
         nickHtml(o.name, o.tag) +
         (isMe ? ' <span class="you">(我)</span>' : '') +
+        (hostHere ? ' <span class="badge">' + t('room.host') + '</span>' : '') +
         (isPassiveServer
           ? ' <span class="badge">' +
             (t('room.passiveServer') || '被动服务器') +
@@ -4939,6 +5043,7 @@
     const need = Number(room.maxPlayers) || min;
     // 仅统计座位玩家，观战席不计入开局人数
     const seated = (room.players || []).filter((p) => p && !p.left).length;
+    const emptySeats = Math.max(0, need - seated);
     el.roomStartHint.textContent = t('room.startHintCount', {
       min,
       cur: seated,
@@ -4951,6 +5056,10 @@
     state.isSpectator = Boolean(isSpectator);
     el.btnStart.hidden = !isHost;
     el.btnStart.disabled = seated < need;
+    if (el.btnFillBots) {
+      el.btnFillBots.hidden =
+        !isHost || room.status === 'playing' || !supportsBot || emptySeats <= 0;
+    }
     if (el.btnEditRoom) {
       el.btnEditRoom.hidden = !isHost || room.status === 'playing';
     }
@@ -6074,6 +6183,16 @@
         wfMapPendingFile = null;
       }
     }
+    if (el.roomTheme) {
+      syncRoomThemeOptions();
+      const th = room.theme || '';
+      if ([...el.roomTheme.options].some((o) => o.value === th)) {
+        el.roomTheme.value = th;
+      } else {
+        el.roomTheme.value = '';
+      }
+      syncRoomThemeEnabled();
+    }
     if (el.roomHasPassword) {
       el.roomHasPassword.checked = Boolean(room.hasPassword);
     }
@@ -6191,18 +6310,45 @@
     if (el.joinCodeModal) el.joinCodeModal.hidden = true;
     if (el.addBotModal) el.addBotModal.hidden = true;
     state.addBotSeatIndex = null;
+    state.addBotFillAll = false;
     state.createModalMode = 'create';
     syncCreateModalChrome();
     syncEditRoomCoreLocks();
   }
 
-  function setAddBotOpen(open, seatIndex) {
+  function setAddBotOpen(open, seatIndex, fillAll = false) {
     if (!el.addBotModal) return;
     el.addBotModal.hidden = !open;
     if (open) {
-      state.addBotSeatIndex = seatIndex;
+      state.addBotFillAll = Boolean(fillAll);
+      state.addBotSeatIndex = fillAll ? null : seatIndex;
+      if (el.addBotTitle) {
+        el.addBotTitle.textContent = fillAll
+          ? t('bot.fillTitle') !== 'bot.fillTitle'
+            ? t('bot.fillTitle')
+            : '填满电脑'
+          : t('bot.addTitle') !== 'bot.addTitle'
+            ? t('bot.addTitle')
+            : '添加电脑';
+      }
       if (el.addBotSeatLabel) {
-        el.addBotSeatLabel.textContent = t('room.botSeatLabel').replace('{seat}', String(Number(seatIndex) + 1));
+        el.addBotSeatLabel.textContent = fillAll
+          ? t('bot.fillSeatLabel') !== 'bot.fillSeatLabel'
+            ? t('bot.fillSeatLabel')
+            : '将为所有空位添加电脑'
+          : t('room.botSeatLabel').replace(
+              '{seat}',
+              String(Number(seatIndex) + 1)
+            );
+      }
+      if (el.btnConfirmAddBot) {
+        el.btnConfirmAddBot.textContent = fillAll
+          ? t('bot.confirmFill') !== 'bot.confirmFill'
+            ? t('bot.confirmFill')
+            : '确认填满'
+          : t('bot.confirmAdd') !== 'bot.confirmAdd'
+            ? t('bot.confirmAdd')
+            : '确认添加';
       }
       if (el.botDifficulty) {
         const gameType = state.room && state.room.gameType;
@@ -6221,6 +6367,7 @@
       if (el.joinCodeModal) el.joinCodeModal.hidden = true;
     } else {
       state.addBotSeatIndex = null;
+      state.addBotFillAll = false;
     }
   }
 
@@ -6229,7 +6376,15 @@
     const gameMeta =
       room && (state.games || []).find((g) => g && g.id === room.gameType);
     if (!gameMeta || !gameMeta.supportsBot) return;
-    setAddBotOpen(true, seatIndex);
+    setAddBotOpen(true, seatIndex, false);
+  }
+
+  function openFillBotsModal() {
+    const room = state.room;
+    const gameMeta =
+      room && (state.games || []).find((g) => g && g.id === room.gameType);
+    if (!gameMeta || !gameMeta.supportsBot) return;
+    setAddBotOpen(true, null, true);
   }
 
   let nickEditing = false;
@@ -6632,6 +6787,11 @@
   if (el.gameMode) {
     el.gameMode.addEventListener('change', updateCreateForm);
   }
+  if (el.roomMap) {
+    el.roomMap.addEventListener('change', () => {
+      syncRoomThemeEnabled();
+    });
+  }
 
   el.btnEnterLobby.addEventListener('click', async () => {
     const name = (el.playerName.value || '').trim();
@@ -6861,12 +7021,18 @@
   if (el.btnConfirmAddBot) {
     el.btnConfirmAddBot.addEventListener('click', () => {
       const seatIndex = state.addBotSeatIndex;
+      const fillAll = state.addBotFillAll;
       const difficulty = el.botDifficulty ? el.botDifficulty.value : 'hard';
-      if (seatIndex != null && net.addBot) {
+      if (fillAll && net.fillBots) {
+        net.fillBots(difficulty);
+      } else if (seatIndex != null && net.addBot) {
         net.addBot(seatIndex, difficulty);
       }
       setAddBotOpen(false);
     });
+  }
+  if (el.btnFillBots) {
+    el.btnFillBots.addEventListener('click', () => openFillBotsModal());
   }
   if (el.addBotModal) {
     el.addBotModal.addEventListener('click', (ev) => {
@@ -7332,6 +7498,8 @@
           : undefined,
       // 战争工厂：指定了地图文件就按它开局（'' = 随机生成）
       mapFile: selectedMapFile(),
+      // 战争工厂地貌主题（'' / null = 开局加权随机）
+      theme: selectedThemeKey(),
     };
 
     if (state.createModalMode === 'edit') {

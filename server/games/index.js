@@ -35,18 +35,31 @@ function gameSupportsHosting(game) {
 }
 
 function listGames() {
-  return Object.values(GAMES).map((g) => ({
-    id: g.id,
-    label: g.label,
-    minPlayers: g.minPlayers,
-    maxPlayers: g.maxPlayers,
-    modes: g.modes || null,
-    client: g.client || null,
-    /** 是否接入 AI（游戏模块导出 decideBotAction，通常来自 bot.js） */
-    supportsBot: gameSupportsBot(g),
-    /** 是否允许对局中玩家托管 */
-    supportsHosting: gameSupportsHosting(g),
-  }));
+  return Object.values(GAMES).map((g) => {
+    const out = {
+      id: g.id,
+      label: g.label,
+      minPlayers: g.minPlayers,
+      maxPlayers: g.maxPlayers,
+      modes: g.modes || null,
+      client: g.client || null,
+      /** 是否接入 AI（游戏模块导出 decideBotAction，通常来自 bot.js） */
+      supportsBot: gameSupportsBot(g),
+      /** 是否允许对局中玩家托管 */
+      supportsHosting: gameSupportsHosting(g),
+    };
+    // 战争工厂：把地貌主题清单下发给建房 UI（房主可选，不再每局暗抽）
+    if (Array.isArray(g.themes) && g.themes.length) {
+      out.themes = g.themes
+        .filter((t) => t && t.key && Number(t.weight) !== 0)
+        .map((t) => ({
+          key: String(t.key),
+          name: String(t.name || t.key),
+          desc: String(t.desc || ''),
+        }));
+    }
+    return out;
+  });
 }
 
 function getGame(gameType) {

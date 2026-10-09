@@ -2295,6 +2295,7 @@ io.on('connection', (socket) => {
       easyStart: data.easyStart,
       matchGames: data.matchGames,
       mapFile: data.mapFile || null,
+      theme: data.theme != null ? data.theme : null,
       passiveHost: wantPassive && Boolean(operatorId),
       operatorId,
     });
@@ -2477,6 +2478,8 @@ io.on('connection', (socket) => {
       peacefulDev: oldRoom.peacefulDev !== false,
       easyStart: oldRoom.easyStart !== false,
       matchGames: oldRoom.matchGames,
+      mapFile: oldRoom.mapFile || null,
+      theme: oldRoom.theme || null,
     };
     const targets = [];
     for (const p of oldRoom.players || []) {
@@ -3251,8 +3254,26 @@ io.on('connection', (socket) => {
     emitRoomUpdate(result.room);
   });
 
+  socket.on('room:toSpectator', () => {
+    const result = rooms.moveSelfToSpectator(socket.id);
+    if (!result.ok) {
+      socket.emit('room:error', { message: result.error });
+      return;
+    }
+    emitRoomUpdate(result.room);
+  });
+
   socket.on('room:addBot', (data = {}) => {
     const result = rooms.addBotPlayer(socket.id, data.seatIndex, data.difficulty);
+    if (!result.ok) {
+      socket.emit('room:error', { message: result.error });
+      return;
+    }
+    emitRoomUpdate(result.room);
+  });
+
+  socket.on('room:fillBots', (data = {}) => {
+    const result = rooms.fillEmptyBots(socket.id, data.difficulty);
     if (!result.ok) {
       socket.emit('room:error', { message: result.error });
       return;
@@ -3317,6 +3338,7 @@ io.on('connection', (socket) => {
       peacefulDev: data.peacefulDev,
       easyStart: data.easyStart,
       matchGames: data.matchGames,
+      theme: data.theme,
     });
     if (!result.ok) {
       socket.emit('room:error', { message: result.error });

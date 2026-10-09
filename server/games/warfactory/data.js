@@ -33,7 +33,7 @@
 const WFData = {
   // ===================== 格子基准：1 格 = 多少像素 =====================
   grid: {
-    cell: 10, // 1 格 = 10px。改这一个值即可整体缩放所有长度（半径 / 射程 / 建筑）。
+    cell: 30, // 1 格 = 10px。改这一个值即可整体缩放所有长度（半径 / 射程 / 建筑）。
   },
 
   // ===================== 地形高低差（由地形派生的坡地高度场） =====================
@@ -74,10 +74,10 @@ const WFData = {
                            // 视角（每格 3.6 屏幕像素）就是一条看不见的细线。
     rampGrip: 4,           // 坡肩外扩（格，只标记不改层）：把坡道加宽成一整条金色地带，
                            // 这是「坡看起来像一种地形」而不是「一条线」的关键。
-    rampMin: 3,            // 每块孤立台地至少几个坡口：抬到 3 —— 坡太少则玩家记不住位置，
+    rampMin: 4,            // 每块孤立台地至少几个坡口：抬到 4 —— 坡太少则玩家记不住位置，
                            // 且一支兵堵在坡口就能让整条通路单向堵死。
-    rampPerCells: 420,     // 台地越大坡口越多：每这么多格再 +1（与 rampMin 累加）
-    rampMaxPerPatch: 7,    // 单块台地最多几个坡口
+    rampPerCells: 360,     // 台地越大坡口越多：每这么多格再 +1（与 rampMin 累加）
+    rampMaxPerPatch: 8,    // 单块台地最多几个坡口
     rampSpread: 1,         // 同一块台地的多个坡口是否按「离已选点最远」铺开（1 = 是）
   },
 
@@ -196,42 +196,45 @@ const WFData = {
   },
 
   // ===================== 地图主题（每局随机抽一个） =====================
-  // 每局开局按 weight 加权随机抽一个主题；抽中后按它的 shapes 清单**盖图元**生成地形。
-  // 地形生成改用**柏林噪声**（https://gitee.com/sli97/pcg）：
-  // 楔形上跑 fBm Perlin → 按 mix 分位阈值成山/水/平原 → D_N 折叠展开成对称世界图。
-  // 主路 / 关口 / 连通 / 补地形仍走原有管线；补地形按同一张噪声场「晋升」平原格。
+  // 每局开局按 weight 加权随机抽一个主题；抽中后按它的 shapes 清单**盖规整图元**生成地形。
+  // 图元是战局骨架（直墙带隘口 / 台地山 / 椭圆湖 / 环形山），不是噪声真随机 ——
+  // 随机只决定「同类图元摆哪、盖几块」，形态与通路由主题配方保证。
+  // 主路 / 关口 / 连通 / 补地形仍走原有管线；补地形也按同一套 shapes 盖章（不走噪声晋升）。
   //
   // 主题字段：
   //   weight      抽取权重（越大越常见；想关掉某个主题就把权重写成 0）
   //   maxBlocked  山 + 水合计覆盖率的硬上限
-  //   mix         山 / 水各占全图多少（分位阈值目标；山 + 水 ≤ maxBlocked）
-  //   noise       柏林噪声参数（缺省见 index.js NOISE_FALLBACK）：
-  //                 scale / octaves / persistance / lacunarity / offsetX / offsetY
-  //                 bias  地貌偏置：none | centerWater | ringMountain | stretchH | stretchV | cornerMountain
-  //   core        中心圈补地形（r / fill / budget）
-  //   shapes      旧图元清单（兼容保留；主生成已不走盖章）
+  //   mix         山 / 水各占全图多少（盖章目标；山 + 水 ≤ maxBlocked）
+  //   core        中心圈补地形（r / fill / budget）—— 中场争夺区专属额度
+  //   shapes      图元清单（主生成）：wall / blob / ring，可写 at:'center'|'corner' 锚点
   themes: [
     {
       key: 'classic', name: '标准战场', weight: 26,
-      desc: '起伏均衡的山丘与湖泊，最通用的一张图',
+      desc: '直墙、山块与湖泊均衡分布，最通用的一张图',
       maxBlocked: 0.36,
+      // mix = 这个地形模型**预设**的山 / 水各占全图多少（山 + 水 ≤ maxBlocked）。
+      // 生成器按它分别配额：山够了就只盖水，水够了就只盖山 —— 不会再出现
+      // 「山图元先抢光额度、湖只剩零头」这种跟设定不符的图。
       mix: { mountain: 0.16, water: 0.06 },
-      noise: { scale: 42, octaves: 5, persistance: 0.5, lacunarity: 2, bias: 'none' },
+      // 中心圈专属额度：中场是双方争夺的主战场，不能是一片空地（详见 topUpCore）。
+      // maxBlocked 已经把这笔 budget 加了进去 —— 中心的地形是**额外的**，不跟外圈抢。
       core: { r: 0.5, fill: 1, budget: 0.32 },
       shapes: [
         { kind: 'wall', type: 'mountain', count: [4, 6], len: [0.34, 0.56], thick: [5, 7], gap: [40, 64], gapW: [10, 14], dir: 'hv' },
-        { kind: 'blob', type: 'mountain', count: [3, 4], w: [28, 42], h: [26, 38], round: 0.8 },
-        { kind: 'blob', type: 'water', count: [2, 3], w: [32, 46], h: [32, 46], round: 0.95 },
+        { kind: 'blob', type: 'mountain', count: [3, 4], w: [28, 42], h: [26, 38], round: 0.15 },
+        { kind: 'blob', type: 'water', count: [2, 3], w: [32, 46], h: [32, 46], round: 0.9 },
       ],
     },
     {
       key: 'battlements', name: '壁垒', weight: 12,
-      desc: '横向起伏的山脊带，像一道道壁垒',
+      desc: '数道横贯东西的长墙，只留几处关口',
       maxBlocked: 0.36,
       mix: { mountain: 0.21, water: 0.04 },
-      noise: { scale: 55, octaves: 4, persistance: 0.45, lacunarity: 2.2, bias: 'stretchH' },
+      // 中心圈专属额度：中场是双方争夺的主战场，不能是一片空地（详见 topUpCore）。
+      // maxBlocked 已经把这笔 budget 加了进去 —— 中心的地形是**额外的**，不跟外圈抢。
       core: { r: 0.5, fill: 1, budget: 0.32 },
       shapes: [
+        // full + at:'center' → 一条真正横贯全图的长墙（副本与自身重合），另有几条错开的长墙
         { kind: 'wall', type: 'mountain', count: [1, 1], len: [0.95, 1], thick: [7, 10], gap: [56, 84], gapW: [12, 16], dir: 'h', full: true, at: 'center' },
         { kind: 'wall', type: 'mountain', count: [4, 6], len: [0.40, 0.70], thick: [5, 8], gap: [48, 76], gapW: [10, 14], dir: 'h', full: true },
         { kind: 'blob', type: 'water', count: [2, 2], w: [32, 46], h: [32, 46], round: 0.9 },
@@ -239,30 +242,46 @@ const WFData = {
     },
     {
       key: 'mountain', name: '群山', weight: 14,
-      desc: '大尺度山脉连绵，山口稀少',
+      desc: '成片台地与短墙连成的山地，山口稀少',
       maxBlocked: 0.40,
       mix: { mountain: 0.25, water: 0.04 },
-      noise: { scale: 32, octaves: 5, persistance: 0.55, lacunarity: 2, bias: 'cornerMountain' },
+      // 中心圈专属额度：中场是双方争夺的主战场，不能是一片空地（详见 topUpCore）。
+      // maxBlocked 已经把这笔 budget 加了进去 —— 中心的地形是**额外的**，不跟外圈抢。
       core: { r: 0.52, fill: 1, budget: 0.32 },
       shapes: [
-        { kind: 'blob', type: 'mountain', count: [7, 10], w: [28, 44], h: [26, 40], round: 0.8 },
+        { kind: 'blob', type: 'mountain', count: [7, 10], w: [28, 44], h: [26, 40], round: 0.1 },
         { kind: 'wall', type: 'mountain', count: [4, 6], len: [0.20, 0.35], thick: [6, 9], gap: [40, 60], gapW: [9, 12], dir: 'hv' },
-        { kind: 'blob', type: 'mountain', count: [1, 1], w: [34, 44], h: [34, 44], round: 0.8, at: 'corner' },
-        { kind: 'blob', type: 'water', count: [2, 2], w: [30, 42], h: [30, 42], round: 0.95 },
+        // 四角各压一座大山：主路沿着各家之间的弦走，够不到角上，所以「群山」再怎么被路切
+        // 也总剩得下这几座（否则极端局里山会被削到只剩零头，看着就不像群山了）。
+        // 尺寸别写太大：它是**钉死的**（超额也不撤），写 50 格时四个角各是一整块 50×50 的
+        // 方形台地，看着像画上去的色块而不是山 —— 30 格上下才像一座山头。
+        { kind: 'blob', type: 'mountain', count: [1, 1], w: [34, 44], h: [34, 44], round: 0.15, at: 'corner' },
+        { kind: 'blob', type: 'water', count: [2, 2], w: [30, 42], h: [30, 42], round: 0.9 },
       ],
     },
     {
       key: 'ocean', name: '汪洋', weight: 12,
-      desc: '中心低洼成海，陆桥就是命脉',
+      desc: '正中一片内海，外圈另有数片海域，陆桥就是命脉',
       maxBlocked: 0.39,
+      // 水量写 27%：正中那片内海是**钉死**的锚点（超额也不撤，见 clampShapes 的 keep），
+      // 单个就占全图 9~11 个点，加上四角外海与外圈海域，实测就是 31% 上下。
       mix: { mountain: 0.04, water: 0.27 },
-      noise: { scale: 48, octaves: 4, persistance: 0.5, lacunarity: 2, bias: 'centerWater' },
+      // 中心圈专属额度：中场是双方争夺的主战场，不能是一片空地（详见 topUpCore）。
+      // maxBlocked 已经把这笔 budget 加了进去 —— 中心的地形是**额外的**，不跟外圈抢。
       core: { r: 0.52, fill: 1, budget: 0.32 },
       shapes: [
+        // 正中央一片「内海」+ 四角各一片「外海」：主路是沿着各家之间的弦挖的，
+        // 够不到正中、更够不到四个角，所以这两处的水怎么都不会被主路吃掉
+        // （早先把水放在外围会被路削掉一大半，水量忽高忽低，汪洋看起来就不像汪洋了）
+        // 内海已经占全图 9~11 个点（它是钉死的锚点，超额也不撤），再大就把
+        // 「山 + 水 ≤ maxBlocked」顶穿了（实测 46% / 上限 39%）。
         { kind: 'blob', type: 'water', count: [1, 1], w: [88, 108], h: [88, 108], round: 0.9, at: 'center' },
         { kind: 'blob', type: 'water', count: [1, 1], w: [30, 40], h: [30, 40], round: 0.8, at: 'corner' },
-        { kind: 'blob', type: 'water', count: [1, 2], w: [38, 54], h: [34, 48], round: 0.85 },
-        { kind: 'blob', type: 'mountain', count: [2, 2], w: [30, 42], h: [30, 42], round: 0.8 },
+        // 外圈的海：单个就够大（一个 55×45 的湖 ≈ 全图 4%），但**只能放 1~2 个** ——
+        // 正中的内海和四角的外海都是**钉死**的锚点（超额也不撤，见 clampShapes 的 keep），
+        // 它们已经吃掉 12 个点了，再加两片外海就把水量顶到 34%（预设 24%）。
+        { kind: 'blob', type: 'water', count: [1, 2], w: [38, 54], h: [34, 48], round: 0.75 },
+        { kind: 'blob', type: 'mountain', count: [2, 2], w: [30, 42], h: [30, 42], round: 0.15 },
       ],
     },
     {
@@ -270,60 +289,81 @@ const WFData = {
       desc: '一马平川，几乎无险可守',
       maxBlocked: 0.19,
       mix: { mountain: 0.05, water: 0.03 },
-      noise: { scale: 60, octaves: 3, persistance: 0.4, lacunarity: 2, bias: 'cornerMountain' },
+      // 中心圈专属额度：中场是双方争夺的主战场，不能是一片空地（详见 topUpCore）。
+      // maxBlocked 已经把这笔 budget 加了进去 —— 中心的地形是**额外的**，不跟外圈抢。
       core: { r: 0.45, fill: 0.9, budget: 0.25 },
       shapes: [
-        { kind: 'blob', type: 'mountain', count: [1, 2], w: [26, 32], h: [26, 32], round: 0.8 },
+        // 预设只有 5% 的山，而图元现在**单个就有 4%~5%**（一块 30×30 的台地被 D_N 复制
+        // 4 份就是全图的 4.3%）—— 所以只能放一块，四角那块还得更小，否则一开局就超预设。
+        { kind: 'blob', type: 'mountain', count: [1, 2], w: [26, 32], h: [26, 32], round: 0.15 },
         { kind: 'blob', type: 'water', count: [1, 2], w: [30, 42], h: [30, 42], round: 1 },
-        { kind: 'blob', type: 'mountain', count: [1, 1], w: [15, 19], h: [15, 19], round: 0.8, at: 'corner' },
+        // 四角各一小块台地：本主题刻意「几乎无险可守」，地形本来就少，
+        // 再被主路扫掉几块就真成一张白纸了 —— 角上放两块，保证至少看得出起伏
+        { kind: 'blob', type: 'mountain', count: [1, 1], w: [15, 19], h: [15, 19], round: 0.15, at: 'corner' },
       ],
     },
     {
       key: 'lakes', name: '千湖泽国', weight: 10,
-      desc: '高频起伏成片湖泊，处处要绕行',
+      desc: '大湖密布，处处要绕行',
       maxBlocked: 0.35,
       mix: { mountain: 0.04, water: 0.2 },
-      noise: { scale: 28, octaves: 6, persistance: 0.55, lacunarity: 2.1, bias: 'none' },
+      // 中心圈专属额度：中场是双方争夺的主战场，不能是一片空地（详见 topUpCore）。
+      // maxBlocked 已经把这笔 budget 加了进去 —— 中心的地形是**额外的**，不跟外圈抢。
       core: { r: 0.5, fill: 1, budget: 0.32 },
       shapes: [
+        // 湖要**大**：早先是 22~30 个 8~14 格的小水坑，既挡不住路也看不出地貌，
+        // 只把地图画脏。改成十几个 18~26 格的大湖 —— 湖少了，但每个都绕不过去。
         { kind: 'blob', type: 'water', count: [5, 7], w: [32, 46], h: [32, 46], round: 1 },
         { kind: 'wall', type: 'mountain', count: [2, 3], len: [0.32, 0.48], thick: [5, 7], gap: [40, 60], gapW: [10, 14], dir: 'hv' },
       ],
     },
     {
       key: 'canyon', name: '裂谷', weight: 8,
-      desc: '纵向山脊切开地图，只有隘口可过',
+      desc: '数道纵贯南北的长墙，只有隘口可过',
       maxBlocked: 0.37,
       mix: { mountain: 0.22, water: 0.04 },
-      noise: { scale: 55, octaves: 4, persistance: 0.45, lacunarity: 2.2, bias: 'stretchV' },
+      // 中心圈专属额度：中场是双方争夺的主战场，不能是一片空地（详见 topUpCore）。
+      // maxBlocked 已经把这笔 budget 加了进去 —— 中心的地形是**额外的**，不跟外圈抢。
       core: { r: 0.5, fill: 1, budget: 0.32 },
       shapes: [
+        // full + at:'center' → 正中一道贯穿南北的主墙；再配两道错开的长墙
         { kind: 'wall', type: 'mountain', count: [1, 1], len: [0.95, 1], thick: [9, 13], gap: [56, 84], gapW: [12, 16], dir: 'v', full: true, at: 'center' },
         { kind: 'wall', type: 'mountain', count: [3, 4], len: [0.60, 0.90], thick: [7, 10], gap: [48, 72], gapW: [10, 14], dir: 'v', full: true },
+        // 水预设只有 4%，而一块 30 格的湖复制 4 份就是 3% —— 只能放一块（放两块会到 7%）。
         { kind: 'blob', type: 'water', count: [1, 1], w: [26, 34], h: [26, 34], round: 0.9 },
       ],
     },
     {
       key: 'checker', name: '棋盘街区', weight: 6,
-      desc: '高频噪声切出碎块街区',
+      desc: '正交墙网切成街区，路口四通八达',
       maxBlocked: 0.34, snap: 6,
       mix: { mountain: 0.14, water: 0.04 },
-      noise: { scale: 22, octaves: 5, persistance: 0.5, lacunarity: 2.3, bias: 'none' },
+      // 中心圈专属额度：中场是双方争夺的主战场，不能是一片空地（详见 topUpCore）。
+      // maxBlocked 已经把这笔 budget 加了进去 —— 中心的地形是**额外的**，不跟外圈抢。
       core: { r: 0.5, fill: 1, budget: 0.32 },
       shapes: [
+        // 墙的数量要够：三条主路铺开之后走廊吃掉三分之一张图，墙又被切成一段段，
+        // 按原来的 14~18 根补不满预设（实测只到 11%~14%，预设 19%）。
         { kind: 'wall', type: 'mountain', count: [16, 22], len: [0.18, 0.32], thick: [4, 6], gap: [42, 60], gapW: [8, 12], dir: 'hv' },
         { kind: 'blob', type: 'water', count: [2, 3], w: [30, 42], h: [30, 42], round: 0.9 },
       ],
     },
     {
       key: 'ring', name: '环形山', weight: 4,
-      desc: '正中央一圈环形山脊，几处缺口通向内场',
+      desc: '正中央一圈环形山，几处缺口通向内场',
       maxBlocked: 0.30,
+      // 山写 14%：正中那一圈是钉死的锚点（≈4 个点），圈内那块空地还会被 topUpCore /
+      // rescueCore 按「中心密度追平全图」补上一次（≈2 个点），实测稳定在 15% 上下。
       mix: { mountain: 0.14, water: 0.04 },
-      noise: { scale: 45, octaves: 4, persistance: 0.5, lacunarity: 2, bias: 'ringMountain' },
+      // 中心圈专属额度：中场是双方争夺的主战场，不能是一片空地（详见 topUpCore）。
+      // maxBlocked 已经把这笔 budget 加了进去 —— 中心的地形是**额外的**，不跟外圈抢。
       core: { r: 0.5, fill: 1, budget: 0.31 },
       shapes: [
+        // full + at:'center' → 环心落在世界中心，副本与自身重合 → 整图只有这一圈环
         { kind: 'ring', type: 'mountain', count: [1, 1], r: [42, 56], thick: [10, 14], gap: [3, 4], full: true, at: 'center' },
+        // 正中那一圈是**钉死**的锚点（超额也不撤）≈ 4 个点，剩下 8 个点由这些墙与湖分；
+        // 墙别放太多 —— 一道 92 格长 × 7 格厚的墙复制出去就是 1.5 个点，放 8 根会顶到 15.5%
+        //（预设 12%，余量 ±3）。
         { kind: 'blob', type: 'water', count: [2, 3], w: [32, 44], h: [32, 44], round: 0.9 },
         { kind: 'wall', type: 'mountain', count: [4, 6], len: [0.20, 0.32], thick: [6, 8], gap: [40, 60], gapW: [10, 14], dir: 'hv' },
       ],
@@ -478,10 +518,10 @@ const WFData = {
   // ===================== 布局：N 重旋转对称（N = 玩家人数）=====================
   // 总部 / 研究所 / 中立工厂全都摆在**绕世界中心的同一圆环**上，按 360°/N 等角间隔分布，
   // 于是每家门口的地形、到中心的距离、与邻居的关系完全同构（对称阶数跟着人数走）。
-  // 布局半径：世界是 11520×11520 的**正方形**，内切圆半径 5760；
-  // 出生圆环取 0.83 × 内切圆半径（地图一改尺寸就按同一比例同步放大，别写死绝对距离）。
+  // 布局半径：世界是 10560×10560 的**正方形**，内切圆半径 5280；
+  // 出生圆环约 0.83 × 内切圆半径（随 WORLD 缩放，别再写回 11520 时代的绝对距离）。
   layout: {
-    baseRadius: 4800,  // 出生点圆环半径（px）：各家都在这个圆上等角分布
+    baseRadius: 4400,  // 出生点圆环半径（px）：各家都在这个圆上等角分布
     baseJitter: 0.2,   // 出生半径最多向内收缩的比例（每局换一个距离，不至于永远贴最外圈）
     labRadiusK: 0.55,  // （旧）研究所圆环系数；现改为「总部旁 1 座 + 中场随机 1 座」，保留字段兼容
     // 研究所：每家总部旁固定 1 座 + 中场随机再 1 座（总数 = 人数 × labPerPlayer）
@@ -491,9 +531,9 @@ const WFData = {
     //      + 人均 2 中 + 1 高（总数 = 7 × 人数）
     starterFacPerHq: 2, // 每家总部附近固定几座初级厂
     randomL1PerPlayer: 2, // 中场轨道再放几组初级厂（每组 = 人数座，C_N 对称）
-    facEdge: 1040,     // 中立工厂距地图边缘的最小留白
-    facGap: 840,       // 中立工厂之间（含各自旋转像）的最小中心距
-    facRadiusMax: 4720,// 中立工厂圆环的最大半径（再大就有旋转像掉出边界了）
+    facEdge: 960,      // 中立工厂距地图边缘的最小留白
+    facGap: 770,       // 中立工厂之间（含各自旋转像）的最小中心距
+    facRadiusMax: 4320,// 中立工厂圆环的最大半径（再大就有旋转像掉出边界了）
   },
 
   // ===================== 总部防卫 =====================

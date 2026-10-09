@@ -1143,8 +1143,16 @@ window.GameNet = (function () {
     ensureSocket().emit('room:moveSeat', { from, to });
   }
 
+  function moveToSpectator() {
+    ensureSocket().emit('room:toSpectator');
+  }
+
   function addBot(seatIndex, difficulty) {
     ensureSocket().emit('room:addBot', { seatIndex, difficulty });
+  }
+
+  function fillBots(difficulty) {
+    ensureSocket().emit('room:fillBots', { difficulty });
   }
 
   function removeBot(seatIndex) {
@@ -1324,7 +1332,9 @@ window.GameNet = (function () {
     setReady,
     startGame,
     moveRoomSeat,
+    moveToSpectator,
     addBot,
+    fillBots,
     removeBot,
     inviteLobby,
     quitGame,

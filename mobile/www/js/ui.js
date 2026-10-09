@@ -115,8 +115,10 @@
     observerList: document.getElementById('observer-list'),
     observerSection: document.getElementById('observer-section'),
     btnStart: document.getElementById('btn-start'),
+    btnFillBots: document.getElementById('btn-fill-bots'),
     btnEditRoom: document.getElementById('btn-edit-room'),
     btnInviteLobby: document.getElementById('btn-invite-lobby'),
+    addBotTitle: document.getElementById('add-bot-title'),
     btnMenuGameRules: document.getElementById('btn-menu-game-rules'),
     btnLeave: document.getElementById('btn-leave'),
     roomTunnelShare: document.getElementById('room-tunnel-share'),
@@ -222,6 +224,7 @@
     passivePublicUrl: '',
     roomSeatMoveFrom: null,
     addBotSeatIndex: null,
+    addBotFillAll: false,
     roomCtxTarget: null,
     chatChannel: 'all',
     chatAll: [],
@@ -4634,12 +4637,14 @@
       (room.observers || []).some(
         (o) => o && String(o.id) === String(state.me.id)
       );
+    // 房主在观战席仍保留房主权限（加电脑 / 开局 / 改房）
     const isHost =
-      state.me &&
-      String(room.hostId) === String(state.me.id) &&
-      !isSpectator;
+      state.me && String(room.hostId) === String(state.me.id);
     const teamRoom =
       room.gameType === 'lasidao' && room.gameMode === 'h2h';
+    const gameMetaForRoom =
+      (state.games || []).find((g) => g && g.id === room.gameType) || null;
+    const supportsBot = Boolean(gameMetaForRoom && gameMetaForRoom.supportsBot);
 
     function fillRoomSlot(slot, p, teamKey, slotIdx) {
       if (p) {
@@ -4665,19 +4670,38 @@
         slot.appendChild(nick);
         slot.appendChild(status);
 
-        if (p.isBot && isHost && room.status !== 'playing') {
+        if (room.status !== 'playing' && !p.left) {
           const actions = document.createElement('div');
           actions.className = 'slot-actions';
-          const btnRemove = document.createElement('button');
-          btnRemove.type = 'button';
-          btnRemove.className = 'btn-remove-bot';
-          btnRemove.textContent = t('room.removeBot');
-          btnRemove.addEventListener('click', (ev) => {
-            ev.stopPropagation();
-            if (net.removeBot) net.removeBot(slotIdx);
-          });
-          actions.appendChild(btnRemove);
-          slot.appendChild(actions);
+          let hasAction = false;
+          if (p.isBot && isHost) {
+            const btnRemove = document.createElement('button');
+            btnRemove.type = 'button';
+            btnRemove.className = 'btn-remove-bot';
+            btnRemove.textContent = t('room.removeBot');
+            btnRemove.addEventListener('click', (ev) => {
+              ev.stopPropagation();
+              if (net.removeBot) net.removeBot(slotIdx);
+            });
+            actions.appendChild(btnRemove);
+            hasAction = true;
+          }
+          if (isMe && !p.isBot) {
+            const btnSpec = document.createElement('button');
+            btnSpec.type = 'button';
+            btnSpec.className = 'btn-to-spectator';
+            btnSpec.textContent =
+              t('room.toSpectator') !== 'room.toSpectator'
+                ? t('room.toSpectator')
+                : '移到观战席';
+            btnSpec.addEventListener('click', (ev) => {
+              ev.stopPropagation();
+              if (net.moveToSpectator) net.moveToSpectator();
+            });
+            actions.appendChild(btnSpec);
+            hasAction = true;
+          }
+          if (hasAction) slot.appendChild(actions);
         }
       } else {
         const empty = document.createElement('span');
@@ -4685,9 +4709,6 @@
         empty.textContent = t('room.emptySeat');
         slot.appendChild(empty);
 
-        const gameMeta =
-          (state.games || []).find((g) => g && g.id === room.gameType) || null;
-        const supportsBot = Boolean(gameMeta && gameMeta.supportsBot);
         if (isHost && room.status !== 'playing' && supportsBot) {
           const actions = document.createElement('div');
           actions.className = 'slot-actions';
@@ -4808,10 +4829,12 @@
       li.dataset.speakerKey = memberSpeakerKey(o);
       const isMe = state.me && o.id === state.me.id;
       const isPassiveServer = Boolean(o.passiveHost);
+      const hostHere = String(o.id) === String(room.hostId);
       const left = document.createElement('span');
       left.innerHTML =
         nickHtml(o.name, o.tag) +
         (isMe ? ' <span class="you">(我)</span>' : '') +
+        (hostHere ? ' <span class="badge">' + t('room.host') + '</span>' : '') +
         (isPassiveServer
           ? ' <span class="badge">' +
             (t('room.passiveServer') || '被动服务器') +
@@ -4836,6 +4859,7 @@
     const need = Number(room.maxPlayers) || min;
     // 仅统计座位玩家，观战席不计入开局人数
     const seated = (room.players || []).filter((p) => p && !p.left).length;
+    const emptySeats = Math.max(0, need - seated);
     el.roomStartHint.textContent = t('room.startHintCount', {
       min,
       cur: seated,
@@ -4848,6 +4872,10 @@
     state.isSpectator = Boolean(isSpectator);
     el.btnStart.hidden = !isHost;
     el.btnStart.disabled = seated < need;
+    if (el.btnFillBots) {
+      el.btnFillBots.hidden =
+        !isHost || room.status === 'playing' || !supportsBot || emptySeats <= 0;
+    }
     if (el.btnEditRoom) {
       el.btnEditRoom.hidden = !isHost || room.status === 'playing';
     }
@@ -6074,18 +6102,45 @@
     if (el.joinCodeModal) el.joinCodeModal.hidden = true;
     if (el.addBotModal) el.addBotModal.hidden = true;
     state.addBotSeatIndex = null;
+    state.addBotFillAll = false;
     state.createModalMode = 'create';
     syncCreateModalChrome();
     syncEditRoomCoreLocks();
   }
 
-  function setAddBotOpen(open, seatIndex) {
+  function setAddBotOpen(open, seatIndex, fillAll = false) {
     if (!el.addBotModal) return;
     el.addBotModal.hidden = !open;
     if (open) {
-      state.addBotSeatIndex = seatIndex;
+      state.addBotFillAll = Boolean(fillAll);
+      state.addBotSeatIndex = fillAll ? null : seatIndex;
+      if (el.addBotTitle) {
+        el.addBotTitle.textContent = fillAll
+          ? t('bot.fillTitle') !== 'bot.fillTitle'
+            ? t('bot.fillTitle')
+            : '填满电脑'
+          : t('bot.addTitle') !== 'bot.addTitle'
+            ? t('bot.addTitle')
+            : '添加电脑';
+      }
       if (el.addBotSeatLabel) {
-        el.addBotSeatLabel.textContent = t('room.botSeatLabel').replace('{seat}', String(Number(seatIndex) + 1));
+        el.addBotSeatLabel.textContent = fillAll
+          ? t('bot.fillSeatLabel') !== 'bot.fillSeatLabel'
+            ? t('bot.fillSeatLabel')
+            : '将为所有空位添加电脑'
+          : t('room.botSeatLabel').replace(
+              '{seat}',
+              String(Number(seatIndex) + 1)
+            );
+      }
+      if (el.btnConfirmAddBot) {
+        el.btnConfirmAddBot.textContent = fillAll
+          ? t('bot.confirmFill') !== 'bot.confirmFill'
+            ? t('bot.confirmFill')
+            : '确认填满'
+          : t('bot.confirmAdd') !== 'bot.confirmAdd'
+            ? t('bot.confirmAdd')
+            : '确认添加';
       }
       if (el.botDifficulty) {
         const gameType = state.room && state.room.gameType;
@@ -6104,6 +6159,7 @@
       if (el.joinCodeModal) el.joinCodeModal.hidden = true;
     } else {
       state.addBotSeatIndex = null;
+      state.addBotFillAll = false;
     }
   }
 
@@ -6112,7 +6168,15 @@
     const gameMeta =
       room && (state.games || []).find((g) => g && g.id === room.gameType);
     if (!gameMeta || !gameMeta.supportsBot) return;
-    setAddBotOpen(true, seatIndex);
+    setAddBotOpen(true, seatIndex, false);
+  }
+
+  function openFillBotsModal() {
+    const room = state.room;
+    const gameMeta =
+      room && (state.games || []).find((g) => g && g.id === room.gameType);
+    if (!gameMeta || !gameMeta.supportsBot) return;
+    setAddBotOpen(true, null, true);
   }
 
   let nickEditing = false;
@@ -6744,12 +6808,18 @@
   if (el.btnConfirmAddBot) {
     el.btnConfirmAddBot.addEventListener('click', () => {
       const seatIndex = state.addBotSeatIndex;
+      const fillAll = state.addBotFillAll;
       const difficulty = el.botDifficulty ? el.botDifficulty.value : 'hard';
-      if (seatIndex != null && net.addBot) {
+      if (fillAll && net.fillBots) {
+        net.fillBots(difficulty);
+      } else if (seatIndex != null && net.addBot) {
         net.addBot(seatIndex, difficulty);
       }
       setAddBotOpen(false);
     });
+  }
+  if (el.btnFillBots) {
+    el.btnFillBots.addEventListener('click', () => openFillBotsModal());
   }
   if (el.addBotModal) {
     el.addBotModal.addEventListener('click', (ev) => {

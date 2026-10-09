@@ -252,6 +252,53 @@ function clearPlayerSeat(room, playerId) {
   return true;
 }
 
+const BOT_DIFF_META = {
+  easy: { label: '简易', name: '简单' },
+  normal: { label: '普通', name: '普通' },
+  hard: { label: '困难', name: '困难' },
+  hardplus: { label: '困难Plus', name: '困难Plus' },
+  hell: { label: '地狱', name: '地狱' },
+};
+
+const BOT_SEAT_NAMES = ['一一', '二二', '三三', '四四', '五五', '六六', '七七', '八八'];
+
+/** 构造占座电脑玩家对象（addBot / fillBots 共用） */
+function makeBotPlayer(room, seatIndex, difficulty) {
+  const diff = String(difficulty || 'normal').toLowerCase();
+  const meta = BOT_DIFF_META[diff] || BOT_DIFF_META.normal;
+  const resolvedDiff = BOT_DIFF_META[diff] ? diff : 'normal';
+  const idx = Number(seatIndex);
+  return {
+    id: `bot_${room.id}_${idx}_${Date.now()}_${Math.floor(Math.random() * 1e6)}`,
+    name: `${BOT_SEAT_NAMES[idx] || `电脑${idx + 1}`}(${meta.name})`,
+    tag: null,
+    ready: true,
+    isBot: true,
+    botDifficulty: resolvedDiff,
+    botDifficultyLabel: meta.label,
+    botSeatIndex: idx,
+    sessionId: null,
+  };
+}
+
+/**
+ * 规范化战争工厂地貌主题：空 / random → null（开局再加权抽）；
+ * 合法 key → 原样留下；非法 key → 报错。非战争工厂一律清成 null。
+ */
+function normalizeRoomTheme(gameType, theme) {
+  if (String(gameType || '') !== 'warfactory') return { ok: true, theme: null };
+  if (theme == null) return { ok: true, theme: null };
+  const key = String(theme).trim();
+  if (!key || key === 'random' || key === 'rand' || key === '*') {
+    return { ok: true, theme: null };
+  }
+  const game = getGame('warfactory');
+  const list = game && Array.isArray(game.themes) ? game.themes : [];
+  const hit = list.find((t) => t && t.key === key && Number(t.weight) !== 0);
+  if (!hit) return { ok: false, error: '未知地图主题：' + key };
+  return { ok: true, theme: key };
+}
+
 /**
  * 把一张地图文件挂到房间上（`room.mapFile`）。
  *
@@ -309,6 +356,8 @@ function publicRoomView(room) {
       : null,
     passiveHosted: Boolean(room.passiveHosted),
     mapFile: room.mapFile || null,
+    /** 战争工厂地貌主题 key；null = 开局加权随机 */
+    theme: room.theme || null,
     canJoin: waiting && playerCount < room.maxPlayers,
     canSpectate: (waiting || playing) && !over,
     playerNames: (room.players || [])
@@ -369,6 +418,8 @@ function fullRoomView(room) {
       : null,
     passiveHosted: Boolean(room.passiveHosted),
     mapFile: room.mapFile || null,
+    /** 战争工厂地貌主题 key；null = 开局加权随机 */
+    theme: room.theme || null,
   };
 }
 
@@ -678,6 +729,7 @@ class RoomManager {
       operatorId = null,
       matchGames,
       mapFile = null,
+      theme = null,
     } = {}
   ) {
     const player = this.players.get(playerId);
@@ -692,6 +744,8 @@ class RoomManager {
       occupied: 1,
     });
     if (!cfg.ok) return cfg;
+    const themeRes = normalizeRoomTheme(cfg.type, theme);
+    if (!themeRes.ok) return themeRes;
 
     const roomName =
       String(name || '').trim().slice(0, 24) ||
@@ -741,6 +795,8 @@ class RoomManager {
       // 指定地图文件（战争工厂的地形编辑器存的那张）；null = 照常随机生成
       mapFile: null,
       wfMap: null,
+      // 地貌主题 key（战争工厂）；null = 开局加权随机抽一个
+      theme: themeRes.theme,
     };
     const mapRes = applyRoomMap(room, mapFile);
     if (!mapRes.ok) {
@@ -778,7 +834,20 @@ class RoomManager {
    */
   updateSettings(
     playerId,
-    { name, hasPassword, password, maxPlayers, gameType, gameMode, turnTimeSec, allowTrade, peacefulDev, easyStart, matchGames } = {}
+    {
+      name,
+      hasPassword,
+      password,
+      maxPlayers,
+      gameType,
+      gameMode,
+      turnTimeSec,
+      allowTrade,
+      peacefulDev,
+      easyStart,
+      matchGames,
+      theme,
+    } = {}
   ) {
     const player = this.players.get(playerId);
     if (!player || !player.roomId) {
@@ -909,6 +978,15 @@ class RoomManager {
     } else {
       room.peacefulDev = true;
       room.easyStart = false;
+    }
+    // 地貌主题：显式传入就按新值校验；换游戏类型时清掉非战争工厂的残留
+    if (theme !== undefined || gameTypeChanged || cfg.type !== 'warfactory') {
+      const themeRes = normalizeRoomTheme(
+        cfg.type,
+        theme !== undefined ? theme : room.theme
+      );
+      if (!themeRes.ok) return themeRes;
+      room.theme = themeRes.theme;
     }
     if (willClearBots) {
       clearAllBotSeats(room);
@@ -1197,12 +1275,42 @@ class RoomManager {
       };
     }
 
-    // 观战席离开：不解散房间
+    // 观战席离开
     if (!Array.isArray(room.observers)) room.observers = [];
     const wasObserver = room.observers.some((o) => o.id === playerId);
     const leftObserver = wasObserver
       ? room.observers.find((o) => o.id === playerId)
       : null;
+
+    // 逻辑房主主动离开（座位或观战席）：解散整个房间
+    // 对局已结束也解散——胜利弹窗由各端本地维持，避免僵尸房挡住新房 MQTT 广播/占用隧道
+    if (room.hostId === playerId) {
+      const affectedPlayerIds = [
+        ...room.players.filter((p) => p && p.id !== playerId).map((p) => p.id),
+        ...room.observers.filter((o) => o && o.id !== playerId).map((o) => o.id),
+      ];
+      for (const memberId of affectedPlayerIds) {
+        const member = this.players.get(memberId);
+        if (member) member.roomId = null;
+      }
+      clearTurnTimer(room);
+      this.rooms.delete(room.id);
+      return {
+        ok: true,
+        room: null,
+        dissolved: true,
+        leftRoomId,
+        affectedPlayerIds,
+        leftObserver: leftObserver
+          ? {
+              id: leftObserver.id,
+              name: leftObserver.name,
+              tag: leftObserver.tag || null,
+            }
+          : null,
+      };
+    }
+
     if (wasObserver) {
       room.observers = room.observers.filter((o) => o.id !== playerId);
       if (
@@ -1239,28 +1347,6 @@ class RoomManager {
               tag: leftObserver.tag || null,
             }
           : null,
-      };
-    }
-
-    // 逻辑房主主动离开：解散整个房间
-    // 对局已结束也解散——胜利弹窗由各端本地维持，避免僵尸房挡住新房 MQTT 广播/占用隧道
-    if (room.hostId === playerId) {
-      const affectedPlayerIds = [
-        ...room.players.filter((p) => p && p.id !== playerId).map((p) => p.id),
-        ...room.observers.map((o) => o.id),
-      ];
-      for (const memberId of affectedPlayerIds) {
-        const member = this.players.get(memberId);
-        if (member) member.roomId = null;
-      }
-      clearTurnTimer(room);
-      this.rooms.delete(room.id);
-      return {
-        ok: true,
-        room: null,
-        dissolved: true,
-        leftRoomId,
-        affectedPlayerIds,
       };
     }
 
@@ -1814,6 +1900,40 @@ class RoomManager {
    * @param {number} seatIndex - 目标座位索引（0-based）
    * @param {string} difficulty - 难度：'easy'|'normal'|'hard'|'hardplus'|'hell'
    */
+  /**
+   * 座位玩家把自己移到观战席（开局前）。房主移过去后仍保留 hostId，可继续加电脑/开局。
+   */
+  moveSelfToSpectator(playerId) {
+    const player = this.players.get(playerId);
+    if (!player || !player.roomId) {
+      return { ok: false, error: '你不在房间中' };
+    }
+    const room = this.getRoom(player.roomId);
+    if (!room) return { ok: false, error: '房间不存在' };
+    if (room.status !== 'waiting') {
+      return { ok: false, error: '对局已开始，无法移到观战席' };
+    }
+    if (!Array.isArray(room.observers)) room.observers = [];
+    if (room.observers.some((o) => o && o.id === playerId)) {
+      return { ok: true, room, already: true };
+    }
+    const seat = (room.players || []).find(
+      (p) => p && p.id === playerId && !p.isBot && !p.left
+    );
+    if (!seat) {
+      return { ok: false, error: '你不在座位上' };
+    }
+    clearPlayerSeat(room, playerId);
+    room.observers.push({
+      id: playerId,
+      name: player.name,
+      tag: player.tag || null,
+      sessionId: player.sessionId || null,
+    });
+    ensureTeamSeats(room);
+    return { ok: true, room };
+  }
+
   addBotPlayer(playerId, seatIndex, difficulty) {
     const player = this.players.get(playerId);
     if (!player || !player.roomId) {
@@ -1837,56 +1957,63 @@ class RoomManager {
       return { ok: false, error: '座位无效' };
     }
 
-    // 该位置已被占用（含left标记的）
-    for (const p of room.players || []) {
-      if (!p) continue;
-      if (p.isBot && p.botSeatIndex === idx) {
-        return { ok: false, error: '该座位已有电脑' };
-      }
-      if (!p.left && p.botSeatIndex === idx) {
-        return { ok: false, error: '该座位已被占用' };
-      }
-    }
-
-    const diff = String(difficulty || 'normal').toLowerCase();
-    const DIFF_META = {
-      easy: { label: '简易', name: '简单' },
-      normal: { label: '普通', name: '普通' },
-      hard: { label: '困难', name: '困难' },
-      hardplus: { label: '困难Plus', name: '困难Plus' },
-      hell: { label: '地狱', name: '地狱' },
-    };
-    const meta = DIFF_META[diff] || DIFF_META.normal;
-    const resolvedDiff = DIFF_META[diff] ? diff : 'normal';
-    const diffLabel = meta.label;
-    const botNameDiff = meta.name;
-    const seatNames = ['一一', '二二', '三三', '四四', '五五', '六六', '七七', '八八'];
-    const botId = `bot_${room.id}_${idx}_${Date.now()}`;
-    const botPlayer = {
-      id: botId,
-      name: `${seatNames[idx] || `电脑${idx + 1}`}(${botNameDiff})`,
-      tag: null,
-      ready: true,
-      isBot: true,
-      botDifficulty: resolvedDiff,
-      botDifficultyLabel: diffLabel,
-      botSeatIndex: idx,
-      sessionId: null,
-    };
-
-    // 检查是否已有bot，避免座位碎片
-    const existingAt = room.players.find((p) => p && p.isBot && p.botSeatIndex === idx);
-    if (existingAt) {
-      return { ok: false, error: '该座位已有电脑' };
-    }
-
-    // 确保 players 数组长度覆盖到目标索引，将 bot 放到正确位置
     while (room.players.length <= idx) {
       room.players.push(null);
     }
+    const at = room.players[idx];
+    if (isSeatedPlayer(at)) {
+      return {
+        ok: false,
+        error: at.isBot ? '该座位已有电脑' : '该座位已被占用',
+      };
+    }
+
+    const botPlayer = makeBotPlayer(room, idx, difficulty);
     room.players[idx] = botPlayer;
     ensureTeamSeats(room);
     return { ok: true, room, bot: botPlayer };
+  }
+
+  /**
+   * 房主一键把所有空位填成电脑（开局前）。
+   */
+  fillEmptyBots(playerId, difficulty) {
+    const player = this.players.get(playerId);
+    if (!player || !player.roomId) {
+      return { ok: false, error: '你不在房间中' };
+    }
+    const room = this.getRoom(player.roomId);
+    if (!room) return { ok: false, error: '房间不存在' };
+    if (room.hostId !== playerId) {
+      return { ok: false, error: '只有房主可以添加电脑' };
+    }
+    if (room.status !== 'waiting') {
+      return { ok: false, error: '对局已开始，无法添加电脑' };
+    }
+    if (!gameSupportsBot(getGame(room.gameType))) {
+      return { ok: false, error: '当前游戏未接入电脑AI' };
+    }
+
+    const maxSlots = Math.max(
+      0,
+      Number(room.maxPlayers) || (room.players || []).length || 0
+    );
+    if (maxSlots <= 0) return { ok: false, error: '座位无效' };
+    while (room.players.length < maxSlots) {
+      room.players.push(null);
+    }
+
+    let filled = 0;
+    for (let i = 0; i < maxSlots; i++) {
+      if (isSeatedPlayer(room.players[i])) continue;
+      room.players[i] = makeBotPlayer(room, i, difficulty);
+      filled += 1;
+    }
+    ensureTeamSeats(room);
+    if (filled === 0) {
+      return { ok: false, error: '没有空位可填' };
+    }
+    return { ok: true, room, filled };
   }
 
   /**

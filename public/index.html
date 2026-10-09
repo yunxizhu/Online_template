@@ -311,8 +311,12 @@
               <p class="muted room-map-note" id="room-map-note" hidden>
                 <span data-i18n="room.mapLabel">地图</span>：<strong id="room-map-name" data-i18n="room.mapRandom">随机生成</strong>
               </p>
+              <p class="muted room-theme-note" id="room-theme-note" hidden>
+                <span data-i18n="room.themeLabel">主题</span>：<strong id="room-theme-name" data-i18n="create.themeRandom">随机</strong>
+              </p>
               <div class="row room-actions">
                 <button id="btn-start" type="button" hidden data-i18n="room.start">开始游戏</button>
+                <button id="btn-fill-bots" type="button" class="secondary" hidden data-i18n="room.fillBots">填满电脑</button>
                 <button id="btn-edit-room" type="button" class="secondary" hidden data-i18n="room.edit">修改房间</button>
                 <button id="btn-invite-lobby" type="button" class="secondary" hidden data-i18n="room.inviteLobby">广播至大厅</button>
                 <button id="btn-leave" type="button" class="secondary btn-leave-room" data-i18n="room.leave">离开房间</button>
@@ -420,6 +424,10 @@
       <label id="room-map-wrap" hidden>
         <span data-i18n="create.map">地图</span>
         <select id="room-map"></select>
+      </label>
+      <label id="room-theme-wrap" hidden>
+        <span data-i18n="create.theme">地图主题</span>
+        <select id="room-theme"></select>
       </label>
       <label>
         <span data-i18n="create.roomName">房间名</span>

@@ -65,7 +65,7 @@ function safeFileName(file) {
 
 /**
  * 游程压缩：`<值>*<段长>` 用逗号分隔，单格就写一个字符。
- * 一整张 288×288 的图通常只有几千段 → 十几 KB，直接写进 JSON 也不肉痛。
+ * 一整张 264×264 的图通常只有几千段 → 十几 KB，直接写进 JSON 也不肉痛。
  */
 function encodeGrid(grid, rows, cols) {
   const out = [];

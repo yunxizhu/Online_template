@@ -49,7 +49,7 @@ const WFData = require('../data.js');
 const GRID_PX = WFData.grid.cell; // 与 index.js 同一个 GRID：所有「格」量都用它换算
 const HQ_R_PX = (WFData.buildings.hqSize * GRID_PX) / 2; // 总部碰撞半径（45px）
 const HQ_DEF_R_PX = WFData.hqDefense.range * GRID_PX; // 总部防卫射程（200px）
-const WORLD_PX = 11520; // 与 index.js 的 WORLD_W 同值（世界是正方形）
+const WORLD_PX = 10560; // 与 index.js 的 WORLD_W 同值（世界是正方形）
 
 // 残血兵后撤（A/B 自对弈实测：净胜 13:11、强度分 +2569）
 const RETREAT_HP = 0.35; // 血量低于这个比例才撤

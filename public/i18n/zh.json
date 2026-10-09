@@ -131,6 +131,8 @@
     "spectatorsEmpty": "暂无观战玩家",
     "spectatorsClose": "关闭",
     "addBot": "添加电脑",
+    "fillBots": "填满电脑",
+    "toSpectator": "移到观战席",
     "removeBot": "移除电脑",
     "botSeatLabel": "座位 {seat}",
     "bot": "电脑",
@@ -138,10 +140,13 @@
     "copyTunnel": "复制",
     "tunnelHint": "发给他人后，对方打开即可加入本房间",
     "mapLabel": "地图",
-    "mapRandom": "随机生成"
+    "mapRandom": "随机生成",
+    "themeLabel": "主题"
   },
   "bot": {
     "addTitle": "添加电脑",
+    "fillTitle": "填满电脑",
+    "fillSeatLabel": "将为所有空位添加电脑",
     "seatLabel": "座位 —",
     "difficulty": "难度",
     "easy": "简易",
@@ -150,6 +155,7 @@
     "hardplus": "困难Plus",
     "hell": "地狱",
     "confirmAdd": "确认添加",
+    "confirmFill": "确认填满",
     "removeConfirm": "移除电脑",
     "botPlayer": "电脑玩家",
     "diffLabelEasy": "简易",
@@ -231,7 +237,10 @@
     "map": "地图",
     "mapRandom": "随机生成",
     "mapEmpty": "暂无存档地图",
-    "mapOption": "{name}（{n} 人）"
+    "mapOption": "{name}（{n} 人）",
+    "theme": "地图主题",
+    "themeRandom": "随机",
+    "themeHint": "指定地貌配方；选「随机」则每局加权抽取。选用自定义地图文件时本项无效。"
   },
   "join": {
     "title": "房间码加入",

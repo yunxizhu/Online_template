@@ -32,12 +32,12 @@ const WFBot = require('./bot.js'); // 对战机器人（困难档）：think() �
 const WFPerlin = require('./perlin.js'); // 柏林噪声（https://gitee.com/sli97/pcg）
 const WFRvo = require('./rvo.js'); // RVO2/ORCA 单位避障（https://github.com/warmtrue/RVO2-Unity）
 
-// 世界是**正方形**：11520 × 11520（N 重旋转对称要求纵横同尺度，否则转 90° 会把地图转出界）。
-// 格子边长 TERR_CELL 保持不变（40px），故行列同为 288（见 TERR_COLS / TERR_ROWS）。
-// 地图一路放大是为了给**中场**腾地方：出生圈贴着外沿、主路沿着各家之间的弦走，
+// 世界是**正方形**：10560 × 10560（N 重旋转对称要求纵横同尺度，否则转 90° 会把地图转出界）。
+// 格子边长 TERR_CELL 保持不变（40px），故行列同为 264（见 TERR_COLS / TERR_ROWS）。
+// 地图给**中场**腾地方：出生圈贴着外沿、主路沿着各家之间的弦走，
 // 中间那一大片正是双方争夺的战场 —— 图越大，中场能摆的遮挡物越多（见 CORE_* 与 topUpCore）。
-const WORLD_W = 11520;
-const WORLD_H = 11520;
+const WORLD_W = 10560;
+const WORLD_H = 10560;
 const TICK_MS = 100;
 const MAX_DT = 0.25;
 const TAU = Math.PI * 2;
@@ -284,8 +284,8 @@ const COLORS = ['#b03a2e', '#2e5e8c', '#c9a227', '#3f7a52'];
 //   0 平原 / 2 山地（不可通行，另有高度 → 遮挡视线与弹道）/ 4 水域（不可通行，大片连续；不遮挡视线）
 // 其中「山地」另有高度：它同时遮挡视线与弹道（山两侧互相看不见、打不到）；
 // 「水域」只是不可通行的平面，不遮挡视线，弹丸照常飞越水面。
-const TERR_COLS = 288;
-const TERR_ROWS = 288; // 正方形地图：288 × 288 格（11520/40 = 288）
+const TERR_COLS = 264;
+const TERR_ROWS = 264; // 正方形地图：264 × 264 格（10560/40 = 264）
 const TERR_CELL = 40;
 const TT_PLAIN = 0;
 const TT_MOUNTAIN = 2;
@@ -321,10 +321,10 @@ const SHAPE_DEFAULTS = {
 const SHAPE_MIN_AREA = 480;
 // 收尾时把比这还小的地形块整块填平（见 clearTinyBlobs）。图元本身 ≥200 格，
 // 但被主路 / 清场圈 / 连通性开道切过之后会留下几格大的斑点 —— 那也算「小山小湖」。
-// 48 格 ≈ 275 × 275 px：再小就挡不住人、只把地图画脏。
-// 早先是 60 格，但三条主路铺开后地形被切得更碎，稀疏主题（超级平原 / 环形山）连
-// topUpCore 专门补进中心圈的那点地形都会被整片清掉（实测 2 人局中心密度比 0.00）。
-const MIN_BLOB_CELLS = 48;
+// 72 格 ≈ 340 × 340 px：再小就挡不住人、只把地图画脏。
+// 噪声量化天生爱出碎斑，阈值后必须抬高门槛；主路切碎后若清过头，靠 coalesce 成片 +
+// promote 回补，不会再靠「留着 48 格脏斑」撑密度。
+const MIN_BLOB_CELLS = 56;
 
 /**
  * 达到最小占地所需的边长（格）。圆形只填满外接矩形的 π/4，方塊填满 1，
@@ -479,9 +479,9 @@ THEME_FALLBACK.maxBlocked = Math.max(
 );
 /** 柏林噪声默认参数（与 Gitee sli97/pcg MapManager 默认值对齐） */
 const NOISE_FALLBACK = {
-  scale: 40,
-  octaves: 5,
-  persistance: 0.5,
+  scale: 56,
+  octaves: 3,
+  persistance: 0.42,
   lacunarity: 2,
   offsetX: 0,
   offsetY: 0,
@@ -718,7 +718,7 @@ function fillNoise(t) {
   };
 }
 
-/** 把主题的字段补齐：主题里没写的就落回 THEME_FALLBACK（shapes 仍保留作兼容，主生成已改噪声） */
+/** 把主题的字段补齐：主题里没写的就落回 THEME_FALLBACK（shapes 仍保留作兼容，主生成走 shapes 盖章） */
 function fillTheme(t) {
   if (!t) return THEME_FALLBACK;
   const shapes = Array.isArray(t.shapes) && t.shapes.length ? t.shapes.map(fillShape) : THEME_FALLBACK.shapes;
@@ -850,7 +850,7 @@ function clampBlocked(grid, cap) {
 /* ---------------- 地图对称：N 重旋转 + N 条镜像轴（阶数 = 玩家人数）---------------- */
 // 需求：地图要轴对称，而且对称的阶数跟着人数走 —— 2 人局 2 重、3 人局 3 重、4 人局 4 重。
 //
-// 世界是 11520×11520 的正方形、地形格是 40px 的方格。「绕中心转 90°」在正方形上刚好还是格子
+// 世界是 10560×10560 的正方形、地形格是 40px 的方格。「绕中心转 90°」在正方形上刚好还是格子
 // 对格子（4 人局严格无误差），但转 120°（3 人局）不会把格子转回格子，
 // 所以这里不是把整张网格拿去旋转，而是**折叠采样**：
 //   ① 先在一张「半扇区楔形」母图上盖好图元（母图坐标系与世界同轴 → 墙仍然是笔直的）；
@@ -1046,6 +1046,198 @@ function applyNoiseBias(noiseMap, dim, bias) {
 }
 
 /**
+ * 对楔形噪声场做 3×3 盒式模糊（原地改 noiseMap[c][r]）。
+ * 高频八度会把分位赋值切成满图碎斑；预平滑后大块成片、边界也干净。
+ */
+function smoothNoiseMap(noiseMap, dim, passes) {
+  const cols = dim.cols;
+  const rows = dim.rows;
+  const nPass = Math.max(1, Math.min(4, passes | 0));
+  const tmp = new Float32Array(rows * cols);
+  for (let p = 0; p < nPass; p++) {
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        let s = 0;
+        let n = 0;
+        for (let dr = -1; dr <= 1; dr++) {
+          const rr = r + dr;
+          if (rr < 0 || rr >= rows) continue;
+          for (let dc = -1; dc <= 1; dc++) {
+            const cc = c + dc;
+            if (cc < 0 || cc >= cols) continue;
+            s += noiseMap[cc][rr];
+            n++;
+          }
+        }
+        tmp[r * cols + c] = s / n;
+      }
+    }
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) noiseMap[c][r] = tmp[r * cols + c];
+    }
+  }
+}
+
+/**
+ * 楔形上按「世界加权格数」清掉小于 minW 的山/水连通块。
+ * @returns {number} 清掉的加权格数
+ */
+function clearTinyWedge(wedge, dim, used, wt, minW) {
+  const cols = dim.cols;
+  const rows = dim.rows;
+  const thresh = Math.max(1, Number(minW) || 1);
+  const usedMask = new Uint8Array(rows * cols);
+  for (let k = 0; k < used.length; k++) usedMask[used[k]] = 1;
+  const seen = new Uint8Array(rows * cols);
+  let gone = 0;
+  for (let k = 0; k < used.length; k++) {
+    const i0 = used[k];
+    if (seen[i0]) continue;
+    const r0 = (i0 / cols) | 0;
+    const c0 = i0 % cols;
+    const type = wedge[r0][c0];
+    if (type !== TT_MOUNTAIN && type !== TT_WATER) {
+      seen[i0] = 1;
+      continue;
+    }
+    const cells = [];
+    let wSum = 0;
+    const stack = [i0];
+    seen[i0] = 1;
+    while (stack.length) {
+      const i = stack.pop();
+      cells.push(i);
+      wSum += wt[i] || 0;
+      const r = (i / cols) | 0;
+      const c = i % cols;
+      if (r > 0) {
+        const ni = i - cols;
+        if (!seen[ni] && usedMask[ni] && wedge[r - 1][c] === type) {
+          seen[ni] = 1;
+          stack.push(ni);
+        }
+      }
+      if (r + 1 < rows) {
+        const ni = i + cols;
+        if (!seen[ni] && usedMask[ni] && wedge[r + 1][c] === type) {
+          seen[ni] = 1;
+          stack.push(ni);
+        }
+      }
+      if (c > 0) {
+        const ni = i - 1;
+        if (!seen[ni] && usedMask[ni] && wedge[r][c - 1] === type) {
+          seen[ni] = 1;
+          stack.push(ni);
+        }
+      }
+      if (c + 1 < cols) {
+        const ni = i + 1;
+        if (!seen[ni] && usedMask[ni] && wedge[r][c + 1] === type) {
+          seen[ni] = 1;
+          stack.push(ni);
+        }
+      }
+    }
+    if (wSum >= thresh) continue;
+    for (let t = 0; t < cells.length; t++) {
+      const i = cells[t];
+      wedge[(i / cols) | 0][i % cols] = TT_PLAIN;
+      gone += wt[i] || 0;
+    }
+  }
+  return gone;
+}
+
+/**
+ * 噪声量化后的楔形成片整饬：清碎屑 → 闭运算（堵洞磨边）→ 开运算（拔刺）→ 按噪声回补 mix。
+ * 不整饬的话高频八度会留下满图 1~3 格山尖/水坑，又丑又绕。
+ */
+function coalesceWedgeTerrain(wedge, noiseFlat, dim, used, wt, total, mixM, mixW) {
+  const cols = dim.cols;
+  const rows = dim.rows;
+  // 世界加权：约 0.2% 图幅以下的块直接抹掉（264² ≈ 140 格）—— 碎斑既丑又绕路
+  const minW = Math.max(48, Math.floor(total * 0.0015));
+  clearTinyWedge(wedge, dim, used, wt, minW);
+
+  // 轻量磨边（不做完整形态学闭/开：闭会把 1~2 格走廊焊死，伤可通过性）
+  //   · 尖刺：同类正交邻 ≤1 → 平原
+  //   · 凹口：平原被同一类 ≥3 面围住 → 填回（堵真洞，不跨走廊）
+  const usedMask = new Uint8Array(rows * cols);
+  for (let k = 0; k < used.length; k++) usedMask[used[k]] = 1;
+  const at = (r, c) => {
+    if (r < 0 || r >= rows || c < 0 || c >= cols) return -1;
+    const i = r * cols + c;
+    if (!usedMask[i]) return -1;
+    return wedge[r][c];
+  };
+  for (let pass = 0; pass < 2; pass++) {
+    const cut = [];
+    const fill = [];
+    for (let k = 0; k < used.length; k++) {
+      const i = used[k];
+      const r = (i / cols) | 0;
+      const c = i % cols;
+      const t = wedge[r][c];
+      if (t === TT_MOUNTAIN || t === TT_WATER) {
+        let n = 0;
+        if (at(r - 1, c) === t) n++;
+        if (at(r + 1, c) === t) n++;
+        if (at(r, c - 1) === t) n++;
+        if (at(r, c + 1) === t) n++;
+        if (n <= 1) cut.push(i);
+      } else if (t === TT_PLAIN) {
+        const t1 = at(r - 1, c);
+        const t2 = at(r + 1, c);
+        const t3 = at(r, c - 1);
+        const t4 = at(r, c + 1);
+        // 纵向/横向过道不填
+        if (t1 === TT_PLAIN && t2 === TT_PLAIN) continue;
+        if (t3 === TT_PLAIN && t4 === TT_PLAIN) continue;
+        let mtn = 0;
+        let wat = 0;
+        for (const v of [t1, t2, t3, t4]) {
+          if (v === TT_MOUNTAIN) mtn++;
+          else if (v === TT_WATER) wat++;
+        }
+        if (mtn >= 3 && wat === 0) fill.push([i, TT_MOUNTAIN]);
+        else if (wat >= 3 && mtn === 0) fill.push([i, TT_WATER]);
+      }
+    }
+    for (let t = 0; t < cut.length; t++) {
+      const i = cut[t];
+      wedge[(i / cols) | 0][i % cols] = TT_PLAIN;
+    }
+    for (let t = 0; t < fill.length; t++) {
+      const i = fill[t][0];
+      wedge[(i / cols) | 0][i % cols] = fill[t][1];
+    }
+    if (!cut.length && !fill.length) break;
+  }
+  clearTinyWedge(wedge, dim, used, wt, minW);
+
+  // 整饬会吃掉一点额度：在仍是平原的 used 格上按噪声晋升回 mix
+  let curM = 0;
+  let curW = 0;
+  const plains = [];
+  for (let k = 0; k < used.length; k++) {
+    const i = used[k];
+    const r = (i / cols) | 0;
+    const c = i % cols;
+    const v = wedge[r][c];
+    if (v === TT_MOUNTAIN) curM += wt[i];
+    else if (v === TT_WATER) curW += wt[i];
+    else plains.push(i);
+  }
+  const addM = Math.max(0, total * Math.max(0, mixM) - curM);
+  const addW = Math.max(0, total * Math.max(0, mixW) - curW);
+  if ((addM > 0 || addW > 0) && noiseFlat && plains.length) {
+    promoteNoiseOnWedge(wedge, noiseFlat, dim, wt, plains, addM, addW);
+    clearTinyWedge(wedge, dim, used, wt, minW);
+  }
+}
+
+/**
  * 把楔形噪声场按 mix 分位阈值成山 / 水 / 平原。
  * 高噪声 → 山、低噪声 → 水；额度按 wt 加权，贴 th.mix。
  * @returns {Float32Array} 楔形线性噪声（供 topUp 继续按噪声补）
@@ -1132,57 +1324,38 @@ function promoteNoiseOnWedge(wedge, noiseFlat, dim, wt, candidates, addM, addW) 
 }
 
 /**
- * 用柏林噪声生成整张地形网格（D_N 对称：噪声画在楔形上再折叠展开）。
- * 算法来自 https://gitee.com/sli97/pcg（generateNoiseMap + 分位阈值）。
- * @param {object} [out] 可选：写入 { noise, noiseSeed } 供补地形复用
+ * 用主题 shapes 盖章生成整张地形网格（D_N 对称：楔形母图盖规整图元再折叠展开）。
+ * 图元是战局配方（墙/山/湖/环），不是噪声真随机 —— 随机只扰动摆位与数量。
+ * @param {object} [out] 可选：兼容字段（噪声管线已弃用，不再写入）
  */
 function generateTerrainGrid(rng, theme, n, out) {
-  const th = theme && theme.mix ? theme : fillTheme(theme);
+  const th = theme && theme.shapes ? theme : fillTheme(theme);
   const order = symOrder(n == null ? SYM_MAX_N : n);
   const dim = wedgeDims(order);
+  const snap = Math.max(1, Math.round(th.snap || SHAPE_SNAP));
 
   // ① 楔形母图：整片平原起步
   const wedge = [];
   for (let r = 0; r < dim.rows; r++) wedge[r] = new Array(dim.cols).fill(TT_PLAIN);
+  // own：每格记下「最后盖上去的图元序号」，撤图元时按它整块还原
+  const own = new Int32Array(dim.rows * dim.cols).fill(-1);
   // 楔形是「半扇区」的外接矩形，矩形里有相当一部分**永远采样不到** ——
   // 额度按「这一格在世界里值几格」加权（wedgeWeights），直接等于世界格数。
   const { used, wt, total } = wedgeWeights(order, dim);
-  const nc = th.noise || NOISE_FALLBACK;
-  // 种子来自本局 rng，保证可复现
-  const noiseSeed = Math.max(1, Math.floor((rng() * 0xfffffe) + 1));
-  // stretch 主题：采样尺度在某一轴上拉长（壁垒横纹 / 裂谷纵纹）
-  let scale = Math.max(4, Number(nc.scale) || 40);
-  let offsetX = Number(nc.offsetX) || 0;
-  let offsetY = Number(nc.offsetY) || 0;
-  if (nc.bias === 'stretchH') scale = Math.max(scale, 55);
-  if (nc.bias === 'stretchV') scale = Math.max(scale, 55);
-  const noiseMap = WFPerlin.generateNoiseMap(
-    dim.cols,
-    dim.rows,
-    noiseSeed,
-    scale,
-    nc.octaves,
-    nc.persistance,
-    nc.lacunarity,
-    { x: offsetX, y: offsetY }
-  );
-  applyNoiseBias(noiseMap, dim, nc.bias);
-  const noiseFlat = paintWedgeByNoise(
-    wedge,
-    noiseMap,
-    dim,
-    used,
-    wt,
-    total,
-    th.mix.mountain,
-    th.mix.water
-  );
-  // 硬上限：噪声分位已经贴 mix，一般不会超；仍兜底一次
+  // maxBlocked 只是**硬上限**（最后 clampBlocked 兜底）；真正要盖到的是 th.mix 的合计。
+  const limit = Math.floor(total * clamp(th.maxBlocked, 0, 0.9));
+  const goalTotal = Math.floor(total * clamp(th.mix.mountain + th.mix.water, 0, 0.9));
+  const plan = shapePlan(rng, th.shapes);
+  // 钉死的图元：写了 at:'center' / at:'corner' 的都是「主路够不到」的锚点图元
+  const keep = new Set();
+  const mixAbs = { mountain: total * th.mix.mountain, water: total * th.mix.water };
+  const id = runStamps(wedge, own, dim, used, wt, rng, plan, snap, order, limit * 0.95, null, keep, null, mixAbs, true);
+  clampShapes(wedge, own, goalTotal, id, used, keep, wt);
   clampBlocked(wedge, th.maxBlocked);
 
   if (out) {
-    out.noise = noiseFlat;
-    out.noiseSeed = noiseSeed;
+    out.noise = null;
+    out.noiseSeed = 0;
   }
   // ② 折叠采样出整张世界图
   return renderWorldFromWedge(wedge, order, dim);
@@ -1612,230 +1785,546 @@ function factoryKeepMask(game, radius) {
 }
 
 function topUpTerrain(game, n, extra, lossK, okMask) {
+
   const gen = game && game._mapGen;
+
   if (!gen || !game.terrain || !game.terrain.grid) return false;
+
   const th = gen.theme;
-  if (!th || !th.mix || !game.hqs || game.hqs.length < 2) return false;
+
+  if (!th || !th.shapes || !th.shapes.length || !game.hqs || game.hqs.length < 2) return false;
+
   const order = symOrder(n == null ? SYM_MAX_N : n);
+
   const dim = wedgeDims(order);
+
+  const rng = gen.rng;
+
+  const snap = Math.max(1, Math.round(th.snap || SHAPE_SNAP));
+
+
 
   const banned = bannedWedgeCells(game, order, dim, extra);
+
   // ② 还原楔形母图，并找出还能落笔的空地（额度一律按「世界里值几格」加权）
+
   const wedge = wedgeFromWorld(game.terrain.grid, order, dim);
+
+  const own = new Int32Array(dim.rows * dim.cols).fill(-1);
+
   const { used, wt, total } = wedgeWeights(order, dim);
-  ensureMapGenNoise(gen, dim, order);
-  const noiseFlat = gen.noise;
-  if (!noiseFlat) return false;
+
   const cur = { mountain: 0, water: 0 };
+
   for (const i of used) {
+
     const v = wedge[(i / dim.cols) | 0][i % dim.cols];
+
     if (v === TT_MOUNTAIN) cur.mountain += wt[i];
+
     else if (v === TT_WATER) cur.water += wt[i];
+
   }
-  const candidates = [];
+
   let free = 0;
-  for (const i of used) {
-    if (okMask ? !okMask[i] : banned[i]) continue;
-    free += wt[i];
-    candidates.push(i);
-  }
-  if (!free || !candidates.length) return false;
+
+  for (const i of used) if (okMask ? okMask[i] : !banned[i]) free += wt[i];
+
+  if (!free) return false;
+
   // 山 / 水各差多少 → 按主题的 mix 补齐（谁缺得多补谁，比例始终贴着预设）。
+
   // **缺口要按 loss 放大后再算**：mix 说的是**重挖走廊之后**地图上该有多少地形，
-  // 而这里画的量随即会被走廊削掉一大半。
+
+  // 而这里画的量随即会被走廊削掉一大半。早先拿「mix − 当前量」当缺口，
+
+  // topUpCore 一把把楔形盖到预设之后这里就恒为 0、整轮什么都不补 ——
+
+  // 实际地图永远停在预设的六成（实测 3 人局 25% / 预设 40%）。
+
   const corr = clamp(Number(gen.corrFrac), 0, 0.85);
+
   const loss0 = lossK > 0 ? clamp(lossK, 1, 4) : clamp(1 / Math.max(0.15, 1 - corr), 1, 2.5);
+
+  // 倍率乘在「目标」而不是「缺口」上，是因为 cur 这一刻是**楔形**里的量：它要按
+
+  // loss 放大后才是「重挖之前该有多少」—— 否则 topUpCore 一把把楔形盖到预设之后，
+
+  // 这里的缺口就恒为 0、整轮放弃（实测这就是大部分局只到预设七成的直接原因）。
+
+  // 只乘缺口会让「已经盖够预设、但重挖后必然不够」的情况直接躺平。
+
   const wantM = Math.max(0, total * th.mix.mountain * TOP_UP_CLEAN_K * loss0 - cur.mountain);
+
   const wantW = Math.max(0, total * th.mix.water * TOP_UP_CLEAN_K * loss0 - cur.water);
+
   const want = wantM + wantW;
+
   if (want <= 0) return false;
-  // 空地能承受的量：主路吃得多的时候不能硬塞满剩下的空地
+
+  // 空地能承受的量：主路吃得多的时候不能硬塞满剩下的空地，否则那片空地会被塞成一整块实心山
+
   const room = Math.min(want, free * TOP_UP_FILL);
+
   const k = room / want;
-  let addM = wantM * k;
-  let addW = wantW * k;
-  // 上限按 loss 放大（重挖之前的目标量）
-  const cap = Math.min(total, total * clamp(th.maxBlocked, 0, 0.9) * loss0);
-  const after = cur.mountain + cur.water + addM + addW;
-  if (after > cap && after > 0) {
-    const shrink = Math.max(0, cap - cur.mountain - cur.water) / (addM + addW);
-    addM *= shrink;
-    addW *= shrink;
-  }
-  // 柏林噪声补地形：在候选平原格里按噪声高低晋升为山 / 水（同 Gitee pcg 阈值思路）
-  const painted = promoteNoiseOnWedge(wedge, noiseFlat, dim, wt, candidates, addM, addW);
-  if (painted.addedM + painted.addedW <= 0) return false;
+
+  // 落笔**不用逐格白名单**：世界里的走廊折回楔形是碎片化的，逐格筛会把图元打出
+
+  // 一片小孔，剩下的边角就是「小山小湖」（实测连通块中位数只有 6 格）。
+
+  // 改成整块盖下去，随后重挖走廊（调用方会再跑一遍清场 / 隔离带 / 主路）即可 ——
+
+  // 路是连成片的宽带，切出来的断面是干净的，不会留一地碎屑。
+
+  // 代价是盖在走廊里的那部分白盖了，所以额度要按走廊占比补偿回来。
+
+  // 补偿系数：走廊（主路 / 隔离带 / 建筑清场圈）能占到半张图，盖在走廊上的地形随后会被
+
+  // 重挖掉。早先这里按 free 占比拍一个 1~2.5 的数，实测存活率只有 0.5 左右、差得远；
+
+  // 现在由调用方按**上一轮实测存活率**回传（lossK = 1/存活率），第一轮没有就落回拍估值。
+
+  const loss = loss0;
+
+  // 缺口里已经含了 loss，这里不能再乘一次
+
+  const mixAbs = { mountain: cur.mountain + wantM * k, water: cur.water + wantW * k };
+
+  // 上限同样要按 loss 放大：maxBlocked 说的是**最终**地图上不可通行的占比，而 mixAbs 是
+
+  // 重挖**之前**的目标量 —— 三条主路铺开之后走廊能吃掉半张图（实测 4 人局 48%），
+
+  // 不放大就等于「补到上限、再被削掉一半」，永远停在预设的六成（实测 21% / 预设 39%）。
+
+  capMixSum(mixAbs, Math.min(total, total * clamp(th.maxBlocked, 0, 0.9) * loss));
+
+  void 0;
+
+  const plan = shapePlan(rng, th.shapes.filter((s) => !s.at));
+
+  if (!plan.length) return false;
+
+  // 不 clampShapes：整块撤图元时会把它压在下面的**原有地形**一起清掉，净增反而变负
+
+  // （实测 1368 → 824）。runStamps 是「盖一个查一次」，且收尾优先挑小图元，误差很小。
+
+  runStamps(wedge, own, dim, used, wt, rng, plan, snap, order, 0, okMask || null, null, null, mixAbs, false);
+
+  // 记下「重挖走廊之前」的量，调用方据此算这一轮的存活率
+
   gen.wedgeMix = wedgeMixCount(wedge, dim, used, wt);
+
   game.terrain.grid = renderWorldFromWedge(wedge, order, dim);
+
   return true;
+
 }
 
-/** 补地形时若噪声场丢失（旧存档 / 测试桩），按主题参数重算一张楔形噪声 */
-function ensureMapGenNoise(gen, dim, order) {
-  if (gen.noise && gen.noise.length === dim.rows * dim.cols) return;
-  const th = gen.theme || THEME_FALLBACK;
-  const nc = th.noise || NOISE_FALLBACK;
-  const seed = gen.noiseSeed || Math.max(1, Math.floor(((gen.rng && gen.rng()) || Math.random()) * 0xfffffe) + 1);
-  const noiseMap = WFPerlin.generateNoiseMap(
-    dim.cols,
-    dim.rows,
-    seed,
-    Math.max(4, Number(nc.scale) || 40),
-    nc.octaves,
-    nc.persistance,
-    nc.lacunarity,
-    { x: Number(nc.offsetX) || 0, y: Number(nc.offsetY) || 0 }
-  );
-  applyNoiseBias(noiseMap, dim, nc.bias);
-  const flat = new Float32Array(dim.rows * dim.cols);
-  for (let r = 0; r < dim.rows; r++) {
-    for (let c = 0; c < dim.cols; c++) flat[r * dim.cols + c] = noiseMap[c][r];
-  }
-  gen.noise = flat;
-  gen.noiseSeed = seed;
-  void order;
-}
+
 
 /**
+
  * 给**中场 / 中心**专门补地形 —— 这是双方真正争夺的主战场，不能是一片空地。
+
  *
+
  * 为什么要单独一步：图元中心按「面积均匀」撒点时，绝大部分会落在外圈（外圈面积大），
+
  * 而主路又恰恰沿着各家之间的弦穿过中场 —— 两头一挤，中间就成了真空
+
  * （实测 4 人局 0.45~0.8 那一环的地形不到 3%，2 人局正中心几乎是 0）。
+
  * 光靠 topUpTerrain 补不回来：它只看全图总量，额度全被面积更大的外圈吃掉了。
+
  *
+
  * 所以这里把图元中心**限制在中心圈内**（zone），并且只统计中心圈的覆盖量：
+
  *   core.r     中心圈半径（相对世界半宽）
+
  *   core.fill  中心圈里「还能落笔的空地」要填到多少比例
+
  * 额度仍受主题的 maxBlocked 约束（中心优先，剩下的留给随后那次全图补）。
+
  *
+
  * @returns {boolean} 是否真的补了
+
  */
+
 /**
+
  * 量一量中心圈里现在有多少地形（补地形用）。
+
  *
+
  * 口径跟 topUpCore 完全一致：中心圈 = 半径 core.r × 世界半宽，格子按 wt 加权
+
  * （= 它在世界里值几格），**不排除主路走廊**（理由见 topUpCore）。
+
  *
+
  * @returns {?{idx:number[], free:number, blocked:number, curM:number, curW:number,
+
  *             fill:number, order:number, dim:object, wedge:number[][], used:number[],
+
  *             wt:Float64Array, total:number}} 圈内的楔形格与统计量
+
  */
+
 function coreCircleStats(game, n) {
+
   const gen = game && game._mapGen;
+
   const th = gen && gen.theme;
+
   if (!th || !game.terrain || !game.terrain.grid || !game.hqs || game.hqs.length < 2) return null;
+
   const core = th.core || CORE_FALLBACK;
+
   const rK = clamp(Number(core.r), 0.05, 1);
+
   const order = symOrder(n == null ? SYM_MAX_N : n);
+
   const dim = wedgeDims(order);
+
   const wedge = wedgeFromWorld(game.terrain.grid, order, dim);
+
   const { used, wt, total } = wedgeWeights(order, dim);
+
   // 中心圈：楔形格的坐标就是「相对世界中心的偏移」，直接比半径即可
+
   const coreR = rK * Math.min(WORLD_W, WORLD_H) / 2;
+
   const idx = [];
+
   let free = 0;
+
   let blocked = 0;
+
   let curM = 0;
+
   let curW = 0;
+
   for (const i of used) {
+
     const c = i % dim.cols;
+
     const r = (i / dim.cols) | 0;
+
     if (Math.hypot((c + 0.5) * TERR_CELL, (r + 0.5) * TERR_CELL) > coreR) continue;
+
     idx.push(i);
+
     free += wt[i];
+
     if (wedge[r][c] === TT_MOUNTAIN) {
+
       curM += wt[i];
+
       blocked += wt[i];
+
     } else if (wedge[r][c] === TT_WATER) {
+
       curW += wt[i];
+
       blocked += wt[i];
+
     }
+
   }
+
   return { idx, free, blocked, curM, curW, fill: clamp(Number(core.fill), 0, 0.9), order, dim, wedge, used, wt, total, rK };
+
 }
+
+
 
 function topUpCore(game, n, extra, lossK, okMask, minGoal, fit) {
-  void fit; // 噪声补地形不再需要把长墙截短
+
   const gen = game && game._mapGen;
+
   if (!gen || !game.terrain || !game.terrain.grid) return false;
+
   const th = gen.theme;
-  if (!th || !th.mix || !game.hqs || game.hqs.length < 2) return false;
+
+  if (!th || !th.shapes || !th.shapes.length || !game.hqs || game.hqs.length < 2) return false;
+
   const cs = coreCircleStats(game, n);
+
   if (!cs || !cs.free) return false;
+
   const fill = cs.fill;
+
   if (fill <= 0) return false;
+
   const order = cs.order;
+
   const dim = cs.dim;
+
   const wedge = cs.wedge;
+
   const used = cs.used;
+
   const wt = cs.wt;
+
   const total = cs.total;
+
   const coreIdx = cs.idx;
+
   const free = cs.free;
+
   const blocked = cs.blocked;
 
+  const curM = cs.curM;
+
+  const curW = cs.curW;
+
+  const rng = gen.rng;
+
+  const snap = Math.max(1, Math.round(th.snap || SHAPE_SNAP));
+
+
+
   const banned = bannedWedgeCells(game, order, dim, extra);
-  ensureMapGenNoise(gen, dim, order);
-  const noiseFlat = gen.noise;
-  if (!noiseFlat) return false;
-  // 中心有**专属额度**（core.budget），不跟外圈抢；总量仍贴主题 mix。
+
+  const own = new Int32Array(dim.rows * dim.cols).fill(-1);
+
+  const zone = { r0: 0, r1: cs.rK };
+
+  // 中心有**专属额度**（core.budget），不跟外圈抢 —— 否则外圈面积大、先到先得，
+
+  // 中间永远补不上。但它**不是额外追加**的：总量仍要贴着主题的 mix 预设，
+
+  // 所以还要扣掉「全图还剩多少额度」（见下面的 remain）。
+
+  // 注意 goal 是「**新增**多少」，不是「补到多少」：中心圈里本来就有地形，
+
+  // 按总量算的话可补的量会被扣掉一大截，补完跟没补一样。
+
   let allBlocked = 0;
+
   let allM = 0;
+
   let allW = 0;
+
   for (const i of used) {
+
     const v = wedge[(i / dim.cols) | 0][i % dim.cols];
+
     if (v === TT_MOUNTAIN) { allM += wt[i]; allBlocked += wt[i]; }
+
     else if (v === TT_WATER) { allW += wt[i]; allBlocked += wt[i]; }
+
   }
+
+  // lossK（= 1/实测存活率）同样要乘进来：盖在走廊上的那一半随后会被重挖掉（见 topUpTerrain）。
+
+  // 没给就按中心圈的拥挤程度估一个（圈里能落笔的空地只占全图几个百分点，比值很大 → 取上限）。
+
+  // 这个系数也用来**放宽**山 / 水各自的上限（见下）：否则「全图山已到 32%」就把中心圈
+
+  // 的山卡死了 —— 中心明明还是空的，却因为外圈到了预设而一格都补不进去。
+
   const corr = clamp(Number(gen.corrFrac), 0, 0.85);
+
   const kk = lossK > 0 ? clamp(lossK, 1, 4) : clamp(1 / Math.max(0.15, 1 - corr), 1, 2.5);
+
+  // remain 同样要乘 kk：它是「还能往全图里加多少」的上限，而加的量随即会被走廊削掉 ——
+
+  // 不乘的话中心圈补到预设就收手，重挖之后又只剩六成。
+
+  // 留一笔保底额度：全图已经贴住预设时 remain 会归零，中心圈就一格也补不进去了 ——
+
+  // 而「中场不该是空地」看的是中心圈相对于全图的密度，全图达标不代表中场达标
+
+  // （实测 4 人局有中心圈密度只有全图 0.02 倍的局）。多补的这一点落在 ±25% 容差里。
+
   const remain = Math.max(
+
     total * 0.02,
+
     Math.max(0, total * (th.mix.mountain + th.mix.water) * kk - allBlocked)
+
   );
+
   const core = th.core || CORE_FALLBACK;
+
+  // minGoal：调用方给的**保底下限**（中心圈兜底专用）。全图已经贴住预设时 remain 会缩到
+
+  // 保底那一点（2%），光靠它补不满中心 —— 而「中场不该是空地」看的是中心圈，
+
+  // 全图达标不代表中场达标。给了 minGoal 就至少补这么多，但仍不许超过「圈内目标量」。
+
   const goal = Math.max(
+
     Math.min(free * fill * kk - blocked, total * clamp(Number(core.budget), 0, 0.5) * kk, remain),
+
     Math.min(Number(minGoal) > 0 ? Number(minGoal) : 0, Math.max(0, free * fill * kk - blocked))
+
   );
+
   if (goal <= 0) return false;
+
+  // 中心圈里补的那部分也按主题的 mix 分给山 / 水（否则中心圈会出现「汪洋主题中间一座山」），
+
+  // 且**各自不许超过全图的目标量** —— 否则中心圈补得爽快，全图比例就对不上预设了。
+
+  // 这个上限也要乘 kk：不乘的话，中心圈一补就把「全图额度」占满，外面的补量恒为 0，
+
+  // 而中心圈补的那部分有一半会随走廊挖掉 —— 全图永远差一截。
+
+  // 给了 minGoal 时把这笔**追加量**也加进上限：那一刻外圈往往已经把 mix 吃满，
+
+  // 不追加就一格也补不进去（实测 4 人裂谷中心圈只剩全图密度的 0.06 倍）。
+
   const mixSum = th.mix.mountain + th.mix.water;
+
   const sh = mixSum > 0 ? th.mix.mountain / mixSum : 0.5;
+
   const boost = Number(minGoal) > 0 ? goal : 0;
-  let addM = Math.min(goal * sh, Math.max(0, total * th.mix.mountain * kk + boost * sh - allM));
-  let addW = Math.min(goal * (1 - sh), Math.max(0, total * th.mix.water * kk + boost * (1 - sh) - allW));
-  const cap = Math.min(total, total * clamp(th.maxBlocked, 0, 0.9) * kk);
-  const after = allM + allW + addM + addW;
-  if (after > cap && addM + addW > 0) {
-    const shrink = Math.max(0, cap - allM - allW) / (addM + addW);
-    addM *= shrink;
-    addW *= shrink;
+
+  // ⚠️ 目标量按**全图**算（allM / allW），不是按「圈内那点」算。
+
+  // 早先按圈内的 curM / curW 起算，而 runStamps 那时也只数圈内的格子 —— 图元是以圈内
+
+  // 某点为中心盖下去的，大半个身子落在圈外，那些格子压根没被计数：于是「圈内还差 3%」
+
+  // 会一直盖到圈内达标为止，全图却已经多出 7.7%（实测超级平原 5% 的山被顶到 9.2%）。
+
+  // 改成全图计数后，goal 就是**真的**只加这么多，圈外溢出也算在账上。
+
+  const mixAbs = {
+
+    mountain: Math.min(allM + goal * sh, total * th.mix.mountain * kk + boost * sh),
+
+    water: Math.min(allW + goal * (1 - sh), total * th.mix.water * kk + boost * (1 - sh)),
+
+  };
+
+  // 同样按 kk 放大（理由见 topUpTerrain）：这是重挖**之前**的目标量
+
+  capMixSum(mixAbs, Math.min(total, total * clamp(th.maxBlocked, 0, 0.9) * kk));
+
+  // 中心圈专用的图元：普通图元 + 写着 at:'center' 的（它本来就长在正中心）
+
+  let plan = shapePlan(rng, th.shapes.filter((s) => !s.at || s.at === 'center'));
+
+  // fit > 0：把长墙截短、并取消 full（不再贯穿全图）—— 中心圈兜底专用。
+
+  // 贯穿全图的长墙只有一两成落在圈内，既填不满中心，又会因为「落笔不足预估 55%」
+
+  // 被整块撤销（实测 4 人裂谷连补 4 轮、圈内一点没多）。
+
+  if (fit > 0) {
+
+    plan = plan.map((p) => {
+
+      if (p.cfg.kind !== 'wall') return p;
+
+      const lo = Array.isArray(p.cfg.len) ? p.cfg.len[0] : p.cfg.len;
+
+      const hi = Array.isArray(p.cfg.len) ? p.cfg.len[1] : p.cfg.len;
+
+      return {
+
+        cfg: Object.assign({}, p.cfg, { full: false, len: [Math.min(lo, fit), Math.min(hi, fit)] }),
+
+        cnt: p.cnt,
+
+        base: p.base,
+
+        done: 0,
+
+      };
+
+    });
+
   }
-  // 只在中心圈候选格上按噪声晋升（okMask / banned 仍尊重）
-  const candidates = [];
-  for (const i of coreIdx) {
-    if (okMask ? !okMask[i] : banned[i]) continue;
-    candidates.push(i);
-  }
-  if (!candidates.length) return false;
+
+  if (!plan.length) return false;
+
   if (process.env.WFDBG) {
+
     console.log(
+
       `     [core] 圈内 ${((free / total) * 100).toFixed(1)}% 图幅（可落笔）／已有地形 ${((blocked / total) * 100).toFixed(1)}%` +
+
         ` → goal ${((goal / total) * 100).toFixed(1)}%（kk ${kk.toFixed(2)}）`
+
     );
+
   }
-  const painted = promoteNoiseOnWedge(wedge, noiseFlat, dim, wt, candidates, addM, addW);
-  if (painted.addedM + painted.addedW <= 0) return false;
+
+  // 落笔**不给逐格白名单**（ok = null）：早先用「只许盖在圈内空地」的逐格筛，
+
+  // 图元一大半压在主路上就被整块撤销重画，3 次都挑不到好位置 —— 实测中心圈只填到
+
+  // 「可落笔空地」的 58%，2 人局（主路走直径、正中一半是路）尤其填不满。
+
+  // 改成整块盖下去、只把**中心**限制在圈内（zone），压在路上的那部分随后重挖走廊时
+
+  // 会被切掉 —— 跟 topUpTerrain 一个路子，断面干净、不留碎屑。
+
+  // 计数范围给**全图**（used）而不是圈内（coreIdx）：见上面 mixAbs 的说明
+
+  runStamps(wedge, own, dim, used, wt, rng, plan, snap, order, blocked + goal, okMask || null, null, zone, mixAbs, false);
+
   if (process.env.WFDBG) {
+
     let nb = 0;
+
     for (const i of coreIdx) if (wedge[(i / dim.cols) | 0][i % dim.cols] !== TT_PLAIN) nb += wt[i];
+
     console.log(`     [core] 盖完圈内地形 ${((nb / total) * 100).toFixed(1)}%`);
+
   }
+
+  // 这里**不撤图元**（不用 clampShapes）：整块撤时会把它压在下面的原有地形一起清掉，
+
+  // 净增反而变负（实测补完比补之前还少）。runStamps 是「盖一个查一次」，
+
+  // 超额最多一个图元，而中心圈本来就该有地形 —— 多几格不碍事。
+
   gen.wedgeMix = wedgeMixCount(wedge, dim, used, wt);
+
   game.terrain.grid = renderWorldFromWedge(wedge, order, dim);
+
   return true;
+
 }
+
+
+
+/**
+
+ * 清掉**过小的地形块**：面积不足 minCells 的连通块（山、水各自算）整块填成平原。
+
+ *
+
+ * 为什么需要：图元本身都不小（≥ SHAPE_MIN_AREA），但后续会被主路 / 建筑清场圈 /
+
+ * 隔离带 / 连通性开道切成碎块 —— 尤其是「对称化 + 连通」那几步，会在地形边缘
+
+ * 啃出 1~3 格的小斑点。合格的地形模型不该有这种碎屑（挡不住人、也看不出地貌）。
+
+ *
+
+ * 判据就是**这块自身**有多大：曾经试过「按整条 D_N 轨道的总重判」，结果 6~7 格的
+
+ * 碎屑靠同轨道大兄弟的重量活了下来（借别人的面积过关），清不干净。
+
+ *
+
+ * 对称由调用处兜：清完拿快照做一次**并集传播**（symmetrizeGrid 'union'），
+
+ * 同一块地形的各个像一起开，误差才压得住。
+
+ *
+
+ * @returns {number} 清掉的格数
+
+ */
 
 /**
  * 清掉**过小的地形块**：面积不足 minCells 的连通块（山、水各自算）整块填成平原。
@@ -3676,6 +4165,119 @@ function clearTerrainAroundBuildings(game, grid) {
  * @param {number|string} [themeSalt] 抽主题的额外扰动（默认用开局时刻）
  *        —— 同一个房间连开第二局也会换一种地貌，而不是永远同一张图
  */
+/**
+ * 地形角圆滑：把山/水轮廓上的 90°（凸尖）与 270°（凹口）各削/填一格，
+ * 海岸线与山脊就不再是一水儿的直角拐弯。配合 buildHeightField 那道 6 格模糊，
+ * 单格角被抹平后会顺着模糊半径摊开约 6 格 —— 派生出来的崖线拐点也跟着圆。
+ *
+ * 判据（8 邻接，对山、水各自独立处理）。一个「直角」的邻域长这样：
+ *   内圈三格是 T   ：两个互相垂直的正交邻居 A、B，以及它俩之间的对角 X；
+ *   外圈五格是空地 ：另两个正交邻居 C、D 与另一个对角 Y 都不是 T；
+ *   于是本格与邻域拼出一个正正的 90° 角。此时：
+ *     · 本格是 T   ⇒ 它是探出去的凸尖（90°）      → 削成平原
+ *     · 本格是空地 ⇒ 它是被 T 围了三面的凹口（270°）→ 填成 T
+ *   （凸/凹的邻域**形状完全相同**，区别只在中心格自己是不是 T。）
+ *
+ * 只动「外圈干净」的单格直角：整条直边（正交 T 有 3 个）与内部格都不满足外圈条件，
+ * 不会被误伤；也不跨山/水互填。判定只读原始邻域、同轮先收集再落笔 ⇒ 不破 D_N 对称。
+ *
+ * @param {number[][]} grid 地形类型网格（就地改）
+ * @param {number} [order] 对称阶数（仅语义，本函数对称安全）
+ * @param {number} [passes] 迭代轮数，默认 2（每轮削/填一层直角，轮数越多倒角越宽）
+ */
+/**
+ * 地形平滑（替代原先的「圆角」）。
+ * 默认模式 majority：3×3 多数滤波，逐格按 3×3 邻域多数决定 山/水/平原。
+ *   · 削掉单格凸尖（90° 凸点）→ 边界 −2
+ *   · 填掉单格凹洞（270° 凹口）→ 边界 −8（大幅下降）
+ *   ⇒ 既削凸又填凹，且整体【缩短】边界（更圆滑），面积基本守恒（±1%）。
+ * 旧模式 corner（WF_ROUND_MODE=corner）：原「内 3 格是 T、外 3 格非 T」单格翻转。
+ *   注意：填凹口会把 3 边凹角换成 5 边凸点，必然拉长边界（周长 +15~30%），
+ *   与「圆滑」目标相反，仅保留供对照。
+ * passes 轮数（WF_ROUND_PASSES 覆写，默认 1；多数滤波 1 轮即够，多加几乎不变）。
+ * WF_NO_ROUND=1 整体关闭。
+ */
+function smoothTerrain(grid, order, passes) {
+  const R = TERR_ROWS, C = TERR_COLS;
+  if (!grid || !grid.length) return;
+  const P = passes == null ? 1 : Math.max(1, passes | 0);
+  if (process.env.WF_ROUND_MODE === 'corner') return roundCornersLegacy(grid, P);
+  const isT = (v) => v === TT_MOUNTAIN || v === TT_WATER;
+  let cur = grid;
+  for (let p = 0; p < P; p++) {
+    const out = cur.map((row) => row.slice());
+    for (let r = 0; r < R; r++) {
+      for (let c = 0; c < C; c++) {
+        let t = 0, pl = 0, m = 0, w = 0;
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            const rr = r + dr, cc = c + dc;
+            const v = rr < 0 || rr >= R || cc < 0 || cc >= C ? TT_PLAIN : cur[rr][cc];
+            if (isT(v)) { t++; if (v === TT_MOUNTAIN) m++; else w++; }
+            else pl++;
+          }
+        }
+        const curT = isT(cur[r][c]);
+        let nv;
+        if (t > pl) nv = 1; else if (pl > t) nv = 0; else nv = curT ? 1 : 0; // 平局保持原值（不动细长三角）
+        if (nv) { if (!curT) out[r][c] = w > m ? TT_WATER : TT_MOUNTAIN; }
+        else if (curT) out[r][c] = TT_PLAIN;
+      }
+    }
+    cur = out;
+  }
+  for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) grid[r][c] = cur[r][c];
+}
+
+// 旧「圆角」逻辑：仅留作 WF_ROUND_MODE=corner 对照用，不默认启用（会拉长边界）。
+function roundCornersLegacy(grid, P) {
+  const R = TERR_ROWS, C = TERR_COLS;
+  const inB = (r, c) => r >= 0 && r < R && c >= 0 && c < C;
+  const N = [-1, 0], S = [1, 0], E = [0, 1], W = [0, -1];
+  const NE = [-1, 1], NW = [-1, -1], SE = [1, 1], SW = [1, -1];
+  const CORNERS = [
+    [N, E, NE, S, W, SW],
+    [N, W, NW, S, E, SE],
+    [S, E, SE, N, W, NW],
+    [S, W, SW, N, E, NE],
+  ];
+  for (let p = 0; p < P; p++) {
+    for (const T of [TT_MOUNTAIN, TT_WATER]) {
+      const cuts = [], fills = [];
+      for (let r = 0; r < R; r++) {
+        const row = grid[r];
+        for (let c = 0; c < C; c++) {
+          const here = row[c];
+          if (here !== T && here !== TT_PLAIN) continue; // 只处理 T 与空地
+          for (let k = 0; k < 4; k++) {
+            const o = CORNERS[k];
+            const ar = r + o[0][0], ac = c + o[0][1];
+            const br = r + o[1][0], bc = c + o[1][1];
+            const xr = r + o[2][0], xc = c + o[2][1];
+            const cr = r + o[3][0], cc = c + o[3][1];
+            const dr = r + o[4][0], dc = c + o[4][1];
+            const yr = r + o[5][0], yc = c + o[5][1];
+            if (!inB(ar, ac) || !inB(br, bc) || !inB(xr, xc)) continue;
+            if (!inB(cr, cc) || !inB(dr, dc) || !inB(yr, yc)) continue;
+            if (grid[ar][ac] !== T || grid[br][bc] !== T || grid[xr][xc] !== T) continue;
+            if (grid[cr][cc] === T || grid[dr][dc] === T || grid[yr][yc] === T) continue;
+            if (here === T) cuts.push(r * C + c); else fills.push(r * C + c);
+            break;
+          }
+        }
+      }
+      for (const i of cuts) {
+        const r = (i / C) | 0, c = i % C;
+        if (grid[r][c] === T) grid[r][c] = TT_PLAIN;
+      }
+      for (const i of fills) {
+        const r = (i / C) | 0, c = i % C;
+        if (grid[r][c] === TT_PLAIN) grid[r][c] = T;
+      }
+    }
+  }
+}
+
 function makeTerrain(game, seed, bands, themeKey, themeSalt, n) {
   const rng = makeRng((seed >>> 0) || 1);
   const theme =
@@ -3701,6 +4303,11 @@ function makeTerrain(game, seed, bands, themeKey, themeSalt, n) {
   // 隔离带本身是 N 条等间隔射线（已经对称），这里只按**多数表决**抹掉栅格化的 ±1 格锯齿：
   // 若用并集传播，占图一成以上的隔离带会把每条轨道连锁掏空（实测地形量掉一半）。
   symmetrizeGrid(grid, order);
+  // 地形平滑：3×3 多数滤波（smoothTerrain），削凸尖 + 填凹洞且缩短边界，更圆滑。
+  // 配合 buildHeightField 的 6 格模糊，派生出的崖线也更顺。
+  // WF_NO_ROUND=1 关掉做 A/B；WF_ROUND_PASSES 覆写轮数（默认 1）；
+  // WF_ROUND_MODE=corner 退回旧的「单格翻转」对照（会拉长边界，不推荐）。
+  if (!process.env.WF_NO_ROUND) smoothTerrain(grid, order, Number(process.env.WF_ROUND_PASSES) || 1);
   game.terrain = {
     cols: TERR_COLS,
     rows: TERR_ROWS,
@@ -8931,6 +9538,9 @@ function createGameState(room) {
       }
     }
   }
+  // 去毛刺 / 建筑开道之后再兜一遍连通：前面若干步只保证「不比之前更差」，
+  // 若进入收尾时已经是多片，会被原样带出去。这里无条件修到 ≤1 片。
+  repairConnect(8);
   // 高低差：**地形定稿之后**才派生高度场（前面每一步都会改地形，早算了白算）。
   // 山的高度往外摊成一圈缓坡、水往下摊成一圈洼地 → 可通行的平原也有了高地 / 低洼之分，
   // 「占高处打低处有射程加持」才真的成立（见 buildHeightField / effRange）。
@@ -11925,6 +12535,8 @@ module.exports = {
   stepOpen,
   navStepOk,
   segmentClear,
+  // 地形平滑（3×3 多数滤波；供测试直接量效果；生产走 makeTerrain 内部调用）
+  smoothTerrain,
   publicGameState,
   getActingPlayerIds,
   onPlayerQuit,
@@ -11956,6 +12568,11 @@ module.exports = {
   thumbOfGame,
   /** 战前信息快照，服务端重建局面时复用 */
   briefingView,
+  /** 地貌主题清单（建房 UI / listGames 用；开局由 room.theme 指定或加权随机） */
+  themes: THEMES,
+  themeByKey,
+  pickTheme,
+  fillTheme,
 
   /** 冒烟测试用：暴露内部推进函数，避免依赖真实时钟 */
   __test: {

@@ -76,7 +76,7 @@ section('① 编辑器开局：填电脑 + 立刻暂停');
   ok(g.editor === true, 'game.editor 已置位');
   ok(g.editorOwnerId === 'host1', '编辑者是房主本人');
   ok(g.paused === true && g.phase === 'edit', '开局即暂停（phase = ' + g.phase + '）');
-  ok(g.terrain && g.terrain.grid.length === 288, '白图是 288 行');
+  ok(g.terrain && g.terrain.grid.length === 264, '白图是 264 行');
   ok(g.hqs.length === 4, '4 座总部都在（实到 ' + g.hqs.length + '）');
   ok(g.labs.length === 0, '白图不该带着随机流水线那串研究所（实到 ' + g.labs.length + '）');
   ok(g.factories.length === 0, '白图没有工厂');
@@ -234,10 +234,10 @@ section('③ 地图文件：导出 → 落盘 → 读回 → 再开局');
 
   const loaded = WFMaps.loadMap(wr.file);
   ok(Boolean(loaded), '读回来了');
-  ok(loaded.grid.rows === 288 && loaded.grid.cols === 288, '网格尺寸一致');
+  ok(loaded.grid.rows === 264 && loaded.grid.cols === 264, '网格尺寸一致');
   let same = true;
-  for (let r = 0; r < 288 && same; r++) {
-    for (let c = 0; c < 288; c++) {
+  for (let r = 0; r < 264 && same; r++) {
+    for (let c = 0; c < 264; c++) {
       if (loaded.grid2[r][c] !== g.terrain.grid[r][c]) {
         same = false;
         break;
@@ -264,8 +264,8 @@ section('③ 地图文件：导出 → 落盘 → 读回 → 再开局');
   const g2 = r2.game;
   let same2 = Boolean(g2 && g2.terrain);
   if (same2) {
-    for (let r = 0; r < 288 && same2; r++) {
-      for (let c = 0; c < 288; c++) {
+    for (let r = 0; r < 264 && same2; r++) {
+      for (let c = 0; c < 264; c++) {
         if (g2.terrain.grid[r][c] !== loaded.grid2[r][c]) {
           same2 = false;
           break;
