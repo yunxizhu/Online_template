@@ -49,7 +49,26 @@ const log = {
   // 地形编辑器「保存并下载」走到最后会点一下 <a download>，这里记一笔
   clicks: [],
   blobs: [],
+  // 渐变：createLinearGradient 的四个端点 + 落过的色标。
+  // 坡道「画成连通上下两层的渐变」这条就靠它断言（纯色画不出坡的方向）。
+  gradients: [],
+  // 圆弧：圆心 + 半径（世界坐标，未换算）。建筑占位圈 = 一对同心圆，据此核对半径。
+  arcs: [],
 };
+/**
+ * 只对这些画布记 arc 的圆心/半径。
+ * 建筑占位圈画在**主画布**上；地形贴图/小地图的离屏画布不记（量大且用不上）。
+ */
+const ARC_LOG_ON = new Set();
+ARC_LOG_ON.add('warfactory-canvas'); // 建筑占位圈就画在这张主画布上
+/**
+ * 渐变记在哪张画布上：坡道渐变画在**离屏地形贴图**里（setTerrainGrid 建的 canvas），
+ * 那张画布没有 id —— 它是 document.createElement 出来的，桩里 id 为空。
+ * 所以这里反过来记：**排除**主画布与已知离屏画布之外的一切，等于「非主画布都记」。
+ */
+const GRAD_LOG_ON = { test: (owner) => owner !== 'warfactory-canvas' };
+/** 渐变记录上限：够断言用，又不至于把整轮拖死 */
+const GRAD_MAX = 4000;
 const sent = [];
 
 /**
@@ -81,7 +100,12 @@ function xfMul(xf, a2, b2, c2, d2, e2, f2) {
 }
 
 function makeCtx(owner) {
-  const grad = { addColorStop() {} };
+  const grad = {
+    addColorStop(o, col) {
+      const g = log.gradients[this.__gi];
+      if (g) g.stops.push([o, col]);
+    },
+  };
   const st = { lineWidth: 1, strokeStyle: '', fillStyle: '', lineCap: 'butt' };
   const xf = makeXf();
   const pt = (x, y) =>
@@ -91,7 +115,20 @@ function makeCtx(owner) {
     {
       get(_t, prop) {
         if (prop === 'measureText') return () => ({ width: 40 });
-        if (prop === 'createLinearGradient' || prop === 'createRadialGradient') return () => grad;
+        if (prop === 'createLinearGradient' || prop === 'createRadialGradient') {
+          return (...a) => {
+            // ⚠️ 只记**前 GRAD_MAX 条**。坡道渐变是「每个坡格一个」，一张图就上千个
+            //    （实测 1020~1800 个/局），全记会把这轮拖成跑不完（>400s）。
+            //    断言只需要知道「有没有画、两端颜色是否不同」，样本足够。
+            if (GRAD_LOG_ON.test(owner || '?') && log.gradients.length < GRAD_MAX) {
+              log.gradients.push({ kind: prop, args: a, stops: [] });
+              grad.__gi = log.gradients.length - 1;
+            } else {
+              grad.__gi = -1;
+            }
+            return grad;
+          };
+        }
         if (prop === 'getImageData') return () => ({ data: [] });
         if (prop === 'fillText') return (txt) => log.texts.push(String(txt));
         // 多带两个字段：属于哪块画布、当时是什么填充色（小地图灰化地形靠它验证）
@@ -169,8 +206,12 @@ function makeCtx(owner) {
           };
         }
         // 圆/椭圆按外接矩形四点近似（略偏大，但各兵种一致，不影响比值判断）
+        // ⚠️ arc 额外记一笔圆心+半径：建筑占位圈要按半径核对（= 碰撞 + navMargin）。
+        //    但**只记被 ARC_LOG_ON 标记的画布**——地形贴图里 8 万格的圆弧全记下来
+        //    会把内存和后续 filter 拖死（实测整轮从 114s 涨到跑不完）。
         if (prop === 'arc') {
           return (x, y, r) => {
+            if (ARC_LOG_ON.has(owner || '?')) log.arcs.push({ x, y, r, owner: owner || '?' });
             pt(x - r, y - r);
             pt(x + r, y + r);
           };
@@ -3433,44 +3474,55 @@ console.log('\n[23] 本轮十项（客户端侧）');
     const c23 = wf.publicGameState(
       wf.createGameState({ id: 'c23-lab', players: [{ id: 'p0', name: '甲' }, { id: 'p1', name: '乙' }] })
     ).consts;
-    ok(c23.labLineCost === 200 && c23.labMaxLines === 1 && c23.labLineRpMul === 1.5,
-      `研究产线：花费 ${c23.labLineCost} / 每所上限 ${c23.labMaxLines} / 产出 ×${c23.labLineRpMul}`);
+    ok(
+      c23.labLineCost === 100 && c23.labMaxLines === 4 && c23.labLineRpBonus === 1 && c23.labLineRpMul == null,
+      `研究产线：花费 ${c23.labLineCost} / 每所上限 ${c23.labMaxLines} / 每条 +${c23.labLineRpBonus}`
+    );
     // 点击即生效：不发二级选择、不弹选择器
     ok(
       /cmd: 'labLine', lid/.test(src) && !/labLine[\s\S]{0,200}openPicker/.test(src),
       '源码核对：点「开拓研究产线」直接发指令，没有二级选择项'
     );
-    // 服务端行为：占下 → 开拓 → 产出 +50%；再点被拒
+    // 服务端行为：占下 → 开拓 → 每条 +1；开满后被拒
     const gl = wf.createGameState({
       id: 'c23-lab2',
       players: [{ id: 'p0', name: '甲' }, { id: 'p1', name: '乙' }],
     });
     gl.phase = 'playing';
     gl.phaseEndsAt = 0;
-    gl.labs[0].owner = 0; // 先占下（未占领时该所不产出，没法比倍率）
-    const before = wf.__test.labRpTotalOf(gl, 0);
+    gl.labs[0].owner = 0; // 先占下（未占领时该所不产出）
+    // 只保留这一座研究所归属，避免其它所干扰合计
+    for (let i = 1; i < gl.labs.length; i++) gl.labs[i].owner = -1;
+    const before = wf.__test.labRpOf(gl.labs[0]);
     gl.players[0].rp = 9999;
     ok(wf.setPlayerInput(gl, 'p0', { cmd: 'labLine', lid: gl.labs[0].id }), '开拓研究产线成功');
     ok(gl.labs[0].lines === 1, '研究所产线 0 → 1');
-    const after = wf.__test.labRpTotalOf(gl, 0);
+    const after = wf.__test.labRpOf(gl.labs[0]);
     ok(
-      before > 0 && Math.abs(after / before - 1.5) < 1e-9,
-      `开拓后该所产出 +50%（${before} → ${after}）`
+      before > 0 && after === before + 1,
+      `开拓后该所产出 +1（${before} → ${after}）`
     );
-    ok(!wf.setPlayerInput(gl, 'p0', { cmd: 'labLine', lid: gl.labs[0].id }), '每所最多 1 条：再点被拒');
+    // 开满 labMaxLines 条
+    let opened = 1;
+    while (opened < c23.labMaxLines) {
+      if (!wf.setPlayerInput(gl, 'p0', { cmd: 'labLine', lid: gl.labs[0].id })) break;
+      opened += 1;
+    }
+    ok(gl.labs[0].lines === c23.labMaxLines, `可开满 ${c23.labMaxLines} 条（实为 ${gl.labs[0].lines}）`);
+    ok(!wf.setPlayerInput(gl, 'p0', { cmd: 'labLine', lid: gl.labs[0].id }), '开满后再点被拒');
     ok(wf.snapshot(gl).lb[0].length === 5, '研究所快照 5 列（末列＝已开拓产线数）');
   }
 
-  // ---------- ⑧ 产线上限 2 + 已开拓标识 ----------
+  // ---------- ⑧ 产线上限 + 已开拓标识 ----------
   {
     const c23 = wf.publicGameState(
       wf.createGameState({ id: 'c23-cap', players: [{ id: 'p0', name: '甲' }, { id: 'p1', name: '乙' }] })
     ).consts;
-    ok(c23.facMaxLines === 2 && c23.labMaxLines === 1,
+    ok(c23.facMaxLines === 2 && c23.labMaxLines === 4,
       `工厂最多 ${c23.facMaxLines} 条（默认 1 + 可开 1）、研究所最多 ${c23.labMaxLines} 条`);
-    ok(/function drawLineBadge\(/.test(src), '源码核对：有「已开拓产线」的小模型标识函数');
+    ok(/function drawLineBadge\(/.test(src), '源码核对：有工厂「已开拓产线」的小模型标识函数');
     ok(/slots\.length >= 2\)/.test(src) && /drawLineBadge\(c, 'fac'/.test(src), '工厂开了第 2 条 → 右下角画简化小模型');
-    ok(/l\.lines \|\| 0\), 0, 1\) >= 1/.test(src) && /drawLineBadge\(c, 'lab'/.test(src), '研究所开了产线 → 右下角画简化小模型');
+    ok(/function drawLabCanisters\(/.test(src), '研究所开了产线 → 四周画研究罐');
     // 标识必须比本体简化：只用两三笔线稿，不画门窗瓦顶
     const badge = /function drawLineBadge\(c, kind, col\) \{[\s\S]*?\n  \}/.exec(src);
     ok(Boolean(badge) && badge[0].length < 1600, '标识造型明显简化（只是两三笔线稿）');
@@ -4308,22 +4360,14 @@ const prodOf = (color) => {
   return out;
 };
 const cliffProds = prodOf(CONTOUR_CLIFF_C);
-// 极简版无坡线，坡由色块表达。
-// ⚠️ 注意：地形贴图是**离屏缓存**、只在 setTerrainGrid 时栅格化一次，
-//    所以坡道色块不会出现在逐帧的 log.rects 里（那是主画布的落笔记录）。
-//    这里改为核对「坡道掩码非空」+「色块颜色已从源码解析到」（见上面的 rampCount 断言）。
+// 坡道不再断言「色块颜色」：坡身已改成**连通上下两层的线性渐变**、边界另有
+// 坡面落差阴影（RAMP_SHADE / RAMP_LIP），不再是金边 C_RAMP_EDGE。整段挪到 [34]（那里能真的驱动渲染、
+// 量到渐变与建筑占位圈），这里只留与缩放无关的崖线粗细。
 const rampRects = [];
 const slopeProds = [];
-ok(RAMP_C, `坡道色块颜色已定义（${RAMP_C}）`);
 const near = (arr, v) => arr.length > 0 && arr.every((x) => Math.abs(x - v) < 0.35);
-ok(
-  near(cliffProds, CLIFF_W_PX),
-  `崖线屏幕粗细恒定 ${CLIFF_W_PX}px（实测 ${cliffProds.length} 笔，均值 ` +
-    (cliffProds.length ? (cliffProds.reduce((a, b) => a + b, 0) / cliffProds.length).toFixed(2) : '-') + 'px）'
-);
-// 坡道色块与高地色块必须是**不同**的颜色，否则「哪儿能上下」就分不出来
-const HIGHER_C = (/const C_HIGHER = '([^']+)'/.exec(src) || [0, ''])[1];
-ok(RAMP_C !== HIGHER_C, `坡道色块与高地色块可区分（${RAMP_C} vs ${HIGHER_C}）`);
+const cliffMean = cliffProds.length ? (cliffProds.reduce((a, b) => a + b, 0) / cliffProds.length).toFixed(2) : '-';
+ok(near(cliffProds, CLIFF_W_PX), `崖线屏幕粗细恒定 ${CLIFF_W_PX}px（实测 ${cliffProds.length} 笔，均值 ${cliffMean}px）`);
 
 // 崖壁立面：烘进地形贴图的那一面。有崖就该有「暗色墙面」的矩形落笔
 // 极简版没有「立面」这个概念（不画挤出墙面）—— 断崖只用一条线表达。
@@ -5237,6 +5281,228 @@ console.log('\n[33] 车体 / 炮塔：分两层画（车体朝行进、炮塔朝
   const wrap = R({ ang: 3.1, tur: -3.1 });
   ok(Math.abs(wrap) < 0.2, `跨 ±π 走最短弧（${wrap.toFixed(3)} rad，不是 ${(2 * Math.PI - Math.abs(wrap)).toFixed(2)}）`);
   ok(R({ ang: 0, tur: null }) === 0 && R({}) === 0, '缺炮塔角时退化为「炮塔 = 车体」（老快照不会画崩）');
+
+  // ④ 世界朝向：车体朝 +Y、炮塔也朝 +Y 时，炮塔尖端必须沿 +Y 伸出。
+  //    早先漏了 c.rotate(u.ang)，只转相对角 → 同向时炮塔停在 +X，激光光束却往 +Y 射，
+  //    肉眼就是「炮台和攻击方向差 90°」。
+  {
+    function turretExtent(ang, tur) {
+      log.points.length = 0;
+      const rel = R({ ang, tur });
+      const pv = Ui.turretPivot('laser', 1);
+      pc.save();
+      pc.translate(0, 0);
+      pc.rotate(ang);
+      pc.scale(1, 1);
+      pc.translate(pv[0], pv[1]);
+      pc.rotate(rel);
+      pc.translate(-pv[0], -pv[1]);
+      Ui.drawUnitParts(pc, 'laser', 1, 'A', '#b03a2e', 'turret');
+      pc.restore();
+      let maxX = 0;
+      let maxY = 0;
+      for (const p of log.points) {
+        maxX = Math.max(maxX, Math.abs(p[0]));
+        maxY = Math.max(maxY, Math.abs(p[1]));
+      }
+      return { maxX, maxY, n: log.points.length };
+    }
+    const north = turretExtent(Math.PI / 2, Math.PI / 2);
+    ok(north.n > 0, `激光炮塔能画出点（${north.n}）`);
+    ok(
+      north.maxY > north.maxX * 1.2,
+      `车体/炮塔同朝 +Y 时，炮塔外廓沿 +Y（maxY ${north.maxY.toFixed(1)} > maxX ${north.maxX.toFixed(1)}）`
+    );
+    const east = turretExtent(0, 0);
+    ok(
+      east.maxX > east.maxY * 1.2,
+      `车体/炮塔同朝 +X 时，炮塔外廓沿 +X（maxX ${east.maxX.toFixed(1)} > maxY ${east.maxY.toFixed(1)}）`
+    );
+  }
+}
+
+console.log('\n[34] 地形分层配色 + 坡道渐变 + 建筑占位圈（看得见的规则）');
+{
+  /** 清空落笔记录：地形贴图只在换图时重画，必须卡在那个窗口里断言 */
+  function clearLog() {
+    log.texts.length = 0;
+    log.rects.length = 0;
+    log.strokes.length = 0;
+    log.strokeStyles.length = 0;
+    log.strokeMags.length = 0;
+    log.fills.length = 0;
+    log.fillMags.length = 0;
+    log.points.length = 0;
+    log.gradients.length = 0;
+    log.arcs.length = 0;
+  }
+  // 这三项都是「画出来 = 规则本身」：
+  //   · 高度 → 每层一个纯色（能读出「高几级」才谈得上射程加成）
+  //   · 坡 → 渐变（能读出「从下往上」才谈得上这是通路）
+  //   · 建筑占位 → 画出碰撞+navMargin 的圈（否则玩家看到的空地走不通）
+  // ⚠️ 地形贴图是**离屏缓存**，只在 render 换图时栅格化一次 ——
+  //    所以这里清空记录后拿**另一个对局对象**重新 render，触发地形重画，
+  //    再断言那一窗口里的落笔。复用 gCliff（上面已经建好的固定「群山」局），
+  //    不新建局 —— createGameState 一局要 1~2s。
+  const gT = gCliff;
+  const publicT = wf.publicGameState(gT);
+  const constsT = publicT.consts;
+  const lvSeen = new Set();
+  for (const v of gT.terrain.heights) lvSeen.add(v);
+  const lvList = [...lvSeen].sort((a, b) => a - b);
+  let rampN = 0;
+  for (const v of gT.terrain.ramps || []) if (v) rampN++;
+  console.log(`  该图高度层 [${lvList.join(',')}] · 坡道 ${rampN} 格 · navMargin ${constsT.navMargin}px`);
+
+  clearLog();
+  Ui.render(publicT, net, { meId: publicT.you, spectator: false, t: () => 0 });
+  pump(); // 先把这一帧走完（pump 会清落笔记录）
+  // ⚠️ 地形贴图是**离屏缓存**：render 里 applyServerTerrain 画的那一次，
+  //    它的落笔已经被 pump 清掉了。所以要再用 applyTerrainPatch 触发一次重画
+  //    （服务端广播「地形改动」走的就是这条路径，见 applyTerrainPatch 的注释），
+  //    并在**清完记录之后**才让它落笔 —— 这样记到的才是地形贴图本身的笔触。
+  // 地形贴图（离屏）的落笔 → 断言 ①②③
+  clearLog();
+  Ui.editor.applyTerrainPatch({
+    full: publicT.terrain.data,
+    heights: publicT.terrain.heights,
+    levels: publicT.terrain.levels,
+    // ⚠️ ramps 必须一起带上：applyServerTerrain 拿不到就置 rampGrid = null，
+    //    坡道一条都不画，坡的断言就成了空跑。
+    ramps: publicT.terrain.ramps,
+  });
+  // ⚠️ 坡面阴影是 rgba()，高度色阶是 rgb() —— 两套都要留快照，后面 pump 会清 rects
+  const tRectsAll = log.rects.slice();
+  const tRects = tRectsAll.filter((r) => /rgb\(/.test(String(r[5])));
+  const tStrokes = log.strokeStyles.slice(); // 快照：后面还要再走一帧，那一帧会往同一个数组里追加
+  const grads = log.gradients;
+
+  // 建筑占位圈（主画布逐帧渲染）→ 断言 ④。
+  // ⚠️ pump() 会清 texts / rects / points 等，但**不清 arcs / gradients**（本次新加），
+  //    所以这里可以在地形断言之后再走一帧，占位圈的记录仍在。
+  log.arcs.length = 0;
+  Ui.render(publicT, net, { meId: publicT.you, spectator: false, t: () => 0 });
+  pump();
+
+  /** 该图「可通行格」实际用到的高度层数（山/水格不参与 —— 它们走各自的语义色） */
+  function heightLevelsUsed() {
+    const cols = gT.terrain.grid[0].length;
+    const s = new Set();
+    for (let r = 0; r < gT.terrain.grid.length; r++) {
+      for (let c = 0; c < cols; c++) {
+        const tv = gT.terrain.grid[r][c];
+        if (tv === 2 || tv === 4) continue;
+        s.add(gT.terrain.heights[r * cols + c]);
+      }
+    }
+    return s.size;
+  }
+  const gradsWith2 = grads.filter((g) => g.stops.length >= 2 && g.stops[0][1] !== g.stops[1][1]);
+
+  // ① 高度分层：每个高度层一个颜色，且**平地上**看得见。
+  //    ⚠️ 判据要算上坡道格：坡道格铺的是渐变（fillStyle 是个渐变对象），
+  //    但它的**两端色就是两端那一层的高度色** —— 所以从渐变的 addColorStop 里
+  //    一并收集。只数纯色 fillRect 的话，坡道密集的图上会漏掉好几层
+  //    （实测某图平原用到 5 层，纯色只露 3 层，±2/±1 全被坡道盖住）。
+  const heightColors = new Set(
+    log.rects
+      .filter((r) => /^rgb\(/.test(String(r[5])))
+      .map((r) => String(r[5]))
+      .concat(log.gradients.flatMap((g) => g.stops.map((s) => String(s[1]))))
+      .filter((s) => /^rgb\(/.test(s))
+  );
+  const wantLv = heightLevelsUsed();
+  ok(
+    heightColors.size >= Math.min(wantLv, 3),
+    `高度色阶是「每层一个纯色」（地面+坡道两端共 ${heightColors.size} 种高度色；该图平原用到 ${wantLv} 层）`
+  );
+  // 坡的渐变两端必须是不同色（否则读不出坡的爬升方向）
+  ok(
+    rampN === 0 || gradsWith2.length === grads.length,
+    `每个坡的渐变两端是**不同**的颜色（${gradsWith2.length}/${grads.length} 合格）`
+  );
+  ok(
+    !tRects.some((r) => String(r[5]).includes('gradient')),
+    '平地不带渐变（渐变只给坡用）'
+  );
+
+  // ② 坡道：每格一个线性渐变 + 两端落色标 + 单独一道描边
+  ok(
+    rampN === 0 || grads.length > 0,
+    `坡身画成线性渐变（该图 ${rampN} 个坡道格，${grads.length} 处 createLinearGradient）`
+  );
+  // 坡的渐变轴必须贴合地形方向：旧实现几乎全部是 (x,y)→(x,y+CELL) 从上到下，
+  // 东西向 / 北高南低的坡颜色整反。现在轴从低台地指向高台地，四个象限都该出现。
+  {
+    const bins = { down: 0, up: 0, right: 0, left: 0, diag: 0 };
+    for (const g of grads) {
+      if (g.kind !== 'createLinearGradient' || !g.args || g.args.length < 4) continue;
+      const dx = g.args[2] - g.args[0];
+      const dy = g.args[3] - g.args[1];
+      const adx = Math.abs(dx);
+      const ady = Math.abs(dy);
+      if (adx < 1 && dy > 0) bins.down += 1;
+      else if (adx < 1 && dy < 0) bins.up += 1;
+      else if (ady < 1 && dx > 0) bins.right += 1;
+      else if (ady < 1 && dx < 0) bins.left += 1;
+      else bins.diag += 1;
+    }
+    const nDir = bins.down + bins.up + bins.right + bins.left + bins.diag;
+    const notDown = nDir - bins.down;
+    ok(
+      nDir === 0 || notDown >= nDir * 0.25,
+      `坡渐变不是固定从上到下（下 ${bins.down} / 上 ${bins.up} / 右 ${bins.right} / 左 ${bins.left} / 斜 ${bins.diag}）`
+    );
+    ok(
+      nDir === 0 || bins.diag + bins.left + bins.right > 0,
+      '至少有一些坡的渐变轴不是纯南北向（东西向或斜坡要画得出方向）'
+    );
+  }
+  // 坡不再描金边框，改走与断崖同族的落差阴影（软阴影 + 浅唇，fillRect / rgba）
+  ok(!/const C_RAMP_EDGE/.test(src), '坡不再使用 C_RAMP_EDGE 描边');
+  const rampShadeRects = tRectsAll.filter((r) => /58,\s*48,\s*36/.test(String(r[5])));
+  const rampLipFills = tRectsAll.filter((r) => /255,\s*250,\s*238/.test(String(r[5])));
+  ok(
+    rampN === 0 || rampShadeRects.length > 0,
+    `坡面落差画了软阴影（${rampShadeRects.length} 笔）`
+  );
+  ok(
+    rampN === 0 || rampLipFills.length > 0,
+    `坡面落差高侧有浅唇（${rampLipFills.length} 笔，与断崖同读法）`
+  );
+
+  // ③ 断崖：深线 + 浅高光，深浅两道在任何底色上都读得出
+  ok(tStrokes.includes('#2b2118'), '断崖主线（深墨）画了');
+  ok(
+    tStrokes.some((s) => /255,\s*250,\s*238/.test(String(s))),
+    '断崖唇另加一道浅色高光（只靠一根深线在纸色底上会看不见）'
+  );
+
+  // ④ 建筑占位圈：半径必须 = 碰撞 + navMargin（与服务端 passGrid 同口径）。
+  //    占位圈画在**主画布的逐帧渲染**里（不是地形贴图），所以要在 render + pump
+  //    之后断言 —— 上面那个 applyTerrainPatch 窗口只覆盖地形贴图。
+  const NAV = constsT.navMargin;
+  ok(Number.isFinite(NAV), `服务端下发了 navMargin = ${NAV}px`);
+  const hqT = gT.hqs[0];
+  const occR = constsT.hqR + NAV;
+  const gy = Ui.heights.groundY(hqT.x, hqT.y);
+  // 主画布上、圆心贴着总部的所有圆（按半径去重）
+  const arcR = log.arcs.filter(
+    (a) => a.owner === 'warfactory-canvas' && Math.abs(a.x - hqT.x) <= 1.5 && Math.abs(a.y - gy) <= 2
+  );
+  const radii = [...new Set(arcR.map((a) => Math.round(a.r)))].sort((x, y) => x - y);
+  ok(
+    radii.some((r) => Math.abs(r - occR) <= 1.5),
+    `总部画出了半径 ${occR}px（碰撞 ${constsT.hqR} + navMargin ${NAV}）的占位圈`,
+    `总部处的圆半径 = [${radii.join(', ')}]`
+  );
+  ok(
+    radii.some((r) => Math.abs(r - constsT.hqR) <= 1.5),
+    '同时画出碰撞本体圈（本体与占位圈之间那条余量看得见）'
+  );
+  // 三类建筑的占位半径互不相同（曾三者都是 15 格，于是小所和总部一样大）
+  const occSet = new Set([constsT.factoryR, constsT.labR, constsT.hqR].map((r) => r + NAV));
+  ok(occSet.size === 3, `工厂/研究所/总部的占位半径互不相同（${[...occSet].join(' / ')}）`);
 }
 
 console.log(failed ? `\n失败 ${failed} 项` : '\n全部通过');

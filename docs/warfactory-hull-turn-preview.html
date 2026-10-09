@@ -1,3 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>战争工厂 · 车体转向核对</title>
+<style>
+  html, body { margin: 0; background: #ece3cd; color: #2a2620;
+               font: 13px/1.7 "Microsoft YaHei", system-ui, sans-serif; }
+  h1 { font-size: 17px; margin: 16px 20px 2px; }
+  .sub { margin: 0 20px 14px; color: #6b6154; }
+  .card { background: #f6efdd; border: 1px solid #c9bda1; border-radius: 4px;
+          padding: 8px 10px 10px; margin: 0 20px 14px; }
+  .card h2 { font-size: 14px; margin: 0 0 6px; }
+  .row { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+  canvas { background: #ece3cd; border: 1px solid #d5c9ad; display: block; }
+  .cap { font-size: 10px; color: #8a7f6a; text-align: center; margin-top: 2px; }
+  .dark { background: #2f2a22; border-color: #4a4338; }
+  .dark canvas { background: #2f2a22; border-color: #4a4338; }
+  .dark .cap { color: #b9ad94; }
+  .darknote { font-size: 11px; color: #8a7f6a; margin: 0 20px 10px; }
+</style>
+</head>
+<body>
+<h1>六兵种 · 车体转向核对（仅 base 层，真实 ui.js 渲染）</h1>
+<p class="sub">车体 = 两侧履带带（阵营色描边 + 滚动齿）+ 车头一枚小阵营色楔形；转起来两条履带跟着偏，一眼看出车体在转弯。上为浅色地形，下为深色地形（核对对比度）。</p>
+<div id="light"></div>
+<p class="darknote">—— 以下模拟深色 / 杂色地形 ——</p>
+<div id="dark" class="dark"></div>
+
+<h1 style="margin-top:26px">六兵种 · 移动留痕示意（base 层 + 身后淡出履带印）</h1>
+<p class="sub">单位移动时沿行进方向在地面留下两道平行履带印，随时间自动淡出（游戏内实时行为，此处静态示意）。印子与车体履带同口径、阵营色，越老越淡。</p>
+<div id="trail"></div>
+
+<script>
 'use strict';
 
 /**
@@ -355,7 +389,7 @@ window.WarFactoryUi = (function () {
   const ROUTE_TTL = 1400; // 路线线存活时长（ms）
   const ROUTE_MAX_UNITS = 14; // 选太多人时只画前几支，免得一屏全是线
   let routeMaskCache = null; // 通行掩码（建筑位置一局不变，算一次就够）
-  let routeFieldCache = new Map(); // 目标格 → { dist, prev, next }（同一次下令里几支队伍共用）
+  let routeFieldCache = new Map(); // 目标格 → { dist, prev }（同一次下令里几支队伍共用）
   // ---- 多点路径规划（按住 Shift 右键依次点路点）----
   // wps：玩家点的路点（世界坐标）；segs：每支队伍「当前位置 → 路点1 → 路点2 …」的实际行进折线。
   // 规划期间只画不下发；松开 Shift 再右键点终点（或按回车）才把整条链交给服务端。
@@ -1405,26 +1439,22 @@ window.WarFactoryUi = (function () {
      */
     const LV = Math.max(1, heightLevels | 0);
     const LV_COLOR = [];
-    // 拉大明暗跨度：洼地更深、高地更亮，台地边界才一眼可读（仍单色系，不回三色花案）
-    const cLow = [0x3a, 0x34, 0x2a]; // 洼地：更深暖墨
-    const cHi = [0xf4, 0xee, 0xdc]; // 高地：更亮宣纸
+    const cLow = [0x4a, 0x42, 0x35]; // 洼地：暗暖墨（近 INK）
+    const cHi = [0xec, 0xe3, 0xcd]; // 高地：宣纸（= PAPER）
     for (let i = -LV; i <= LV; i++) {
-      // t ∈ [0,1]：0 = 最低洼（暗），1 = 最高地（亮）—— 用 smoothstep 拉开中段对比
-      const u = (i + LV) / (2 * LV);
-      const t = u * u * (3 - 2 * u);
+      // t ∈ [0,1]：0 = 最低洼（暗），1 = 最高地（亮）
+      const t = (i + LV) / (2 * LV);
       const rgb = [0, 1, 2].map((k) => Math.round(cLow[k] + (cHi[k] - cLow[k]) * t));
       LV_COLOR[i + LV] = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
     }
     const lvColor = (lv) => LV_COLOR[clamp(lv, -LV, LV) + LV];
 
-    // 坡身走渐变（①b）+ 暖色倾向；落差用与断崖同族的软阴影（①c），不再描金边框
+    // 坡身走渐变（①b）；落差用与断崖同族的软阴影（①c），不再描金边框
     // 断崖边线：全图唯一的强调色，只用来标「过不去」
     const C_CLIFF = '#2b2118';
-    // 坡面落差阴影（可走）：比断崖淡一号，但要比上一版更醒目
-    const RAMP_SHADE = 'rgba(58,48,36,0.55)';
-    const RAMP_LIP = 'rgba(255,250,238,0.78)';
-    // 坡身相对平地的暖尘倾向（仍跟高度明暗走，只是偏暖，整条坡带才跳得出来）
-    const RAMP_WARM = [0xc8, 0xad, 0x62];
+    // 坡面落差阴影（可走）：比断崖淡一号 —— 同是「高→低」的读法，但不暗示挡路
+    const RAMP_SHADE = 'rgba(58,48,36,0.32)';
+    const RAMP_LIP = 'rgba(255,250,238,0.42)';
 
     /**
      * 某一格该铺什么底色。
@@ -1523,24 +1553,11 @@ window.WarFactoryUi = (function () {
     }
     /** 某一高度层（可分数）对应的色阶 —— 坡身要沿方向连续过渡，不能每格都从最暗拉到最亮 */
     const lvColorF = (lv) => {
-      const u = (Math.max(-LV, Math.min(LV, lv)) + LV) / (2 * LV);
-      const t = u * u * (3 - 2 * u);
+      const t = (Math.max(-LV, Math.min(LV, lv)) + LV) / (2 * LV);
       const rgb = [0, 1, 2].map((k) => Math.round(cLow[k] + (cHi[k] - cLow[k]) * t));
       return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
     };
     const mixLv = (lo, hi, s) => lvColorF(lo + (hi - lo) * Math.max(0, Math.min(1, s)));
-    /** 坡身色：高度明暗 + 暖尘倾向，两端仍随 lo/hi 变化（能读爬升方向） */
-    const mixRamp = (lo, hi, s) => {
-      const u = Math.max(0, Math.min(1, s));
-      const lv = lo + (hi - lo) * u;
-      const uu = (Math.max(-LV, Math.min(LV, lv)) + LV) / (2 * LV);
-      const t = uu * uu * (3 - 2 * uu);
-      const base = [0, 1, 2].map((k) => cLow[k] + (cHi[k] - cLow[k]) * t);
-      // 中段更暖（坡心最显眼），两端略贴台地色
-      const warmAmt = 0.28 + 0.22 * (1 - Math.abs(u - 0.5) * 2);
-      const rgb = [0, 1, 2].map((k) => Math.round(base[k] * (1 - warmAmt) + RAMP_WARM[k] * warmAmt));
-      return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
-    };
     /**
      * 某坡道格：两端层、低/高台地质心（像素）、爬升轴。
      * 轴从低台地指向高台地；画的时候这一格只取整条坡上属于自己的那一段。
@@ -1605,76 +1622,13 @@ window.WarFactoryUi = (function () {
 
     // ① 逐格铺纯色。合并「同色连续段」成一笔，八万格也不用画八万次。
     //    坡道格 baseColor 返回 null → 这里跳过，交给 ①b 的渐变。
-    //    山/水外凸直角在格内斜切（不改可走掩码）：两正交邻都不是同类固体 → 该角改画斜边。
-    const CHAMFER = CELL * 0.98; // 近满格斜切：外凸直角 ≈ 45° 斜边（略留缝避免相邻格漏白）
-    const solidSame = (r, c, t) => r >= 0 && r < gh && c >= 0 && c < gw && at(r, c) === t;
-    const cornerCuts = (r, c, t) => {
-      const N = solidSame(r - 1, c, t);
-      const S = solidSame(r + 1, c, t);
-      const W = solidSame(r, c - 1, t);
-      const E = solidSame(r, c + 1, t);
-      return {
-        nw: !N && !W,
-        ne: !N && !E,
-        se: !S && !E,
-        sw: !S && !W,
-        any: (!N && !W) || (!N && !E) || (!S && !E) || (!S && !W),
-      };
-    };
-    const fillChamfer = (x, y, cuts) => {
-      const s = CELL;
-      const k = CHAMFER;
-      g.beginPath();
-      if (cuts.nw) {
-        g.moveTo(x + k, y);
-        g.lineTo(x, y + k);
-      } else {
-        g.moveTo(x, y);
-      }
-      if (cuts.ne) {
-        g.lineTo(x + s - k, y);
-        g.lineTo(x + s, y + k);
-      } else {
-        g.lineTo(x + s, y);
-      }
-      if (cuts.se) {
-        g.lineTo(x + s, y + s - k);
-        g.lineTo(x + s - k, y + s);
-      } else {
-        g.lineTo(x + s, y + s);
-      }
-      if (cuts.sw) {
-        g.lineTo(x + k, y + s);
-        g.lineTo(x, y + s - k);
-      } else {
-        g.lineTo(x, y + s);
-      }
-      g.closePath();
-      g.fill();
-    };
     for (let r = r0; r <= r1; r++) {
       let c = 0;
       while (c < gw) {
         const col = baseColor(r, c);
         if (!col) { c++; continue; } // 坡道格
-        const t = at(r, c);
-        const isSolid = t === 2 || t === 4;
-        // 山/水：有外凸角的格子单独画斜切多边形，不能并进横条 fillRect
-        if (isSolid) {
-          const cuts = cornerCuts(r, c, t);
-          if (cuts.any) {
-            g.fillStyle = col;
-            fillChamfer(c * CELL, r * CELL, cuts);
-            c++;
-            continue;
-          }
-        }
         let c1 = c;
-        while (c1 + 1 < gw && baseColor(r, c1 + 1) === col) {
-          const t2 = at(r, c1 + 1);
-          if ((t2 === 2 || t2 === 4) && cornerCuts(r, c1 + 1, t2).any) break;
-          c1++;
-        }
+        while (c1 + 1 < gw && baseColor(r, c1 + 1) === col) c1++;
         const x = c * CELL;
         const w = (c1 - c + 1) * CELL;
         g.fillStyle = col;
@@ -1744,15 +1698,14 @@ window.WarFactoryUi = (function () {
       }
     }
 
-    // ①b 坡道：沿**实际爬升方向**画暖色渐变 + 踏步细线，这一格只取整条坡上属于自己的那一段。
+    // ①b 坡道：沿**实际爬升方向**画渐变，这一格只取整条坡上属于自己的那一段色。
     //
-    //   坡 =「把两个高度连起来」：渐变读方向，暖尘倾向让坡带从平地里跳出来，
-    //   踏步线强化「能走上去」—— 不再靠金边框贴纸感。
+    //   为什么坡不能也用纯色（早先就是一块 C_RAMP 金色）：坡的本质是「把两个高度连起来」，
+    //   画成一段色阶过渡，玩家不用数线就知道「这条带子从哪边斜到哪边」——
+    //   也就知道站在坡的哪一头能打得更远。纯色只说明「这儿能上下」，说不出方向。
     //
-    //   渐变轴 = 低台地质心 → 高台地质心；宽坡带每格只取自己那一段色，避免条纹重复。
-    g.save();
-    g.lineCap = 'butt';
-    g.lineJoin = 'miter';
+    //   渐变轴 = 低台地质心 → 高台地质心（东西坡就左右过渡，北高南低就下暗上亮）。
+    //   宽坡带里每一格不再把「最暗→最亮」整段拉一遍，否则整条坡会变成重复条纹。
     for (let r = r0; r <= r1; r++) {
       for (let c = 0; c < gw; c++) {
         if (!isRampCell(r, c)) continue;
@@ -1760,7 +1713,7 @@ window.WarFactoryUi = (function () {
         const x = c * CELL;
         const y = r * CELL;
         if (e.lo === e.hi || e.span < 0.5) {
-          g.fillStyle = mixRamp(e.lo, e.hi, 0.5);
+          g.fillStyle = lvColor(e.lo);
           g.fillRect(x, y, CELL + 0.6, CELL + 0.6);
           continue;
         }
@@ -1775,77 +1728,56 @@ window.WarFactoryUi = (function () {
         const s0 = Math.max(0, Math.min(1, ((cx - hx - e.loX) * ux + (cy - hy - e.loY) * uy) * inv));
         const s1 = Math.max(0, Math.min(1, ((cx + hx - e.loX) * ux + (cy + hy - e.loY) * uy) * inv));
         if (Math.abs(s1 - s0) < 0.02) {
-          g.fillStyle = mixRamp(e.lo, e.hi, (s0 + s1) * 0.5);
+          g.fillStyle = mixLv(e.lo, e.hi, (s0 + s1) * 0.5);
           g.fillRect(x, y, CELL + 0.6, CELL + 0.6);
-        } else {
-          const grad = g.createLinearGradient(cx - hx, cy - hy, cx + hx, cy + hy);
-          grad.addColorStop(0, mixRamp(e.lo, e.hi, s0));
-          grad.addColorStop(1, mixRamp(e.lo, e.hi, s1));
-          g.fillStyle = grad;
-          g.fillRect(x, y, CELL + 0.6, CELL + 0.6);
+          continue;
         }
-        // 踏步细线：垂直于爬升轴，标「这是斜坡不是平地色块」
-        const px = -uy;
-        const py = ux;
-        g.strokeStyle = 'rgba(58,48,36,0.28)';
-        g.lineWidth = Math.max(1.2, CELL * 0.06);
-        g.beginPath();
-        for (let k = 1; k <= 2; k++) {
-          const t = k / 3;
-          const mx = x + CELL * 0.5 + ux * (t - 0.5) * CELL * 0.7;
-          const my = y + CELL * 0.5 + uy * (t - 0.5) * CELL * 0.7;
-          const half = CELL * 0.38;
-          g.moveTo(mx - px * half, my - py * half);
-          g.lineTo(mx + px * half, my + py * half);
-        }
-        g.stroke();
+        const grad = g.createLinearGradient(cx - hx, cy - hy, cx + hx, cy + hy);
+        grad.addColorStop(0, mixLv(e.lo, e.hi, s0));
+        grad.addColorStop(1, mixLv(e.lo, e.hi, s1));
+        g.fillStyle = grad;
+        g.fillRect(x, y, CELL + 0.6, CELL + 0.6);
       }
     }
-    g.restore();
 
-    // ①c 高度落差阴影：跟断崖同一套「上唇高光 + 下沿阴影」。
-    //    · 坡边：更粗更实 —— 「这儿能走上去」
-    //    · 台地落差（平原↔平原、非断崖）：稍淡 —— 「这儿有高低」
-    //    ⚠️ 不再描金边框。阴影落在**低的那一侧**，高侧留浅唇。
+    // ①c 坡面落差阴影：跟断崖同一套「上唇高光 + 下沿阴影」，但更淡 ——
+    //    标的是「这儿有高低、能走上去」，不是「过不去」。
+    //    ⚠️ 不再描金边框：边框把坡描成一张贴纸，和台地落差的阴影语言不一致。
+    //
+    //    画在「有高度落差、且至少一侧是坡」的边上；阴影落在**低的那一侧**，
+    //    高侧留一道浅唇。南向落差最显眼（与断崖挤出同向），东西向也补，
+    //    否则横向坡读不出台阶。
     {
-      const shadeW = Math.max(4, CELL * 0.22);
-      const lipW = Math.max(2.5, CELL * 0.11);
-      const dropNS = []; // [x, w, yEdge, drop, strong]
-      const dropSN = [];
-      const dropEW = [];
-      const dropWE = [];
-      const walkable = (r, c) => {
-        if (r < 0 || r >= gh || c < 0 || c >= gw) return false;
-        const t = at(r, c);
-        return t !== 2 && t !== 4;
-      };
+      const shadeW = Math.max(3, CELL * 0.14); // 阴影带宽（随格变）
+      const lipW = Math.max(2, CELL * 0.08);
+      const dropNS = []; // [x, w, yEdge, drop] 南向：北高南低
+      const dropSN = []; // 北向：南高北低（少见，阴影画在北边）
+      const dropEW = []; // [y, h, xEdge, drop] 东向：西高东低
+      const dropWE = []; // 西向：东高西低
       for (let r = r0; r <= r1; r++) {
         for (let c = 0; c < gw; c++) {
-          if (!walkable(r, c)) continue;
           const ha = hLevel(r, c);
           // 南邻
-          if (r + 1 < gh && walkable(r + 1, c)) {
+          if (r + 1 < gh) {
             const hb = hLevel(r + 1, c);
-            if (ha !== hb && !cliffSide(r, c, r + 1, c)) {
-              const strong = isRampCell(r, c) || isRampCell(r + 1, c) ? 1 : 0;
+            if (ha !== hb && (isRampCell(r, c) || isRampCell(r + 1, c))) {
               const yEdge = (r + 1) * CELL;
-              if (ha > hb) dropNS.push(c * CELL, CELL, yEdge, ha - hb, strong);
-              else dropSN.push(c * CELL, CELL, yEdge, hb - ha, strong);
+              if (ha > hb) dropNS.push(c * CELL, CELL, yEdge, ha - hb);
+              else dropSN.push(c * CELL, CELL, yEdge, hb - ha);
             }
           }
           // 东邻
-          if (c + 1 < gw && walkable(r, c + 1)) {
+          if (c + 1 < gw) {
             const hb = hLevel(r, c + 1);
-            if (ha !== hb && !cliffSide(r, c, r, c + 1)) {
-              const strong = isRampCell(r, c) || isRampCell(r, c + 1) ? 1 : 0;
+            if (ha !== hb && (isRampCell(r, c) || isRampCell(r, c + 1))) {
               const xEdge = (c + 1) * CELL;
-              if (ha > hb) dropEW.push(r * CELL, CELL, xEdge, ha - hb, strong);
-              else dropWE.push(r * CELL, CELL, xEdge, hb - ha, strong);
+              if (ha > hb) dropEW.push(r * CELL, CELL, xEdge, ha - hb);
+              else dropWE.push(r * CELL, CELL, xEdge, hb - ha);
             }
           }
         }
       }
-      // 合并同向连续段（含 strong 标志），避免逐格起笔发虚
+      // 合并同向连续段，避免逐格起笔发虚
       const mergeH = (raw) => {
         const out = [];
         let i = 0;
@@ -1854,19 +1786,12 @@ window.WarFactoryUi = (function () {
           let w = raw[i + 1];
           const y = raw[i + 2];
           let d = raw[i + 3];
-          let st = raw[i + 4];
-          i += 5;
-          while (
-            i < raw.length &&
-            raw[i + 2] === y &&
-            raw[i] === x + w &&
-            raw[i + 3] === d &&
-            raw[i + 4] === st
-          ) {
+          i += 4;
+          while (i < raw.length && raw[i + 2] === y && raw[i] === x + w && raw[i + 3] === d) {
             w += raw[i + 1];
-            i += 5;
+            i += 4;
           }
-          out.push(x, w, y, d, st);
+          out.push(x, w, y, d);
         }
         return out;
       };
@@ -1878,19 +1803,12 @@ window.WarFactoryUi = (function () {
           let h = raw[i + 1];
           const x = raw[i + 2];
           let d = raw[i + 3];
-          let st = raw[i + 4];
-          i += 5;
-          while (
-            i < raw.length &&
-            raw[i + 2] === x &&
-            raw[i] === y + h &&
-            raw[i + 3] === d &&
-            raw[i + 4] === st
-          ) {
+          i += 4;
+          while (i < raw.length && raw[i + 2] === x && raw[i] === y + h && raw[i + 3] === d) {
             h += raw[i + 1];
-            i += 5;
+            i += 4;
           }
-          out.push(y, h, x, d, st);
+          out.push(y, h, x, d);
         }
         return out;
       };
@@ -1898,57 +1816,47 @@ window.WarFactoryUi = (function () {
       const sn = mergeH(dropSN);
       const ew = mergeV(dropEW);
       const we = mergeV(dropWE);
-      const paintH = (arr, southHigh) => {
-        for (let i = 0; i < arr.length; i += 5) {
-          const x = arr[i];
-          const w = arr[i + 1];
-          const y = arr[i + 2];
-          const drop = arr[i + 3];
-          const strong = arr[i + 4];
-          const mul = strong ? 1 : 0.55;
-          const thick = Math.min(shadeW * (0.75 + 0.35 * drop) * mul, CELL * (strong ? 0.42 : 0.28));
-          const lip = lipW * (strong ? 1 : 0.7);
-          if (southHigh) {
-            // 北高南低：唇在上、阴影在下
-            g.fillStyle = strong ? RAMP_LIP : 'rgba(255,250,238,0.45)';
-            g.fillRect(x, y - lip, w, lip);
-            g.fillStyle = strong ? RAMP_SHADE : 'rgba(58,48,36,0.32)';
-            g.fillRect(x, y, w, thick);
-          } else {
-            g.fillStyle = strong ? RAMP_SHADE : 'rgba(58,48,36,0.32)';
-            g.fillRect(x, y - thick, w, thick);
-            g.fillStyle = strong ? RAMP_LIP : 'rgba(255,250,238,0.45)';
-            g.fillRect(x, y, w, lip);
-          }
-        }
-      };
-      const paintV = (arr, eastHigh) => {
-        for (let i = 0; i < arr.length; i += 5) {
-          const y = arr[i];
-          const h = arr[i + 1];
-          const x = arr[i + 2];
-          const drop = arr[i + 3];
-          const strong = arr[i + 4];
-          const mul = strong ? 1 : 0.55;
-          const thick = Math.min(shadeW * (0.75 + 0.35 * drop) * mul, CELL * (strong ? 0.42 : 0.28));
-          const lip = lipW * (strong ? 1 : 0.7);
-          if (eastHigh) {
-            g.fillStyle = strong ? RAMP_LIP : 'rgba(255,250,238,0.45)';
-            g.fillRect(x - lip, y, lip, h);
-            g.fillStyle = strong ? RAMP_SHADE : 'rgba(58,48,36,0.32)';
-            g.fillRect(x, y, thick, h);
-          } else {
-            g.fillStyle = strong ? RAMP_SHADE : 'rgba(58,48,36,0.32)';
-            g.fillRect(x - thick, y, thick, h);
-            g.fillStyle = strong ? RAMP_LIP : 'rgba(255,250,238,0.45)';
-            g.fillRect(x, y, lip, h);
-          }
-        }
-      };
-      paintH(ns, true);
-      paintH(sn, false);
-      paintV(ew, true);
-      paintV(we, false);
+      // 南向落差：高光在上沿、阴影压在下侧（与断崖同向）
+      for (let i = 0; i < ns.length; i += 4) {
+        const x = ns[i];
+        const w = ns[i + 1];
+        const y = ns[i + 2];
+        const thick = Math.min(shadeW * (0.7 + 0.3 * ns[i + 3]), CELL * 0.35);
+        g.fillStyle = RAMP_LIP;
+        g.fillRect(x, y - lipW, w, lipW);
+        g.fillStyle = RAMP_SHADE;
+        g.fillRect(x, y, w, thick);
+      }
+      for (let i = 0; i < sn.length; i += 4) {
+        const x = sn[i];
+        const w = sn[i + 1];
+        const y = sn[i + 2];
+        const thick = Math.min(shadeW * (0.7 + 0.3 * sn[i + 3]), CELL * 0.35);
+        g.fillStyle = RAMP_SHADE;
+        g.fillRect(x, y - thick, w, thick);
+        g.fillStyle = RAMP_LIP;
+        g.fillRect(x, y, w, lipW);
+      }
+      for (let i = 0; i < ew.length; i += 4) {
+        const y = ew[i];
+        const h = ew[i + 1];
+        const x = ew[i + 2];
+        const thick = Math.min(shadeW * (0.7 + 0.3 * ew[i + 3]), CELL * 0.35);
+        g.fillStyle = RAMP_LIP;
+        g.fillRect(x - lipW, y, lipW, h);
+        g.fillStyle = RAMP_SHADE;
+        g.fillRect(x, y, thick, h);
+      }
+      for (let i = 0; i < we.length; i += 4) {
+        const y = we[i];
+        const h = we[i + 1];
+        const x = we[i + 2];
+        const thick = Math.min(shadeW * (0.7 + 0.3 * we[i + 3]), CELL * 0.35);
+        g.fillStyle = RAMP_SHADE;
+        g.fillRect(x - thick, y, thick, h);
+        g.fillStyle = RAMP_LIP;
+        g.fillRect(x, y, lipW, h);
+      }
     }
 
     // ② 断崖边线：只画「这一侧过不去」的地方。
@@ -1970,246 +1878,121 @@ window.WarFactoryUi = (function () {
     //    线细了拉远就整条消失，玩家于是照样把兵派过去、然后原地撞墙。
     //    做法：先描一道浅色高光（把崖唇从崖面上「切」出来），再压深色主线 ——
     //    深浅两道在任何底色上都读得出，不依赖单一颜色的对比度。
-    // 南向断崖：横段 + 台阶竖连接段 → 接成长链 → 拐角切 45°
-    //
-    // ⚠️ 2026-10-09 重写。旧版是「横段一套 + 2×2 台阶斜段一套」两个循环各写各的：
-    //    斜段的两个端点取自 2×2 块里**互不相邻的角**（`(x,yBot) → (x+CELL,yTop)` 之类），
-    //    方向恒反；而且它还会把原来那条横段 `cliffSkipH` 掉 —— 结果每一级台阶都变成
-    //    一段穿进地块内部的假斜线，真正的南向横段反而全被抹掉。
-    //    远看就是一条锯齿 / 一整排「V」勾（玩家截图里最扎眼的那堆东西）。
-    //
-    // 新做法四步，全部只在**格点**上做整数运算，天然对齐、不需要容差：
-    //   ① 收南向横边 hOn：格 (r,c) ↔ (r+1,c) —— 唯一「有面积、看得见」的立面；
-    //   ② 收竖向边 vOn：格 (r,c) ↔ (r,c+1)。正投影下东西向立面没有面积，
-    //      **但台阶侧脸必须有它，链条才连得起来**；只保留「端点上挂着横边」的那些，
-    //      一长条竖墙的中段全部丢掉 —— 那种脸不朝南，画出来就是凭空多一条长直线。
-    //   ③ 沿格点把边接成长链（每个格点最多 4 条边，取没走过的那条继续走）。
-    //   ④ 拐角切角：折点换成 45° 斜线（每次正好切一格）—— 一级台阶就是一段斜线，
-    //      连排台阶连起来自然就是一条干净的 45° 线，且不会切断真正的长横段。
-    const cliffR0 = Math.max(0, r0 - 1);
-    const cliffR1 = Math.min(gh - 2, r1 + 1);
-    const cliffChains = [];
-    if (cliffR1 >= cliffR0) {
-      const cW = gw - 1; // 一条边行最多这么多个
-      const cN = (cliffR1 - cliffR0 + 1) * gw;
-      const cH = new Uint8Array(cN); // 南向横边
-      const cV = new Uint8Array(cN); // 竖向边
-      const cIdx = (r, c) => (r < cliffR0 || r > cliffR1 || c < 0 || c >= cW ? -1 : (r - cliffR0) * gw + c);
-      const cOn = (isV, r, c) => {
-        const k = cIdx(r, c);
-        return k < 0 ? false : (isV ? cV[k] : cH[k]) === 1;
-      };
-      for (let r = cliffR0; r <= cliffR1; r++) {
-        const base = (r - cliffR0) * gw;
-        for (let c = 0; c < cW; c++) {
-          if (cliffSide(r, c, r + 1, c)) cH[base + c] = 1;
-          if (cliffSide(r, c, r, c + 1)) cV[base + c] = 1;
+    const cliffSegs = [];
+    for (let r = r0; r <= r1; r++) {
+      const last = r + 1 >= gh;
+      let c = 0;
+      while (c < gw) {
+        const here = last ? false : cliffSide(r, c, r + 1, c);
+        // 合并连续同判定的横段
+        let c1 = c;
+        while (c1 + 1 < gw) {
+          if (cliffSide(r, c1 + 1, r + 1, c1 + 1) !== here) break;
+          c1++;
         }
-      }
-      // ② 竖边只在「端点上挂着横边」时留 = 台阶侧脸
-      for (let r = cliffR0; r <= cliffR1; r++) {
-        const base = (r - cliffR0) * gw;
-        for (let c = 0; c < cW; c++) {
-          if (!cV[base + c]) continue;
-          // 竖边 (r,c) 的两端 = 格点 (r,c+1) 与 (r+1,c+1)
-          if (cOn(0, r - 1, c) || cOn(0, r - 1, c + 1) || cOn(0, r, c) || cOn(0, r, c + 1)) continue;
-          cV[base + c] = 0;
-        }
-      }
-      // 边的两个端点（格点：行, 列）—— 横边 (r,c) 走 (r+1,c) → (r+1,c+1)；竖边走 (r,c+1) → (r+1,c+1)
-      const cEnds = (isV, r, c) => (isV ? [r, c + 1, r + 1, c + 1] : [r + 1, c, r + 1, c + 1]);
-      const cUsed = new Uint8Array(cN * 2);
-      const cKey = (isV, r, c) => (isV ? cN : 0) + (r - cliffR0) * gw + c;
-      /**
-       * 站在格点 (py,px)、刚走完边 (isV,er,ec)：找下一条没走过的边（不原路退回）。
-       * 四条候选按「西横 → 北竖 → 东横 → 南竖」排 —— 度数为 2 的普通格点只会有一条，
-       * 顺序只在三岔/四岔格点上起作用（那种地方本来就该断开）。
-       */
-      const cliffStep = (py, px, isV, er, ec) => {
-        const cand = [
-          [0, py - 1, px - 1],
-          [1, py - 1, px - 1],
-          [0, py - 1, px],
-          [1, py, px - 1],
-        ];
-        for (let i = 0; i < 4; i++) {
-          const v = cand[i][0];
-          const rr = cand[i][1];
-          const cc = cand[i][2];
-          if (!cOn(v === 1, rr, cc)) continue;
-          if (v === isV && rr === er && cc === ec) continue;
-          if (cUsed[cKey(v === 1, rr, cc)]) continue;
-          return cand[i];
-        }
-        return null;
-      };
-      // 从格点 (sy,sx) 沿边 (isV,er,ec) 一路走到底，返回格点串（世界像素，x/y 交替）
-      const cliffWalk = (sy, sx, isV, er, ec) => {
-        const pts = [sx * CELL, sy * CELL];
-        let pv = isV;
-        let pr = er;
-        let pc = ec;
-        let py = sy;
-        let px = sx;
-        while (pv >= 0) {
-          cUsed[cKey(pv === 1, pr, pc)] = 1;
-          const e = cEnds(pv === 1, pr, pc);
-          const atA = e[0] === py && e[1] === px;
-          const oy = atA ? e[2] : e[0];
-          const ox = atA ? e[3] : e[1];
-          pts.push(ox * CELL, oy * CELL);
-          const nx = cliffStep(oy, ox, pv, pr, pc);
-          py = oy;
-          px = ox;
-          if (!nx) break;
-          pv = nx[0];
-          pr = nx[1];
-          pc = nx[2];
-        }
-        return pts;
-      };
-      const cliffDedup = (pts) => {
-        const out = [pts[0], pts[1]];
-        for (let i = 2; i < pts.length; i += 2) {
-          if (pts[i] === out[out.length - 2] && pts[i + 1] === out[out.length - 1]) continue;
-          out.push(pts[i], pts[i + 1]);
-        }
-        return out;
-      };
-      // ④ 拐角切 45°：把折点换成到「下一个点」的斜线，一次正好切一格
-      const cliffChamfer = (pts) => {
-        const n = pts.length / 2;
-        if (n < 3) return pts;
-        const out = [pts[0], pts[1]];
-        let i = 1;
-        while (i < n - 1) {
-          const px = pts[(i - 1) * 2];
-          const py = pts[(i - 1) * 2 + 1];
-          const cx = pts[i * 2];
-          const cy = pts[i * 2 + 1];
-          const nx = pts[(i + 1) * 2];
-          const ny = pts[(i + 1) * 2 + 1];
-          if ((cy === py) !== (ny === cy)) {
-            out.push(nx, ny); // 拐角 → 直连下一个点（这一段就是 45° 斜线）
-            i += 2;
-          } else {
-            out.push(cx, cy);
-            i += 1;
-          }
-        }
-        const lx = pts[(n - 1) * 2];
-        const ly = pts[(n - 1) * 2 + 1];
-        if (out[out.length - 2] !== lx || out[out.length - 1] !== ly) out.push(lx, ly);
-        return out;
-      };
-      for (let v = 0; v < 2; v++) {
-        const arr = v === 1 ? cV : cH;
-        for (let r = cliffR0; r <= cliffR1; r++) {
-          const base = (r - cliffR0) * gw;
-          for (let c = 0; c < cW; c++) {
-            if (arr[base + c] !== 1 || cUsed[(v === 1 ? cN : 0) + base + c]) continue;
-            const e = cEnds(v === 1, r, c);
-            // 两个方向各走一遍：反向先走（边还没标记），正向首跳无条件
-            const back = cliffWalk(e[0], e[1], v, r, c);
-            const fwd = cliffWalk(e[2], e[3], v, r, c);
-            const pts = [];
-            for (let i = back.length / 2 - 1; i >= 0; i--) pts.push(back[i * 2], back[i * 2 + 1]);
-            for (let i = 0; i < fwd.length; i++) pts.push(fwd[i]);
-            const chain = cliffChamfer(cliffDedup(pts));
-            if (chain.length >= 4) cliffChains.push(chain);
-          }
-        }
+        if (here) cliffSegs.push(c * CELL, (c1 - c + 1) * CELL, r * CELL + CELL);
+        c = c1 + 1;
       }
     }
-    const strokeCliffs = (chains, yBias, col, w) => {
-      g.strokeStyle = col;
-      g.lineWidth = w;
-      g.lineJoin = 'round';
-      g.lineCap = 'round';
+    if (cliffSegs.length) {
+      // 高光：崖唇上方 2.5px 的浅色线，衬出「这是一道坎」
+      g.strokeStyle = 'rgba(255,250,238,0.72)';
+      g.lineWidth = 5;
       g.beginPath();
-      for (let n = 0; n < chains.length; n++) {
-        const c = chains[n];
-        g.moveTo(c[0], c[1] + yBias);
-        for (let i = 2; i < c.length; i += 2) g.lineTo(c[i], c[i + 1] + yBias);
+      for (let i = 0; i < cliffSegs.length; i += 3) {
+        g.moveTo(cliffSegs[i], cliffSegs[i + 2] - 2.5);
+        g.lineTo(cliffSegs[i] + cliffSegs[i + 1], cliffSegs[i + 2] - 2.5);
       }
       g.stroke();
-    };
-    if (cliffChains.length) {
-      strokeCliffs(cliffChains, -2.5, 'rgba(255,250,238,0.72)', 5);
-      strokeCliffs(cliffChains, 0, C_CLIFF, 3);
+      // 主线：深色
+      g.strokeStyle = C_CLIFF;
+      g.lineWidth = 3;
+      g.beginPath();
+      for (let i = 0; i < cliffSegs.length; i += 3) {
+        g.moveTo(cliffSegs[i], cliffSegs[i + 2]);
+        g.lineTo(cliffSegs[i] + cliffSegs[i + 1], cliffSegs[i + 2]);
+      }
+      g.stroke();
     }
 
-    // ③ 地形外缘：山/水 与其它地形相接的边。外凸直角走斜切边，不再画成方折线。
+    // ③ 地形外缘：山/水 与其它地形**相接的那几条边**画一条细线。
+    //
+    // ⚠️ 只画「外缘」，不画每一格的上/下沿 —— 否则整片水面会被画成横条纹
+    //    （上一版就是这个问题：极简之前我逐格画上下沿，结果水域像百叶窗）。
+    //    判据就是「这一侧和邻格不同类」，没有邻格就越界，不画。
+    //
+    // ⚠️ 楼梯锯齿画斜边：若 (r,c) 与 (r+1,c+1) 同类固体、而另两个对角是空，
+    //    轴对齐描边会走出「方台阶」；改画一条对角线，外缘读起来才圆。
     g.strokeStyle = 'rgba(70,60,48,0.40)';
     g.lineWidth = 1.5;
     g.lineJoin = 'round';
     g.lineCap = 'round';
     g.beginPath();
     for (let r = r0; r <= r1; r++) {
-      for (let c = 0; c < gw; c++) {
+      let c = 0;
+      while (c < gw) {
         const t = at(r, c);
-        if (t !== 2 && t !== 4) continue;
+        const solid = t === 2 || t === 4;
+        // 合并连续同类段，避免逐格起笔
+        let c1 = c;
+        while (c1 + 1 < gw) {
+          const t2 = at(r, c1 + 1);
+          if ((t2 === 2 || t2 === 4) !== solid) break;
+          c1++;
+        }
+        if (solid) {
+          const x = c * CELL;
+          const w = (c1 - c + 1) * CELL;
+          // 上沿：仅当北邻不同类（越界也不画）
+          const up = at(r - 1, c);
+          if (up !== t) {
+            g.moveTo(x, r * CELL);
+            g.lineTo(x + w, r * CELL);
+          }
+          // 下沿：仅当南邻不同类
+          const dn = at(r + 1, c);
+          if (dn !== t) {
+            g.moveTo(x, r * CELL + CELL);
+            g.lineTo(x + w, r * CELL + CELL);
+          }
+          // 左端：仅当西邻不同类
+          const lf = at(r, c - 1);
+          if (lf !== t) {
+            g.moveTo(x, r * CELL);
+            g.lineTo(x, r * CELL + CELL);
+          }
+          // 右端：仅当东邻不同类
+          const rt = at(r, c1 + 1);
+          if (rt !== t) {
+            g.moveTo(x + w, r * CELL);
+            g.lineTo(x + w, r * CELL + CELL);
+          }
+        }
+        c = c1 + 1;
+      }
+    }
+    // 楼梯斜边：每个 2×2 窗口只画一次，避免与轴对齐边重复描成「方折线」
+    for (let r = Math.max(0, r0 - 1); r < Math.min(gh - 1, r1 + 1); r++) {
+      for (let c = 0; c < gw - 1; c++) {
+        const a = at(r, c);
+        const b = at(r, c + 1);
+        const d = at(r + 1, c);
+        const e = at(r + 1, c + 1);
+        const sa = a === 2 || a === 4;
+        const sb = b === 2 || b === 4;
+        const sd = d === 2 || d === 4;
+        const se = e === 2 || e === 4;
         const x = c * CELL;
         const y = r * CELL;
-        const s = CELL;
-        const k = CHAMFER;
-        const cuts = cornerCuts(r, c, t);
-        const N = solidSame(r - 1, c, t);
-        const S = solidSame(r + 1, c, t);
-        const W = solidSame(r, c - 1, t);
-        const E = solidSame(r, c + 1, t);
-        // 北沿
-        if (!N) {
-          const x0 = cuts.nw ? x + k : x;
-          const x1 = cuts.ne ? x + s - k : x + s;
-          if (x1 > x0 + 0.1) {
-            g.moveTo(x0, y);
-            g.lineTo(x1, y);
-          }
+        // 主对角同类固体、反对角都空 → 外缘走东北—西南斜线
+        if (sa && se && a === e && !sb && !sd) {
+          g.moveTo(x + CELL, y);
+          g.lineTo(x, y + CELL);
         }
-        // 东沿
-        if (!E) {
-          const y0 = cuts.ne ? y + k : y;
-          const y1 = cuts.se ? y + s - k : y + s;
-          if (y1 > y0 + 0.1) {
-            g.moveTo(x + s, y0);
-            g.lineTo(x + s, y1);
-          }
-        }
-        // 南沿
-        if (!S) {
-          const x0 = cuts.sw ? x + k : x;
-          const x1 = cuts.se ? x + s - k : x + s;
-          if (x1 > x0 + 0.1) {
-            g.moveTo(x1, y + s);
-            g.lineTo(x0, y + s);
-          }
-        }
-        // 西沿
-        if (!W) {
-          const y0 = cuts.nw ? y + k : y;
-          const y1 = cuts.sw ? y + s - k : y + s;
-          if (y1 > y0 + 0.1) {
-            g.moveTo(x, y1);
-            g.lineTo(x, y0);
-          }
-        }
-        // 斜切角
-        if (cuts.nw) {
-          g.moveTo(x + k, y);
-          g.lineTo(x, y + k);
-        }
-        if (cuts.ne) {
-          g.moveTo(x + s - k, y);
-          g.lineTo(x + s, y + k);
-        }
-        if (cuts.se) {
-          g.moveTo(x + s, y + s - k);
-          g.lineTo(x + s - k, y + s);
-        }
-        if (cuts.sw) {
-          g.moveTo(x + k, y + s);
-          g.lineTo(x, y + s - k);
+        // 反对角同类固体、主对角都空 → 外缘走西北—东南斜线
+        if (sb && sd && b === d && !sa && !se) {
+          g.moveTo(x, y);
+          g.lineTo(x + CELL, y + CELL);
         }
       }
     }
@@ -3669,33 +3452,22 @@ window.WarFactoryUi = (function () {
     }
   }
 
-  /** 轰击：自行迫击炮车 —— 方形车体 + 斜上扬炮管（屏幕向上抬升，与朝向无关）+ 液压支腿 + 弹药架 */
-  function drawBurst(c, tier, branch, col, part, turWorld) {
+  /** 轰击：自行迫击炮车 —— 方形车体 + 斜上扬炮管（收在方框内）+ 液压支腿 + 弹药架 */
+  function drawBurst(c, tier, branch, col, part) {
     const lv = detailLevel(tier);
     const sp = spanOf('burst', tier);
     const sx = sp[0], sy = sp[1];
     const acc = TYPE_ACCENT.burst;
     const w = 2.2 + lv * 0.42;
     // 炮管几何：耳轴与炮口（炮塔件与车体件都要用，先算出来）
-    // ⚠️ 迫击炮核心特征 = **明显斜向上仰**（曲射），与锐士/游侠直管最大区别。
-    //    旧版把抬升 bake 在炮塔本地 -y，炮塔一转、抬升方向也跟着转 → 某些朝向看像「朝下 / 单纯歪」。
-    //    现改为**屏幕向上**抬升：把炮口在屏幕上整体抬高 H，再折回当前（已旋转到射向的）本地坐标，
-    //    于是无论炮塔朝哪，炮口永远是全炮管最高点 → 所有视角都读得出「曲射仰角」。
-    const px0 = sx * 0.08, py0 = sy * 0.14;   // 耳轴 = 座圈中心（与 turretPivot 一致）
-    const turW = turWorld || 0;
-    // ⚠️ H 与 Lx 必须取自同一基准（max(sx,sy)），否则 sx≠sy 时某个朝向会 H≈Lx、
-    //    炮口刚好落在耳轴高度 → 又变「朝下 / 单纯歪」。取同一基准后抬升恒 > 伸出，所有视角都仰。
-    const S = Math.max(sx, sy);
-    const H = S * (1.2 + lv * 0.08);          // 屏幕抬升量（设计坐标），必须 > Lx
-    const Lx = S * (0.9 + lv * 0.1);          // 沿射向的水平伸出
-    const lx = -H * Math.sin(turW);
-    const ly = -H * Math.cos(turW);
-    const bx = px0, by = py0;                 // 耳轴（炮管根部）
-    const mx = px0 + Lx + lx, my = py0 + ly;  // 抬升后的炮口
-    const ddx = mx - bx, ddy = my - by;
-    const dd = Math.hypot(ddx, ddy) || 1;
-    const nx = -ddy / dd, ny = ddx / dd;      // 炮管法向（加厚 / 并排副管用）
-    const th = sy * 0.24;                     // 炮管半厚（比直管兵粗 —— 迫击炮管壁厚）
+    // ⚠️ 迫击炮的核心特征是**明显斜向上仰**（曲射），这是它与锐士/游侠的直管最大的区别，
+    //    所以角度要给足：y 从 +0.14 抬到 -1.05（越仰越像曲射），炮口也探出方框之外。
+    const px0 = sx * 0.08, py0 = sy * 0.14;
+    const px1 = sx * (1.16 + lv * 0.1), py1 = -sy * (1.05 + lv * 0.08);
+    const dx = px1 - px0, dy = py1 - py0;
+    const d = Math.hypot(dx, dy) || 1;
+    const nx = -dy / d, ny = dx / d;
+    const th = sy * 0.24; // 炮管半厚（比直管兵粗 —— 迫击炮管壁厚）
     const tur = part === 'turret';
 
     if (!tur) {
@@ -3716,67 +3488,50 @@ window.WarFactoryUi = (function () {
       );
     }
     if (tur) {
-      // ② 炮塔：座圈 + 正立方块转塔 + **始终朝屏幕上方抬升的迫击炮管**
-      // ⚠️ 转塔体改成正立方块（跟着车体转、**不斜置**）；只有炮管抬升，
-      //    这样「歪」的是炮管仰角本身、不是整座炮塔被掰歪，读起来就是「曲射仰炮」。
-      turretBase(c, bx, by, sx * 0.42, w, col);
-      // 转塔体：轴对齐方块（绕座圈转，不再斜置）
+      // ② 炮塔：座圈 + 转塔体 + **斜上扬的迫击炮管**
+      turretBase(c, px0, py0, sx * 0.42, w, col);
+      // 转塔体：斜置的方块（跟着炮管一起仰，看着就是一个「炮台」而不是「车身」）
       plate(c,
         [
-          [bx + sx * 0.44, by - sy * 0.46],
-          [bx + sx * 0.2, by - sy * 0.66],
-          [bx - sx * 0.28, by - sy * 0.62],
-          [bx - sx * 0.46, by - sy * 0.3],
-          [bx - sx * 0.46, by + sy * 0.3],
-          [bx - sx * 0.28, by + sy * 0.62],
-          [bx + sx * 0.2, by + sy * 0.66],
-          [bx + sx * 0.44, by + sy * 0.46],
+          [px0 + sx * 0.3, py0 - sy * 0.5],
+          [px0 - sx * 0.12, py0 - sy * 0.68],
+          [px0 - sx * 0.44, py0 - sy * 0.4],
+          [px0 - sx * 0.44, py0 + sy * 0.36],
+          [px0 - sx * 0.06, py0 + sy * 0.5],
+          [px0 + sx * 0.32, py0 + sy * 0.3],
         ],
         hexAlpha(INK, 0.9),
         INK,
         w * 0.9
       );
-      // 抬升阴影：炮管在车体上方的投影（屏幕向下偏一点），卖「悬空仰起」的立体感
-      const shx = sy * 0.16 * Math.sin(turW), shy = sy * 0.16 * Math.cos(turW);
+      // 炮管本体：从耳轴斜向前上方，明显粗于直管兵
       plate(c,
         [
-          [bx + nx * th + shx, by + ny * th + shy],
-          [mx + nx * th + shx, my + ny * th + shy],
-          [mx - nx * th + shx, my - ny * th + shy],
-          [bx - nx * th + shx, by - ny * th + shy],
-        ],
-        hexAlpha(INK, 0.16),
-        null,
-        0
-      );
-      // 炮管本体：从耳轴斜向前上方（屏幕向上抬升，与朝向无关）
-      plate(c,
-        [
-          [bx + nx * th, by + ny * th],
-          [mx + nx * th, my + ny * th],
-          [mx - nx * th, my - ny * th],
-          [bx - nx * th, by - ny * th],
+          [px0 + nx * th, py0 + ny * th],
+          [px1 + nx * th, py1 + ny * th],
+          [px1 - nx * th, py1 - ny * th],
+          [px0 - nx * th, py0 - ny * th],
         ],
         hexAlpha(INK, 0.9),
         INK,
         w * 0.95
       );
-      // 炮管加强环 ×2（沿管轴）
+      // 炮管加强环 ×2（沿管轴，间隔开 —— 迫击炮的标志）
       for (const t of [0.34, 0.66]) {
-        const rx = bx + ddx * t;
-        const ry = by + ddy * t;
+        const rx = px0 + dx * t;
+        const ry = py0 + dy * t;
         strut(c, [[rx + nx * th * 1.24, ry + ny * th * 1.24], [rx - nx * th * 1.24, ry - ny * th * 1.24]], hexAlpha(PAPER, 0.32), w * 0.72);
       }
       // 炮口制退器：口部一道粗箍 + 端面（曲射炮口总是比直管粗一圈）
-      strut(c, [[mx + nx * th * 1.6, my + ny * th * 1.6], [mx - nx * th * 1.6, my - ny * th * 1.6]], hexAlpha(INK, 0.6), w * 0.85);
-      // 口端那一枚彩色：整座炮塔唯一的识别点（落在抬升后的炮口）
-      strut(c, [[mx + ddx * 0.06 + nx * th * 1.4, my + ddy * 0.06 + ny * th * 1.4], [mx + ddx * 0.06 - nx * th * 1.4, my + ddy * 0.06 - ny * th * 1.4]], hexAlpha(acc, 0.9), w * 0.7);
+      strut(c, [[px1 + nx * th * 1.6, py1 + ny * th * 1.6], [px1 - nx * th * 1.6, py1 - ny * th * 1.6]], hexAlpha(INK, 0.6), w * 0.85);
+      // 口端那一枚彩色：整座炮塔唯一的识别点
+      strut(c, [[px1 + dx * 0.1 + nx * th * 1.4, py1 + dy * 0.1 + ny * th * 1.4], [px1 + dx * 0.1 - nx * th * 1.4, py1 + dy * 0.1 - ny * th * 1.4]], hexAlpha(acc, 0.9), w * 0.7);
       plate(c,
         [
-          [mx + ddx * 0.06 + nx * th * 1.45, my + ddy * 0.06 + ny * th * 1.45],
-          [mx + ddx * 0.0 + nx * th * 1.3, my + ddy * 0.0 + ny * th * 1.3],
-          [mx + ddx * 0.0 - nx * th * 1.3, my + ddy * 0.0 - ny * th * 1.3],
-          [mx + ddx * 0.06 - nx * th * 1.45, my + ddy * 0.06 - ny * th * 1.45],
+          [px1 + dx * 0.1 + nx * th * 1.45, py1 + dy * 0.1 + ny * th * 1.45],
+          [px1 + dx * 0.02 + nx * th * 1.3, py1 + dy * 0.02 + ny * th * 1.3],
+          [px1 + dx * 0.02 - nx * th * 1.3, py1 + dy * 0.02 - ny * th * 1.3],
+          [px1 + dx * 0.1 - nx * th * 1.45, py1 + dy * 0.1 - ny * th * 1.45],
         ],
         hexAlpha(INK, 0.92),
         INK,
@@ -3808,10 +3563,9 @@ window.WarFactoryUi = (function () {
       const th2 = th * 0.5;
       // ⚠️ 横向偏移要跟着主管半厚走（th 在 2026-10-09 加粗过，写死 1.9 会离主管一道空隙）
       const boff = th + th2 + sy * 0.06;
-      const bx0 = bx + nx * boff, by0 = by + ny * boff;
-      const bx1 = mx + nx * boff, by1 = my + ny * boff;
+      const bx0 = px0 - dx * 0.1 + nx * boff, by0 = py0 - dy * 0.1 + ny * boff;
+      const bx1 = px1 - dx * 0.08 + nx * boff, by1 = py1 - dy * 0.08 + ny * boff;
       if (tur) {
-        // 副管：与主管平行、一起抬升
         plate(c,
           [
             [bx0 + nx * th2, by0 + ny * th2],
@@ -4166,7 +3920,7 @@ window.WarFactoryUi = (function () {
    * @param {'base'|'turret'} [part='base'] 'base' = 车体（腿 / 履带 / 机箱 / 尾部附件），
    *        'turret' = 炮塔（炮管 / 喷臂 / 镜筒 / 观瞄）。两者分开旋转：车体朝行进方向、炮塔朝攻击方向。
    */
-  function drawUnitBody(c, type, tier, branch, col, part, tread, tur) {
+  function drawUnitBody(c, type, tier, branch, col, part, tread) {
     // 进化已改为单一方向：造型不再区分 A 攻势 / B 守势，统一使用下面这一套风格
     const b = 'A';
     // 本体底层加厚：tier>=2 先铺一层阵营色「加厚剪影」，剪影体积随阶数增长（形状区分，非纹理）
@@ -4175,7 +3929,7 @@ window.WarFactoryUi = (function () {
     if (type === 'warrior') drawWarrior(c, tier, b, col, part);
     else if (type === 'shield') drawShield(c, tier, b, col, part);
     else if (type === 'ranger') drawRanger(c, tier, b, col, part);
-    else if (type === 'burst') drawBurst(c, tier, b, col, part, tur);
+    else if (type === 'burst') drawBurst(c, tier, b, col, part);
     else if (type === 'burn') drawBurn(c, tier, b, col, part);
     else if (type === 'laser') drawLaser(c, tier, b, col, part);
     // 车体强化：履带式底盘 + 亮色轮廓 + 车头朝向标记（只画 base 层、随车体旋转，见 chassisAccent）
@@ -4336,17 +4090,13 @@ window.WarFactoryUi = (function () {
 
       c.save();
       c.translate(recoilX, recoilY);
-      // ⚠️ 必须先转到车体世界角，再叠相对角 —— 只转 turRel 等于把「差角」当成世界角。
-      //    车体朝北、炮塔也朝北时 turRel=0，炮塔会停在未旋转的 +X（东），
-      //    激光光束却按 u.tur 往北射 → 肉眼就是「炮台和攻击方向差 90°+」。
-      c.rotate(u.ang);
       c.scale(f, f);
-      // 炮塔绕座圈转（座圈钉在车体上，相对角才是「炮口往哪扫」）
+      // 炮塔绕座圈转（座圈是本体坐标，scale 之后平移即可）
       const pv = turretPivot(u.type, u.tier);
       c.translate(pv[0], pv[1]);
       c.rotate(turRelOf(u));
       c.translate(-pv[0], -pv[1]);
-      drawUnitBody(c, u.type, u.tier, u.branch, col, 'turret', undefined, u.tur);
+      drawUnitBody(c, u.type, u.tier, u.branch, col, 'turret');
       c.restore();
 
       // 第 9 项：刚被选中 → 模型上闪一下（纸白盖住本体 + 墨边留住轮廓）
@@ -8325,106 +8075,43 @@ window.WarFactoryUi = (function () {
     return -1;
   }
 
-  /**
-   * 以 goal 为源做加权 Dijkstra，再生成 SolasXer 风格向量场（认崖 + 坡可过崖 + 禁对角切角）。
-   * 与服务端 flowField / navEdgeCost 同口径：斜边 √2，换层/走坡加罚，平路优先；
-   * next = 每格指向「stepOk 且 dist 最低」的邻格。
-   */
+  /** 以 goal 为源做 8 向 BFS（认崖 + 禁对角切角），与服务端 navStepOk 同口径 */
   function routeField(pg, goal) {
     const hit = routeFieldCache.get(goal);
     if (hit) return hit;
     const C = terrainGW;
     const R = terrainGH;
     const tot = R * C;
-    const INF = 1e30;
-    const COST_ORTH = 1;
-    const COST_DIAG = Math.SQRT2;
-    const COST_DH = 0.65;
-    const COST_RAMP = 0.4;
-    // Float64：避免堆项代价与 dist[] 因 Float32 舍入对不上
-    const dist = new Float64Array(tot);
-    dist.fill(INF);
+    const dist = new Int32Array(tot).fill(-1);
     const prev = new Int32Array(tot).fill(-1);
-    const isRamp = (i) => rampGrid && rampGrid[i] === 1;
-    const cliff = (ia, ib) => {
-      if (isRamp(ia) || isRamp(ib)) return false;
-      const c0 = ia % C;
-      const r0 = (ia - c0) / C;
-      const c1 = ib % C;
-      const r1 = (ib - c1) / C;
-      return Math.abs(hLevel(r0, c0) - hLevel(r1, c1)) >= heightCliff;
-    };
+    const q = new Int32Array(tot);
+    let head = 0;
+    let tail = 0;
+    dist[goal] = 0;
+    q[tail++] = goal;
     const stepOk = (from, to) => {
-      if (!pg[to]) return false;
-      if (cliff(from, to)) return false;
+      if (!pg[to] || dist[to] >= 0) return false;
       const c0 = from % C;
       const r0 = (from - c0) / C;
       const c1 = to % C;
       const r1 = (to - c1) / C;
+      if (Math.abs(hLevel(r0, c0) - hLevel(r1, c1)) >= heightCliff) return false;
       const dc = c1 - c0;
       const dr = r1 - r0;
       if (dc !== 0 && dr !== 0) {
         const iH = r0 * C + c1;
         const iV = r1 * C + c0;
         if (!pg[iH] || !pg[iV]) return false;
-        if (cliff(from, iH) || cliff(from, iV)) return false;
-        if (cliff(iH, to) || cliff(iV, to)) return false;
+        if (Math.abs(hLevel(r0, c0) - hLevel(r0, c1)) >= heightCliff) return false;
+        if (Math.abs(hLevel(r0, c0) - hLevel(r1, c0)) >= heightCliff) return false;
+        if (Math.abs(hLevel(r0, c1) - hLevel(r1, c1)) >= heightCliff) return false;
+        if (Math.abs(hLevel(r1, c0) - hLevel(r1, c1)) >= heightCliff) return false;
       }
       return true;
     };
-    const edgeCost = (from, to) => {
-      const c0 = from % C;
-      const r0 = (from - c0) / C;
-      const c1 = to % C;
-      const r1 = (to - c1) / C;
-      let cost = c0 !== c1 && r0 !== r1 ? COST_DIAG : COST_ORTH;
-      const dh = Math.abs(hLevel(r0, c0) - hLevel(r1, c1));
-      if (dh > 0) cost += dh * COST_DH;
-      if (isRamp(from) || isRamp(to)) cost += COST_RAMP;
-      return cost;
-    };
-    const hd = [];
-    const hi = [];
-    const hpush = (d, id) => {
-      hd.push(d);
-      hi.push(id);
-      let i = hd.length - 1;
-      while (i > 0) {
-        const p = (i - 1) >> 1;
-        if (hd[p] <= hd[i]) break;
-        const td = hd[p]; hd[p] = hd[i]; hd[i] = td;
-        const ti = hi[p]; hi[p] = hi[i]; hi[i] = ti;
-        i = p;
-      }
-    };
-    const hpop = () => {
-      const d = hd[0];
-      const id = hi[0];
-      const ld = hd.pop();
-      const li = hi.pop();
-      if (hd.length) {
-        hd[0] = ld;
-        hi[0] = li;
-        let i = 0;
-        for (;;) {
-          const l = i * 2 + 1;
-          const r2 = l + 1;
-          let m = i;
-          if (l < hd.length && hd[l] < hd[m]) m = l;
-          if (r2 < hd.length && hd[r2] < hd[m]) m = r2;
-          if (m === i) break;
-          const td = hd[m]; hd[m] = hd[i]; hd[i] = td;
-          const ti = hi[m]; hi[m] = hi[i]; hi[i] = ti;
-          i = m;
-        }
-      }
-      return [d, id];
-    };
-    dist[goal] = 0;
-    hpush(0, goal);
-    while (hd.length) {
-      const [d, cur] = hpop();
-      if (d !== dist[cur]) continue;
+    while (head < tail) {
+      const cur = q[head++];
+      const nd = dist[cur] + 1;
       const c0 = cur % C;
       const r0 = (cur - c0) / C;
       for (let dr = -1; dr <= 1; dr++) {
@@ -8435,51 +8122,20 @@ window.WarFactoryUi = (function () {
           if (nc < 0 || nc >= C || nr < 0 || nr >= R) continue;
           const n = nr * C + nc;
           if (!stepOk(cur, n)) continue;
-          const nd = d + edgeCost(cur, n);
-          if (nd + 1e-9 < dist[n]) {
-            dist[n] = nd;
-            prev[n] = cur;
-            hpush(nd, n);
-          }
+          dist[n] = nd;
+          prev[n] = cur;
+          q[tail++] = n;
         }
       }
     }
-    for (let i = 0; i < tot; i++) {
-      if (dist[i] >= INF * 0.5) dist[i] = -1;
-    }
-    // SolasXer findOptimalNeighbor：每格 → 可迈且 dist 最低的邻格
-    const next = new Int32Array(tot).fill(-1);
-    for (let i = 0; i < tot; i++) {
-      if (dist[i] < 0 || i === goal) continue;
-      const c0 = i % C;
-      const r0 = (i - c0) / C;
-      let best = -1;
-      let bestD = INF;
-      for (let dr = -1; dr <= 1; dr++) {
-        for (let dc = -1; dc <= 1; dc++) {
-          if (!dr && !dc) continue;
-          const nc = c0 + dc;
-          const nr = r0 + dr;
-          if (nc < 0 || nc >= C || nr < 0 || nr >= R) continue;
-          const n = nr * C + nc;
-          const nd = dist[n];
-          if (nd < 0 || !stepOk(i, n)) continue;
-          if (nd + 1e-9 < bestD) {
-            bestD = nd;
-            best = n;
-          }
-        }
-      }
-      if (best >= 0) next[i] = best;
-    }
-    const f = { dist, prev, next, goal };
+    const f = { dist, prev, goal };
     routeFieldCache.set(goal, f);
     return f;
   }
 
   /**
    * 求 (sx,sy) → (tx,ty) 的行进折线（世界坐标），走不通返回 null。
-   * 沿向量场 next 链前进，再把共线点并成一节 —— 画出来就是「先直走、再拐弯」的行军线。
+   * 沿 BFS 父链回溯，再把直线段并成一节 —— 画出来就是「先直走、再拐弯」的行军线。
    */
   function planRoute(sx, sy, tx, ty) {
     if (!terrainReady || !terrainGrid || !heightGrid) return null;
@@ -8503,7 +8159,7 @@ window.WarFactoryUi = (function () {
       const c = node % C;
       raw.push([(c + 0.5) * TERRAIN_CELL, (r + 0.5) * TERRAIN_CELL]);
       if (node === goal) break;
-      node = f.next ? f.next[node] : f.prev[node];
+      node = f.prev[node];
       if (node < 0) break;
     }
     if (raw.length < 2) return null;
@@ -10945,15 +10601,14 @@ window.WarFactoryUi = (function () {
    * translate/rotate/scale）。只复用作画代码，不参与对战逻辑，供 docs 下的
    * 兵种图谱页比对「各阶装饰繁简」用。
    */
-  function previewUnitBody(c, type, tier, branch, col, baseScale, tur) {
+  function previewUnitBody(c, type, tier, branch, col, baseScale) {
     const s = baseScale || 1;
     c.save();
     c.scale(s, s);
     const cc = col || TYPE_ACCENT[type] || INK;
     // 静态预览没有「行进 / 攻击」之分：车体与炮塔同向，两层叠起来就是完整的一只兵
-    // tur = 炮塔世界角（供「屏幕向上抬升」类兵种用，例如轰击的曲射仰角在所有视角都朝屏幕上方）
-    drawUnitBody(c, type, tier, branch, cc, 'base', undefined, tur);
-    drawUnitBody(c, type, tier, branch, cc, 'turret', undefined, tur);
+    drawUnitBody(c, type, tier, branch, cc, 'base');
+    drawUnitBody(c, type, tier, branch, cc, 'turret');
     c.restore();
   }
 
@@ -11011,7 +10666,7 @@ window.WarFactoryUi = (function () {
      * 分层绘制（静态预览 / 测试用）：part = 'base' 车体 | 'turret' 炮塔。
      * 两层都要能画出东西 —— 炮塔件被误包进车体分支时会画空，测试靠这个抓住。
      */
-    drawUnitParts: (c, type, tier, branch, col, part, tur) => drawUnitBody(c, type, tier, branch, col, part, undefined, tur),
+    drawUnitParts: (c, type, tier, branch, col, part) => drawUnitBody(c, type, tier, branch, col, part),
     /** 炮塔相对车体的夹角（最短弧），测试用来锁「不绕远路」 */
     turretRel: turRelOf,
     /** 炮塔座圈（本体坐标系）—— 预览页要按它把炮塔转起来 */
@@ -11121,3 +10776,175 @@ window.WarFactoryUi = (function () {
     },
   };
 })();
+</script>
+<script>
+(function () {
+  try {
+  var Ui = window.WarFactoryUi;
+  if (!Ui) throw new Error('WarFactoryUi 未挂载');
+  var COL = '#b03a2e'; // 阵营红：预览只看「车体转向 + 对比度」，用阵营色最直观
+  var TYPES = ["warrior","shield","ranger","burst","burn","laser"];
+  var BRIEF = {"warrior":"锐士 · 双足突击机甲","shield":"盾卫 · 履带重装堡垒","ranger":"游侠 · 三足炮塔平台","burst":"轰击 · 自行迫击炮车","burn":"燎原 · 喷火机甲","laser":"激光兵 · 光束发射车"};
+  var ANGLES = [0,30,60,90,135,180];
+
+  function cell(w, h) {
+    var c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    var x = c.getContext('2d');
+    x.lineJoin = 'miter'; x.lineCap = 'butt';
+    return { c: c, x: x };
+  }
+  function wrap(w, h, draw, capText) {
+    var d = document.createElement('div');
+    var box = cell(w, h);
+    try { draw(box.x, w, h); }
+    catch (err) {
+      box.x.fillStyle = '#b03a2e'; box.x.font = '11px monospace';
+      box.x.fillText('ERR: ' + err.message, 6, 20);
+      if (window.console) console.error('draw fail', err);
+    }
+    d.appendChild(box.c);
+    var cap = document.createElement('div');
+    cap.className = 'cap'; cap.textContent = capText || '';
+    d.appendChild(cap);
+    return d;
+  }
+
+  function rowFor(tier, destId) {
+    var dest = document.getElementById(destId);
+    for (var i = 0; i < TYPES.length; i++) {
+      (function (ty) {
+        var card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = '<h2>' + BRIEF[ty] + ' · ' + (tier === 1 ? '一阶' : '三阶') + '</h2>';
+        var row = document.createElement('div');
+        row.className = 'row';
+        for (var k = 0; k < ANGLES.length; k++) {
+          (function (deg) {
+            var rad = deg * Math.PI / 180;
+            row.appendChild(wrap(170, 150, function (x, w, h) {
+              var f = 2.0;
+              x.save();
+              x.translate(w / 2, h / 2);
+              x.rotate(rad);          // 车体朝行进方向转
+              x.scale(f, f);
+              Ui.drawUnitParts(x, ty, tier, 'A', COL, 'base');
+              x.restore();
+              // 十字准星（不旋转，标「世界朝向前方」），看车体相对它的偏角
+              x.strokeStyle = 'rgba(107,97,84,0.4)';
+              x.lineWidth = 1;
+              x.beginPath();
+              x.moveTo(w / 2 - 14, h / 2); x.lineTo(w / 2 + 14, h / 2);
+              x.moveTo(w / 2, h / 2 - 14); x.lineTo(w / 2, h / 2 + 14);
+              x.stroke();
+            }, deg + '°'));
+          })(ANGLES[k]);
+        }
+        card.appendChild(row);
+        dest.appendChild(card);
+      })(TYPES[i]);
+    }
+  }
+  rowFor(1, 'light');
+  rowFor(3, 'light');
+  rowFor(1, 'dark');
+  rowFor(3, 'dark');
+
+  // ---- 移动留痕示意：把一只兵放在右侧，身后拖一串由新到旧、逐渐淡出的履带印 ----
+  function hexRgb(col) {
+    var m = /^#([0-9a-f]{6})$/i.exec(col || '');
+    if (!m) return '120,90,70';
+    var n = parseInt(m[1], 16);
+    return ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255);
+  }
+  // 量出某兵种某阶在画布上的实际半长 / 半宽（含履带），与车体履带严格同口径
+  function measureExtent(ty, tier, f) {
+    var off = document.createElement('canvas');
+    off.width = 220; off.height = 220;
+    var ox = off.getContext('2d');
+    ox.lineJoin = 'miter'; ox.lineCap = 'butt';
+    ox.save();
+    ox.translate(110, 110);
+    ox.scale(f, f);
+    Ui.drawUnitParts(ox, ty, tier, 'A', COL, 'base');
+    ox.restore();
+    var img = ox.getImageData(0, 0, 220, 220).data;
+    var minx = 220, maxx = 0, miny = 220, maxy = 0, hit = false;
+    for (var yy = 0; yy < 220; yy++) {
+      for (var xx = 0; xx < 220; xx++) {
+        if (img[(yy * 220 + xx) * 4 + 3] > 12) {
+          hit = true;
+          if (xx < minx) minx = xx; if (xx > maxx) maxx = xx;
+          if (yy < miny) miny = yy; if (yy > maxy) maxy = yy;
+        }
+      }
+    }
+    if (!hit) return { hx: 40, hy: 30 };
+    return { hx: (maxx - minx) / 2, hy: (maxy - miny) / 2 };
+  }
+  function capsule(x, cx, cy, len, th, fill) {
+    var r = Math.min(th / 2, len / 2);
+    x.beginPath();
+    x.moveTo(cx - len / 2 + r, cy - th / 2);
+    x.lineTo(cx + len / 2 - r, cy - th / 2);
+    x.arc(cx + len / 2 - r, cy, r, -Math.PI / 2, Math.PI / 2);
+    x.lineTo(cx - len / 2 + r, cy + th / 2);
+    x.arc(cx - len / 2 + r, cy, r, Math.PI / 2, -Math.PI / 2);
+    x.closePath();
+    x.fillStyle = fill; x.fill();
+  }
+  function drawPrint(x, px, py, ang, hx, hy, alpha, col) {
+    x.save();
+    x.translate(px, py);
+    x.rotate(ang);
+    var off = hy * 0.82, tl = hx * 2 * 0.98, th = hy * 0.40;
+    for (var s = -1; s <= 1; s += 2) {
+      capsule(x, 0, s * off, tl, th, 'rgba(' + hexRgb(col) + ',' + alpha.toFixed(3) + ')');
+    }
+    x.restore();
+  }
+  function rowForTrail(tier, destId) {
+    var dest = document.getElementById(destId);
+    for (var i = 0; i < TYPES.length; i++) {
+      (function (ty) {
+        var card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = '<h2>' + BRIEF[ty] + ' · ' + (tier === 1 ? '一阶' : '三阶') + '</h2>';
+        var cv = cell(380, 150);
+        var x = cv.x, w = 380, h = 150, f = 1.7;
+        var ext = measureExtent(ty, tier, f);
+        var ux = w - 60, uy = h / 2; // 兵放在右侧、朝右（+x = 行进方向）
+        // 身后一串由新到旧、逐渐淡出的履带印（间距 = hx 的 ~0.9 倍，连成连续履带）
+        var N = 9, gap = ext.hx * 1.5;
+        for (var k = N; k >= 1; k--) {
+          var a = 0.34 * Math.pow(1 - (k - 1) / N, 1.6); // 越老越淡
+          drawPrint(x, ux - k * gap, uy, 0, ext.hx, ext.hy, a, COL);
+        }
+        x.save();
+        x.translate(ux, uy);
+        x.scale(f, f);
+        Ui.drawUnitParts(x, ty, tier, 'A', COL, 'base'); // 车体履带与印子同口径
+        x.restore();
+        // 行进方向箭头
+        x.strokeStyle = 'rgba(107,97,84,0.5)'; x.lineWidth = 1.2;
+        x.beginPath(); x.moveTo(ux - N * gap - 14, uy); x.lineTo(ux - N * gap + 2, uy); x.stroke();
+        x.beginPath(); x.moveTo(ux - N * gap - 2, uy - 4); x.lineTo(ux - N * gap + 2, uy); x.lineTo(ux - N * gap - 2, uy + 4); x.stroke();
+        card.appendChild(cv.c);
+        dest.appendChild(card);
+      })(TYPES[i]);
+    }
+  }
+  rowForTrail(1, 'trail');
+  rowForTrail(3, 'trail');
+
+  window.__WF_READY__ = true;
+  } catch (e) {
+    var d = document.createElement('pre');
+    d.style.cssText = 'color:#b03a2e;background:#fff;padding:10px;margin:0 20px;white-space:pre-wrap';
+    d.textContent = '页面脚本异常：' + (e && e.stack || e);
+    document.body.appendChild(d);
+  }
+})();
+</script>
+</body>
+</html>

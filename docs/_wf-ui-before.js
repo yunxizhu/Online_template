@@ -1970,157 +1970,98 @@ window.WarFactoryUi = (function () {
     //    线细了拉远就整条消失，玩家于是照样把兵派过去、然后原地撞墙。
     //    做法：先描一道浅色高光（把崖唇从崖面上「切」出来），再压深色主线 ——
     //    深浅两道在任何底色上都读得出，不依赖单一颜色的对比度。
-    // 南向断崖：横段 + 台阶竖连接段 → 接成长链 → 拐角切 45°
-    //
-    // ⚠️ 2026-10-09 重写。旧版是「横段一套 + 2×2 台阶斜段一套」两个循环各写各的：
-    //    斜段的两个端点取自 2×2 块里**互不相邻的角**（`(x,yBot) → (x+CELL,yTop)` 之类），
-    //    方向恒反；而且它还会把原来那条横段 `cliffSkipH` 掉 —— 结果每一级台阶都变成
-    //    一段穿进地块内部的假斜线，真正的南向横段反而全被抹掉。
-    //    远看就是一条锯齿 / 一整排「V」勾（玩家截图里最扎眼的那堆东西）。
-    //
-    // 新做法四步，全部只在**格点**上做整数运算，天然对齐、不需要容差：
-    //   ① 收南向横边 hOn：格 (r,c) ↔ (r+1,c) —— 唯一「有面积、看得见」的立面；
-    //   ② 收竖向边 vOn：格 (r,c) ↔ (r,c+1)。正投影下东西向立面没有面积，
-    //      **但台阶侧脸必须有它，链条才连得起来**；只保留「端点上挂着横边」的那些，
-    //      一长条竖墙的中段全部丢掉 —— 那种脸不朝南，画出来就是凭空多一条长直线。
-    //   ③ 沿格点把边接成长链（每个格点最多 4 条边，取没走过的那条继续走）。
-    //   ④ 拐角切角：折点换成 45° 斜线（每次正好切一格）—— 一级台阶就是一段斜线，
-    //      连排台阶连起来自然就是一条干净的 45° 线，且不会切断真正的长横段。
-    const cliffR0 = Math.max(0, r0 - 1);
-    const cliffR1 = Math.min(gh - 2, r1 + 1);
-    const cliffChains = [];
-    if (cliffR1 >= cliffR0) {
-      const cW = gw - 1; // 一条边行最多这么多个
-      const cN = (cliffR1 - cliffR0 + 1) * gw;
-      const cH = new Uint8Array(cN); // 南向横边
-      const cV = new Uint8Array(cN); // 竖向边
-      const cIdx = (r, c) => (r < cliffR0 || r > cliffR1 || c < 0 || c >= cW ? -1 : (r - cliffR0) * gw + c);
-      const cOn = (isV, r, c) => {
-        const k = cIdx(r, c);
-        return k < 0 ? false : (isV ? cV[k] : cH[k]) === 1;
-      };
-      for (let r = cliffR0; r <= cliffR1; r++) {
-        const base = (r - cliffR0) * gw;
-        for (let c = 0; c < cW; c++) {
-          if (cliffSide(r, c, r + 1, c)) cH[base + c] = 1;
-          if (cliffSide(r, c, r, c + 1)) cV[base + c] = 1;
-        }
-      }
-      // ② 竖边只在「端点上挂着横边」时留 = 台阶侧脸
-      for (let r = cliffR0; r <= cliffR1; r++) {
-        const base = (r - cliffR0) * gw;
-        for (let c = 0; c < cW; c++) {
-          if (!cV[base + c]) continue;
-          // 竖边 (r,c) 的两端 = 格点 (r,c+1) 与 (r+1,c+1)
-          if (cOn(0, r - 1, c) || cOn(0, r - 1, c + 1) || cOn(0, r, c) || cOn(0, r, c + 1)) continue;
-          cV[base + c] = 0;
-        }
-      }
-      // 边的两个端点（格点：行, 列）—— 横边 (r,c) 走 (r+1,c) → (r+1,c+1)；竖边走 (r,c+1) → (r+1,c+1)
-      const cEnds = (isV, r, c) => (isV ? [r, c + 1, r + 1, c + 1] : [r + 1, c, r + 1, c + 1]);
-      const cUsed = new Uint8Array(cN * 2);
-      const cKey = (isV, r, c) => (isV ? cN : 0) + (r - cliffR0) * gw + c;
-      /**
-       * 站在格点 (py,px)、刚走完边 (isV,er,ec)：找下一条没走过的边（不原路退回）。
-       * 四条候选按「西横 → 北竖 → 东横 → 南竖」排 —— 度数为 2 的普通格点只会有一条，
-       * 顺序只在三岔/四岔格点上起作用（那种地方本来就该断开）。
-       */
-      const cliffStep = (py, px, isV, er, ec) => {
-        const cand = [
-          [0, py - 1, px - 1],
-          [1, py - 1, px - 1],
-          [0, py - 1, px],
-          [1, py, px - 1],
-        ];
-        for (let i = 0; i < 4; i++) {
-          const v = cand[i][0];
-          const rr = cand[i][1];
-          const cc = cand[i][2];
-          if (!cOn(v === 1, rr, cc)) continue;
-          if (v === isV && rr === er && cc === ec) continue;
-          if (cUsed[cKey(v === 1, rr, cc)]) continue;
-          return cand[i];
-        }
-        return null;
-      };
-      // 从格点 (sy,sx) 沿边 (isV,er,ec) 一路走到底，返回格点串（世界像素，x/y 交替）
-      const cliffWalk = (sy, sx, isV, er, ec) => {
-        const pts = [sx * CELL, sy * CELL];
-        let pv = isV;
-        let pr = er;
-        let pc = ec;
-        let py = sy;
-        let px = sx;
-        while (pv >= 0) {
-          cUsed[cKey(pv === 1, pr, pc)] = 1;
-          const e = cEnds(pv === 1, pr, pc);
-          const atA = e[0] === py && e[1] === px;
-          const oy = atA ? e[2] : e[0];
-          const ox = atA ? e[3] : e[1];
-          pts.push(ox * CELL, oy * CELL);
-          const nx = cliffStep(oy, ox, pv, pr, pc);
-          py = oy;
-          px = ox;
-          if (!nx) break;
-          pv = nx[0];
-          pr = nx[1];
-          pc = nx[2];
-        }
-        return pts;
-      };
-      const cliffDedup = (pts) => {
-        const out = [pts[0], pts[1]];
-        for (let i = 2; i < pts.length; i += 2) {
-          if (pts[i] === out[out.length - 2] && pts[i + 1] === out[out.length - 1]) continue;
-          out.push(pts[i], pts[i + 1]);
-        }
-        return out;
-      };
-      // ④ 拐角切 45°：把折点换成到「下一个点」的斜线，一次正好切一格
-      const cliffChamfer = (pts) => {
-        const n = pts.length / 2;
-        if (n < 3) return pts;
-        const out = [pts[0], pts[1]];
-        let i = 1;
-        while (i < n - 1) {
-          const px = pts[(i - 1) * 2];
-          const py = pts[(i - 1) * 2 + 1];
-          const cx = pts[i * 2];
-          const cy = pts[i * 2 + 1];
-          const nx = pts[(i + 1) * 2];
-          const ny = pts[(i + 1) * 2 + 1];
-          if ((cy === py) !== (ny === cy)) {
-            out.push(nx, ny); // 拐角 → 直连下一个点（这一段就是 45° 斜线）
-            i += 2;
-          } else {
-            out.push(cx, cy);
-            i += 1;
-          }
-        }
-        const lx = pts[(n - 1) * 2];
-        const ly = pts[(n - 1) * 2 + 1];
-        if (out[out.length - 2] !== lx || out[out.length - 1] !== ly) out.push(lx, ly);
-        return out;
-      };
-      for (let v = 0; v < 2; v++) {
-        const arr = v === 1 ? cV : cH;
-        for (let r = cliffR0; r <= cliffR1; r++) {
-          const base = (r - cliffR0) * gw;
-          for (let c = 0; c < cW; c++) {
-            if (arr[base + c] !== 1 || cUsed[(v === 1 ? cN : 0) + base + c]) continue;
-            const e = cEnds(v === 1, r, c);
-            // 两个方向各走一遍：反向先走（边还没标记），正向首跳无条件
-            const back = cliffWalk(e[0], e[1], v, r, c);
-            const fwd = cliffWalk(e[2], e[3], v, r, c);
-            const pts = [];
-            for (let i = back.length / 2 - 1; i >= 0; i--) pts.push(back[i * 2], back[i * 2 + 1]);
-            for (let i = 0; i < fwd.length; i++) pts.push(fwd[i]);
-            const chain = cliffChamfer(cliffDedup(pts));
-            if (chain.length >= 4) cliffChains.push(chain);
-          }
+    // 南向断崖：横段 + 楼梯角改斜段（2×2 方台阶走 45°，不再画成直角折线）
+    const cliffSegs = [];
+    const cliffDiag = []; // [x0,y0,x1,y1]
+    const cliffSkipH = new Uint8Array(gw * gh); // 被斜段替代的南向横边
+    for (let r = Math.max(0, r0 - 1); r < Math.min(gh - 1, r1 + 1); r++) {
+      for (let c = 0; c < gw - 1; c++) {
+        const a = cliffSide(r, c, r + 1, c);
+        const b = cliffSide(r, c + 1, r + 1, c + 1);
+        if (a === b) continue;
+        // 同一 2×2 里还有竖向崖 → 这是方台阶拐角，改画斜线
+        const v0 = cliffSide(r, c, r, c + 1);
+        const v1 = cliffSide(r + 1, c, r + 1, c + 1);
+        if (!(v0 || v1)) continue;
+        const x = c * CELL;
+        const yBot = (r + 1) * CELL;
+        const yTop = r * CELL;
+        if (a && !b) {
+          // 左下有南崖、右无：斜边连左下 → 右上
+          cliffDiag.push(x, yBot, x + CELL, yTop);
+          cliffSkipH[r * gw + c] = 1;
+        } else if (!a && b) {
+          cliffDiag.push(x + CELL, yBot, x, yTop);
+          cliffSkipH[r * gw + c + 1] = 1;
         }
       }
     }
+    for (let r = r0; r <= r1; r++) {
+      const last = r + 1 >= gh;
+      let c = 0;
+      while (c < gw) {
+        const here = last ? false : cliffSide(r, c, r + 1, c) && !cliffSkipH[r * gw + c];
+        let c1 = c;
+        while (c1 + 1 < gw) {
+          const h2 = last ? false : cliffSide(r, c1 + 1, r + 1, c1 + 1) && !cliffSkipH[r * gw + c1 + 1];
+          if (h2 !== here) break;
+          c1++;
+        }
+        if (here) cliffSegs.push(c * CELL, (c1 - c + 1) * CELL, r * CELL + CELL);
+        c = c1 + 1;
+      }
+    }
+    const chainCliffSegments = (segs, diags) => {
+      const list = [];
+      for (let i = 0; i < segs.length; i += 3) list.push([segs[i], segs[i + 2], segs[i] + segs[i + 1], segs[i + 2]]);
+      for (let i = 0; i < diags.length; i += 4) list.push([diags[i], diags[i + 1], diags[i + 2], diags[i + 3]]);
+      const key = (x, y) => Math.round(x) + ':' + Math.round(y);
+      const ends = list.map((s) => [key(s[0], s[1]), key(s[2], s[3])]);
+      const touching = new Map();
+      for (let i = 0; i < ends.length; i++) {
+        for (const k of ends[i]) {
+          let a = touching.get(k);
+          if (!a) { a = []; touching.set(k, a); }
+          a.push(i);
+        }
+      }
+      const used = new Uint8Array(list.length);
+      const far = (i, k) => (ends[i][0] === k ? ends[i][1] : ends[i][0]);
+      const walk = (i, from) => {
+        const out = [];
+        let cur = i;
+        let k = from;
+        while (cur != null) {
+          used[cur] = 1;
+          const s = list[cur];
+          if (ends[cur][0] === k) out.push(s[0], s[1], s[2], s[3]);
+          else out.push(s[2], s[3], s[0], s[1]);
+          k = far(cur, k);
+          const cand = touching.get(k) || [];
+          let next = null;
+          for (let j = 0; j < cand.length; j++) if (!used[cand[j]]) { next = cand[j]; break; }
+          cur = next;
+        }
+        return out;
+      };
+      const chains = [];
+      for (let i = 0; i < list.length; i++) {
+        if (used[i]) continue;
+        const a = (touching.get(ends[i][0]) || []).length;
+        const b = (touching.get(ends[i][1]) || []).length;
+        if (a === 1 || b === 1) {
+          const c = walk(i, a === 1 ? ends[i][0] : ends[i][1]);
+          if (c.length >= 4) chains.push(c);
+        }
+      }
+      for (let i = 0; i < list.length; i++) {
+        if (used[i]) continue;
+        const c = walk(i, ends[i][0]);
+        if (c.length >= 4) chains.push(c);
+      }
+      return chains;
+    };
+    const cliffChains = chainCliffSegments(cliffSegs, cliffDiag);
     const strokeCliffs = (chains, yBias, col, w) => {
       g.strokeStyle = col;
       g.lineWidth = w;
@@ -2138,7 +2079,6 @@ window.WarFactoryUi = (function () {
       strokeCliffs(cliffChains, -2.5, 'rgba(255,250,238,0.72)', 5);
       strokeCliffs(cliffChains, 0, C_CLIFF, 3);
     }
-
     // ③ 地形外缘：山/水 与其它地形相接的边。外凸直角走斜切边，不再画成方折线。
     g.strokeStyle = 'rgba(70,60,48,0.40)';
     g.lineWidth = 1.5;

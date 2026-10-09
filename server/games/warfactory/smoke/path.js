@@ -4,12 +4,12 @@
  * 寻路冒烟：node server/games/warfactory/smoke/path.js
  *
  * 几件事，一件都不能再退回去：
- *   ① 流场带父链 —— 沿父链回溯的每一步都得是「可通行 + 不跨崖」的真边，
- *      部队就不会再被「贪心挑 dist 最小的邻格」指到崖对面去（崖沿抖动的根因）。
+ *   ① 向量场 —— SolasXer 口径：每格 next 指向「navStepOk + dist 最低」的邻格，
+ *      沿 next 链每一步都得是「可通行 + 不跨崖」的真边（否则又会指到崖对面抖）。
  *   ② 建筑地基出得去 —— 地基垫平圈必须大过寻路掩码的占位圈，
  *      否则生在建筑里的兵一辈子出不来（实测 5 秒位移 1.2px 的那种）。
  *   ③ 整队远征不空转 —— 下令跨越半张图后，队伍必须真的在往落点推进。
- *   ④ 斜线 —— 流场是 8 向的，父链里得有对角步，不能永远「横一段 + 竖一段」。
+ *   ④ 斜线 —— 向量场是 8 向的，next 链里得有对角步，不能永远「横一段 + 竖一段」。
  *   ⑤ 坡与崖 —— 跨层只能走坡；对角切崖角也必须拦住。
  */
 
@@ -35,8 +35,8 @@ function room(n, tag) {
 
 console.log('寻路冒烟');
 
-/* ---- ① 父链：每一步都得真走得通 ---- */
-console.log('\n[1] 流场父链（每一步可通行 · 不跨崖 · 严格递减）');
+/* ---- ① 向量场：每一步都得真走得通 ---- */
+console.log('\n[1] 向量场 next 链（每一步可通行 · 不跨崖 · 严格递减）');
 {
   const g = createGameState(room(3, 'chain'));
   const t = g.terrain;
@@ -66,29 +66,44 @@ console.log('\n[1] 流场父链（每一步可通行 · 不跨崖 · 严格递�
   ok(Boolean(goal), '找到落点');
   g._flowBudget = 99; // 手动时钟下 step() 没跑过，预算得自己给
   const f = __test.flowField(g, goal.x, goal.y, from.x, from.y);
-  ok(Boolean(f && f.prev), '流场带父链');
+  ok(Boolean(f && f.next && f.dirX && f.dirY), '流场带向量（next / dirX / dirY）');
   const start = fromCell.i;
   ok(f && f.dist[start] > 20, `总部到落点有 ${f ? f.dist[start] : 0} 格路程`);
   let steps = 0;
   let badEdge = 0;
   let badDrop = 0;
+  let badDir = 0;
   let node = start;
   const rmp = t.ramps;
+  const cols = t.cols;
   while (f && node >= 0 && node !== f.goalIdx && steps < 5000) {
-    const nx = f.prev[node];
+    const nx = f.next[node];
     if (nx < 0) break;
     if (!pg[nx]) badEdge++;
     // 跨了 ≥cliffAt 层却两端都不是坡 = 真的穿墙了。
     // 坡道是「无视高低差也能走」的地形，走坡时跨几层都合法（见 cliffBetween）。
     if (Math.abs(t.heights[nx] - t.heights[node]) >= CLIFF && !(rmp && (rmp[nx] || rmp[node]))) badEdge++;
-    if (f.dist[nx] !== f.dist[node] - 1) badDrop++;
+    // 加权 Dijkstra：每一步代价必须严格下降（不再要求恰好 -1）
+    if (!(f.dist[nx] < f.dist[node] - 1e-6)) badDrop++;
+    // 方向向量应指向 next 邻格
+    const c0 = node % cols;
+    const r0 = (node - c0) / cols;
+    const c1 = nx % cols;
+    const r1 = (nx - c1) / cols;
+    const wantX = c1 - c0;
+    const wantY = r1 - r0;
+    const wlen = Math.hypot(wantX, wantY) || 1;
+    const dx = f.dirX[node];
+    const dy = f.dirY[node];
+    if (Math.hypot(dx - wantX / wlen, dy - wantY / wlen) > 0.05) badDir++;
     node = nx;
     steps++;
   }
-  ok(steps > 20, `沿父链走出 ${steps} 步`);
+  ok(steps > 20, `沿向量链走出 ${steps} 步`);
   ok(badEdge === 0, `每一步都可通行、跨层只在坡上（越界 ${badEdge} 步）`);
-  ok(badDrop === 0, `每一步都严格靠近目标一步（异常 ${badDrop} 步）`);
-  ok(f && node === f.goalIdx, '父链一路走到目标格');
+  ok(badDrop === 0, `每一步都严格靠近目标（异常 ${badDrop} 步）`);
+  ok(badDir === 0, `dirX/dirY 与 next 一致（异常 ${badDir} 步）`);
+  ok(f && node === f.goalIdx, '向量链一路走到目标格');
 }
 
 /* ---- ② 建筑地基出得去 ---- */
@@ -326,8 +341,8 @@ for (let k = 0; k < 3; k++) {
   ok(before > 0 && u.route == null && u.moveX == null, 'stop 能把整条规划链一次作废');
 }
 
-/* ---- ⑤ 斜线寻路：父链必须含对角步，不能永远是「横 + 竖」---- */
-console.log('\n[5] 斜线寻路（8 向流场，父链含对角）');
+/* ---- ⑤ 斜线寻路：向量链必须含对角步，不能永远是「横 + 竖」---- */
+console.log('\n[5] 斜线寻路（8 向向量场，next 链含对角）');
 {
   const g = createGameState(room(3, 'diag'));
   g._flowBudget = 99;
@@ -363,7 +378,7 @@ console.log('\n[5] 斜线寻路（8 向流场，父链含对角）');
   let node = fromCell.i;
   const cols = t.cols;
   while (f && node >= 0 && node !== f.goalIdx && card + diag < 8000) {
-    const p = f.prev[node];
+    const p = f.next[node];
     if (p < 0) break;
     const dc = (p % cols) - (node % cols);
     const dr = Math.floor(p / cols) - Math.floor(node / cols);
@@ -373,7 +388,7 @@ console.log('\n[5] 斜线寻路（8 向流场，父链含对角）');
   }
   const hops = card + diag;
   ok(hops > 20, `斜向路径有 ${hops} 步`);
-  ok(diag > 0, `父链含对角步（对角 ${diag} / 正交 ${card}）`);
+  ok(diag > 0, `向量链含对角步（对角 ${diag} / 正交 ${card}）`);
   ok(diag / Math.max(1, hops) >= 0.15, `对角占比 ${(diag / Math.max(1, hops) * 100).toFixed(0)}% ≥ 15%`);
 }
 
@@ -456,7 +471,7 @@ console.log('\n[6] 坡可通行 / 崖不可通行（含对角切角禁令）');
     for (let guard = 0; guard < 200000; guard++) {
       out.push(node);
       if (node === f.goalIdx) break;
-      const p = f.prev[node];
+      const p = f.next ? f.next[node] : f.prev[node];
       if (p < 0) break;
       node = p;
     }

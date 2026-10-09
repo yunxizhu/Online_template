@@ -69,18 +69,69 @@ window.WarFactoryUi = (function () {
   }
   function factoryRadius() {
     const K = meta && meta.consts;
-    if (K && K.factorySize != null) return (buildingSize('factorySize', 15) * gridCell()) / 2;
-    return (K && K.factoryR) || 75;
+    if (K && K.factorySize != null) return (buildingSize('factorySize', 11) * gridCell()) / 2;
+    return (K && K.factoryR) || 55;
   }
   function labR() {
     const K = meta && meta.consts;
-    if (K && K.labSize != null) return (buildingSize('labSize', 15) * gridCell()) / 2;
-    return (K && K.labR) || 75;
+    if (K && K.labSize != null) return (buildingSize('labSize', 7) * gridCell()) / 2;
+    return (K && K.labR) || 35;
   }
   function hqR() {
     const K = meta && meta.consts;
-    if (K && K.hqSize != null) return (buildingSize('hqSize', 15) * gridCell()) / 2;
-    return (K && K.hqR) || 75;
+    if (K && K.hqSize != null) return (buildingSize('hqSize', 9) * gridCell()) / 2;
+    return (K && K.hqR) || 45;
+  }
+
+  /**
+   * 寻路掩码对建筑占位的额外外扩（服务端 consts.navMargin，即 BLOCK_MARGIN）。
+   * 占位圈按 `碰撞 + navMargin` 画 —— 与服务端 passGrid 同口径，详见 public 副本同名函数。
+   */
+  function navMargin() {
+    const K = meta && meta.consts;
+    return K && Number.isFinite(Number(K.navMargin)) ? Number(K.navMargin) : 22;
+  }
+  function occupancyRadius(collisionR) {
+    return collisionR + navMargin();
+  }
+
+  /**
+   * 建筑占位圈：把「这里走不过去」的范围画出来。
+   * 与 public 副本逐字同口径（碰撞 + navMargin），压在建筑之下。
+   * 陷落的总部不再封路，所以不画（与服务端 passGrid 的 `if (!h.down)` 一致）。
+   */
+  function drawBuildingFootprints() {
+    if (!terrainReady) return;
+    const c = ctx;
+    const list = [];
+    for (const f of factoriesView) list.push([f.x, f.y, factoryRadius()]);
+    for (const l of labsView) list.push([l.x, l.y, labR()]);
+    for (const h of hqView) {
+      if (!h.down) list.push([h.x, h.y, hqR()]);
+    }
+    if (!list.length) return;
+    c.save();
+    for (const [bx, by, R] of list) {
+      const occ = occupancyRadius(R);
+      const gy = groundY(bx, by);
+      c.fillStyle = 'rgba(58,50,40,0.10)';
+      c.beginPath();
+      c.arc(bx, gy, occ, 0, TAU);
+      c.fill();
+      c.strokeStyle = 'rgba(58,50,40,0.45)';
+      c.lineWidth = 1.4 / zoom;
+      c.setLineDash([7 / zoom, 5 / zoom]);
+      c.beginPath();
+      c.arc(bx, gy, occ, 0, TAU);
+      c.stroke();
+      c.setLineDash([]);
+      c.strokeStyle = 'rgba(42,38,32,0.32)';
+      c.lineWidth = 1 / zoom;
+      c.beginPath();
+      c.arc(bx, gy, R, 0, TAU);
+      c.stroke();
+    }
+    c.restore();
   }
 
   // ==== 水墨配色 ====
@@ -1742,9 +1793,75 @@ window.WarFactoryUi = (function () {
     c.font = 12 / k + 'px ' + CALLOUT_FONT;
     c.textAlign = 'center';
     c.fillText('研 究 所', 0, 50);
+
+    // 已开拓的研究产线 → 四周各立一只研究罐，管子连回亭身
+    const labLines = clamp(
+      Math.round(l.lines || 0),
+      0,
+      (meta && meta.consts && meta.consts.labMaxLines) || 4
+    );
+    if (labLines > 0) drawLabCanisters(c, labLines, owned ? col : INK, t, k);
+
     // 研究所血条：和工厂一样可被攻击，打光即由最后一击者接管
     drawBuildingHpBar(c, 0, 58, l.hp, l.hpMax, 64, k);
     c.restore();
+  }
+
+  /**
+   * 研究所四周的研究罐：每开拓一条产线多一只，固定占东北 / 东南 / 西南 / 西北四槽，
+   * 管子连回六边形亭身。坐标系与 drawLab 手绘骨架一致（半径约 30）。
+   */
+  function drawLabCanisters(c, n, col, t, k) {
+    const slots = Math.min(4, Math.max(0, n | 0));
+    const orbit = 42;
+    const ink = hexAlpha(col, 0.9);
+    for (let i = 0; i < slots; i++) {
+      const a = -Math.PI / 4 + (TAU * i) / 4;
+      const x = Math.cos(a) * orbit;
+      const y = Math.sin(a) * orbit;
+      const ix = Math.cos(a) * 28;
+      const iy = Math.sin(a) * 28;
+      c.strokeStyle = hexAlpha(col, 0.5);
+      c.lineWidth = 2 / k;
+      c.beginPath();
+      c.moveTo(ix, iy);
+      c.lineTo(x, y);
+      c.stroke();
+      c.save();
+      c.translate(x, y);
+      const bw = 8;
+      const bh = 14;
+      c.fillStyle = hexAlpha(PAPER, 0.92);
+      c.strokeStyle = ink;
+      c.lineWidth = 1.6 / k;
+      c.beginPath();
+      c.moveTo(-bw / 2, -bh / 2 + 3);
+      c.quadraticCurveTo(-bw / 2, -bh / 2, 0, -bh / 2);
+      c.quadraticCurveTo(bw / 2, -bh / 2, bw / 2, -bh / 2 + 3);
+      c.lineTo(bw / 2, bh / 2 - 2);
+      c.quadraticCurveTo(bw / 2, bh / 2, 0, bh / 2);
+      c.quadraticCurveTo(-bw / 2, bh / 2, -bw / 2, bh / 2 - 2);
+      c.closePath();
+      c.fill();
+      c.stroke();
+      const fillH = bh * (0.38 + 0.12 * Math.sin(t / 380 + i * 1.7));
+      c.fillStyle = hexAlpha(col, 0.4);
+      c.beginPath();
+      c.rect(-bw / 2 + 1.2, bh / 2 - 2 - fillH, bw - 2.4, fillH);
+      c.fill();
+      c.beginPath();
+      c.moveTo(-bw / 2 + 1, -bh / 2 + 1);
+      c.lineTo(bw / 2 - 1, -bh / 2 + 1);
+      c.lineTo(0, -bh / 2 - 4);
+      c.closePath();
+      c.stroke();
+      c.strokeStyle = hexAlpha(INK, 0.35);
+      c.lineWidth = 1.2 / k;
+      c.beginPath();
+      c.ellipse(0, bh / 2 + 1.5, bw * 0.7, 2.2, 0, 0, TAU);
+      c.stroke();
+      c.restore();
+    }
   }
 
   /** 建筑通用血条（世界坐标，以 (x,y) 为左上角基准）；k=当前建筑 scale，用于线宽/字号抵消 */
@@ -1807,17 +1924,7 @@ window.WarFactoryUi = (function () {
         c.restore();
         continue;
       }
-      let tgt = null;
-      if (h.atkId > 0) tgt = units.get(h.atkId);
-      else {
-        const fid = -h.atkId;
-        for (let i = 0; i < factoriesView.length; i++) {
-          if (factoriesView[i].id === fid) {
-            tgt = factoriesView[i];
-            break;
-          }
-        }
-      }
+      const tgt = hqAtkTargetOf(h);
       if (!tgt) {
         c.restore();
         continue;
@@ -5207,6 +5314,11 @@ window.WarFactoryUi = (function () {
           owner: row ? row[1] : l.owner,
           hp: row ? row[2] : l.hp != null ? l.hp : null,
           hpMax: (row ? row[3] : l.hpMax) || (meta.consts && meta.consts.labHp) || 1200,
+          lines: clamp(
+            Math.round(row && row[4] != null ? row[4] : l.lines || 0),
+            0,
+            (meta && meta.consts && meta.consts.labMaxLines) || 4
+          ),
         };
       });
     }
@@ -5238,6 +5350,7 @@ window.WarFactoryUi = (function () {
           atkId: row && row[10] != null ? row[10] : h.atkId || 0,
           atkWindupMs: row && row[11] != null ? row[11] : h.atkWindupMs || 0,
           lc: (row && row[12]) || [],
+          atkKind: row && row[13] != null ? row[13] : h.atkKind || 0,
           atkWindupAt: now,
           fireAt: (prev && prev.fireAt) || 0,
         };
@@ -5963,9 +6076,27 @@ window.WarFactoryUi = (function () {
     }
   }
 
+  /** 按总部防卫 atkKind + atkId 解析当前锁定目标（兼容旧「负数 = 工厂」编码） */
+  function hqAtkTargetOf(h) {
+    if (!h || !h.atkId) return null;
+    let kind = h.atkKind || 0;
+    let id = h.atkId;
+    if (!kind) {
+      if (id < 0) {
+        kind = 2;
+        id = -id;
+      } else if (id > 0) kind = 1;
+    }
+    if (kind === 1) return units.get(id) || null;
+    if (kind === 2) return factoriesView.find((x) => x.id === id) || null;
+    if (kind === 3) return labsView.find((x) => x.id === id) || null;
+    if (kind === 4) return hqView.find((x) => x.id === id) || null;
+    return null;
+  }
+
   /**
-   * 选中总部后右键：点中敌方单位 / 中立或敌方工厂 → 切换防卫目标（不设集结点）。
-   * 命中合法目标返回 true。
+   * 选中总部后右键：点中敌方单位 / 中立或敌方建筑 → 切换防卫目标（不设集结点）。
+   * 口径与部队右键攻击一致（单位、工厂、研究所、总部）。
    */
   function issueHqAttackOn(wx, wy) {
     if (isSpectator || !selHqId) return false;
@@ -5986,6 +6117,23 @@ window.WarFactoryUi = (function () {
     );
     if (foeF) {
       sendHqAttack('f', foeF.id, wx, wy);
+      return true;
+    }
+    const foeL = labsView.find(
+      (x) => x.owner !== mine && Math.hypot(x.x - wx, groundY(x.x, x.y) - wy2) < labR() + 18
+    );
+    if (foeL) {
+      sendHqAttack('l', foeL.id, wx, wy);
+      return true;
+    }
+    const foeH = hqView.find(
+      (x) =>
+        !x.down &&
+        x.owner !== mine &&
+        Math.hypot(x.x - wx, groundY(x.x, x.y) - wy2) < hqR() + 18
+    );
+    if (foeH) {
+      sendHqAttack('h', foeH.id, wx, wy);
       return true;
     }
     return false;
@@ -6520,6 +6668,7 @@ window.WarFactoryUi = (function () {
     drawGroundMarks(t); // 弹痕贴地：压在地形之上、单位/建筑之下
     drawFires(t); // 灼烧地形贴地：同样压在单位之下（踩在上面的人才看得清）
     drawRangeRelief(); // 地势射程环：压在地形之上、单位/建筑之下（站得高打得远，画出来不说出来）
+    drawBuildingFootprints(); // 建筑占位圈：与寻路掩码同口径，压在建筑之下
 
     for (const f of factoriesView) drawFactory(f, t);
     drawRallies(t);
@@ -6748,6 +6897,11 @@ window.WarFactoryUi = (function () {
       owner: l.owner,
       hp: l.hp != null ? l.hp : l.hpMax,
       hpMax: l.hpMax || 1200,
+      lines: clamp(
+        Math.round(l.lines || 0),
+        0,
+        (meta && meta.consts && meta.consts.labMaxLines) || 4
+      ),
     }));
     hqView = (meta.hqs || []).map((h) => ({
       id: h.id,

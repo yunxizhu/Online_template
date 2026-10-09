@@ -70,7 +70,12 @@ console.log('\n[A] 工厂/研究所布局（门口 2 初 + 中场 2 初/2 中/1 
     ok(g.labs.length === e.labs && g.labs.length === C.LABS.length, `${c}人：研究所 ${g.labs.length} 座（应 ${e.labs}）`);
     let labDoor = 0;
     for (const hq of g.hqs) {
-      const near = g.labs.filter((l) => Math.hypot(l.x - hq.x, l.y - hq.y) <= C.HQ_R + C.LAB_R + 80);
+      // ⚠️ 阈值必须跟着布局口径走：门口研究所摆在**总部正后方 minCenterDist(HQ_R, LAB_R)**
+      //    = 两座占位半径之和 + 一条净缝（见 index.js 的 BUILD_LANE_PX）。
+      //    早先这里写死 `HQ_R + LAB_R + 80`，而布局改按占位算之后距离变大，
+      //    断言就变成「所有门口一所都没数到」—— 是判据过期，不是布局坏了。
+      const reach = T.minCenterDist(C.HQ_R, C.LAB_R) + T.BUILD_LANE_PX;
+      const near = g.labs.filter((l) => Math.hypot(l.x - hq.x, l.y - hq.y) <= reach);
       if (near.length === 1) labDoor++;
     }
     ok(labDoor === c, `${c}人：每家总部旁恰好 1 座研究所（${labDoor}/${c}）`);

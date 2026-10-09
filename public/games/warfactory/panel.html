@@ -100,7 +100,7 @@
           <span class="warfactory-legend-item"><b>产线进化</b><em>每 300 科技点可让<b>一条产线</b>进化一阶（此后这条线一直产该阶单位）；总部产线不可进化</em></span>
           <span class="warfactory-legend-item"><b>生产加速</b><em>点选总部 → 花 300 科技点点「加速生产」；每次在当前生产间隔上再减 1/15（复利），最多 20 级</em></span>
           <span class="warfactory-legend-item"><b>研究所</b><em>初始中立，与工厂一样有血量：打光即由「最后一击者」接管并满血</em></span>
-          <span class="warfactory-legend-item"><b>研究产线</b><em>占下研究所后，可在面板里花 200 科技点点「开拓研究产线」（点击即生效，<b>每所最多 1 条</b>）；开拓后该所每 3 秒的产出从 +2 提到 +3</em></span>
+          <span class="warfactory-legend-item"><b>研究产线</b><em>占下研究所后，可在面板里花科技点点「开拓研究产线」（点击即生效，<b>每所最多 4 条</b>）；每条每周期产出 <b>+1</b>，建筑四周多一只研究罐</em></span>
           <span class="warfactory-legend-item"><b>总部防卫</b><em>总部自带一门炮：新索敌先蓄能（聚能球 + 蓄能弧走满），蓄满后按冷却突突连射；换目标会重新蓄能</em></span>
           <span class="warfactory-legend-item"><b>总部</b><em>每人一座、不可易主；自带一条产线（默认产锐士、<b>不可进化</b>），被打光即总部陷落，本人出局</em></span>
         </div>
@@ -110,7 +110,7 @@
           <span class="warfactory-legend-item"><b>总部面板</b><em>左键点选自己的总部 → 右侧详情栏：看总部产线（默认锐士）、开辟新产线、加速生产</em></span>
         </div>
         <p class="warfactory-help" data-i18n="warfactory.help">
-          部队只打攻击范围内的敌人、不自动追击，但移动中照常开火 · 工厂与研究所有血量：打光即由「最后一击者」接管，易主后恢复满血，中立建筑只有 1/3 血 · 每条产线产什么兵自己定：点工厂 / 总部花 300 开辟产线（先选兵种，最多合计 2 条）· 中高级工厂每条产线花 300 进化一阶（此后直接产该阶单位，每个兵种只有一条进化路线）· 总部默认产锐士且不可进化 · 左键框选部队 · 右键移动 · Shift+右键 依次点路点规划路径（回车出发 / Esc 取消） · F 选取镜头内部队 / F2 全选我方部队 · 选中工厂 / 总部后右键设集结点 · 点总部花 300 加速生产（最多 20 级）· 点自家研究所花 200 开拓研究产线（产出 ×1.5）· WASD/方向键移动镜头 · 点击小地图跳转 · 总部被打爆即出局
+          部队只打攻击范围内的敌人、不自动追击，但移动中照常开火 · 工厂与研究所有血量：打光即由「最后一击者」接管，易主后恢复满血，中立建筑只有 1/3 血 · 每条产线产什么兵自己定：点工厂 / 总部花 300 开辟产线（先选兵种，最多合计 2 条）· 中高级工厂每条产线花 300 进化一阶（此后直接产该阶单位，每个兵种只有一条进化路线）· 总部默认产锐士且不可进化 · 左键框选部队 · 右键移动 · Shift+右键 依次点路点规划路径（回车出发 / Esc 取消） · F 选取镜头内部队 / F2 全选我方部队 · 选中工厂 / 总部后右键设集结点 · 点总部花 300 加速生产（最多 20 级）· 点自家研究所开拓研究产线（每条每周期 +1，四周多一只研究罐）· WASD/方向键移动镜头 · 点击小地图跳转 · 总部被打爆即出局
         </p>
       </div>
     </div>
@@ -368,7 +368,7 @@
               <div class="wfp-col">
                 <button type="button" class="wfp-evolve wfp-evolve-block" id="wfp-line">开辟产线（300）</button>
                 <!-- 第 7 项：研究所「开拓研究产线」—— 点击即生效，没有二级选择项 -->
-                <button type="button" class="wfp-evolve wfp-evolve-block" id="wfp-labline" hidden>开拓研究产线（200）</button>
+                <button type="button" class="wfp-evolve wfp-evolve-block" id="wfp-labline" hidden>开拓研究产线</button>
                 <div class="wfp-sec-title">说明</div>
                 <div class="wfp-note" id="wfp-note"></div>
               </div>

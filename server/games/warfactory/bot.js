@@ -394,17 +394,42 @@ function pickHarass(game, oi, units, myPow) {
 
 /* ---------------- 主攻目标选择（高价值打分） ---------------- */
 
+/** 我方存活部队的重心；没兵时退回 null（开局亲兵刚死光等极端情况） */
+function armyCentroid(game, oi) {
+  const us = unitsOf(game, oi);
+  if (!us.length) return null;
+  let x = 0;
+  let y = 0;
+  for (const u of us) {
+    x += u.x;
+    y += u.y;
+  }
+  return { x: x / us.length, y: y / us.length, n: us.length };
+}
+
 /**
  * 价值基础分：敌总部 > 敌工厂 > 中立工厂 > 敌研究所 > 中立研究所。
- * 再按「距离折扣」「守军强度折扣」「血量折扣」「粘性」修正；阶段 / 经济缺口不同，权重也不同。
+ * 再按「到手时间 reach」「守军强度」「血量」「粘性」「贴身」修正。
+ *
+ * ⚠️ 距离必须按**兵力重心**算，不能按总部：兵已经站在远处厂门口时，
+ *    用总部距离会把它们拽去打「离总部近」的另一座 —— 还没走到，那座就被人占了，
+ *    再折回打脚下那座，整段路白走（用户实测的舍近求远）。
+ *
+ * ⚠️ 分数 ≈ 价值 × 可达性：可达性 = f(行军 + 拆楼)。高价值但特别远会被压低，
+ *    近处易拿的优先 —— 扩张效率看的是「单位时间拿到多少」，不是纸面价值榜。
+ *
  * @returns {Array} 按分数降序的候选列表（pickTarget 取第 0 个，pickProngs 拿前几个分兵）
  */
 function rankTargets(game, oi, stance, state, tNow) {
   const hq = myHq(game, oi);
   const me = game.players[oi];
-  const cx = hq ? hq.x : me.baseX || 0;
-  const cy = hq ? hq.y : me.baseY || 0;
+  const hx = hq ? hq.x : me.baseX || 0;
+  const hy = hq ? hq.y : me.baseY || 0;
+  const army = armyCentroid(game, oi);
+  const ax = army ? army.x : hx;
+  const ay = army ? army.y : hy;
   const myPow = powerOf(game, oi);
+  const alive = army ? unitsOf(game, oi) : [];
   const cands = [];
 
   const labsOwned = myLabs(game, oi).length;
@@ -427,22 +452,45 @@ function rankTargets(game, oi, stance, state, tNow) {
   }
   for (const f of game.factories) {
     if (f.owner === oi) continue;
-    cands.push({ kind: 'f', id: f.id, x: f.x, y: f.y, w: f.owner === -1 ? wFacN : wFacE, ref: f });
+    // 工厂分等级：只有 lv≥2 能进化。lv3 吸引力翻倍，别把兵力耗在永远 1 阶的厂上。
+    const lv = f.level || 1;
+    const lvMul = lv >= 3 ? 2 : lv >= 2 ? 1.35 : 1;
+    cands.push({
+      kind: 'f',
+      id: f.id,
+      x: f.x,
+      y: f.y,
+      w: (f.owner === -1 ? wFacN : wFacE) * lvMul,
+      ref: f,
+    });
   }
   for (const l of game.labs) {
     if (l.owner === oi) continue;
     cands.push({ kind: 'l', id: l.id, x: l.x, y: l.y, w: l.owner === -1 ? wLabN : wLabE, ref: l });
   }
 
+  // 到手时间用的行军速度 / 拆楼 dps（与分兵评估同口径）
+  const marchSpd = 55;
+  const myDps = Math.max(6, armyDps(alive));
+
   for (const c of cands) {
-    const d = dist(cx, cy, c.x, c.y);
+    const dArmy = dist(ax, ay, c.x, c.y);
+    const dHq = dist(hx, hy, c.x, c.y);
+    // 路程看兵在哪（主力）；总部距离只留一点「门口安全扩张」偏向。
+    // 前中期几乎全听兵力；打敌总部时总部距离略加重（别为了近厂永远不去推家）。
+    let d;
+    if (c.kind === 'h') d = 0.65 * dArmy + 0.35 * dHq;
+    else if (stance === 'develop' || stance === 'skirmish') d = 0.9 * dArmy + 0.1 * dHq;
+    else d = 0.8 * dArmy + 0.2 * dHq;
+
     // 守军折扣：目标周围 700 内敌军比我全军还强 → 不去送
     const guard = enemyPowerNear(game, oi, c.x, c.y, 700);
     let mul = 1;
     if (guard > myPow * 0.9) mul = 0.15;
     else if (guard > myPow * 0.6) mul = 0.5;
     // 血量折扣：建筑血越残越容易被我拿下（中立厂 1/2 血最香）
-    const hpRatio = c.ref.hp != null && c.ref.hpMax ? c.ref.hp / c.ref.hpMax : 1;
+    const hp = c.ref.hp != null ? c.ref.hp : c.kind === 'h' ? 10000 : 3000;
+    const hpRatio = c.ref.hpMax ? hp / c.ref.hpMax : 1;
     // ⚠️ 0.4 → 0.8 → 1.2 → 1.6 是逐档实测出来的（24 局强度分 10076 → 11501 → 12491 → 12934）：
     // 「快打完了」本身就是最强的吸引力 —— 再补一刀就能变成自己的产能，
     // 而去啃一座满血的新目标要从头再来。真人一定先收残血。
@@ -450,13 +498,28 @@ function rankTargets(game, oi, stance, state, tNow) {
     // 粘性：正在打的目标给个大加成，避免来回横跳（打到一半换目标 = 两边都打不下来）
     const sticky =
       state && state.target && state.target.kind === c.kind && state.target.id === c.id ? 1.6 : 1;
-    // ⚠️ 距离折扣的分母不能再小：2200 会把 9600px 外的敌总部砍到 0.19 倍，
-    // 反而输给近处的厂/所 —— 后期就永远在「想去打总部 → 被近处目标勾走」之间横跳。
-    // ⚠️ 工厂**分等级**，而且只有 lv≥2 的厂能进化（lv2→2 阶、lv3→3 阶），
-    // lv1 厂永远只能吐 1 阶兵。全场 14 座里 lv1×8 / lv2×4 / lv3×2 ——
-    // 不分等级地抢，等于把有限的兵力花在 8 座「永远升不了阶」的厂上，
-    // 而 3 阶兵是唯一能压垮对手的质量差。所以 lv3 厂的吸引力要翻倍。
-    c.score = (c.w / (1 + d / 2200)) * mul * hpMul * sticky;
+    // 兵已经贴着 / 围着的目标：强烈加分 —— 这就是「脚下的厂」，别为了总部附近那座空跑
+    let nearMul = 1;
+    if (alive.length) {
+      let near = 0;
+      for (const u of alive) {
+        if (dist(u.x, u.y, c.x, c.y) <= 900) near += 1;
+      }
+      if (near >= 3) nearMul = 1.75;
+      else if (near >= 2) nearMul = 1.5;
+      else if (near >= 1) nearMul = 1.25;
+    }
+
+    // —— 可达性：价值要除以「到手要多久」——
+    //   eta ≈ 行军 + 拆楼。高价值但特别远 → eta 大 → 分数被压下去，
+    //   近处易拿的反而更好（扩张窗口花在路上就是纯亏）。
+    //   总部拆得久，参考时长远一点，免得中后局永远不敢推家。
+    const eta = d / marchSpd + hp / myDps;
+    const etaRef = c.kind === 'h' ? (stance === 'endgame' ? 100 : 140) : 45;
+    // 指数 >1：特别远时跌得更狠；eta = etaRef 时约半价
+    const reach = 1 / (1 + Math.pow(eta / etaRef, 1.35));
+    c.score = c.w * reach * mul * hpMul * sticky * nearMul;
+    c.eta = eta; // 调试 / 分兵评估可复用
   }
 
   cands.sort((a, b) => b.score - a.score);
@@ -541,50 +604,268 @@ function updateProbe(game, oi, state, tNow, committed, stance) {
 
 /* ---------------- 多线分兵：前中期同时开几条战线 ---------------- */
 
-/**
- * 前中期（develop / skirmish，且还没发动总攻）把部队按「离哪个目标近」拆成 2 股各打各的。
- *
- * 为什么必须分兵：**占领是靠把建筑血打光来易主的**（中立厂 2500 血 ≈ 10 个兵打 28 秒），
- * 单线推进 = 抢完一座再横穿半张图去下一座，开局最好的扩张窗口全浪费在路上。
- * 真人一定是两三个方向同时开。
- *
- * 只拆给「软目标」：守军不超过我全军的 1/3、彼此离得够远、且不碰总部（总部必须合兵）。
- * 任一股凑不够下限就整体不分 —— 添油比不拆更糟。
- *
- * @returns {null|Array<{target:object, units:Array}>}
- */
-function pickProngs(game, oi, stance, state, units, tNow) {
-  if (stance !== 'develop' && stance !== 'skirmish') return null;
-  if (!units || units.length < 8) return null;
-  const list = rankTargets(game, oi, stance, state, tNow);
-  const myPow = powerOf(game, oi);
-  const soft = [];
-  for (const c of list) {
-    if (soft.length >= 2) break;
-    if (c.kind === 'h') continue; // 总部不合兵打不下来
-    if (c.ref && c.ref.owner === oi) continue;
-    if (enemyPowerNear(game, oi, c.x, c.y, 600) > myPow * 0.35) continue;
-    if (soft.some((s) => dist(s.x, s.y, c.x, c.y) < 900)) continue; // 别在同一个点开两条线
-    soft.push(c);
-  }
-  if (soft.length < 2) return null;
+const MARCH_SPD = 55; // 与 think 里赶路宽限同口径（px/s）
+const PRONG_SEP = 1200; // 两条线的目标至少隔这么远，否则就是同一场仗
+const PRONG_MAX_ETA = 200; // 这一股预计超过这么久还拿不下来 → 这条线不值得开
+const PRONG_STICK_MS = 22000; // 分兵目标粘性：半路改道比分错一次更亏
 
-  const groups = soft.map(() => []);
+function buildingHp(target) {
+  return target && target.ref && target.ref.hp != null ? target.ref.hp : 3000;
+}
+
+/**
+ * 一股兵拆掉这座建筑要多久：按「谁先走到谁先开火」积分，不是全员到齐再打。
+ * 全军叠在出生点时，这就是「行军 + 拆楼」；已经有人围着打时，eta 会明显短于后到的人。
+ */
+function captureEta(units, target) {
+  if (!units || !units.length || !target) return Infinity;
+  const arrivals = units
+    .map((u) => ({
+      t: dist(u.x, u.y, target.x, target.y) / MARCH_SPD,
+      dps: unitDps(u),
+    }))
+    .sort((a, b) => a.t - b.t);
+  let dps = 0;
+  let left = buildingHp(target);
+  let t = 0;
+  for (const a of arrivals) {
+    const dt = a.t - t;
+    if (dps > 0.4) {
+      const dealt = dps * dt;
+      if (dealt >= left) return t + left / dps;
+      left -= dealt;
+    }
+    t = a.t;
+    dps += a.dps;
+  }
+  if (dps < 0.4) return Infinity;
+  return t + left / dps;
+}
+
+/** 全军串行：拿完一座，人从那座走到下一座再拆（扩张窗口浪费在路上的那条对照基线） */
+function sequentialEta(units, targets) {
+  if (!units || !units.length || !targets.length) return { makespan: Infinity, first: Infinity, times: [] };
+  let cx = 0;
+  let cy = 0;
   for (const u of units) {
+    cx += u.x;
+    cy += u.y;
+  }
+  cx /= units.length;
+  cy /= units.length;
+  const dps = Math.max(0.4, armyDps(units));
+  let t = 0;
+  const left = targets.slice();
+  const finish = [];
+  while (left.length) {
     let bi = 0;
     let bd = Infinity;
-    for (let i = 0; i < soft.length; i++) {
-      const d = dist(u.x, u.y, soft[i].x, soft[i].y);
+    for (let i = 0; i < left.length; i++) {
+      const d = dist(cx, cy, left[i].x, left[i].y);
       if (d < bd) {
         bd = d;
         bi = i;
       }
     }
-    groups[bi].push(u);
+    const c = left.splice(bi, 1)[0];
+    t += bd / MARCH_SPD + buildingHp(c) / dps;
+    finish.push(t);
+    cx = c.x;
+    cy = c.y;
   }
-  const min = Math.max(3, Math.round(units.length / 4));
-  if (groups.some((g) => g.length < min)) return null;
-  return soft.map((c, i) => ({ target: c, units: groups[i] }));
+  return { makespan: t, first: finish[0], times: finish };
+}
+
+/**
+ * 按目标价值配额分兵，而不是「每人就近」。
+ *
+ * ⚠️ 开局 6 个亲兵几乎叠在同一格：就近分配时距离全相等（或只差几十 px），
+ * `d < bd` 会把整队倒进列表里的第一座建筑，第二路 0 人 → 旧 pickProngs 直接放弃。
+ * 人就这么一坨出去，拿完高价值再横穿半张图 —— 正是用户看到的问题。
+ */
+function assignProngUnits(units, targets) {
+  const n = units.length;
+  const totalScore = targets.reduce((a, t) => a + Math.max(0.1, t.score), 0);
+  const cap = targets.map((t) =>
+    Math.max(3, Math.round((n * Math.max(0.1, t.score)) / totalScore))
+  );
+  let capSum = cap.reduce((a, b) => a + b, 0);
+  // 配额加总要对上人数：多的补给价值最高的，少的从价值最低的往下砍（不低于 3）
+  while (capSum < n) {
+    cap[0] += 1;
+    capSum += 1;
+  }
+  while (capSum > n) {
+    let cut = -1;
+    for (let i = cap.length - 1; i >= 0; i--) {
+      if (cap[i] > 3) {
+        cut = i;
+        break;
+      }
+    }
+    if (cut < 0) break;
+    cap[cut] -= 1;
+    capSum -= 1;
+  }
+
+  const groups = targets.map((target) => ({ target, units: [] }));
+  // 对某一路明显更近的兵先分配，叠在一起、没有偏好的兵按配额填
+  const ordered = units.slice().sort((a, b) => {
+    const spread = (u) => {
+      let lo = Infinity;
+      let hi = 0;
+      for (const t of targets) {
+        const d = dist(u.x, u.y, t.x, t.y);
+        if (d < lo) lo = d;
+        if (d > hi) hi = d;
+      }
+      return hi - lo;
+    };
+    return spread(b) - spread(a);
+  });
+  for (const u of ordered) {
+    let bi = -1;
+    let bd = Infinity;
+    for (let i = 0; i < targets.length; i++) {
+      if (groups[i].units.length >= cap[i]) continue;
+      const d = dist(u.x, u.y, targets[i].x, targets[i].y);
+      if (d < bd) {
+        bd = d;
+        bi = i;
+      }
+    }
+    if (bi < 0) {
+      for (let i = 0; i < targets.length; i++) {
+        const d = dist(u.x, u.y, targets[i].x, targets[i].y);
+        if (d < bd) {
+          bd = d;
+          bi = i;
+        }
+      }
+    }
+    groups[Math.max(0, bi)].units.push(u);
+  }
+  return groups;
+}
+
+function prongMakespan(groups) {
+  let m = 0;
+  const times = [];
+  for (const g of groups) {
+    const e = captureEta(g.units, g.target);
+    times.push(e);
+    if (e > m) m = e;
+  }
+  return { makespan: m, first: Math.min.apply(null, times), times };
+}
+
+/**
+ * 前中期把部队拆成至多 2 股，并行去占两座软目标。
+ *
+ * 分不分，看三条时间线，不是看「第二名高价值在不在列表里」：
+ *   串行 makespan = 全军拿 A 再走到 B 再拿 B；
+ *   并行 makespan = 两股各自拆完的较晚者；
+ *   主目标延误 = 分兵后 A 的 eta / 全军先打 A 的 eta。
+ * 并行能更早拿下「两座都到手」，且主目标不会被抽空拖成添油，才拆。
+ *
+ * 总部永远不合兵打不下来，这里直接跳过。
+ *
+ * @returns {null|Array<{target:object, units:Array}>}
+ */
+function pickProngs(game, oi, stance, state, units, tNow) {
+  if (stance !== 'develop' && stance !== 'skirmish') {
+    if (state) state.prongKeys = null;
+    return null;
+  }
+  if (!units || units.length < 6) {
+    if (state) state.prongKeys = null;
+    return null;
+  }
+  const list = rankTargets(game, oi, stance, state, tNow);
+  const myPow = powerOf(game, oi);
+  const soft = [];
+  for (const c of list) {
+    if (soft.length >= 5) break;
+    if (c.kind === 'h') continue;
+    if (c.ref && c.ref.owner === oi) continue;
+    if (enemyPowerNear(game, oi, c.x, c.y, 600) > myPow * 0.35) continue;
+    if (soft.some((s) => dist(s.x, s.y, c.x, c.y) < PRONG_SEP)) continue;
+    soft.push(c);
+  }
+  if (soft.length < 2) {
+    if (state) state.prongKeys = null;
+    return null;
+  }
+
+  const minN = Math.max(3, Math.round(units.length / 4));
+  let ax = 0;
+  let ay = 0;
+  for (const u of units) {
+    ax += u.x;
+    ay += u.y;
+  }
+  ax /= units.length;
+  ay /= units.length;
+  const scorePair = (targets) => {
+    if (dist(targets[0].x, targets[0].y, targets[1].x, targets[1].y) < PRONG_SEP) return null;
+    // 从部队重心看，两座目标几乎在同一条射线上、一前一后 → 就是顺路。
+    // 分兵会让后队路过前一座却不帮忙，串行「拿完近的接着推」更快。
+    {
+      const vx0 = targets[0].x - ax;
+      const vy0 = targets[0].y - ay;
+      const vx1 = targets[1].x - ax;
+      const vy1 = targets[1].y - ay;
+      const l0 = Math.hypot(vx0, vy0) || 1;
+      const l1 = Math.hypot(vx1, vy1) || 1;
+      const cos = (vx0 * vx1 + vy0 * vy1) / (l0 * l1);
+      if (cos > 0.7 && Math.abs(l0 - l1) > 350) return null;
+    }
+    const groups = assignProngUnits(units, targets);
+    if (groups.some((g) => g.units.length < minN)) return null;
+    const par = prongMakespan(groups);
+    if (par.times.some((e) => !Number.isFinite(e) || e > PRONG_MAX_ETA)) return null;
+    const seq = sequentialEta(units, targets);
+    // 主目标取价值更高的那座（不是地理更近的那座）
+    const primary = targets[0].score >= targets[1].score ? targets[0] : targets[1];
+    const tAllFirst = captureEta(units, primary);
+    const gPri = groups.find((g) => g.target === primary) || groups[0];
+    const tParFirst = captureEta(gPri.units, primary);
+    const delay = tParFirst / Math.max(1, tAllFirst);
+    // 并行拿下两座要明显快于串行；主目标最多拖到 1.7 倍（抽太多就变成两路都啃不动）
+    if (!(par.makespan * 1.06 < seq.makespan && delay <= 1.7)) return null;
+    return { groups, gain: seq.makespan / Math.max(1, par.makespan), delay };
+  };
+
+  let best = null;
+  // 粘性：上一轮那对目标还在软列表里，优先沿用（避免 0.7s 一思考就改道）
+  if (state && Array.isArray(state.prongKeys) && tNow - (state.prongAt || 0) < PRONG_STICK_MS) {
+    const kept = [];
+    for (const k of state.prongKeys) {
+      const c = soft.find((s) => targetKey(s) === k);
+      if (c) kept.push(c);
+    }
+    if (kept.length >= 2) best = scorePair(kept.slice(0, 2));
+  }
+  if (!best) {
+    for (let i = 0; i < soft.length; i++) {
+      for (let j = i + 1; j < soft.length; j++) {
+        const pair = [soft[i], soft[j]];
+        // 价值高的放前面，配额才会把略多的兵留给主目标
+        if (pair[1].score > pair[0].score) pair.reverse();
+        const got = scorePair(pair);
+        if (got && (!best || got.gain > best.gain)) best = got;
+      }
+    }
+  }
+  if (!best) {
+    if (state) state.prongKeys = null;
+    return null;
+  }
+  if (state) {
+    state.prongKeys = best.groups.map((g) => targetKey(g.target));
+    state.prongAt = tNow;
+  }
+  return best.groups;
 }
 
 /* ---------------- 集结：先聚兵，再压上去 ---------------- */
@@ -1147,8 +1428,9 @@ function splitMarch(game, target, units, cmds) {
  *
  * 调度优先级：
  *   ① 回防 / 换家判决（homeDefense）
- *   ② 未集结完成 → 前中期分兵多线扩张，否则机动部队去集结（守军照常护家）
- *   ③ 已集结    → 机动部队扑向主目标
+ *   ② 前中期软目标 → 用行军/拆楼时间评估后分兵（不因主目标 committed 就全员归一）
+ *   ③ 中立无人守 → 直接去打，不在集结点空等
+ *   ④ 已集结 / 还在集结 → 扑向主目标或去前压点
  */
 function assignUnits(game, oi, stance, target, threats, def, stage, committed, state, tNow, posture) {
   const cmds = [];
@@ -1311,8 +1593,9 @@ function assignUnits(game, oi, stance, target, threats, def, stage, committed, s
         splitMarch(game, harass.target, harass.units, cmds);
       }
     }
-    // 前中期还没发动总攻 → 分兵多线同时扩张（单线推进太慢，见 pickProngs）
-    const prongs = !committed && target ? pickProngs(game, oi, stance, state, mobile, tNow) : null;
+    // 前中期软目标：用时间线评估后分兵。总部必须合兵，committed 也不准把两路合成一路。
+    const prongs =
+      target && target.kind !== 'h' ? pickProngs(game, oi, stance, state, mobile, tNow) : null;
     if (prongs) {
       for (const g of prongs) splitMarch(game, g.target, g.units, cmds);
     } else if (!mobile.length) {
@@ -1321,6 +1604,9 @@ function assignUnits(game, oi, stance, target, threats, def, stage, committed, s
       if (stage) cmds.push({ cmd: 'move', x: Math.round(stage.x), y: Math.round(stage.y), ids: mobile.map((u) => u.id) });
     } else if (committed) {
       // 全军扑向主目标：已到门口的强拆，还在赶路的边走边打（补充兵也由集结点直发战场）
+      splitMarch(game, target, mobile, cmds);
+    } else if (target.ref && target.ref.owner < 0) {
+      // 中立无人守：行军就是扩张，别在前压点空等半支军队
       splitMarch(game, target, mobile, cmds);
     } else if (stage) {
       // 还没凑够人：先到前压集结点会合（移动途中照常自动索敌开火）
@@ -1443,6 +1729,7 @@ module.exports = {
     detectStance,
     rankTargets,
     pickTarget,
+    armyCentroid,
     pickProngs,
     detectThreats,
     homeDefense,

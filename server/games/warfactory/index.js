@@ -29,6 +29,8 @@
 const WFData = require('./data.js'); // 平衡数据总表：兵种 / 进化 / 科技费用 / 建筑 / 总部 / 激光 / 火焰
 const WFMaps = require('./maps.js'); // 自定义地图仓库（地形编辑器导出的 maps/warfactory/*.json）
 const WFBot = require('./bot.js'); // 对战机器人（困难档）：think() 输出 setPlayerInput 指令
+const WFPerlin = require('./perlin.js'); // 柏林噪声（https://gitee.com/sli97/pcg）
+const WFRvo = require('./rvo.js'); // RVO2/ORCA 单位避障（https://github.com/warmtrue/RVO2-Unity）
 
 // 世界是**正方形**：11520 × 11520（N 重旋转对称要求纵横同尺度，否则转 90° 会把地图转出界）。
 // 格子边长 TERR_CELL 保持不变（40px），故行列同为 288（见 TERR_COLS / TERR_ROWS）。
@@ -102,11 +104,14 @@ const PROD_SPEED_MAX = WFData.tech.prodSpeedMax; // 升级次数上限
 const PROD_SPEED_STEP = WFData.tech.prodSpeedStep; // 每次在现有间隔上再减少的比例
 
 // ---- 第 7 项：研究所「研究产线」----
-// 研究所也能花科技点开拓 1 条研究产线（每座最多 1 条，点击即生效、无二级选择）。
-// 开拓后该研究所的科技点产出 +50%（每座每 3 秒 2 点 → 3 点）。
+// 研究所可花科技点开拓研究产线（每座最多 LAB_MAX_LINES 条，点击即生效、无二级选择）。
+// 每开拓一条，该所每周期产出 +LAB_LINE_RP_BONUS（与基数相加，不是倍率）。
 const LAB_LINE_COST = WFData.tech.labLineCost; // 开拓研究产线消耗的科技点
 const LAB_MAX_LINES = WFData.tech.labMaxLines; // 每座研究所最多开拓的产线条数
-const LAB_LINE_RP_MUL = WFData.tech.labLineRpMul; // 已开拓产线的研究所产出倍率（+50%）
+const LAB_LINE_RP_BONUS = Math.max(
+  0,
+  Math.round(Number(WFData.tech.labLineRpBonus != null ? WFData.tech.labLineRpBonus : 1))
+); // 每条产线每周期额外产出
 
 // ---- 第 6 项：总部防卫 ----
 // 总部自带防卫火力：锁定进入射程的敌方部队，先亮出明显的攻击前摇，再一发直伤。
@@ -296,14 +301,16 @@ const TERRAIN_CLEAR_CELLS = 3; // 建筑周围清理「山地/水域」的格子
 //   blob  山块 / 湖泊：round 控制方圆（0 = 矩形台地，1 = 椭圆湖）
 //   ring  环形山：一圈墙 + 若干缺口
 // 位置随机但**吸附到 SHAPE_SNAP 的整数倍**、方向只取正交 → 每局摆位不同、
-// 结构却是同一套：墙是直的、块是方的、湖是圆的，看着像人画的关卡图。
+// 结构却是同一套：墙大致顺直、山块圆角、湖是圆的。收尾还有 roundTerrainEdges
+// 削掉外缘直角锯齿（对角切角禁令下，方角会把窄路卡死）。
 const SHAPE_SNAP = 4; // 图元中心吸附的格距（越大越有「格子纸上画图」的整齐感）
 const SHAPE_TRY = 24; // 有落笔白名单时，图元中心最多试几个候选位（见 shapeCenter）
 // 每种图元的兜底参数：主题里没写的字段落回这里（写法见 data.js 的 themes 段）
 const SHAPE_DEFAULTS = {
   // len 是「世界宽度的倍数」；gap / gapW 是隘口的间距与宽度（格）
   wall: { count: [5, 7], len: [0.3, 0.5], thick: [3, 4], gap: [44, 72], gapW: [10, 14], dir: 'hv' },
-  blob: { count: [3, 5], w: [12, 24], h: [12, 24], round: 0.2 },
+  // round 0.78 → 超椭圆指数 ≈ 3.8：明显圆角，少直角台地（0.2 ≈ 指数 8.4 的方砖）
+  blob: { count: [3, 5], w: [12, 24], h: [12, 24], round: 0.78 },
   ring: { count: [1, 1], r: [24, 34], thick: [4, 6], gap: [3, 4] },
 };
 
@@ -470,6 +477,18 @@ THEME_FALLBACK.maxBlocked = Math.max(
   THEME_FALLBACK.maxBlocked,
   THEME_FALLBACK.mix.mountain + THEME_FALLBACK.mix.water + 0.05
 );
+/** 柏林噪声默认参数（与 Gitee sli97/pcg MapManager 默认值对齐） */
+const NOISE_FALLBACK = {
+  scale: 40,
+  octaves: 5,
+  persistance: 0.5,
+  lacunarity: 2,
+  offsetX: 0,
+  offsetY: 0,
+  /** 可选地貌偏置：'none' | 'centerWater' | 'ringMountain' | 'stretchH' | 'stretchV' */
+  bias: 'none',
+};
+THEME_FALLBACK.noise = Object.assign({}, NOISE_FALLBACK);
 
 /**
  * 中心圈补地形的默认值（主题里没写 core 就用它）。
@@ -496,6 +515,15 @@ const FLOW_BUILD_BASE = 24; // 每步保底新建额度
 const FLOW_BUILD_PER_UNIT = 2; // 每在场单位再加多少（单位多、目标分散时才容易不够）
 const FLOW_BUILD_MAX = 256; // 硬上限：再多人也不会让单步无限建场
 const FLOW_CACHE_MAX = 192; // 流场缓存上限（按目标格缓存）—— 同步调大，别让缓存先于预算失效
+
+// ---- RVO2 / ORCA 单位避障（https://github.com/warmtrue/RVO2-Unity，Apache-2.0）----
+// 流场给出「想往哪走」的期望速度；ORCA 在邻域里半责任让开，再交给 slideStep 落地。
+// 静态障碍（山/建筑）仍走 canStand + separateUnits，不进 RVO 障碍多边形。
+const RVO_CFG = (WFData.rvo) || {};
+const RVO_NEIGHBOR_DIST = Math.max(40, Number(RVO_CFG.neighborDist != null ? RVO_CFG.neighborDist : 140));
+const RVO_MAX_NEIGHBORS = Math.max(1, Math.round(Number(RVO_CFG.maxNeighbors != null ? RVO_CFG.maxNeighbors : 10)));
+const RVO_TIME_HORIZON = Math.max(0.2, Number(RVO_CFG.timeHorizon != null ? RVO_CFG.timeHorizon : 1.25));
+const RVO_ENABLED = RVO_CFG.enabled === false ? false : true;
 // ---- 山体遮挡（山有高度）----
 // 山地不只是「不可通行」：它还会挡住视线与弹道，山两侧的单位互相看不见、打不到。
 // 水域只是不可通行（平面），不遮挡视线，弹丸照常飞过水面。
@@ -675,7 +703,22 @@ function fillMix(t, maxBlocked, shapes) {
   return { mountain: Math.max(0, m), water: Math.max(0, w) };
 }
 
-/** 把主题的字段补齐：主题里没写的就落回 THEME_FALLBACK（shapes 逐条再落回 SHAPE_DEFAULTS） */
+/** 主题柏林噪声参数补齐（缺字段落回 NOISE_FALLBACK） */
+function fillNoise(t) {
+  const raw = (t && t.noise) || {};
+  const fb = NOISE_FALLBACK;
+  return {
+    scale: raw.scale != null ? Number(raw.scale) : fb.scale,
+    octaves: raw.octaves != null ? Number(raw.octaves) : fb.octaves,
+    persistance: raw.persistance != null ? Number(raw.persistance) : fb.persistance,
+    lacunarity: raw.lacunarity != null ? Number(raw.lacunarity) : fb.lacunarity,
+    offsetX: raw.offsetX != null ? Number(raw.offsetX) : fb.offsetX,
+    offsetY: raw.offsetY != null ? Number(raw.offsetY) : fb.offsetY,
+    bias: raw.bias != null ? String(raw.bias) : fb.bias,
+  };
+}
+
+/** 把主题的字段补齐：主题里没写的就落回 THEME_FALLBACK（shapes 仍保留作兼容，主生成已改噪声） */
 function fillTheme(t) {
   if (!t) return THEME_FALLBACK;
   const shapes = Array.isArray(t.shapes) && t.shapes.length ? t.shapes.map(fillShape) : THEME_FALLBACK.shapes;
@@ -695,6 +738,7 @@ function fillTheme(t) {
     snap: t.snap == null ? THEME_FALLBACK.snap : t.snap,
     maxBlocked,
     mix,
+    noise: fillNoise(t),
     core: {
       r: t.core && t.core.r != null ? t.core.r : CORE_FALLBACK.r,
       fill: t.core && t.core.fill != null ? t.core.fill : CORE_FALLBACK.fill,
@@ -964,40 +1008,182 @@ function wedgeCellAt(x, y, n, dim) {
  * @param {number} [n] 对称阶数（= 玩家人数 2/3/4），缺省 4
  * @returns {number[][]} grid[r][c] ∈ {0,2,4}
  */
-function generateTerrainGrid(rng, theme, n) {
-  const th = theme && theme.shapes ? theme : fillTheme(theme);
+/**
+ * 按主题 bias 微调噪声场（在分位阈值之前）。
+ * 高值 → 山、低值 → 水（与 paintWedgeByNoise 一致）。
+ */
+function applyNoiseBias(noiseMap, dim, bias) {
+  if (!bias || bias === 'none') return;
+  const cols = dim.cols;
+  const rows = dim.rows;
+  const halfPx = Math.min(WORLD_W, WORLD_H) / 2;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const rn = Math.hypot((c + 0.5) * TERR_CELL, (r + 0.5) * TERR_CELL) / halfPx;
+      let v = noiseMap[c][r];
+      if (bias === 'centerWater') {
+        // 中心压低噪声 → 更容易成水（汪洋）
+        const k = clamp(1 - rn * 1.1, 0, 1);
+        v = v * (1 - 0.55 * k);
+      } else if (bias === 'ringMountain') {
+        // 环形带抬高噪声 → 环形山
+        const band = Math.exp(-((rn - 0.38) * (rn - 0.38)) / (2 * 0.09 * 0.09));
+        v = v * (1 - 0.35 * band) + band * 0.95;
+      } else if (bias === 'stretchH') {
+        // 横纹感：叠加低频竖向波（壁垒）
+        v = clamp(v * 0.7 + 0.3 * (0.5 + 0.5 * Math.sin(r / 7)), 0, 1);
+      } else if (bias === 'stretchV') {
+        // 纵纹感（裂谷）
+        v = clamp(v * 0.7 + 0.3 * (0.5 + 0.5 * Math.sin(c / 7)), 0, 1);
+      } else if (bias === 'cornerMountain') {
+        // 角上抬高（群山 / 超级平原保底起伏）
+        const corner = Math.max(rn - 0.75, 0) / 0.35;
+        v = clamp(v + corner * 0.35, 0, 1);
+      }
+      noiseMap[c][r] = v;
+    }
+  }
+}
+
+/**
+ * 把楔形噪声场按 mix 分位阈值成山 / 水 / 平原。
+ * 高噪声 → 山、低噪声 → 水；额度按 wt 加权，贴 th.mix。
+ * @returns {Float32Array} 楔形线性噪声（供 topUp 继续按噪声补）
+ */
+function paintWedgeByNoise(wedge, noiseMap, dim, used, wt, total, mixM, mixW) {
+  const cols = dim.cols;
+  const flat = new Float32Array(dim.rows * cols);
+  for (let r = 0; r < dim.rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      flat[r * cols + c] = noiseMap[c][r];
+      wedge[r][c] = TT_PLAIN;
+    }
+  }
+  const items = new Array(used.length);
+  for (let k = 0; k < used.length; k++) {
+    const i = used[k];
+    items[k] = { i, n: flat[i], w: wt[i] };
+  }
+  const wantM = total * Math.max(0, mixM);
+  const wantW = total * Math.max(0, mixW);
+
+  items.sort((a, b) => b.n - a.n);
+  let gotM = 0;
+  for (let k = 0; k < items.length && gotM < wantM; k++) {
+    const it = items[k];
+    const r = (it.i / cols) | 0;
+    const c = it.i % cols;
+    wedge[r][c] = TT_MOUNTAIN;
+    gotM += it.w;
+  }
+
+  items.sort((a, b) => a.n - b.n);
+  let gotW = 0;
+  for (let k = 0; k < items.length && gotW < wantW; k++) {
+    const it = items[k];
+    const r = (it.i / cols) | 0;
+    const c = it.i % cols;
+    if (wedge[r][c] !== TT_PLAIN) continue;
+    wedge[r][c] = TT_WATER;
+    gotW += it.w;
+  }
+  return flat;
+}
+
+/**
+ * 在候选平原格上按噪声继续「晋升」为山 / 水，补到目标加权格数。
+ * @returns {{addedM:number, addedW:number}}
+ */
+function promoteNoiseOnWedge(wedge, noiseFlat, dim, wt, candidates, addM, addW) {
+  const cols = dim.cols;
+  const plains = [];
+  for (let k = 0; k < candidates.length; k++) {
+    const i = candidates[k];
+    const r = (i / cols) | 0;
+    const c = i % cols;
+    if (wedge[r][c] !== TT_PLAIN) continue;
+    plains.push({ i, n: noiseFlat[i], w: wt[i] });
+  }
+  let addedM = 0;
+  let addedW = 0;
+  if (addM > 0) {
+    plains.sort((a, b) => b.n - a.n);
+    for (let k = 0; k < plains.length && addedM < addM; k++) {
+      const it = plains[k];
+      const r = (it.i / cols) | 0;
+      const c = it.i % cols;
+      if (wedge[r][c] !== TT_PLAIN) continue;
+      wedge[r][c] = TT_MOUNTAIN;
+      addedM += it.w;
+    }
+  }
+  if (addW > 0) {
+    plains.sort((a, b) => a.n - b.n);
+    for (let k = 0; k < plains.length && addedW < addW; k++) {
+      const it = plains[k];
+      const r = (it.i / cols) | 0;
+      const c = it.i % cols;
+      if (wedge[r][c] !== TT_PLAIN) continue;
+      wedge[r][c] = TT_WATER;
+      addedW += it.w;
+    }
+  }
+  return { addedM, addedW };
+}
+
+/**
+ * 用柏林噪声生成整张地形网格（D_N 对称：噪声画在楔形上再折叠展开）。
+ * 算法来自 https://gitee.com/sli97/pcg（generateNoiseMap + 分位阈值）。
+ * @param {object} [out] 可选：写入 { noise, noiseSeed } 供补地形复用
+ */
+function generateTerrainGrid(rng, theme, n, out) {
+  const th = theme && theme.mix ? theme : fillTheme(theme);
   const order = symOrder(n == null ? SYM_MAX_N : n);
   const dim = wedgeDims(order);
-  const snap = Math.max(1, Math.round(th.snap || SHAPE_SNAP));
 
   // ① 楔形母图：整片平原起步
   const wedge = [];
   for (let r = 0; r < dim.rows; r++) wedge[r] = new Array(dim.cols).fill(TT_PLAIN);
-  // own：每格记下「最后盖上去的图元序号」，撤图元时按它整块还原
-  const own = new Int32Array(dim.rows * dim.cols).fill(-1);
-  // 楔形是「半扇区」的外接矩形，矩形里有相当一部分**永远采样不到**：
-  // ① 落在扇区外（角度 > π/N）；② 半径超过世界半宽 / 半高，D_N 的像全在图外。
-  // （正方形地图上 ② 尤其明显：楔形外接矩形的角上那一大块，转出来的像全都出界。）
-  // 所以额度按「这一格在世界里值几格」加权（wedgeWeights），直接等于世界格数 ——
-  // 主题写 maxBlocked 0.28，玩家看到的就是 28% 的山加水。
+  // 楔形是「半扇区」的外接矩形，矩形里有相当一部分**永远采样不到** ——
+  // 额度按「这一格在世界里值几格」加权（wedgeWeights），直接等于世界格数。
   const { used, wt, total } = wedgeWeights(order, dim);
-  // maxBlocked 只是**硬上限**（最后 clampBlocked 兜底）；真正要盖到的是 th.mix 的合计 ——
-  // 按上限盖的话，主题写 mix 合计 11%、maxBlocked 13% 时会一路盖到 13%，预设就形同虚设。
-  const limit = Math.floor(total * clamp(th.maxBlocked, 0, 0.9));
-  const goalTotal = Math.floor(total * clamp(th.mix.mountain + th.mix.water, 0, 0.9));
-  // 图元额度：每种盖几个（先各摇一个数）
-  const plan = shapePlan(rng, th.shapes);
-  // 钉死的图元：写了 at:'center' / at:'corner' 的都是「主路够不到」的锚点图元
-  // （正中央 / 四角），它们是这局地貌的保底 —— 超额撤图元时**不许撤它们**，
-  // 否则「超级平原」这种额度很小的主题会把保底的那几块也撤掉，最后整张图光溜溜。
-  const keep = new Set();
-  // 山 / 水各有自己的目标量（th.mix，占全图比例 → 这里换成加权格数）
-  const mixAbs = { mountain: total * th.mix.mountain, water: total * th.mix.water };
-  const id = runStamps(wedge, own, dim, used, wt, rng, plan, snap, order, limit * 0.95, null, keep, null, mixAbs, true);
-  // 覆盖率封顶：先整块撤图元，不够再从边缘削
-  clampShapes(wedge, own, goalTotal, id, used, keep, wt);
+  const nc = th.noise || NOISE_FALLBACK;
+  // 种子来自本局 rng，保证可复现
+  const noiseSeed = Math.max(1, Math.floor((rng() * 0xfffffe) + 1));
+  // stretch 主题：采样尺度在某一轴上拉长（壁垒横纹 / 裂谷纵纹）
+  let scale = Math.max(4, Number(nc.scale) || 40);
+  let offsetX = Number(nc.offsetX) || 0;
+  let offsetY = Number(nc.offsetY) || 0;
+  if (nc.bias === 'stretchH') scale = Math.max(scale, 55);
+  if (nc.bias === 'stretchV') scale = Math.max(scale, 55);
+  const noiseMap = WFPerlin.generateNoiseMap(
+    dim.cols,
+    dim.rows,
+    noiseSeed,
+    scale,
+    nc.octaves,
+    nc.persistance,
+    nc.lacunarity,
+    { x: offsetX, y: offsetY }
+  );
+  applyNoiseBias(noiseMap, dim, nc.bias);
+  const noiseFlat = paintWedgeByNoise(
+    wedge,
+    noiseMap,
+    dim,
+    used,
+    wt,
+    total,
+    th.mix.mountain,
+    th.mix.water
+  );
+  // 硬上限：噪声分位已经贴 mix，一般不会超；仍兜底一次
   clampBlocked(wedge, th.maxBlocked);
 
+  if (out) {
+    out.noise = noiseFlat;
+    out.noiseSeed = noiseSeed;
+  }
   // ② 折叠采样出整张世界图
   return renderWorldFromWedge(wedge, order, dim);
 }
@@ -1429,69 +1615,85 @@ function topUpTerrain(game, n, extra, lossK, okMask) {
   const gen = game && game._mapGen;
   if (!gen || !game.terrain || !game.terrain.grid) return false;
   const th = gen.theme;
-  if (!th || !th.shapes || !th.shapes.length || !game.hqs || game.hqs.length < 2) return false;
+  if (!th || !th.mix || !game.hqs || game.hqs.length < 2) return false;
   const order = symOrder(n == null ? SYM_MAX_N : n);
   const dim = wedgeDims(order);
-  const rng = gen.rng;
-  const snap = Math.max(1, Math.round(th.snap || SHAPE_SNAP));
 
   const banned = bannedWedgeCells(game, order, dim, extra);
   // ② 还原楔形母图，并找出还能落笔的空地（额度一律按「世界里值几格」加权）
   const wedge = wedgeFromWorld(game.terrain.grid, order, dim);
-  const own = new Int32Array(dim.rows * dim.cols).fill(-1);
   const { used, wt, total } = wedgeWeights(order, dim);
+  ensureMapGenNoise(gen, dim, order);
+  const noiseFlat = gen.noise;
+  if (!noiseFlat) return false;
   const cur = { mountain: 0, water: 0 };
   for (const i of used) {
     const v = wedge[(i / dim.cols) | 0][i % dim.cols];
     if (v === TT_MOUNTAIN) cur.mountain += wt[i];
     else if (v === TT_WATER) cur.water += wt[i];
   }
+  const candidates = [];
   let free = 0;
-  for (const i of used) if (okMask ? okMask[i] : !banned[i]) free += wt[i];
-  if (!free) return false;
+  for (const i of used) {
+    if (okMask ? !okMask[i] : banned[i]) continue;
+    free += wt[i];
+    candidates.push(i);
+  }
+  if (!free || !candidates.length) return false;
   // 山 / 水各差多少 → 按主题的 mix 补齐（谁缺得多补谁，比例始终贴着预设）。
   // **缺口要按 loss 放大后再算**：mix 说的是**重挖走廊之后**地图上该有多少地形，
-  // 而这里画的量随即会被走廊削掉一大半。早先拿「mix − 当前量」当缺口，
-  // topUpCore 一把把楔形盖到预设之后这里就恒为 0、整轮什么都不补 ——
-  // 实际地图永远停在预设的六成（实测 3 人局 25% / 预设 40%）。
+  // 而这里画的量随即会被走廊削掉一大半。
   const corr = clamp(Number(gen.corrFrac), 0, 0.85);
   const loss0 = lossK > 0 ? clamp(lossK, 1, 4) : clamp(1 / Math.max(0.15, 1 - corr), 1, 2.5);
-  // 倍率乘在「目标」而不是「缺口」上，是因为 cur 这一刻是**楔形**里的量：它要按
-  // loss 放大后才是「重挖之前该有多少」—— 否则 topUpCore 一把把楔形盖到预设之后，
-  // 这里的缺口就恒为 0、整轮放弃（实测这就是大部分局只到预设七成的直接原因）。
-  // 只乘缺口会让「已经盖够预设、但重挖后必然不够」的情况直接躺平。
   const wantM = Math.max(0, total * th.mix.mountain * TOP_UP_CLEAN_K * loss0 - cur.mountain);
   const wantW = Math.max(0, total * th.mix.water * TOP_UP_CLEAN_K * loss0 - cur.water);
   const want = wantM + wantW;
   if (want <= 0) return false;
-  // 空地能承受的量：主路吃得多的时候不能硬塞满剩下的空地，否则那片空地会被塞成一整块实心山
+  // 空地能承受的量：主路吃得多的时候不能硬塞满剩下的空地
   const room = Math.min(want, free * TOP_UP_FILL);
   const k = room / want;
-  // 落笔**不用逐格白名单**：世界里的走廊折回楔形是碎片化的，逐格筛会把图元打出
-  // 一片小孔，剩下的边角就是「小山小湖」（实测连通块中位数只有 6 格）。
-  // 改成整块盖下去，随后重挖走廊（调用方会再跑一遍清场 / 隔离带 / 主路）即可 ——
-  // 路是连成片的宽带，切出来的断面是干净的，不会留一地碎屑。
-  // 代价是盖在走廊里的那部分白盖了，所以额度要按走廊占比补偿回来。
-  // 补偿系数：走廊（主路 / 隔离带 / 建筑清场圈）能占到半张图，盖在走廊上的地形随后会被
-  // 重挖掉。早先这里按 free 占比拍一个 1~2.5 的数，实测存活率只有 0.5 左右、差得远；
-  // 现在由调用方按**上一轮实测存活率**回传（lossK = 1/存活率），第一轮没有就落回拍估值。
-  const loss = loss0;
-  // 缺口里已经含了 loss，这里不能再乘一次
-  const mixAbs = { mountain: cur.mountain + wantM * k, water: cur.water + wantW * k };
-  // 上限同样要按 loss 放大：maxBlocked 说的是**最终**地图上不可通行的占比，而 mixAbs 是
-  // 重挖**之前**的目标量 —— 三条主路铺开之后走廊能吃掉半张图（实测 4 人局 48%），
-  // 不放大就等于「补到上限、再被削掉一半」，永远停在预设的六成（实测 21% / 预设 39%）。
-  capMixSum(mixAbs, Math.min(total, total * clamp(th.maxBlocked, 0, 0.9) * loss));
-  void 0;
-  const plan = shapePlan(rng, th.shapes.filter((s) => !s.at));
-  if (!plan.length) return false;
-  // 不 clampShapes：整块撤图元时会把它压在下面的**原有地形**一起清掉，净增反而变负
-  // （实测 1368 → 824）。runStamps 是「盖一个查一次」，且收尾优先挑小图元，误差很小。
-  runStamps(wedge, own, dim, used, wt, rng, plan, snap, order, 0, okMask || null, null, null, mixAbs, false);
-  // 记下「重挖走廊之前」的量，调用方据此算这一轮的存活率
+  let addM = wantM * k;
+  let addW = wantW * k;
+  // 上限按 loss 放大（重挖之前的目标量）
+  const cap = Math.min(total, total * clamp(th.maxBlocked, 0, 0.9) * loss0);
+  const after = cur.mountain + cur.water + addM + addW;
+  if (after > cap && after > 0) {
+    const shrink = Math.max(0, cap - cur.mountain - cur.water) / (addM + addW);
+    addM *= shrink;
+    addW *= shrink;
+  }
+  // 柏林噪声补地形：在候选平原格里按噪声高低晋升为山 / 水（同 Gitee pcg 阈值思路）
+  const painted = promoteNoiseOnWedge(wedge, noiseFlat, dim, wt, candidates, addM, addW);
+  if (painted.addedM + painted.addedW <= 0) return false;
   gen.wedgeMix = wedgeMixCount(wedge, dim, used, wt);
   game.terrain.grid = renderWorldFromWedge(wedge, order, dim);
   return true;
+}
+
+/** 补地形时若噪声场丢失（旧存档 / 测试桩），按主题参数重算一张楔形噪声 */
+function ensureMapGenNoise(gen, dim, order) {
+  if (gen.noise && gen.noise.length === dim.rows * dim.cols) return;
+  const th = gen.theme || THEME_FALLBACK;
+  const nc = th.noise || NOISE_FALLBACK;
+  const seed = gen.noiseSeed || Math.max(1, Math.floor(((gen.rng && gen.rng()) || Math.random()) * 0xfffffe) + 1);
+  const noiseMap = WFPerlin.generateNoiseMap(
+    dim.cols,
+    dim.rows,
+    seed,
+    Math.max(4, Number(nc.scale) || 40),
+    nc.octaves,
+    nc.persistance,
+    nc.lacunarity,
+    { x: Number(nc.offsetX) || 0, y: Number(nc.offsetY) || 0 }
+  );
+  applyNoiseBias(noiseMap, dim, nc.bias);
+  const flat = new Float32Array(dim.rows * dim.cols);
+  for (let r = 0; r < dim.rows; r++) {
+    for (let c = 0; c < dim.cols; c++) flat[r * dim.cols + c] = noiseMap[c][r];
+  }
+  gen.noise = flat;
+  gen.noiseSeed = seed;
+  void order;
 }
 
 /**
@@ -1554,10 +1756,11 @@ function coreCircleStats(game, n) {
 }
 
 function topUpCore(game, n, extra, lossK, okMask, minGoal, fit) {
+  void fit; // 噪声补地形不再需要把长墙截短
   const gen = game && game._mapGen;
   if (!gen || !game.terrain || !game.terrain.grid) return false;
   const th = gen.theme;
-  if (!th || !th.shapes || !th.shapes.length || !game.hqs || game.hqs.length < 2) return false;
+  if (!th || !th.mix || !game.hqs || game.hqs.length < 2) return false;
   const cs = coreCircleStats(game, n);
   if (!cs || !cs.free) return false;
   const fill = cs.fill;
@@ -1571,19 +1774,12 @@ function topUpCore(game, n, extra, lossK, okMask, minGoal, fit) {
   const coreIdx = cs.idx;
   const free = cs.free;
   const blocked = cs.blocked;
-  const curM = cs.curM;
-  const curW = cs.curW;
-  const rng = gen.rng;
-  const snap = Math.max(1, Math.round(th.snap || SHAPE_SNAP));
 
   const banned = bannedWedgeCells(game, order, dim, extra);
-  const own = new Int32Array(dim.rows * dim.cols).fill(-1);
-  const zone = { r0: 0, r1: cs.rK };
-  // 中心有**专属额度**（core.budget），不跟外圈抢 —— 否则外圈面积大、先到先得，
-  // 中间永远补不上。但它**不是额外追加**的：总量仍要贴着主题的 mix 预设，
-  // 所以还要扣掉「全图还剩多少额度」（见下面的 remain）。
-  // 注意 goal 是「**新增**多少」，不是「补到多少」：中心圈里本来就有地形，
-  // 按总量算的话可补的量会被扣掉一大截，补完跟没补一样。
+  ensureMapGenNoise(gen, dim, order);
+  const noiseFlat = gen.noise;
+  if (!noiseFlat) return false;
+  // 中心有**专属额度**（core.budget），不跟外圈抢；总量仍贴主题 mix。
   let allBlocked = 0;
   let allM = 0;
   let allW = 0;
@@ -1592,90 +1788,50 @@ function topUpCore(game, n, extra, lossK, okMask, minGoal, fit) {
     if (v === TT_MOUNTAIN) { allM += wt[i]; allBlocked += wt[i]; }
     else if (v === TT_WATER) { allW += wt[i]; allBlocked += wt[i]; }
   }
-  // lossK（= 1/实测存活率）同样要乘进来：盖在走廊上的那一半随后会被重挖掉（见 topUpTerrain）。
-  // 没给就按中心圈的拥挤程度估一个（圈里能落笔的空地只占全图几个百分点，比值很大 → 取上限）。
-  // 这个系数也用来**放宽**山 / 水各自的上限（见下）：否则「全图山已到 32%」就把中心圈
-  // 的山卡死了 —— 中心明明还是空的，却因为外圈到了预设而一格都补不进去。
   const corr = clamp(Number(gen.corrFrac), 0, 0.85);
   const kk = lossK > 0 ? clamp(lossK, 1, 4) : clamp(1 / Math.max(0.15, 1 - corr), 1, 2.5);
-  // remain 同样要乘 kk：它是「还能往全图里加多少」的上限，而加的量随即会被走廊削掉 ——
-  // 不乘的话中心圈补到预设就收手，重挖之后又只剩六成。
-  // 留一笔保底额度：全图已经贴住预设时 remain 会归零，中心圈就一格也补不进去了 ——
-  // 而「中场不该是空地」看的是中心圈相对于全图的密度，全图达标不代表中场达标
-  // （实测 4 人局有中心圈密度只有全图 0.02 倍的局）。多补的这一点落在 ±25% 容差里。
   const remain = Math.max(
     total * 0.02,
     Math.max(0, total * (th.mix.mountain + th.mix.water) * kk - allBlocked)
   );
   const core = th.core || CORE_FALLBACK;
-  // minGoal：调用方给的**保底下限**（中心圈兜底专用）。全图已经贴住预设时 remain 会缩到
-  // 保底那一点（2%），光靠它补不满中心 —— 而「中场不该是空地」看的是中心圈，
-  // 全图达标不代表中场达标。给了 minGoal 就至少补这么多，但仍不许超过「圈内目标量」。
   const goal = Math.max(
     Math.min(free * fill * kk - blocked, total * clamp(Number(core.budget), 0, 0.5) * kk, remain),
     Math.min(Number(minGoal) > 0 ? Number(minGoal) : 0, Math.max(0, free * fill * kk - blocked))
   );
   if (goal <= 0) return false;
-  // 中心圈里补的那部分也按主题的 mix 分给山 / 水（否则中心圈会出现「汪洋主题中间一座山」），
-  // 且**各自不许超过全图的目标量** —— 否则中心圈补得爽快，全图比例就对不上预设了。
-  // 这个上限也要乘 kk：不乘的话，中心圈一补就把「全图额度」占满，外面的补量恒为 0，
-  // 而中心圈补的那部分有一半会随走廊挖掉 —— 全图永远差一截。
-  // 给了 minGoal 时把这笔**追加量**也加进上限：那一刻外圈往往已经把 mix 吃满，
-  // 不追加就一格也补不进去（实测 4 人裂谷中心圈只剩全图密度的 0.06 倍）。
   const mixSum = th.mix.mountain + th.mix.water;
   const sh = mixSum > 0 ? th.mix.mountain / mixSum : 0.5;
   const boost = Number(minGoal) > 0 ? goal : 0;
-  // ⚠️ 目标量按**全图**算（allM / allW），不是按「圈内那点」算。
-  // 早先按圈内的 curM / curW 起算，而 runStamps 那时也只数圈内的格子 —— 图元是以圈内
-  // 某点为中心盖下去的，大半个身子落在圈外，那些格子压根没被计数：于是「圈内还差 3%」
-  // 会一直盖到圈内达标为止，全图却已经多出 7.7%（实测超级平原 5% 的山被顶到 9.2%）。
-  // 改成全图计数后，goal 就是**真的**只加这么多，圈外溢出也算在账上。
-  const mixAbs = {
-    mountain: Math.min(allM + goal * sh, total * th.mix.mountain * kk + boost * sh),
-    water: Math.min(allW + goal * (1 - sh), total * th.mix.water * kk + boost * (1 - sh)),
-  };
-  // 同样按 kk 放大（理由见 topUpTerrain）：这是重挖**之前**的目标量
-  capMixSum(mixAbs, Math.min(total, total * clamp(th.maxBlocked, 0, 0.9) * kk));
-  // 中心圈专用的图元：普通图元 + 写着 at:'center' 的（它本来就长在正中心）
-  let plan = shapePlan(rng, th.shapes.filter((s) => !s.at || s.at === 'center'));
-  // fit > 0：把长墙截短、并取消 full（不再贯穿全图）—— 中心圈兜底专用。
-  // 贯穿全图的长墙只有一两成落在圈内，既填不满中心，又会因为「落笔不足预估 55%」
-  // 被整块撤销（实测 4 人裂谷连补 4 轮、圈内一点没多）。
-  if (fit > 0) {
-    plan = plan.map((p) => {
-      if (p.cfg.kind !== 'wall') return p;
-      const lo = Array.isArray(p.cfg.len) ? p.cfg.len[0] : p.cfg.len;
-      const hi = Array.isArray(p.cfg.len) ? p.cfg.len[1] : p.cfg.len;
-      return {
-        cfg: Object.assign({}, p.cfg, { full: false, len: [Math.min(lo, fit), Math.min(hi, fit)] }),
-        cnt: p.cnt,
-        base: p.base,
-        done: 0,
-      };
-    });
+  let addM = Math.min(goal * sh, Math.max(0, total * th.mix.mountain * kk + boost * sh - allM));
+  let addW = Math.min(goal * (1 - sh), Math.max(0, total * th.mix.water * kk + boost * (1 - sh) - allW));
+  const cap = Math.min(total, total * clamp(th.maxBlocked, 0, 0.9) * kk);
+  const after = allM + allW + addM + addW;
+  if (after > cap && addM + addW > 0) {
+    const shrink = Math.max(0, cap - allM - allW) / (addM + addW);
+    addM *= shrink;
+    addW *= shrink;
   }
-  if (!plan.length) return false;
+  // 只在中心圈候选格上按噪声晋升（okMask / banned 仍尊重）
+  const candidates = [];
+  for (const i of coreIdx) {
+    if (okMask ? !okMask[i] : banned[i]) continue;
+    candidates.push(i);
+  }
+  if (!candidates.length) return false;
   if (process.env.WFDBG) {
     console.log(
       `     [core] 圈内 ${((free / total) * 100).toFixed(1)}% 图幅（可落笔）／已有地形 ${((blocked / total) * 100).toFixed(1)}%` +
         ` → goal ${((goal / total) * 100).toFixed(1)}%（kk ${kk.toFixed(2)}）`
     );
   }
-  // 落笔**不给逐格白名单**（ok = null）：早先用「只许盖在圈内空地」的逐格筛，
-  // 图元一大半压在主路上就被整块撤销重画，3 次都挑不到好位置 —— 实测中心圈只填到
-  // 「可落笔空地」的 58%，2 人局（主路走直径、正中一半是路）尤其填不满。
-  // 改成整块盖下去、只把**中心**限制在圈内（zone），压在路上的那部分随后重挖走廊时
-  // 会被切掉 —— 跟 topUpTerrain 一个路子，断面干净、不留碎屑。
-  // 计数范围给**全图**（used）而不是圈内（coreIdx）：见上面 mixAbs 的说明
-  runStamps(wedge, own, dim, used, wt, rng, plan, snap, order, blocked + goal, okMask || null, null, zone, mixAbs, false);
+  const painted = promoteNoiseOnWedge(wedge, noiseFlat, dim, wt, candidates, addM, addW);
+  if (painted.addedM + painted.addedW <= 0) return false;
   if (process.env.WFDBG) {
     let nb = 0;
     for (const i of coreIdx) if (wedge[(i / dim.cols) | 0][i % dim.cols] !== TT_PLAIN) nb += wt[i];
     console.log(`     [core] 盖完圈内地形 ${((nb / total) * 100).toFixed(1)}%`);
   }
-  // 这里**不撤图元**（不用 clampShapes）：整块撤时会把它压在下面的原有地形一起清掉，
-  // 净增反而变负（实测补完比补之前还少）。runStamps 是「盖一个查一次」，
-  // 超额最多一个图元，而中心圈本来就该有地形 —— 多几格不碍事。
   gen.wedgeMix = wedgeMixCount(wedge, dim, used, wt);
   game.terrain.grid = renderWorldFromWedge(wedge, order, dim);
   return true;
@@ -1744,6 +1900,201 @@ function clearTinyBlobs(grid, minCells) {
     gone += cells.length;
   }
   return gone;
+}
+
+/**
+ * 把山 / 水外缘的直角锯齿磨圆：削尖刺、削外凸直角、填凹口。
+ *
+ * 为什么必须做（不是纯好看）：
+ *   ① 直角外缘在对角切角禁令（navStepOk）下，部队要绕「凸出来的一格」走两步正交，
+ *      窄走廊里就变成原地抖、看着有路却过不去；
+ *   ② 开道 / 对称化 / 搬迁会在外缘啃出 1 格楼梯锯齿 —— 图元本身 round 再高也救不了收尾。
+ *
+ * 每遍三步（先记后改，同遍互不干扰）：
+ *   尖刺 —— 同类正交邻居 ≤ 1 → 平原；
+ *   凸角 —— 恰好 2 个邻居成 L、外侧对角非同类 → 削掉（方台变八边形）；
+ *   凹口 —— 平原三面被同一类山/水围住 → 填回去。
+ * 凸角只在前两遍削（再削会把厚墙啃穿）；尖刺 / 凹口每遍都做。
+ *
+ * @returns {number} 改动的格数
+ */
+/**
+ * 磨圆山/水外缘：削尖刺、填内凹直角（楼梯凹角）、首遍轻削外凸尖角。
+ * 外凸直角主要靠客户端格内斜切表达（再削会越削越出台阶）；这里只把凹台阶填实、去掉 1 邻尖刺。
+ */
+function roundTerrainEdges(grid, passes) {
+  const R = grid.length;
+  if (!R) return 0;
+  const C = grid[0].length;
+  const nPass = Math.max(1, Math.min(6, passes | 0));
+  let changed = 0;
+  const same = (r, c, t) => r >= 0 && r < R && c >= 0 && c < C && grid[r][c] === t;
+  for (let p = 0; p < nPass; p++) {
+    const tips = [];
+    const corners = [];
+    const fills = [];
+    for (let r = 0; r < R; r++) {
+      for (let c = 0; c < C; c++) {
+        const t = grid[r][c];
+        if (t === TT_MOUNTAIN || t === TT_WATER) {
+          const N = same(r - 1, c, t);
+          const S = same(r + 1, c, t);
+          const W = same(r, c - 1, t);
+          const E = same(r, c + 1, t);
+          const n = (N ? 1 : 0) + (S ? 1 : 0) + (W ? 1 : 0) + (E ? 1 : 0);
+          if (n <= 1) {
+            tips.push(r * C + c);
+            continue;
+          }
+          // 只在首遍削一刀外凸 L：多削会沿对角线剥出台阶，反而更方
+          if (p === 0 && n === 2 && !((N && S) || (W && E))) {
+            corners.push(r * C + c);
+          }
+        } else if (t === TT_PLAIN) {
+          let mtn = 0;
+          let wat = 0;
+          const tally = (rr, cc) => {
+            if (rr < 0 || rr >= R || cc < 0 || cc >= C) return;
+            if (grid[rr][cc] === TT_MOUNTAIN) mtn += 1;
+            else if (grid[rr][cc] === TT_WATER) wat += 1;
+          };
+          tally(r - 1, c);
+          tally(r + 1, c);
+          tally(r, c - 1);
+          tally(r, c + 1);
+          if (mtn >= 3 && wat === 0) fills.push([r * C + c, TT_MOUNTAIN]);
+          else if (wat >= 3 && mtn === 0) fills.push([r * C + c, TT_WATER]);
+          else {
+            // 内凹直角 / 楼梯凹角：两正交邻为同类固体，且夹角对角也是同类 → 填实
+            const fillL = (type, N, S, W, E) => {
+              if (N && E && same(r - 1, c + 1, type)) return true;
+              if (N && W && same(r - 1, c - 1, type)) return true;
+              if (S && E && same(r + 1, c + 1, type)) return true;
+              if (S && W && same(r + 1, c - 1, type)) return true;
+              return false;
+            };
+            const N = same(r - 1, c, TT_MOUNTAIN);
+            const S = same(r + 1, c, TT_MOUNTAIN);
+            const W = same(r, c - 1, TT_MOUNTAIN);
+            const E = same(r, c + 1, TT_MOUNTAIN);
+            const nM = (N ? 1 : 0) + (S ? 1 : 0) + (W ? 1 : 0) + (E ? 1 : 0);
+            if (nM === 2 && wat === 0 && fillL(TT_MOUNTAIN, N, S, W, E)) {
+              fills.push([r * C + c, TT_MOUNTAIN]);
+            } else {
+              const Nw = same(r - 1, c, TT_WATER);
+              const Sw = same(r + 1, c, TT_WATER);
+              const Ww = same(r, c - 1, TT_WATER);
+              const Ew = same(r, c + 1, TT_WATER);
+              const nW = (Nw ? 1 : 0) + (Sw ? 1 : 0) + (Ww ? 1 : 0) + (Ew ? 1 : 0);
+              if (nW === 2 && mtn === 0 && fillL(TT_WATER, Nw, Sw, Ww, Ew)) {
+                fills.push([r * C + c, TT_WATER]);
+              }
+            }
+          }
+        }
+      }
+    }
+    for (const i of tips) {
+      grid[(i / C) | 0][i % C] = TT_PLAIN;
+      changed += 1;
+    }
+    for (const i of corners) {
+      grid[(i / C) | 0][i % C] = TT_PLAIN;
+      changed += 1;
+    }
+    for (const it of fills) {
+      grid[(it[0] / C) | 0][it[0] % C] = it[1];
+      changed += 1;
+    }
+  }
+  return changed;
+}
+
+/**
+ * 去毛刺：把 **1 格宽**的尖刺拔掉、**1 格宽**的凹口填平。
+ *
+ * 为什么必须单独一条、而不能指望 roundTerrainEdges：
+ *   ① roundTerrainEdges 的「削外凸角」每削一次就把方台削成 45° 台阶，越削越碎。
+ *      实测在同一张收尾图上再跑 2 / 4 / 6 遍，「1 格宽的 V 字尖」从 396 涨到 420~452 个，
+ *      地形量还掉 2~4 个点。去毛刺只拔尖、且外凸只拔「1 格宽的凸角」，不进 45° 台阶 ——
+ *      同一张图 396 → 24，地形量一格不变（27.6% → 27.6%）。
+ *   ② 毛刺是整条生成链（噪声阈值 → 图元 → 挖主路 → 关口 → 开道 → 表决）必然留下的残渣：
+ *      1 格山尖戳在平原边上、1 格平原缺口嵌进山体。它挡不住人也走不进去，
+ *      唯一后果就是把地图画脏 —— 玩家说的「一点都不平滑」大半是它。
+ *
+ * 只读局部 3×3，所以**与 D_N 对称群可交换**（对称的邻域转过去还是对称的邻域，判定同值）。
+ * 因此它可以安全地跑在 symmetrizeGrid **之后**：既不用再表决一次（一表决就会按轨道多数
+ * 把刚拔掉的尖刺插回去 —— 这正是毛刺一直清不掉的原因），也不会破坏对称与公平。
+ *
+ * ⚠️ 填凹口有一条硬约束：**不许把 1 格宽的过道堵死**。判据是「这个平原格有没有一对
+ *    正对的平原邻居」—— 只要它在一条通道上（沿通道两个方向都是平原），一律不填。
+ *    （拔尖永远不会断连通：尖刺不是桥。）
+ *
+ * @returns {number} 改动的格数
+ */
+function despeckleEdges(grid, passes) {
+  const R = grid.length;
+  if (!R) return 0;
+  const C = grid[0].length;
+  const nPass = Math.max(1, Math.min(8, passes | 0));
+  const at = (r, c) => (r < 0 || r >= R || c < 0 || c >= C ? 0 : grid[r][c]);
+  let changed = 0;
+  for (let p = 0; p < nPass; p++) {
+    const cut = [];
+    const fill = [];
+    for (let r = 0; r < R; r++) {
+      for (let c = 0; c < C; c++) {
+        const t = grid[r][c];
+        if (t === TT_MOUNTAIN || t === TT_WATER) {
+          const N = at(r - 1, c) === t;
+          const S = at(r + 1, c) === t;
+          const W = at(r, c - 1) === t;
+          const E = at(r, c + 1) === t;
+          const n = (N ? 1 : 0) + (S ? 1 : 0) + (W ? 1 : 0) + (E ? 1 : 0);
+          if (n <= 1) {
+            cut.push(r * C + c); // 孤立格 / 单格尖刺
+            continue;
+          }
+          if (n === 2) {
+            // 1 格宽的凸角：两个正邻成 L，而夹在它们中间的那个对角是异类
+            if (
+              (N && W && at(r - 1, c - 1) !== t) ||
+              (N && E && at(r - 1, c + 1) !== t) ||
+              (S && W && at(r + 1, c - 1) !== t) ||
+              (S && E && at(r + 1, c + 1) !== t)
+            ) {
+              cut.push(r * C + c);
+            }
+          }
+        } else if (t === TT_PLAIN) {
+          const t1 = at(r - 1, c);
+          const t2 = at(r + 1, c);
+          const t3 = at(r, c - 1);
+          const t4 = at(r, c + 1);
+          if (t1 === TT_PLAIN && t2 === TT_PLAIN) continue; // 纵向过道，别堵
+          if (t3 === TT_PLAIN && t4 === TT_PLAIN) continue; // 横向过道，别堵
+          let mtn = 0;
+          let wat = 0;
+          for (const v of [t1, t2, t3, t4]) {
+            if (v === TT_MOUNTAIN) mtn++;
+            else if (v === TT_WATER) wat++;
+          }
+          if (mtn >= 3 && wat === 0) fill.push([r * C + c, TT_MOUNTAIN]);
+          else if (wat >= 3 && mtn === 0) fill.push([r * C + c, TT_WATER]);
+        }
+      }
+    }
+    if (!cut.length && !fill.length) break;
+    for (const i of cut) {
+      grid[(i / C) | 0][i % C] = TT_PLAIN;
+      changed += 1;
+    }
+    for (const it of fill) {
+      grid[(it[0] / C) | 0][it[0] % C] = it[1];
+      changed += 1;
+    }
+  }
+  return changed;
 }
 
 /**
@@ -2506,7 +2857,7 @@ function buildingBlockMask(sites) {
   const C = TERR_COLS;
   const m = new Uint8Array(R * C);
   for (const s of sites) {
-    const rr = s.r + BLOCK_MARGIN;
+    const rr = occupyR(s.r);
     const c0 = Math.max(0, Math.floor((s.x - rr) / TERR_CELL));
     const c1 = Math.min(C - 1, Math.floor((s.x + rr) / TERR_CELL));
     const r0 = Math.max(0, Math.floor((s.y - rr) / TERR_CELL));
@@ -2586,12 +2937,12 @@ function flattenSites(h, order, grid, sites) {
     let L = h[cr * C + cc];
     let bc = -1;
     cnt.forEach((v, k) => { if (v > bc) { bc = v; L = k; } });
-    // ⚠️ 垫平圈必须**大过**寻路掩码的占位圈（BLOCK_MARGIN = 22px，见 passGrid）：
-    // 早先只垫到 r + 20px，正好被 r + 22px 的占位圈整个盖住 —— 地基在掩码里全是 0，
-    // 部队只能「从地基一步跨到圈外」。圈外那圈若比地基低/高 2 层（崖），这一步就永远
-    // 迈不出去：生在那里的兵原地抖一辈子（实测 5 秒位移 1.2px）。
-    // 现在垫到 r + 1.5 格（60px），于是地基外缘留出一条**可站人且同层**的环 —— 一定出得去。
-    const padR = rr + TERR_CELL * 1.5;
+    // ⚠️ 垫平圈必须**大过**寻路掩码的占位圈（见 occupyR），且要再留出至少一格：
+    //    圈外那圈若比地基低/高 2 层（崖），部队就永远迈不出去 —— 生在那里的兵原地抖一辈子。
+    //    判据用「占位 + 半格量化 + 一格缓冲」：
+    //      occupyR(r) = r + 22；格心判定让实际边界再外扩半格（TERR_CELL/2 = 20）；
+    //      再加一格（40）⇒ 环上至少有一整圈「可站人且同层」的格子，一定出得去。
+    const padR = occupyR(rr) + TERR_CELL * 1.5;
     for (let dr = -out0 - 2; dr <= out0 + 2; dr++) {
       for (let dc = -out0 - 2; dc <= out0 + 2; dc++) {
         const r = cr + dr;
@@ -3106,6 +3457,184 @@ function terrainAnchors(game) {
   return out;
 }
 
+/**
+ * 开局收尾：把「建筑占位」也算成障碍，再补一次连通性开道。
+ *
+ * ⚠️ 这是「看着能通、实际走不通」的根因，也是必须单独做一遍的原因：
+ *   ensureOpenTerrain / repairWide / repairConnect 那一整串只认**地形**（山/水），
+ *   建筑占位是寻路掩码 passGrid 才加进去的。所以地图可以「地形上连成一整片」，
+ *   建筑一落位就把某片地整个圈掉 —— 玩家看到的地图是连通的，路却不存在。
+ *   实测（4 人局 ×3，开局建筑 size 全是 15 格时）：地形宽通道 1 片，
+ *   加上建筑占位后多出 5~9 片；总部–门口研究所净缝甚至是**负 0.2 格**（占位圈重叠）。
+ *
+ * 做法与 ensureOpenTerrain 同源（连通片 + 多源 Dijkstra 回溯 + carveWide），只多两件事：
+ *   ① 障碍 = 地形 **+ 建筑占位**（buildingBlockMask，口径与 passGrid 一致）；
+ *      建筑自己**不开挖**（blk 的格跳过），但**可以从它旁边绕过去**——
+ *      一座楼堵在 1 格宽的走廊里时，多源 Dijkstra 会就近穿山绕开，路就通了。
+ *   ② 只修「小到不可能是设计意图」的碎块（≤ LANE_ORPHAN_MAX 格）：
+ *      大到那片本身就是地形（湖心岛之类），硬接反而破图。
+ *
+ * ⚠️ 必须在 buildHeightField **之前**跑：新挖的走廊要参与高度场派生与挖坡口，
+ *    否则会出现「地形上通了、层差 2 层 = 崖」，还是过不去。
+ *
+ * ⚠️ 对称：carveWide 走 setPlainSym（180° 点对称）。建筑成 C_N 轨道，
+ *    每座建筑各自触发一次挖掘，天然覆盖各自的对称像，各家看到的地形仍然同构。
+ *
+ * @param {object} game 对局状态（就地改 terrain.grid）
+ * @returns {number} 挖掉的格数（诊断用）
+ */
+function openLanesAroundBuildings(game) {
+  const grid = game.terrain.grid;
+  const blk = buildingBlockMask(buildingSites(game));
+  if (!blk) return 0;
+  const C = TERR_COLS;
+  const R = TERR_ROWS;
+  const TOT = C * R;
+  /** 站得住人 = 地形可通行 ∧ 不在建筑占位里（与 passGrid 同口径） */
+  const free = new Uint8Array(TOT);
+  for (let i = 0; i < TOT; i++) {
+    const r = (i / C) | 0;
+    const c = i % C;
+    if (blk[i]) continue;
+    const v = grid[r][c];
+    free[i] = v !== TT_MOUNTAIN && v !== TT_WATER ? 1 : 0;
+  }
+  let dug = 0;
+  for (let round = 0; round < 4; round++) {
+    // ① free 的 4-连通片，按大小降序
+    const seen = new Uint8Array(TOT);
+    const comps = [];
+    const stack = [];
+    for (let i = 0; i < TOT; i++) {
+      if (!free[i] || seen[i]) continue;
+      const cells = [];
+      seen[i] = 1;
+      stack.push(i);
+      while (stack.length) {
+        const cur = stack.pop();
+        cells.push(cur);
+        const cc = cur % C;
+        const rr = (cur - cc) / C;
+        if (rr > 0 && free[cur - C] && !seen[cur - C]) { seen[cur - C] = 1; stack.push(cur - C); }
+        if (rr < R - 1 && free[cur + C] && !seen[cur + C]) { seen[cur + C] = 1; stack.push(cur + C); }
+        if (cc > 0 && free[cur - 1] && !seen[cur - 1]) { seen[cur - 1] = 1; stack.push(cur - 1); }
+        if (cc < C - 1 && free[cur + 1] && !seen[cur + 1]) { seen[cur + 1] = 1; stack.push(cur + 1); }
+      }
+      comps.push(cells);
+    }
+    if (!comps.length) break;
+    comps.sort((a, b) => b.length - a.length);
+    const orphans = comps.slice(1).filter((s) => s.length <= LANE_ORPHAN_MAX);
+    if (!orphans.length) break;
+    // ② 以主片为源做多源 Dijkstra（0=平原 / 1=水 / 3=山；建筑占位不可入）
+    const res = dijkstraWithBlocks(grid, blk, comps[0]);
+    let did = 0;
+    for (const o of orphans) {
+      let best = -1;
+      let bd = Infinity;
+      for (const id of o) {
+        if (res.dist[id] < bd) {
+          bd = res.dist[id];
+          best = id;
+        }
+      }
+      if (best < 0) continue; // 穿不过去：这块只能认了（不该发生，留作兜底退出）
+      for (let cur = best; cur >= 0; cur = res.prev[cur]) {
+        const rr = (cur / C) | 0;
+        const cc = cur % C;
+        if (grid[rr][cc] !== TT_PLAIN) {
+          grid[rr][cc] = TT_PLAIN;
+          dug++;
+        }
+        free[cur] = 1;
+      }
+      did++;
+    }
+    if (!did) break;
+  }
+  return dug;
+}
+
+/**
+ * 开道专用的小权重 Dijkstra（0 平原 / 1 水 / 3 山），额外接受一张「绝对不可入」掩码。
+ * 与 dijkstraFrom 的区别只有「代价表 + 屏蔽掩码」，所以另写一份而不去改 dijkstraFrom
+ * （后者被地形补全那条链大量复用，动它的签名风险大）。
+ */
+function dijkstraWithBlocks(grid, blocks, sources) {
+  const C = TERR_COLS;
+  const R = TERR_ROWS;
+  const TOT = C * R;
+  const dist = new Int32Array(TOT).fill(0x3fffffff);
+  const prev = new Int32Array(TOT).fill(-1);
+  const hd = [];
+  const hi = [];
+  const hpush = (d, id) => {
+    hd.push(d);
+    hi.push(id);
+    let i = hd.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (hd[p] <= hd[i]) break;
+      const td = hd[p]; hd[p] = hd[i]; hd[i] = td;
+      const ti = hi[p]; hi[p] = hi[i]; hi[i] = ti;
+      i = p;
+    }
+  };
+  const hpop = () => {
+    const d = hd[0];
+    const id = hi[0];
+    const ld = hd.pop();
+    const li = hi.pop();
+    if (hd.length) {
+      hd[0] = ld;
+      hi[0] = li;
+      let i = 0;
+      for (;;) {
+        const l = i * 2 + 1;
+        const rr = l + 1;
+        let m = i;
+        if (l < hd.length && hd[l] < hd[m]) m = l;
+        if (rr < hd.length && hd[rr] < hd[m]) m = rr;
+        if (m === i) break;
+        const td = hd[m]; hd[m] = hd[i]; hd[i] = td;
+        const ti = hi[m]; hi[m] = hi[i]; hi[i] = ti;
+        i = m;
+      }
+    }
+    return [d, id];
+  };
+  for (const s of sources) {
+    if (dist[s] === 0) continue;
+    dist[s] = 0;
+    hpush(0, s);
+  }
+  while (hd.length) {
+    const [d, id] = hpop();
+    if (d !== dist[id]) continue;
+    const cc = id % C;
+    const rr = (id - cc) / C;
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        if (!dr && !dc) continue;
+        const nr = rr + dr;
+        const nc = cc + dc;
+        if (nr < 0 || nr >= R || nc < 0 || nc >= C) continue;
+        const nid = nr * C + nc;
+        if (blocks[nid]) continue; // 建筑占位：绝不开挖、绝不当通路
+        const v = grid[nr][nc];
+        const w = v === TT_MOUNTAIN ? 3 : v === TT_WATER ? 1 : 0;
+        const nd = d + w;
+        if (nd < dist[nid]) {
+          dist[nid] = nd;
+          prev[nid] = id;
+          hpush(nd, nid);
+        }
+      }
+    }
+  }
+  return { dist, prev };
+}
+
 /** 把建筑（工厂/研究所/出生点）周围的山地清成平原，避免建筑与出兵点被不可通行的山封死。
  *  对每个建筑格，同时清理其 180° 旋转对应的格子（直接对格子索引旋转，避免坐标旋转再 floor 的错位），保持整图点对称。 */
 function clearTerrainAroundBuildings(game, grid) {
@@ -3154,10 +3683,18 @@ function makeTerrain(game, seed, bands, themeKey, themeSalt, n) {
     pickTheme(hashStr(String(seed >>> 0) + '|theme|' + (themeSalt == null ? 0 : themeSalt)));
   // 对称阶数 = 玩家人数：地形跟着人数带上 N 重旋转 + N 条镜像轴
   const order = symOrder(n == null ? (game && game.players ? game.players.length : 4) : n);
-  const grid = generateTerrainGrid(rng, theme, order);
-  // 暂存生成期的东西（主题、随机源、隔离带）：挖完主路还要按同一套参数把地形补回来。
+  const noiseOut = {};
+  const grid = generateTerrainGrid(rng, theme, order, noiseOut);
+  // 暂存生成期的东西（主题、随机源、隔离带、噪声场）：挖完主路还要按同一套噪声把地形补回来。
   // 挂在 game 上而不是 game.terrain 上 —— terrain 会整份下发给客户端，不该夹带这些。
-  game._mapGen = { theme, rng, bands, order };
+  game._mapGen = {
+    theme,
+    rng,
+    bands,
+    order,
+    noise: noiseOut.noise || null,
+    noiseSeed: noiseOut.noiseSeed || 0,
+  };
   clearTerrainAroundBuildings(game, grid);
   // 第 5 项：隔离带整片压成平原（放在建筑清场之后，免得又被挖回山/水）
   carveIsolationBands(grid, bands);
@@ -3257,6 +3794,20 @@ function isolationBands(count, rot) {
   return out;
 }
 
+/**
+ * 隔离带在某个归一化半径处的**有效半角**：在半角上掺一层沿半径起伏的慢波（±18%，
+ * 两端用 sin(πt) 收口 —— 带的径向端本来就是圆弧，边缘不该在那儿突然错开）。
+ *
+ * 为什么要它：半角恒定时带的两条边界是**从世界中心射出去的直线**，长度 60+ 格，
+ * 横穿地形后照样把山切成直边块。
+ * 只跟 rn 有关、不带带号 ⇒ 各条带逐字相同，绕中心旋转对称不破。
+ */
+function bandHalfAt(rn) {
+  const span = Math.max(1e-6, BAND_R_MAX - BAND_R_MIN);
+  const t = clamp((rn - BAND_R_MIN) / span, 0, 1);
+  return BAND_HALF_ANGLE * (1 + 0.18 * Math.sin(Math.PI * t) * edgeWave(t, 0.37));
+}
+
 /** 某点是否落在任一隔离带内（工厂布局据此排除候选点） */
 function inIsolationBand(bands, x, y) {
   if (!bands || !bands.length) return false;
@@ -3266,6 +3817,13 @@ function inIsolationBand(bands, x, y) {
   // 半径按出生**圆**环归一化（出生点是圆环上的等角点，用圆才对得上）
   const rn = Math.hypot(dx, dy) / BASE_R;
   if (rn < BAND_R_MIN || rn > BAND_R_MAX) return false;
+  // 半角再叠一层 D_N 对称的二维边缘噪声 —— 光靠沿半径的慢波只是「一条被掰弯的直线」，
+  // 加上这一层才是自然岸线。两处（这里与 carveIsolationBands）共用同一个函数，
+  // 工厂避让口径与地形压制口径天然一致。
+  const fr = clamp(Math.floor(y / TERR_CELL), 0, TERR_ROWS - 1);
+  const fc = clamp(Math.floor(x / TERR_CELL), 0, TERR_COLS - 1);
+  let half = bandHalfAt(rn);
+  if (!process.env.WF_NOEDGENOISE) half *= 1 + 0.2 * edgeField(bands.length)[fr * TERR_COLS + fc];
   const a = Math.atan2(dy, dx);
   const TAU2 = Math.PI * 2;
   for (const b of bands) {
@@ -3273,7 +3831,7 @@ function inIsolationBand(bands, x, y) {
     // 直接相减会超出 2π，折半后甚至算出负数 —— 负数恒 ≤ 半角，会把几乎全图误判成「在带内」。
     let diff = (((a - b) % TAU2) + TAU2) % TAU2; // → [0, 2π)
     if (diff > Math.PI) diff = TAU2 - diff; // → [0, π] 最短夹角
-    if (diff <= BAND_HALF_ANGLE) return true;
+    if (diff <= half) return true;
   }
   return false;
 }
@@ -3326,27 +3884,39 @@ function adjacentBasePairs(bases) {
 
 /**
  * 沿一条折线把两侧半宽内的山 / 水压成平原（圆盘逐点扫，步长半格 → 不留缝）。
+ *
+ * ⚠️ 半宽**逐格**乘上一个 D_N 对称的边缘噪声（见 edgeField）：等宽扫掠出来的边缘是一条
+ *    数学直线，横穿地形会把山切成直边块 —— 实测 2 人局主路占 17.6% 图幅、
+ *    33% 的地形外缘紧贴主路，玩家看到的就是「本该是斜向的地形，被硬生生拉出一条直线」。
+ *    噪声夹在 `halfCells ± 1~2 格` 内，下限按 `roads` 的硬口径收（净宽不许低于名义半宽的 86%）。
+ *
  * @param {number[][]} grid 地形网格
  * @param {number[][]} pts 折线采样点 [x, y]（像素）
- * @param {number} halfCells 半宽（格）
+ * @param {number} halfCells 名义半宽（格）
+ * @param {Float32Array} [field] edgeField 的产物（不传 = 不抖，退化成老口径）
  * @returns {number} 被改成平原的格子数
  */
-function carveRoadPath(grid, pts, halfCells) {
-  const rPx = halfCells * TERR_CELL;
-  const r2 = rPx * rPx;
+function carveRoadPath(grid, pts, halfCells, field) {
+  const n = pts.length;
+  const amp = clamp(halfCells * 0.22, 1.0, 2.2);
+  const floor = Math.max(halfCells - 1.4, halfCells * 0.86);
+  const rMax = (halfCells + amp) * TERR_CELL;
   let carved = 0;
-  for (let i = 0; i < pts.length; i++) {
+  for (let i = 0; i < n; i++) {
     const px = pts[i][0];
     const py = pts[i][1];
-    const c0 = Math.max(0, Math.floor((px - rPx) / TERR_CELL));
-    const c1 = Math.min(TERR_COLS - 1, Math.floor((px + rPx) / TERR_CELL));
-    const r0 = Math.max(0, Math.floor((py - rPx) / TERR_CELL));
-    const r1 = Math.min(TERR_ROWS - 1, Math.floor((py + rPx) / TERR_CELL));
+    const c0 = Math.max(0, Math.floor((px - rMax) / TERR_CELL));
+    const c1 = Math.min(TERR_COLS - 1, Math.floor((px + rMax) / TERR_CELL));
+    const r0 = Math.max(0, Math.floor((py - rMax) / TERR_CELL));
+    const r1 = Math.min(TERR_ROWS - 1, Math.floor((py + rMax) / TERR_CELL));
     for (let r = r0; r <= r1; r++) {
+      const dy = (r + 0.5) * TERR_CELL - py;
+      const rowBase = r * TERR_COLS;
       for (let c = c0; c <= c1; c++) {
+        const fv = field ? field[rowBase + c] : 0;
+        const rr = Math.max(floor, halfCells + amp * fv) * TERR_CELL;
         const dx = (c + 0.5) * TERR_CELL - px;
-        const dy = (r + 0.5) * TERR_CELL - py;
-        if (dx * dx + dy * dy > r2) continue;
+        if (dx * dx + dy * dy > rr * rr) continue;
         if (grid[r][c] !== TT_PLAIN) {
           grid[r][c] = TT_PLAIN;
           carved++;
@@ -3384,6 +3954,81 @@ function roadBow(t) {
   if (t <= 0 || t >= 1) return 0;
   const v = Math.sin(Math.PI * t) + ROAD_WAVE3 * Math.sin(3 * Math.PI * t) + ROAD_WAVE5 * Math.sin(5 * Math.PI * t);
   return Math.max(0, v) / ROAD_EVEN_NORM;
+}
+
+/**
+ * 走廊边缘的**确定性慢波**（−1..1）—— 主路的中心线蛇行用它。
+ *
+ * 为什么必须确定（而不是 Math.random）：主路的几何要在 N 个对称位置上**逐字相同**
+ * （carveMainRoads 只是把同一份折线旋转过去再挖一遍）。用即时时序随机会让各个像的边缘
+ * 各漂各的 —— 对称误差立刻飙起来。所以扰动只能跟「路径下标」有关，旋转后下标不变。
+ *
+ * @param {number} t 0..1（非闭合参数：路径进度 / 归一化半径）
+ * @param {number} [k] 相位种子：同一条路的不同车道取不同值，别让它们同步起伏
+ * @returns {number} −1..1
+ */
+function edgeWave(t, k) {
+  const s = (Number(k) || 0) * 1.7;
+  const u = t * Math.PI * 2;
+  return (
+    Math.sin(u * 3.7 + s) * 0.55 +
+    Math.sin(u * 8.3 + s * 2.1) * 0.29 +
+    Math.sin(u * 17 + s * 3.7) * 0.16
+  );
+}
+
+/** 二维平滑值噪声（双线性 + smoothstep），值域 −1..1。不依赖 rng ⇒ 各处调用结果一致 */
+function wfSmoothNoise(x, y) {
+  const xi = Math.floor(x);
+  const yi = Math.floor(y);
+  const xf = x - xi;
+  const yf = y - yi;
+  const u = xf * xf * (3 - 2 * xf);
+  const v = yf * yf * (3 - 2 * yf);
+  const h = (a, b) => {
+    const s = Math.sin(a * 127.1 + b * 311.7) * 43758.5453;
+    return (s - Math.floor(s)) * 2 - 1;
+  };
+  const n00 = h(xi, yi);
+  const n10 = h(xi + 1, yi);
+  const n01 = h(xi, yi + 1);
+  const n11 = h(xi + 1, yi + 1);
+  return (n00 * (1 - u) + n10 * u) * (1 - v) + (n01 * (1 - u) + n11 * u) * v;
+}
+
+/**
+ * 「走廊边缘噪声场」—— 全图一格的采样值，用来把**挖出来的直线边缘**打碎成自然岸线。
+ *
+ * 关键三点：
+ *  ① **D_N 对称**：先 `foldToWedge` 折回楔形再取噪声 ⇒ 同一条 D_N 轨道的所有像取值完全相同，
+ *     主路 / 隔离带 / 关口的边缘在 n 个方向上逐格重合，对称误差纹丝不动。
+ *  ② **不依赖 rng / 种子**：只用「世界坐标 + 阶数」算，于是**探针**（`roadPlainFor` 那张
+ *     「全是山」的图）与生成器内部算出的是同一张路面掩膜 —— 这一点是硬要求，
+ *     搬迁判据 / 地形参战率都建立在「两处口径一致」上。
+ *  ③ **按阶数缓存**：8.3 万格的 hypot+atan2+hash 只算一次（约 10ms），之后全是查表。
+ *
+ * 波长取 7 格（大起伏）+ 2.6 格（小碎边）两个八度：前者让走廊边缘摆动几个格，
+ * 后者给边界加一点 1~2 格的碎屑感 —— 也就是一片真海岸线该有的样子。
+ */
+const EDGE_FIELD_CACHE = new Map();
+function edgeField(order) {
+  const n = symOrder(order);
+  const hit = EDGE_FIELD_CACHE.get(n);
+  if (hit) return hit;
+  const f = new Float32Array(TERR_ROWS * TERR_COLS);
+  const big = TERR_CELL * 7;
+  const small = TERR_CELL * 2.6;
+  for (let r = 0; r < TERR_ROWS; r++) {
+    const y = (r + 0.5) * TERR_CELL;
+    for (let c = 0; c < TERR_COLS; c++) {
+      const x = (c + 0.5) * TERR_CELL;
+      const p = foldToWedge(x, y, n);
+      f[r * TERR_COLS + c] =
+        wfSmoothNoise(p[0] / big, p[1] / big) * 0.68 + wfSmoothNoise(p[0] / small + 31.7, p[1] / small + 11.3) * 0.32;
+    }
+  }
+  EDGE_FIELD_CACHE.set(n, f);
+  return f;
 }
 
 /**
@@ -3554,11 +4199,23 @@ function roadLanes(a, b, order) {
   const roomIn = -deepest(-1, ROAD_INNER);
   const per = roadPerPair(ord);
   const depths = roadDepths(per, roomIn, roomOut, ord);
+  // 车道**蛇行**：中心线沿路径左右摆 ±ROAD_WOBBLE 格（用 sin(πt) 收口 —— 两头必须
+  // 严丝合缝地钉在总部与关口上，抖了反而对不齐）。
+  //
+  // 为什么非抖不可：三条路的深度是**常数 × 弓形**，中段那几十格就是一条数学直线；
+  // 等宽圆盘扫过去，走廊边缘也是直线 —— 实测 2 人局主路占 17.6% 图幅、
+  // 33% 的地形外缘紧贴主路，玩家看到的就是「本该是斜向的地形被硬拉出一条直线」。
+  // 蛇行只动**中心线**、不动半宽 ⇒ 主路净宽口径一字不变（`roads.widthCells` 是硬需求），
+  // 但边缘成了一条自然岸线。相位只跟车道号有关 ⇒ 旋转复制出来的各个像逐格重合，对称不破。
+  // WF_NOEDGENOISE=1 关掉整套走廊边缘噪声（蛇行 + 逐格抖动），做 A/B 对照用
+  const ROAD_WOBBLE = process.env.WF_NOEDGENOISE ? 0 : 3.2;
   const lanes = depths.map(() => []);
   for (let s = 0; s <= steps; s++) {
     const t = s / steps;
+    const env = Math.sin(Math.PI * t);
     for (let i = 0; i < depths.length; i++) {
-      const off = depths[i] * roadBow(t) * TERR_CELL;
+      const wob = env > 0 ? ROAD_WOBBLE * env * edgeWave(t, i + 1) : 0;
+      const off = (depths[i] * roadBow(t) + wob) * TERR_CELL;
       lanes[i].push([a.x + ux * len * t + nx * off, a.y + uy * len * t + ny * off]);
     }
   }
@@ -3607,8 +4264,9 @@ function carveMainRoads(grid, bases, n) {
           }))
         : roadLanes(a, b); // 兜底：出生点不是标准轨道时（外部调用 / 老测试）照旧各算一遍
     const per = lanes.length;
+    const edgeN = process.env.WF_NOEDGENOISE ? null : edgeField(order);
     for (let k = 0; k < per; k++) {
-      carveRoadPath(grid, lanes[k], roadHalfOf(per, k));
+      carveRoadPath(grid, lanes[k], roadHalfOf(per, k), edgeN);
       // role 只是给预览页 / 测试标注用的；perPair ≠ 3 时退回平行路，就谈不上角色了
       out.push({ from: pr[0], to: pr[1], lane: k, role: ROAD_ROLES[Math.min(k, ROAD_ROLES.length - 1)], pts: lanes[k] });
     }
@@ -3707,6 +4365,8 @@ function gateRects(bases, order, gk) {
   // 不缩的话超级平原的山能从 5% 顶到 8.5%，主题预设就形同虚设了。
   const out = geos.map((g) => ({
     ...g,
+    // 阶数带下去：gateHit 的边缘噪声要按它折回楔形（口径与主路 / 隔离带同一套）
+    order,
     halfSpan: Math.max((GATE_MIN_SPAN / 2) * k, halfSpan * k),
     halfThick: Math.max((GATE_MIN_THICK / 2) * k, (GATE_THICK / 2) * k),
   }));
@@ -3725,12 +4385,18 @@ function gateSizeK(theme) {
   return clamp(0.45 + (sum / 0.26) * 0.55, 0.45, 1.15);
 }
 
-/** 关口的逐格判定（超椭圆，见 GATE_ROUND_P） */
+/** 关口的逐格判定（超椭圆 + 外缘边缘噪声，见 GATE_ROUND_P / edgeField） */
 function gateHit(g, x, y) {
   const du = (x - g.cx) * g.ux + (y - g.cy) * g.uy;
   const dn = (x - g.cx) * g.nx + (y - g.cy) * g.ny;
-  const a = Math.abs(du / (g.halfThick * TERR_CELL));
-  const b = Math.abs(dn / (g.halfSpan * TERR_CELL));
+  // 外缘乘一层 D_N 对称的边缘噪声（±22%）：超椭圆 p=3 的四条长边仍是「一把尺子量出来的
+  // 直线」，不掺就是地图正中最显眼的几块直角矩形。噪声取自 edgeField（楔形折叠坐标），
+  // 所以每个关口与它的 D_N 像形状逐格相同，`gateMaskOf` / `stampGates` 口径也天然一致。
+  const fr = clamp(Math.floor(y / TERR_CELL), 0, TERR_ROWS - 1);
+  const fc = clamp(Math.floor(x / TERR_CELL), 0, TERR_COLS - 1);
+  const grow = process.env.WF_NOEDGENOISE ? 1 : 1 + 0.16 * edgeField(g.order || SYM_MAX_N)[fr * TERR_COLS + fc];
+  const a = Math.abs(du / (g.halfThick * TERR_CELL * grow));
+  const b = Math.abs(dn / (g.halfSpan * TERR_CELL * grow));
   return Math.pow(a, GATE_ROUND_P) + Math.pow(b, GATE_ROUND_P) <= 1;
 }
 
@@ -3798,19 +4464,22 @@ let NEUTRAL_FACTORIES = [];
 function placeStarterFactoriesNearHqs(bases) {
   const out = [];
   if (!bases || !bases.length || STARTER_FAC_PER_HQ <= 0) return out;
-  // 中心距：下限躲开总部碰撞，上限保证工厂中心落在 HQ_ATK_RANGE 内（防卫按中心距判定）
-  const dMin = HQ_R + FACTORY_R + 16;
+  // 中心距：下限按「占位 + 净缝」躲开总部（见 minCenterDist / BUILD_LANE_PX），
+  // 上限保证工厂中心落在 HQ_ATK_RANGE 内（防卫按中心距判定）。
+  // ⚠️ 早先这里是 `HQ_R + FACTORY_R + 16` —— 只算碰撞半径、且只留 16px，
+  //    扣掉寻路外扩 + 格量化之后净缝是**负的**：门口那两座厂与总部的占位圈直接重叠。
+  const dMin = minCenterDist(HQ_R, FACTORY_R);
   const dMax = Math.max(dMin, HQ_ATK_RANGE - 12);
   const d = dMin + (dMax - dMin) * 0.55;
-  // 两座并排：横向半距略大于工厂半径，避免互叠
-  const halfSep = FACTORY_R + 40;
+  // 两座并排：横向半距 = 一半的「占位 + 净缝」⇒ 两厂之间刚好留 BUILD_LANE_PX 的通路
+  const halfSep = occupyR(FACTORY_R) + BUILD_LANE_PX / 2;
   for (const hq of bases) {
     const { fx, fy, rx, ry } = dirTowardCenter(hq.x, hq.y);
     // 2 座：左 / 右各一；若将来改成更多，就在正前方横排铺开
     const nFac = STARTER_FAC_PER_HQ;
     for (let k = 0; k < nFac; k++) {
-      // n=2 → ±halfSep；更多时按「工厂直径 + 缝」横排
-      const step = nFac <= 2 ? halfSep * 2 : FACTORY_R * 2 + 36;
+      // n=2 → ±halfSep；更多时按「占位直径 + 缝」横排
+      const step = nFac <= 2 ? halfSep * 2 : minCenterDist(FACTORY_R, FACTORY_R);
       const latK = (k - (nFac - 1) * 0.5) * step;
       out.push({
         x: round1(hq.x + fx * d + rx * latK),
@@ -3883,9 +4552,9 @@ function buildNeutralFactories(count, rng, bands, bases, grid) {
     return sBlocked * 0.6 + sRoad * 0.4;
   };
   const EDGE = FAC_EDGE; // 距地图边缘最小留白
-  const GAP = FAC_GAP; // 工厂之间最小中心距（> 400 满足布局测试，也远小于 2×占领半径）
-  const LAB_CLEAR = 860; // 距研究所最小中心距
-  const HQ_CLEAR = HQ_BUILDING_GAP + FACTORY_R; // 距各家总部的最小中心距
+  const GAP = Math.max(FAC_GAP, minCenterDist(FACTORY_R, FACTORY_R)); // 工厂之间最小中心距
+  const LAB_CLEAR = Math.max(860, minCenterDist(FACTORY_R, LAB_R)); // 距研究所最小中心距
+  const HQ_CLEAR = Math.max(HQ_BUILDING_GAP + FACTORY_R, minCenterDist(HQ_R, FACTORY_R)); // 距各家总部
   // 轨道内相邻两座的间距 = 2·d·sin(π/n) 同样要 ≥ GAP → 半径有下限
   const dMin = Math.max(GAP / (2 * Math.sin(Math.PI / n)), 520);
   const dMax = Math.min(FAC_R_MAX, WORLD_H / 2 - EDGE); // 再大就有旋转像掉出上下边界
@@ -4025,8 +4694,10 @@ let LABS = [];
 function placeStarterLabsNearHqs(bases) {
   const out = [];
   if (!bases || !bases.length || STARTER_LAB_PER_HQ <= 0) return out;
-  const dBack = HQ_R + LAB_R + 36; // 总部正后方（背对中场）
-  const latStep = LAB_R * 2 + 48;
+  // 总部正后方（背对中场）。⚠️ 早先是 `HQ_R + LAB_R + 36`，扣掉寻路外扩之后净缝 −0.2 格 ——
+  //   占位圈与总部重叠，研究所把总部后半圈整个糊死，出生部队推不出去。
+  const dBack = minCenterDist(HQ_R, LAB_R);
+  const latStep = minCenterDist(LAB_R, LAB_R);
   for (const hq of bases) {
     const { fx, fy, rx, ry } = dirTowardCenter(hq.x, hq.y);
     const nLab = STARTER_LAB_PER_HQ;
@@ -4057,9 +4728,9 @@ function buildLabs(count, rng, bands, bases, grid) {
   const cx = WORLD_W / 2;
   const cy = WORLD_H / 2;
   const EDGE = FAC_EDGE;
-  const GAP = Math.max(FAC_GAP * 0.85, LAB_R * 2 + 200); // 研究所彼此间距
-  const HQ_CLEAR = HQ_BUILDING_GAP + LAB_R;
-  const STARTER_CLEAR = LAB_R * 2 + 120; // 躲开各家门口固定所
+  const GAP = Math.max(FAC_GAP * 0.85, minCenterDist(LAB_R, LAB_R)); // 研究所彼此间距
+  const HQ_CLEAR = Math.max(HQ_BUILDING_GAP + LAB_R, minCenterDist(HQ_R, LAB_R));
+  const STARTER_CLEAR = minCenterDist(LAB_R, LAB_R); // 躲开各家门口固定所
   const dMin = Math.max(GAP / (2 * Math.sin(Math.PI / n)), BASE_R * LAB_R_K * 0.35);
   const dMax = Math.min(FAC_R_MAX, WORLD_H / 2 - EDGE);
   const N = 420;
@@ -4443,13 +5114,16 @@ function nearestPassable(game, x, y, wantComp, opts) {
 function snapOutsideBuildings(game, x, y, r) {
   let px = x;
   let py = y;
-  const clearance = r == null ? 22 : r;
+  const pad = (r == null ? BLOCK_MARGIN : r) + (r == null ? 0 : BLOCK_MARGIN);
   for (let iter = 0; iter < 4; iter++) {
     const blocks = [];
-    for (const f of game.factories || []) blocks.push([f.x, f.y, FACTORY_R + clearance]);
-    for (const l of game.labs || []) blocks.push([l.x, l.y, LAB_R + clearance]);
+    // ⚠️ 口径必须与 passGrid 一致（占位 = 碰撞 + BLOCK_MARGIN）。早先这里用的是
+    //    `FACTORY_R + clearance`，而流场按 `FACTORY_R + BLOCK_MARGIN` 封 —— 两套口径不一致，
+    //    于是「落点被判可走、但流场那格是 0」，部队走过去就被推开，原地绕圈。
+    for (const f of game.factories || []) blocks.push([f.x, f.y, occupyR(FACTORY_R) + pad]);
+    for (const l of game.labs || []) blocks.push([l.x, l.y, occupyR(LAB_R) + pad]);
     for (const h of game.hqs || []) {
-      if (!h.down) blocks.push([h.x, h.y, HQ_R + clearance]);
+      if (!h.down) blocks.push([h.x, h.y, occupyR(HQ_R) + pad]);
     }
     let moved = false;
     for (const b of blocks) {
@@ -4565,6 +5239,33 @@ function navStepOk(game, pg, cols, from, to) {
     if (cliffBetween(game, iH, to) || cliffBetween(game, iV, to)) return false;
   }
   return true;
+}
+
+/**
+ * 导航边代价（调用方已确认 navStepOk）。
+ * 正交 1 / 对角 √2；换层、踩坡加罚 —— 有同层平路时不会拐去走坡再拐回来。
+ * 必要换层时坡仍是唯一通路，罚金只是偏好，不会堵死。
+ */
+const NAV_COST_ORTH = 1;
+const NAV_COST_DIAG = Math.SQRT2;
+const NAV_COST_DH = 0.65; // 每跨 1 层层高
+const NAV_COST_RAMP = 0.4; // 边端点任一为坡
+
+function navEdgeCost(game, from, to) {
+  const cols = game.terrain.cols;
+  const c0 = from % cols;
+  const r0 = (from - c0) / cols;
+  const c1 = to % cols;
+  const r1 = (to - c1) / cols;
+  let cost = c0 !== c1 && r0 !== r1 ? NAV_COST_DIAG : NAV_COST_ORTH;
+  const hf = game.terrain.heights;
+  if (hf) {
+    const dh = Math.abs((hf[from] || 0) - (hf[to] || 0));
+    if (dh > 0) cost += dh * NAV_COST_DH;
+  }
+  const ramps = game.terrain.ramps;
+  if (ramps && (ramps[from] || ramps[to])) cost += NAV_COST_RAMP;
+  return cost;
 }
 
 /**
@@ -4742,23 +5443,105 @@ function turretAimed(u, want) {
  *
  * @returns {boolean|'turn'} 真值 = 这一步有动作（挪了窝或在原地掉头）；false = 被挡住没动
  */
+/**
+ * 本帧 RVO 邻域：用各单位「上一帧速度」建空间哈希。
+ * ORCA 标准口径 —— 邻居的 velocity_ 是上一步结果，本步同时算 newVelocity。
+ */
+function beginRvoFrame(game) {
+  if (!RVO_ENABLED) {
+    game._rvo = null;
+    return;
+  }
+  const agents = [];
+  for (let i = 0; i < game.units.length; i++) {
+    const u = game.units[i];
+    if (!u || u.dead) continue;
+    agents.push({
+      id: u.id,
+      x: u.x,
+      y: u.y,
+      vx: u._vx || 0,
+      vy: u._vy || 0,
+      r: Math.max(4, u.r || 10),
+    });
+  }
+  game._rvo = WFRvo.beginFrame(agents, {
+    neighborDist: RVO_NEIGHBOR_DIST,
+    maxNeighbors: RVO_MAX_NEIGHBORS,
+    timeHorizon: RVO_TIME_HORIZON,
+  });
+}
+
 function slideStep(game, u, ang, spd, dt) {
   const off = angWrap(ang - u.angle);
   turnHull(u, ang, dt);
   const c = Math.cos(off);
-  if (c < TURN_MOVE_COS) return 'turn'; // 车头偏太多 → 原地掉头，转到位（或转到够近）再走
-  const step = spd * Math.max(TURN_MOVE_MIN, c);
-  const dir = u.angle;
-  for (const off of SLIDE_OFFSETS) {
-    const a = dir + (off * Math.PI) / 180;
+  if (c < TURN_MOVE_COS) {
+    u._vx = 0;
+    u._vy = 0;
+    return 'turn'; // 车头偏太多 → 原地掉头，转到位（或转到够近）再走
+  }
+  let step = spd * Math.max(TURN_MOVE_MIN, c);
+  let dir = u.angle;
+
+  // RVO：把流场期望速度交给 ORCA，避开邻兵（地形仍由下面 canStand 管）。
+  // ⚠️ 必须钳制：纯 ORCA 在同路挤兑时会给出**反向**速度 → 多点路点永远走不完。
+  //    丢掉反向分量，并把相对期望方向的偏角限制在 ~50° 内（侧让，不掉头逃跑）。
+  if (game._rvo && dt > 1e-6) {
+    const maxSpd = Math.max(u.speed || 80, step / dt);
+    let prefVx = Math.cos(dir) * (step / dt);
+    let prefVy = Math.sin(dir) * (step / dt);
+    const jitter = 0.0001 * maxSpd;
+    const ja = (u.id * 12.9898 + (game.now || 0) * 0.001) % (Math.PI * 2);
+    prefVx += Math.cos(ja) * jitter;
+    prefVy += Math.sin(ja) * jitter;
+    const adj = WFRvo.compute(game._rvo, u.id, prefVx, prefVy, maxSpd, dt);
+    let ox = adj.vx;
+    let oy = adj.vy;
+    const pLen2 = prefVx * prefVx + prefVy * prefVy;
+    if (pLen2 > 1e-6) {
+      const fwd = (ox * prefVx + oy * prefVy) / pLen2;
+      if (fwd < 0) {
+        ox -= prefVx * fwd;
+        oy -= prefVy * fwd;
+      }
+      const prefAng = Math.atan2(prefVy, prefVx);
+      let rvoAng = Math.atan2(oy, ox);
+      let dAng = angWrap(rvoAng - prefAng);
+      const maxDev = 0.87; // ≈50°
+      if (dAng > maxDev) dAng = maxDev;
+      if (dAng < -maxDev) dAng = -maxDev;
+      rvoAng = prefAng + dAng;
+      const spdOut = Math.min(maxSpd, Math.hypot(ox, oy));
+      ox = Math.cos(rvoAng) * spdOut;
+      oy = Math.sin(rvoAng) * spdOut;
+    }
+    const len = Math.hypot(ox, oy);
+    if (len > 1e-4) {
+      dir = Math.atan2(oy, ox);
+      step = Math.min(step, len * dt);
+    }
+  }
+
+  const ox = u.x;
+  const oy = u.y;
+  for (const soff of SLIDE_OFFSETS) {
+    const a = dir + (soff * Math.PI) / 180;
     const nx = u.x + Math.cos(a) * step;
     const ny = u.y + Math.sin(a) * step;
     // 带上起点：崖只在这一步跨过去时才拦得住（只判落点的话，部队能直接走上崖顶）
     if (!canStand(game, nx, ny, u.r, u.x, u.y)) continue;
     u.x = nx;
     u.y = ny;
+    if (dt > 1e-6) {
+      u._vx = (nx - ox) / dt;
+      u._vy = (ny - oy) / dt;
+    }
+    u._rvoMoved = true;
     return true;
   }
+  u._vx = 0;
+  u._vy = 0;
   return false;
 }
 
@@ -4802,10 +5585,10 @@ function passGrid(game) {
     }
   }
   const blocks = [];
-  for (const f of game.factories || []) blocks.push([f.x, f.y, FACTORY_R + BLOCK_MARGIN]);
-  for (const l of game.labs || []) blocks.push([l.x, l.y, LAB_R + BLOCK_MARGIN]);
+  for (const f of game.factories || []) blocks.push([f.x, f.y, occupyR(FACTORY_R)]);
+  for (const l of game.labs || []) blocks.push([l.x, l.y, occupyR(LAB_R)]);
   for (const h of game.hqs || []) {
-    if (!h.down) blocks.push([h.x, h.y, HQ_R + BLOCK_MARGIN]);
+    if (!h.down) blocks.push([h.x, h.y, occupyR(HQ_R)]);
   }
   for (const b of blocks) {
     const c0 = Math.max(0, Math.floor((b[0] - b[2]) / t.cell));
@@ -4929,12 +5712,16 @@ function flowBudgetFor(game) {
 }
 
 /**
- * 以目标点所在格为源做 BFS，得到「每格到目标的步数」流场；-1 表示不可达。
+ * 以目标点所在格为源做加权 Dijkstra，再按 SolasXer/vector-field-pathfinding 的口径
+ * 生成「每格指向最优邻格」的方向向量场（MIT，https://github.com/SolasXer/vector-field-pathfinding）。
+ *
+ * 代价场：边代价 = navEdgeCost（几何距离 + 换层/走坡罚），有同层平路时不会拐去走坡再拐回。
+ * 向量场：对每格在 8 邻域里挑「navStepOk 且 dist 最低」的邻格（与仓库 findOptimalNeighbor 同思路），
+ *         存 next / dirX / dirY；⚠️ 邻格必须过 navStepOk，否则会指到崖对面（旧贪心抖动根因）。
  * 目标格会先按「与 (fromX,fromY) 同属一个连通分量」修正——否则目标落在山体里时，
  * 最近的可通行格若是孤立小岛，整张流场会把单位所在大陆标成不可达（寻路直接失效）。
  * 按目标格缓存（集结点固定不变、群体下令共用同一目标，命中率很高）。
- * 60×40=2400 格的 BFS 只有几万次操作；再加一道「每步新建上限」兜底，
- * 避免大量单位各自追击不同移动目标时单步爆建流场（超限则退回直线转向）。
+ * 再加一道「每步新建上限」兜底，避免大量单位各自追击不同移动目标时单步爆建流场。
  */
 function flowField(game, goalX, goalY, fromX, fromY) {
   const t = game.terrain;
@@ -4986,21 +5773,66 @@ function flowField(game, goalX, goalY, fromX, fromY) {
 
   const cols = t.cols;
   const rows = t.rows;
-  // 8 向 BFS：斜线也是合法边（代价同为 1 步）。对角走得动，才不会永远「横走完再竖走」。
-  // 边口径 = navStepOk（可通行 + 不跨崖 + 不许对角切崖角/山角），与 compLabels 一致。
-  const dist = new Int32Array(cols * rows).fill(-1);
+  const tot = cols * rows;
+  const INF = 1e30;
+  // 边口径 = navStepOk；代价 = navEdgeCost（斜边 √2 + 换层/坡罚）
+  // ⚠️ 必须用 Float64：Float32 舍入会让堆里的 d !== dist[cur]，整表 Dijkstra 失效
+  const dist = new Float64Array(tot);
+  dist.fill(INF);
   // 父指针：「这一格是从哪一格走过来的」。沿它回溯就是一条**真正走得通**的路 ——
-  // 每一步都是 BFS 亲自验过的导航边，绝不会像「贪心挑 dist 最小的邻格」
+  // 每一步都是亲自验过的导航边，绝不会像「贪心挑 dist 最小的邻格」
   // 那样挑到一条隔着崖、迈不过去的近路（那正是部队在崖沿原地抖动的老毛病）。
-  const prev = new Int32Array(cols * rows).fill(-1);
-  const queue = new Int32Array(cols * rows);
-  let head = 0;
-  let tail = 0;
+  const prev = new Int32Array(tot).fill(-1);
+  const hd = [];
+  const hi = [];
+  const hpush = (d, id) => {
+    hd.push(d);
+    hi.push(id);
+    let i = hd.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (hd[p] <= hd[i]) break;
+      const td = hd[p];
+      hd[p] = hd[i];
+      hd[i] = td;
+      const ti = hi[p];
+      hi[p] = hi[i];
+      hi[i] = ti;
+      i = p;
+    }
+  };
+  const hpop = () => {
+    const d = hd[0];
+    const id = hi[0];
+    const ld = hd.pop();
+    const li = hi.pop();
+    if (hd.length) {
+      hd[0] = ld;
+      hi[0] = li;
+      let i = 0;
+      for (;;) {
+        const l = i * 2 + 1;
+        const r2 = l + 1;
+        let m = i;
+        if (l < hd.length && hd[l] < hd[m]) m = l;
+        if (r2 < hd.length && hd[r2] < hd[m]) m = r2;
+        if (m === i) break;
+        const td = hd[m];
+        hd[m] = hd[i];
+        hd[i] = td;
+        const ti = hi[m];
+        hi[m] = hi[i];
+        hi[i] = ti;
+        i = m;
+      }
+    }
+    return [d, id];
+  };
   dist[gi.i] = 0;
-  queue[tail++] = gi.i;
-  while (head < tail) {
-    const cur = queue[head++];
-    const nd = dist[cur] + 1;
+  hpush(0, gi.i);
+  while (hd.length) {
+    const [d, cur] = hpop();
+    if (d !== dist[cur]) continue;
     const c0 = cur % cols;
     const r0 = (cur - c0) / cols;
     for (let dr = -1; dr <= 1; dr++) {
@@ -5010,18 +5842,67 @@ function flowField(game, goalX, goalY, fromX, fromY) {
         const nr = r0 + dr;
         if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) continue;
         const n = nr * cols + nc;
-        if (dist[n] >= 0) continue;
         if (!navStepOk(game, pg, cols, cur, n)) continue;
-        dist[n] = nd;
-        prev[n] = cur;
-        queue[tail++] = n;
+        const nd = d + navEdgeCost(game, cur, n);
+        if (nd + 1e-9 < dist[n]) {
+          dist[n] = nd;
+          prev[n] = cur;
+          hpush(nd, n);
+        }
       }
+    }
+  }
+  for (let i = 0; i < tot; i++) {
+    if (dist[i] >= INF * 0.5) dist[i] = -1;
+  }
+
+  // —— 向量场（SolasXer：updateAllGridsVectors / findOptimalNeighbor）——
+  // 每格指向「可一步迈过去、且到目标代价最低」的邻格；单位采样该方向即可前进。
+  // prev 仍保留：诊断 / 冒烟沿父链回溯；向量与 prev 在多数格上一致，多最优邻时向量取最低 dist。
+  const next = new Int32Array(tot).fill(-1);
+  const dirX = new Float32Array(tot);
+  const dirY = new Float32Array(tot);
+  for (let i = 0; i < tot; i++) {
+    if (dist[i] < 0 || i === gi.i) continue;
+    const c0 = i % cols;
+    const r0 = (i - c0) / cols;
+    let best = -1;
+    let bestD = INF;
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        if (!dr && !dc) continue;
+        const nc = c0 + dc;
+        const nr = r0 + dr;
+        if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) continue;
+        const n = nr * cols + nc;
+        const nd = dist[n];
+        if (nd < 0) continue;
+        if (!navStepOk(game, pg, cols, i, n)) continue;
+        if (nd + 1e-9 < bestD) {
+          bestD = nd;
+          best = n;
+        }
+      }
+    }
+    if (best < 0) continue;
+    next[i] = best;
+    const bc = best % cols;
+    const br = (best - bc) / cols;
+    let vx = bc - c0;
+    let vy = br - r0;
+    const len = Math.hypot(vx, vy);
+    if (len > 1e-6) {
+      dirX[i] = vx / len;
+      dirY[i] = vy / len;
     }
   }
 
   const field = {
     dist,
     prev,
+    next,
+    dirX,
+    dirY,
     cols,
     rows,
     goalIdx: gi.i,
@@ -5336,8 +6217,9 @@ function detourStep(game, u, goalX, goalY, spd, dt) {
 }
 
 /**
- * 近距局部寻路：只在「单位 ↔ 目标」外扩 LOCAL_PATH_MARGIN 格的小框里做 8 向 BFS。
+ * 近距局部寻路：只在「单位 ↔ 目标」外扩 LOCAL_PATH_MARGIN 格的小框里做加权 Dijkstra。
  * 解决「点了很近的地方，全局流场却绕总部/山体走半张图」—— 框外的长绕行根本进不了候选。
+ * 代价与全局流场同口径（navEdgeCost），平路优先。
  * @returns {{x:number,y:number}|null} 下一步迈向的点（格心或目标点）；null = 框内走不通
  */
 const LOCAL_PATH_MARGIN = 28; // 格：近距框外扩（约 1120px），够绕过总部+门口厂+研究所团
@@ -5383,32 +6265,67 @@ function localSteer(game, u, goalX, goalY) {
   cMax = Math.min(cols - 1, cMax);
   rMin = Math.max(0, rMin);
   rMax = Math.min(rows - 1, rMax);
-  // 局部 BFS：以目标为源，只在框内扩（复用缓冲，stamp 免清零）
+  // 局部 Dijkstra：以目标为源，只在框内扩（复用缓冲）
   const tot = cols * rows;
+  const INF = 1e30;
   if (!game._localDist || game._localDist.length !== tot) {
-    game._localDist = new Int32Array(tot);
+    game._localDist = new Float64Array(tot);
     game._localPrev = new Int32Array(tot);
-    game._localSeen = new Int32Array(tot);
-    game._localQueue = new Int32Array(tot);
-    game._localStamp = 1;
   }
   const distA = game._localDist;
   const prevA = game._localPrev;
-  const seen = game._localSeen;
-  const q = game._localQueue;
-  const stamp = game._localStamp++;
-  if (game._localStamp > 0x3fffffff) {
-    game._localSeen.fill(0);
-    game._localStamp = 1;
-  }
-  let head = 0;
-  let tail = 0;
-  seen[gCell.i] = stamp;
+  distA.fill(INF);
+  prevA.fill(-1);
+  const hd = [];
+  const hi = [];
+  const hpush = (d, id) => {
+    hd.push(d);
+    hi.push(id);
+    let i = hd.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (hd[p] <= hd[i]) break;
+      const td = hd[p];
+      hd[p] = hd[i];
+      hd[i] = td;
+      const ti = hi[p];
+      hi[p] = hi[i];
+      hi[i] = ti;
+      i = p;
+    }
+  };
+  const hpop = () => {
+    const d = hd[0];
+    const id = hi[0];
+    const ld = hd.pop();
+    const li = hi.pop();
+    if (hd.length) {
+      hd[0] = ld;
+      hi[0] = li;
+      let i = 0;
+      for (;;) {
+        const l = i * 2 + 1;
+        const r2 = l + 1;
+        let m = i;
+        if (l < hd.length && hd[l] < hd[m]) m = l;
+        if (r2 < hd.length && hd[r2] < hd[m]) m = r2;
+        if (m === i) break;
+        const td = hd[m];
+        hd[m] = hd[i];
+        hd[i] = td;
+        const ti = hi[m];
+        hi[m] = hi[i];
+        hi[i] = ti;
+        i = m;
+      }
+    }
+    return [d, id];
+  };
   distA[gCell.i] = 0;
-  prevA[gCell.i] = -1;
-  q[tail++] = gCell.i;
-  while (head < tail) {
-    const cur = q[head++];
+  hpush(0, gCell.i);
+  while (hd.length) {
+    const [d, cur] = hpop();
+    if (d !== distA[cur]) continue;
     if (cur === me.i) break;
     const c0 = cur % cols;
     const r0 = (cur - c0) / cols;
@@ -5419,26 +6336,35 @@ function localSteer(game, u, goalX, goalY) {
         const nr = r0 + dr;
         if (nc < cMin || nc > cMax || nr < rMin || nr > rMax) continue;
         const n = nr * cols + nc;
-        if (seen[n] === stamp) continue;
-        // 部队可能站在建筑占位格（pg[me]=0）：允许 BFS 扩到 me，其它格仍走 navStepOk
+        // 部队可能站在建筑占位格（pg[me]=0）：允许扩到 me，其它格仍走 navStepOk
+        let edgeOk = false;
         if (n === me.i) {
-          if (cliffBetween(game, cur, n)) continue;
-          if (dc && dr) {
-            const iH = r0 * cols + nc;
-            const iV = nr * cols + c0;
-            if (cliffBetween(game, cur, iH) || cliffBetween(game, cur, iV)) continue;
+          if (!cliffBetween(game, cur, n)) {
+            if (dc && dr) {
+              const iH = r0 * cols + nc;
+              const iV = nr * cols + c0;
+              edgeOk = !cliffBetween(game, cur, iH) && !cliffBetween(game, cur, iV);
+            } else {
+              edgeOk = true;
+            }
           }
-        } else if (!navStepOk(game, pg, cols, cur, n)) {
-          continue;
+        } else {
+          edgeOk = navStepOk(game, pg, cols, cur, n);
         }
-        seen[n] = stamp;
-        distA[n] = distA[cur] + 1;
-        prevA[n] = cur;
-        q[tail++] = n;
+        if (!edgeOk) continue;
+        const stepCost = n === me.i
+          ? (dc && dr ? NAV_COST_DIAG : NAV_COST_ORTH)
+          : navEdgeCost(game, cur, n);
+        const nd = d + stepCost;
+        if (nd + 1e-9 < distA[n]) {
+          distA[n] = nd;
+          prevA[n] = cur;
+          hpush(nd, n);
+        }
       }
     }
   }
-  if (seen[me.i] !== stamp) return null;
+  if (distA[me.i] >= INF * 0.5) return null;
   // 沿父链走一步（拉直：能直达的最远框内点）
   const chain = [];
   let node = me.i;
@@ -5461,17 +6387,16 @@ function localSteer(game, u, goalX, goalY) {
 }
 
 /**
- * 沿流场朝目标推进一小步。
+ * 沿向量场朝目标推进一小步。
  *
- * 走法（2026-10-08 重写，替换掉「贪心挑 dist 最小的邻格」）：
- *   ⓪ 直线走得通 → 直奔（最近的点击别绕）；近距优先局部 BFS，挡住全局大绕行。
- *   ① 单位所在格可达 → 沿 **BFS 父链**回溯出一条真路（每一步都是 BFS 亲自验过
- *      「可通行 + 不跨崖」的边），再**前瞻拉直**：从当前位置往前最多看 FLOW_PULL_AHEAD
- *      格，取「直线走得通的最远那个路点」当落点 —— 于是部队走的是一条条直线段，
- *      而不是贴着格边一格一格蹦，也不会再挑中隔崖的近路。
- *   ② 单位站在**建筑占位格**上（该格在掩码里是 0，父链指不到它）→ 退回邻域搜索：
+ * 走法（2026-10-09 换成 SolasXer 向量场：每格一个方向，单位采样后前进；
+ *       代价场仍是加权 Dijkstra，邻格方向必须过 navStepOk）：
+ *   ⓪ 直线走得通 → 直奔（最近的点击别绕）；近距优先局部寻路，挡住全局大绕行。
+ *   ① 单位所在格可达 → 沿 **向量场 next 链**往前最多看 FLOW_PULL_AHEAD 格，
+ *      再**前瞻拉直**：取「直线走得通、且整条弦贴向量链」的最远路点当落点。
+ *   ② 单位站在**建筑占位格**上（该格在掩码里是 0，向量指不到它）→ 退回邻域搜索：
  *      挑一个「可达且不跨崖」的邻格走出去（这一步之后就回到 ①）。
- *   ③ 连这样的邻格都没有（真的被崖 / 建筑圈死）→ 先朝最近的可通行格脱出占位，
+ *   ③ 连这样的邻格都没有（真的被崖 / 建筑圈死）→ escapeStep / nearestSteppable，
  *      脱不出去才退回直线转向。
  *
  * @returns {boolean} 是否发生了移动
@@ -5565,12 +6490,14 @@ function stepViaFlow(game, u, goalX, goalY, spd, dt) {
   let ty = 0;
   let got = false;
 
-  if (cur > 0 && f.prev) {
-    // ① 先把父链前缀取出来（至多 FLOW_PULL_AHEAD 个路点）……
+  if (cur > 0 && f.next) {
+    // ① 沿向量场 next 链取出前缀（至多 FLOW_PULL_AHEAD 个路点）……
+    //    单格也可直接用 dirX/dirY 当速度方向（SolasXer Agent 采样槽位方向）；
+    //    这里多看几格再拉直，避免大地图上一格一格蹭。
     const chain = [];
     let node = me.i;
     for (let k = 0; k < FLOW_PULL_AHEAD; k++) {
-      const nx = f.prev[node];
+      const nx = f.next[node];
       if (nx < 0) break;
       const nc = nx % cols;
       const nr = (nx - nc) / cols;
@@ -5578,10 +6505,9 @@ function stepViaFlow(game, u, goalX, goalY, spd, dt) {
       node = nx;
       if (nx === f.goalIdx) break;
     }
-    // ……再从最远的那个往回试，取第一个「直线走得通、且整条弦都贴着父链」的当落点。
+    // ……再从最远的那个往回试，取第一个「直线走得通、且整条弦都贴着向量链」的当落点。
     // ⚠️ 走廊约束不能省：只验「终点走得通」的话，部队会沿着一条斜弦滑走，
-    //    一步就滑进隔壁格子 —— 那格的父链又指回原处，于是两步一翻转、原地转圈
-    //    （实测 5 秒位移 0.1px，正是「点了移动却纹丝不动」）。
+    //    一步就滑进隔壁格子 —— 那格的向量又指回原处，于是两步一翻转、原地转圈。
     const band = t.cell * FLOW_PULL_BAND;
     for (let k = chain.length - 1; k >= 0; k--) {
       const c = chain[k];
@@ -5601,11 +6527,22 @@ function stepViaFlow(game, u, goalX, goalY, spd, dt) {
       got = true;
       break;
     }
+    // 链拉直全失败时：退回本格方向向量（SolasXer 默认走法）
+    if (!got && f.dirX && f.dirY) {
+      const vx = f.dirX[me.i];
+      const vy = f.dirY[me.i];
+      if (vx * vx + vy * vy > 1e-6) {
+        tx = u.x + vx * t.cell;
+        ty = u.y + vy * t.cell;
+        got = true;
+      }
+    }
   }
 
   if (!got) {
-    // ② 自身格不可达（站在建筑占位格里）或父链被临时挡住：邻域搜索找一个能迈出去的格
+    // ② 自身格不可达（站在建筑占位格里）或向量链被临时挡住：邻域搜索找一个能迈出去的格
     // ⚠️ 边口径必须与流场一致（navStepOk）：只比两端层高会漏掉「对角切崖角」。
+    //    这里等价于 SolasXer 的 findOptimalNeighbor（最低 dist + 可迈）。
     const pgN = passGrid(game);
     let bestIdx = -1;
     let bestCost = Infinity;
@@ -5707,6 +6644,29 @@ const HQ_RADIUS_JITTER = 0.2; // 椭圆半径最多向内收缩 20%（让出生�
 // 候选点给得太少时会被迫放宽到 1 道甚至 0 道。
 const HQ_SPOT_TRIES = 400;
 const HQ_BASE_MARGIN = 800; // 出生点距世界边缘的最小距离（随世界尺寸同步放大）
+
+/**
+ * 两座建筑之间的**净缝**（占位圈之间真正能走的地带）下限，世界像素。
+ *
+ * ⚠️ 这是「堵路」问题的唯一判据，也是所有布局间距公式的公共口径：
+ *   建筑间距必须 ≥ 两座建筑的**占位半径**之和 + 本值。
+ *   占位半径 = 碰撞半径 + BLOCK_MARGIN，寻路掩码再叠加半格量化（TERRAIN_CELL/2）——
+ *   早先布局公式只按「碰撞半径之和 + 一个小常数」摆位，于是
+ *   ① 总部与门口研究所的占位圈**重叠**（实测净缝 −0.2 格，总部被研究所贴死）；
+ *   ② 门口两座厂之间只剩 0.9 格，看着有路、实际被占位糊成一片。
+ *   现在统一按占位算，并要求至少留 1.5 个地形格（60px ≈ 两排兵并行通过）。
+ */
+const BUILD_LANE_PX = TERR_CELL * 1.5;
+/** 开道时只修「小到不可能是设计意图」的碎块（格）：更大的孤岛本身就是地形，硬接反而破图 */
+const LANE_ORPHAN_MAX = 400;
+/** 某座建筑的寻路占位半径（碰撞 + 外扩余量）：布局、掩码、校验三处共用同一口径 */
+function occupyR(collisionR) {
+  return collisionR + BLOCK_MARGIN;
+}
+/** 两座建筑之间的最小**中心距**（保证中间还剩 BUILD_LANE_PX 的可走净缝） */
+function minCenterDist(rA, rB) {
+  return occupyR(rA) + occupyR(rB) + BUILD_LANE_PX;
+}
 // 第 2 项：任意两座总部之间必须至少隔着这么多条**独立的山脉带**（「墙」= 山脉）。
 // 判定方式：沿两座总部的连线采样地形，统计「连续山地」的段数（见 ridgeBandsBetween）。
 const HQ_MIN_RIDGES = 2;
@@ -6070,7 +7030,9 @@ function applyMapState(game, wfMap, opts) {
     prodProg: 0,
     rally: null,
     atkId: 0,
-    atkFocus: 0, // 玩家右键指定的优先目标（编码同 atkId；0 = 自动索敌）
+    atkKind: 0, // 1 单位 / 2 工厂 / 3 研究所 / 4 总部
+    atkFocus: 0, // 玩家右键指定的优先目标 id（0 = 自动索敌）
+    atkFocusKind: 0,
     atkWindup: 0,
     atkCd: 0,
   }));
@@ -6537,7 +7499,7 @@ function createGameState(room) {
     hp: Math.round(LAB_HP * NEUTRAL_HP_RATIO),
     hpMax: LAB_HP,
     lastHitBy: -1,
-    // 第 7/8 项：研究产线（默认 0 条，花科技点可开拓 1 条 → 该所产出 +50%）
+    // 第 7/8 项：研究产线（默认 0 条，可开拓多条；每条每周期产出 +labLineRpBonus）
     lines: 0,
   }));
 
@@ -6573,6 +7535,13 @@ function createGameState(room) {
       evolved: EVOLVED_PX,
       aggroBonus: 0, // 已废弃（不再有追击圈）：保留字段避免旧客户端读 consts 时取到 undefined
       attackSlack: ATTACK_SLACK,
+      /**
+       * 寻路掩码对建筑占位的额外外扩（BLOCK_MARGIN）。
+       * 客户端要**按同一条公式**画占位圈（occupancy = 碰撞 + navMargin）——
+       * 不下发的话客户端只能写死一个数，一旦这边调了，「画出来的能走范围」
+       * 和「实际能走范围」又对不上，那正是占位圈要修的病。
+       */
+      navMargin: BLOCK_MARGIN,
       // 转向速率：车体 / 炮塔都按角速度转（客户端据此做同速率的插值，两端不会打架）
       turn: {
         hull: TURN_HULL,
@@ -6596,7 +7565,7 @@ function createGameState(room) {
       // 第 7 项：研究所研究产线
       labLineCost: LAB_LINE_COST,
       labMaxLines: LAB_MAX_LINES,
-      labLineRpMul: LAB_LINE_RP_MUL,
+      labLineRpBonus: LAB_LINE_RP_BONUS, // 每条产线每周期额外产出（与基数相加）
       // 第 6 项：总部防卫（客户端据此画射程圈 / 前摇）
       hqAtkRange: HQ_ATK_RANGE,
       hqAtkCd: HQ_ATK_CD,
@@ -6760,8 +7729,10 @@ function createGameState(room) {
     prodProg: 0,
     rally: null, // 第 4 项：总部集结点（右键设置，交互同己方工厂）
     // 第 6 项：总部防卫（射程 200 / 间隔 0.5s / 伤害 20 / 前摇 500ms）
-    atkId: 0, // 当前锁定的敌方单位 id（0 = 无目标）
-    atkFocus: 0, // 玩家右键指定的优先目标（编码同 atkId；0 = 自动索敌）
+    atkId: 0, // 当前锁定目标 id（0 = 无目标）
+    atkKind: 0, // 1 单位 / 2 工厂 / 3 研究所 / 4 总部
+    atkFocus: 0, // 玩家右键指定的优先目标 id（0 = 自动索敌）
+    atkFocusKind: 0,
     atkWindup: 0, // 前摇结束的绝对时间戳（> now 表示正在蓄能）
     atkCd: 0, // 距离下次可开火的剩余秒数
   }));
@@ -7904,6 +8875,62 @@ function createGameState(room) {
     }
     regLog('12 扫碎屑');
   }
+  // 磨圆山/水外缘直角：削尖刺 + 削凸角 + 填凹口。连通仍优先 —— 磨完若宽通道裂开就退回。
+  {
+    const before = wideRegions(wideMask(game.terrain.grid)).length;
+    const snapT = game.terrain.grid.map((row) => row.slice());
+    const n = roundTerrainEdges(game.terrain.grid, 4);
+    if (n) {
+      symmetrizeGrid(game.terrain.grid, count);
+      const after = wideRegions(wideMask(game.terrain.grid)).length;
+      if (after > Math.max(1, before)) {
+        game.terrain.grid = snapT;
+      } else {
+        repairConnect(4);
+      }
+    }
+    regLog('12b 磨圆外缘');
+  }
+  // 建筑占位下的连通性开道：**必须排在高度场之前**（详见 openLanesAroundBuildings 的注释）。
+  // 前面那一整串连通修复只认地形，建筑占位是寻路掩码 passGrid 才加进去的 ——
+  // 地图「地形上连成一整片」，建筑一落位却能把某片地整个圈掉，玩家看到的路就不存在。
+  // 新挖的走廊要参与高度场派生与挖坡口，所以这一刀必须在 buildHeightField 之前。
+  {
+    const before = process.env.WFREG ? wideRegions(wideMask(game.terrain.grid)).length : 0;
+    const dug = openLanesAroundBuildings(game);
+    if (process.env.WFREG) {
+      const after = wideRegions(wideMask(game.terrain.grid)).length;
+      console.log(`  [reg] 13 建筑开道：挖 ${dug} 格，宽通道 ${before} → ${after} 片（${count} 人）`);
+    }
+    // 挖完对称一次：开道逐格判定，栅格化后各 D_N 像难免差一格。
+    // ⚠️ 用**多数表决**而不是并集 —— 并集会把主路走廊整组开掉（分隔带只有 gapCells 宽，
+    // 同组里路面占多数），中场被抹平。详见本函数上方「收尾」段的注释。
+    if (dug) {
+      symmetrizeGrid(game.terrain.grid, count);
+      // 开道会在走廊两侧啃出新的直角锯齿 —— 再磨两遍（凹角填 + 凸角削）
+      if (roundTerrainEdges(game.terrain.grid, 2)) symmetrizeGrid(game.terrain.grid, count);
+    }
+  }
+  // 去毛刺（见 despeckleEdges）：**收尾的最后一眼** —— 把 1 格宽的尖刺拔掉、1 格宽的凹口填平。
+  //   · 放在这里（建筑开道之后、高度场之前）：开道啃出来的新锯齿一并清掉；
+  //   · 跑在 symmetrizeGrid 之后是**故意**的：本地 3×3 规则与 D_N 可交换，对称自己就保住了，
+  //     不需要再表决 —— 而一表决就会按「轨道多数」把刚拔掉的尖刺原样插回去
+  //     （毛刺一路活到成品，根子就在这儿）。
+  //   · 连通仍然优先：宽通道裂开就整版退回（和上面几步同一个纪律）。
+  // WF_NODESPECKLE=1 关掉这一步（A/B 对照用；关掉后边界上会留下一堆 1 格毛刺）
+  if (!process.env.WF_NODESPECKLE) {
+    const before = wideRegions(wideMask(game.terrain.grid)).length;
+    const snapT = game.terrain.grid.map((row) => row.slice());
+    const cut = despeckleEdges(game.terrain.grid, 4);
+    if (cut) {
+      const after = wideRegions(wideMask(game.terrain.grid)).length;
+      if (after > Math.max(1, before)) {
+        game.terrain.grid = snapT; // 去毛刺把宽通道磨断了 —— 整版退回
+      } else if (process.env.WFREG) {
+        console.log(`  [reg] 13b 去毛刺：改 ${cut} 格，宽通道 ${before} → ${after} 片（${count} 人）`);
+      }
+    }
+  }
   // 高低差：**地形定稿之后**才派生高度场（前面每一步都会改地形，早算了白算）。
   // 山的高度往外摊成一圈缓坡、水往下摊成一圈洼地 → 可通行的平原也有了高地 / 低洼之分，
   // 「占高处打低处有射程加持」才真的成立（见 buildHeightField / effRange）。
@@ -8113,10 +9140,11 @@ function labCountOf(game, ownerIdx) {
 
 /**
  * 第 7 项：某座研究所的科技点产出（点 / 结算周期）。
- * 开拓了研究产线的研究所产出 ×LAB_LINE_RP_MUL（+50%）。
+ * 基数 RP_PER_LAB；每开拓一条研究产线再 +LAB_LINE_RP_BONUS。
  */
 function labRpOf(l) {
-  return RP_PER_LAB * (l && l.lines >= 1 ? LAB_LINE_RP_MUL : 1);
+  const n = Math.max(0, Math.round((l && l.lines) || 0));
+  return RP_PER_LAB + n * LAB_LINE_RP_BONUS;
 }
 
 /** 该玩家下一次结算能拿到的科技点总数（按各研究所是否已开拓产线累加） */
@@ -8126,58 +9154,135 @@ function labRpTotalOf(game, ownerIdx) {
   return sum;
 }
 
+/** 总部防卫目标类别：0 无 / 1 单位 / 2 工厂 / 3 研究所 / 4 总部（与单位索敌一致） */
+function hqNormAtk(h) {
+  // 兼容旧编码：曾经用 atkId/atkFocus 负数表示工厂、正数表示单位
+  if (h.atkKind == null) {
+    if (h.atkId < 0) {
+      h.atkKind = 2;
+      h.atkId = -h.atkId;
+    } else if (h.atkId > 0) h.atkKind = 1;
+    else h.atkKind = 0;
+  }
+  if (h.atkFocusKind == null) {
+    if (h.atkFocus < 0) {
+      h.atkFocusKind = 2;
+      h.atkFocus = -h.atkFocus;
+    } else if (h.atkFocus > 0) h.atkFocusKind = 1;
+    else h.atkFocusKind = 0;
+  }
+  if (!(h.atkId > 0)) {
+    h.atkId = 0;
+    h.atkKind = 0;
+  }
+  if (!(h.atkFocus > 0)) {
+    h.atkFocus = 0;
+    h.atkFocusKind = 0;
+  }
+}
+
+/**
+ * 解析总部当前锁定：目标仍合法则返回 { kind, target }；否则 null。
+ * inRangeOnly=true 时还要求在射程内且通视。
+ */
+function hqLookupAtk(game, h, kind, id, inRangeOnly) {
+  if (!kind || !id) return null;
+  let target = null;
+  if (kind === 1) {
+    const t = game.units.find((u) => u.id === id);
+    if (t && !t.dead && t.ownerIdx !== h.owner) target = t;
+  } else if (kind === 2) {
+    const f = game.factories.find((x) => x.id === id);
+    if (f && f.owner !== h.owner) target = f;
+  } else if (kind === 3) {
+    const l = game.labs.find((x) => x.id === id);
+    if (l && l.owner !== h.owner) target = l;
+  } else if (kind === 4) {
+    const eh = game.hqs.find((x) => x.id === id);
+    if (eh && !eh.down && eh.owner !== h.owner) target = eh;
+  }
+  if (!target) return null;
+  if (inRangeOnly) {
+    if (dist(target.x, target.y, h.x, h.y) > HQ_ATK_RANGE) return null;
+    if (losBlocked(game, h.x, h.y, target.x, target.y)) return null;
+  }
+  return { kind, target };
+}
+
+/**
+ * 总部自动索敌：口径与 findTarget 一致 ——
+ * 先打射程内最近的敌方单位；没有单位再在工厂 / 研究所 / 敌方总部里取最近（中立可打）。
+ */
+function hqPickAuto(game, h) {
+  let bestD = Infinity;
+  let bestU = null;
+  for (const u of game.units) {
+    if (u.dead || u.ownerIdx === h.owner) continue;
+    const d = dist(u.x, u.y, h.x, h.y);
+    if (d > HQ_ATK_RANGE || d >= bestD) continue;
+    if (losBlocked(game, h.x, h.y, u.x, u.y)) continue;
+    bestD = d;
+    bestU = u;
+  }
+  if (bestU) return { kind: 1, target: bestU };
+
+  let bestB = null;
+  let bestKind = 0;
+  bestD = Infinity;
+  const bear = (kind, ref) => {
+    if (ref.owner === h.owner) return;
+    if (kind === 4 && ref.down) return;
+    const d = dist(ref.x, ref.y, h.x, h.y);
+    if (d > HQ_ATK_RANGE || d >= bestD) return;
+    if (losBlocked(game, h.x, h.y, ref.x, ref.y)) return;
+    bestD = d;
+    bestB = ref;
+    bestKind = kind;
+  };
+  for (const f of game.factories) bear(2, f);
+  for (const l of game.labs) bear(3, l);
+  for (const eh of game.hqs) bear(4, eh);
+  return bestB ? { kind: bestKind, target: bestB } : null;
+}
+
 /**
  * 第 6 项：总部防卫。
- * 默认锁定射程（HQ_ATK_RANGE）内最近的敌方部队；没有部队时改打射程内的中立 / 敌方工厂
- * （门口那 2 座初级厂开局就在射程里，总部可以直接帮忙拆）。
+ * 索敌与普通单位同口径：优先射程内敌方部队，其次中立 / 敌方工厂、研究所、总部。
  * 玩家右键指定后写入 atkFocus：有焦点时优先打它（进射程才开火），失效才回退自动索敌。
  * 起攻击前摇 → 前摇走完且冷却结束才开火，每发 HQ_ATK_DMG 点直伤。
- * atkId / atkFocus > 0 = 单位 id；< 0 = 工厂 id 的相反数（客户端据此找目标）。
+ * atkKind：1 单位 / 2 工厂 / 3 研究所 / 4 总部；atkId 为正 id。
  */
 function updateHqDefense(game, dt, now) {
   for (const h of game.hqs) {
     if (!h || h.down) {
       if (h) {
         h.atkId = 0;
+        h.atkKind = 0;
         h.atkFocus = 0;
+        h.atkFocusKind = 0;
         h.atkWindup = 0;
       }
       continue;
     }
-    if (h.atkFocus == null) h.atkFocus = 0;
+    hqNormAtk(h);
     if (h.atkCd > 0) h.atkCd -= dt;
 
     // ① 玩家指定焦点：目标仍在（未死 / 未易主）则优先；进射程+通视才开火
-    let kind = 0; // 0 无 / 1 单位 / 2 工厂
+    let kind = 0;
     let target = null;
     let focused = false;
-    if (h.atkFocus > 0) {
-      const t = game.units.find((u) => u.id === h.atkFocus);
-      if (t && !t.dead && t.ownerIdx !== h.owner) {
-        focused = true;
-        if (
-          dist(t.x, t.y, h.x, h.y) <= HQ_ATK_RANGE &&
-          !losBlocked(game, h.x, h.y, t.x, t.y)
-        ) {
-          kind = 1;
-          target = t;
-        }
-      } else {
+    if (h.atkFocusKind && h.atkFocus) {
+      const alive = hqLookupAtk(game, h, h.atkFocusKind, h.atkFocus, false);
+      if (!alive) {
         h.atkFocus = 0;
-      }
-    } else if (h.atkFocus < 0) {
-      const f = game.factories.find((x) => x.id === -h.atkFocus);
-      if (f && f.owner !== h.owner) {
-        focused = true;
-        if (
-          dist(f.x, f.y, h.x, h.y) <= HQ_ATK_RANGE &&
-          !losBlocked(game, h.x, h.y, f.x, f.y)
-        ) {
-          kind = 2;
-          target = f;
-        }
+        h.atkFocusKind = 0;
       } else {
-        h.atkFocus = 0;
+        focused = true;
+        const inR = hqLookupAtk(game, h, h.atkFocusKind, h.atkFocus, true);
+        if (inR) {
+          kind = inR.kind;
+          target = inR.target;
+        }
       }
     }
 
@@ -8185,74 +9290,35 @@ function updateHqDefense(game, dt, now) {
       if (!target) {
         // 焦点还在但够不着 → 保持指定、暂不打别人
         h.atkId = 0;
+        h.atkKind = 0;
         h.atkWindup = 0;
         continue;
       }
-      if (h.atkId !== h.atkFocus) {
+      if (h.atkKind !== kind || h.atkId !== h.atkFocus) {
+        h.atkKind = kind;
         h.atkId = h.atkFocus;
         h.atkWindup = now + HQ_ATK_WINDUP_MS;
         continue; // 新锁定只亮前摇
       }
+      h.atkKind = kind;
       h.atkId = h.atkFocus;
     } else {
-      // ② 无焦点：校验当前目标，否则自动索敌
-      if (h.atkId > 0) {
-        const t = game.units.find((u) => u.id === h.atkId);
-        if (
-          t &&
-          !t.dead &&
-          t.ownerIdx !== h.owner &&
-          dist(t.x, t.y, h.x, h.y) <= HQ_ATK_RANGE &&
-          !losBlocked(game, h.x, h.y, t.x, t.y)
-        ) {
-          kind = 1;
-          target = t;
-        }
-      } else if (h.atkId < 0) {
-        const f = game.factories.find((x) => x.id === -h.atkId);
-        if (
-          f &&
-          f.owner !== h.owner &&
-          dist(f.x, f.y, h.x, h.y) <= HQ_ATK_RANGE &&
-          !losBlocked(game, h.x, h.y, f.x, f.y)
-        ) {
-          kind = 2;
-          target = f;
-        }
+      // ② 无焦点：校验当前目标，否则自动索敌（单位优先，再建筑）
+      const cur = hqLookupAtk(game, h, h.atkKind, h.atkId, true);
+      if (cur) {
+        kind = cur.kind;
+        target = cur.target;
       }
       if (!target) {
-        let bestD = Infinity;
-        let bestU = null;
-        for (const u of game.units) {
-          if (u.dead || u.ownerIdx === h.owner) continue;
-          const d = dist(u.x, u.y, h.x, h.y);
-          if (d > HQ_ATK_RANGE || d >= bestD) continue;
-          if (losBlocked(game, h.x, h.y, u.x, u.y)) continue;
-          bestD = d;
-          bestU = u;
-        }
-        if (bestU) {
-          kind = 1;
-          target = bestU;
-          h.atkId = bestU.id;
+        const picked = hqPickAuto(game, h);
+        if (picked) {
+          kind = picked.kind;
+          target = picked.target;
+          h.atkKind = kind;
+          h.atkId = target.id;
         } else {
-          bestD = Infinity;
-          let bestF = null;
-          for (const f of game.factories) {
-            if (f.owner === h.owner) continue; // 自家厂不打；中立 owner=-1 可打
-            const d = dist(f.x, f.y, h.x, h.y);
-            if (d > HQ_ATK_RANGE || d >= bestD) continue;
-            if (losBlocked(game, h.x, h.y, f.x, f.y)) continue;
-            bestD = d;
-            bestF = f;
-          }
-          if (bestF) {
-            kind = 2;
-            target = bestF;
-            h.atkId = -bestF.id;
-          } else {
-            h.atkId = 0;
-          }
+          h.atkKind = 0;
+          h.atkId = 0;
         }
         h.atkWindup = target ? now + HQ_ATK_WINDUP_MS : 0;
         continue; // 本步只亮前摇，不开火
@@ -8270,6 +9336,10 @@ function updateHqDefense(game, dt, now) {
       damageUnit(game, target, HQ_ATK_DMG, h.owner);
     } else if (kind === 2) {
       damageFactory(game, target, HQ_ATK_DMG, h.owner);
+    } else if (kind === 3) {
+      damageLab(game, target, HQ_ATK_DMG, h.owner);
+    } else if (kind === 4) {
+      damageHq(game, target, HQ_ATK_DMG, h.owner);
     }
     pushEvent(game, {
       t: 'hqatk',
@@ -8307,7 +9377,7 @@ function updateResearch(game, dt) {
       p.rpAccMs = 0;
       continue;
     }
-    // 第 7 项：产出按「各研究所是否已开拓研究产线」累加（开拓过的 +50%）
+    // 第 7 项：产出按各研究所 labRpOf 累加（基数 + 每条产线 bonus）
     const per = labRpTotalOf(game, i);
     if (per <= 0) {
       p.rpAccMs = 0; // 一座不占：不产出，进度也不保留
@@ -8934,15 +10004,39 @@ function unitFire(game, u, target, now) {
 }
 
 /**
- * 推一条「开火」事件：枪口位置 + 朝向（弧度）+ 弹种 + 射手 id/体型。
- * 客户端据此在枪口喷出火焰并让射手向后一顿（后坐）——
- * 弹道快照是 10Hz 抽样的，靠它推不出「哪一下是刚开的火」。
+ * 各兵种的**炮口前伸系数**：枪口位置 = 碰撞半径 × 该系数。
+ *
+ * 为什么要有这张表：客户端把炮管画得又大又长之后，枪口焰若仍按「碰撞半径 + 5」定位，
+ * 就会从炮管**中段**冒出来 —— 看着像枪在管子中间开火。
+ * 早先 2026-10-09 之前所有兵种都是 `r + 5`（≈半格），那是因为炮管一律收在方框内，
+ * 炮口本来就在体外一点点；炮管加长后必须跟着改。
+ *
+ * ⚠️ 必须与客户端 ui.js 里各 draw* 的炮口 x 坐标**同口径**：
+ *    那边是「BODY_SPAN[type][tier] 的 x × 该兵种炮口比例」，按视觉倍率缩放后落在同一个世界位置。
+ *    改炮管长度时两边一起改，否则枪口焰又会跑偏。
  */
+const MUZZLE_K = {
+  warrior: 3.1, // 坦克炮：炮口在炮管前端
+  shield: 2.6,  // 无炮管，撞角前端（近战无枪口焰，但保持口径一致）
+  ranger: 3.4,  // 长管炮：全兵种最远
+  burst: 2.4,   // 迫击炮：斜仰，按水平投影估
+  burn: 2.9,    // 喇叭口前端
+  laser: 3.0,   // 棱镜聚焦点
+};
+
+/** 某单位当前的枪口前伸距离（世界像素，沿射击方向） */
+function muzzleReach(u) {
+  const k = MUZZLE_K[u.type || 'warrior'] || 3;
+  return Math.max(u.r + 5, u.r * k);
+}
 function pushShot(game, u, ang, kindIx) {
+  // 枪口位置按兵种的炮口前伸量算（MUZZLE_K）：炮管加长后，
+  // 沿用固定的 `r + 5` 会让枪口焰从炮管中段冒出来。
+  const reach = muzzleReach(u);
   pushEvent(game, {
     t: 'shot',
-    x: round1(u.x + Math.cos(ang) * (u.r + 5)),
-    y: round1(u.y + Math.sin(ang) * (u.r + 5)),
+    x: round1(u.x + Math.cos(ang) * reach),
+    y: round1(u.y + Math.sin(ang) * reach),
     a: round2(ang),
     k: kindIx,
     oi: u.ownerIdx,
@@ -8984,6 +10078,36 @@ function laserMul(u, now) {
   if (held <= 0) return 1;
   if (!(LASER_RAMP_MS > 0)) return LASER_MAX_MUL; // 没配爬升时间 = 一锁定就满倍率
   return Math.min(LASER_MAX_MUL, 1 + held / LASER_RAMP_MS);
+}
+
+/**
+ * lockKey 指向的实体是否仍是合法敌方（不判射程 / 通视）。
+ * 用于「暂无射击目标」时决定要不要清掉蓄能：死亡/易主才清，移动清空 target 不清。
+ */
+function laserLockEntityAlive(game, u) {
+  if (!u.lockKey) return false;
+  const i = u.lockKey.indexOf(':');
+  if (i < 0) return false;
+  const kind = u.lockKey.slice(0, i);
+  const id = Number(u.lockKey.slice(i + 1));
+  if (!Number.isFinite(id)) return false;
+  if (kind === 'u') {
+    const e = game.units.find((x) => x.id === id && !x.dead);
+    return Boolean(e && e.ownerIdx !== u.ownerIdx);
+  }
+  if (kind === 'fac') {
+    const f = game.factories.find((x) => x.id === id);
+    return Boolean(f && f.owner !== u.ownerIdx);
+  }
+  if (kind === 'lab') {
+    const l = game.labs.find((x) => x.id === id);
+    return Boolean(l && l.owner !== u.ownerIdx);
+  }
+  if (kind === 'hq') {
+    const h = game.hqs.find((x) => x.id === id);
+    return Boolean(h && !h.down && h.owner !== u.ownerIdx);
+  }
+  return false;
 }
 
 /**
@@ -9081,10 +10205,27 @@ function advanceRoute(game, u, now) {
 }
 
 function updateUnits(game, dt, now) {
+  // RVO 邻域：用上一帧速度建哈希，本帧 slideStep 里算 ORCA 新速度
+  beginRvoFrame(game);
   for (const u of game.units) {
     if (u.dead) continue;
+    u._rvoMoved = false; // slideStep 成功挪步后置 true；站桩则速度清零给下一帧 ORCA
     // 本 tick 的车体转动额度（turnHull 里按角速度记账，置空 = 这 tick 还没转过）
     u._turnLeft = null;
+    // finally：燎原等分支的 continue 也会清掉幽灵速度，保证下一帧 ORCA 口径正确
+    try {
+      updateOneUnit(game, u, dt, now);
+    } finally {
+      if (!u._rvoMoved) {
+        u._vx = 0;
+        u._vy = 0;
+      }
+    }
+  }
+}
+
+/** 单兵本 tick：索敌 / 寻路（含 RVO）/ 开火。由 updateUnits 包在 try/finally 里调。 */
+function updateOneUnit(game, u, dt, now) {
     // ⚠️ 残渣（1e-17）必须当成 0：0.5 − 10×0.05 在浮点里是 6.9e-17 而不是 0，
     // 「正好到点」的那一帧判不出 <= 0，所有兵种每次攻击都要**多等一帧** ——
     // cd 0.5 秒实测变成 0.55 秒一口（真实秒伤比 data.js 少一成）。夹掉残渣即回到标称攻速。
@@ -9254,21 +10395,25 @@ function updateUnits(game, dt, now) {
           sprayFlame(game, u, u.x + Math.cos(u.turret) * reach, u.y + Math.sin(u.turret) * reach, now);
         }
       }
-      continue;
+      return;
     }
 
     // 激光兵：维护「锁定」。只有真正进入射程才开始蓄能。
-    // 「换目标」现在只会由三种情况触发（自动索敌已改为死咬，见 laserHeldTarget）：
-    //   目标死亡 / 易主、目标离开射程（或被山挡住视线）、玩家手动改派。
-    // 任何一种都会立刻重置倍率并进入前摇，前摇期间不开火。
+    // 蓄能重置**只**发生在锁上另一个目标时（含首次上锁）。
+    // 移动指令会清 target*、扫瞄空隙也会短暂无目标 —— 这些绝不能清掉前功。
+    // 旧锁实体死亡/易主后仍暂无新目标时，才把 lockKey 清掉。
     if (u.laser) {
       const key = inRange
         ? (target.kind || 'u') + ':' + (target.kind ? target.ref.id : target.id)
         : '';
-      if (key !== u.lockKey) {
+      if (key && key !== u.lockKey) {
         u.lockKey = key;
-        u.lockStart = key ? now : 0;
-        u.windupUntil = key ? now + LASER_WINDUP_MS : 0;
+        u.lockStart = now;
+        u.windupUntil = now + LASER_WINDUP_MS;
+      } else if (!key && u.lockKey && !laserLockEntityAlive(game, u)) {
+        u.lockKey = '';
+        u.lockStart = 0;
+        u.windupUntil = 0;
       }
       u.lockMul = key ? laserMul(u, now) : 1;
       u.lockKind = key
@@ -9299,7 +10444,6 @@ function updateUnits(game, dt, now) {
         }
       }
     }
-  }
 }
 
 /* ---------------- 燎原：喷火 / 灼烧地形 ---------------- */
@@ -9712,6 +10856,8 @@ function stepBullet(game, b, dt, now) {
 /** 单位圆形分离 + 不穿过工厂建筑 + 边界约束 */
 function separateUnits(game) {
   const list = game.units.filter((u) => !u.dead);
+  // 单位↔单位：RVO 已在移动时半责任让开；这里只处理**已经重叠**的硬穿透
+  // （ORCA 时间域约束在极密时仍可能叠一点），推开量减半以免和 RVO 抢方向。
   for (let i = 0; i < list.length; i++) {
     for (let j = i + 1; j < list.length; j++) {
       const a = list[i];
@@ -9726,7 +10872,7 @@ function separateUnits(game) {
         dy = 0;
         d = 1;
       }
-      const push = (min - d) / 2;
+      const push = ((min - d) / 2) * (RVO_ENABLED ? 0.55 : 1);
       const ux = dx / d;
       const uy = dy / d;
       // 推挤不能把单位塞进不可通行的地形（山/水）：被挡的一侧保持原位，宁可重叠
@@ -10037,11 +11183,12 @@ function snapshot(game) {
       round2(h.prodProg || 0),
       clamp(Math.round(h.lines || 1), 1, FAC_MAX_LINES),
       syncSlots(h).map(slotToRow),
-      // 第 6 项：总部防卫状态 —— 锁定目标 id + 前摇剩余毫秒（>0 = 正在蓄能，客户端画前摇）
+      // 第 6 项：总部防卫状态 —— 锁定目标 id + 前摇剩余毫秒 + 目标类别（1 单位 / 2 厂 / 3 所 / 4 总部）
       h.atkId || 0,
       h.atkWindup > now ? Math.round(h.atkWindup - now) : 0,
       // 第 9 项：总部每条产线此刻还在场的兵数（与工厂同规则：满额即停产）
       aliveRow(hqLineKey(game, h), h),
+      h.atkKind || 0,
     ]),
     // 科技点：与 players 同序（左上角 HUD / 记分牌用）
     rp: game.players.map((p) => Math.round(p.rp)),
@@ -10123,7 +11270,7 @@ function publicGameState(game) {
       owner: l.owner,
       hp: Math.round(l.hp),
       hpMax: l.hpMax,
-      // 第 7/8 项：已开拓的研究产线数（0 或 1），开拓后该所产出 +50%
+      // 第 7/8 项：已开拓的研究产线数；每条每周期产出 +labLineRpBonus
       lines: clamp(Math.round(l.lines || 0), 0, LAB_MAX_LINES),
     })),
     hqs: game.hqs.map((h) => ({
@@ -10143,8 +11290,9 @@ function publicGameState(game) {
       // 第 4 项：总部集结点（与工厂同款字段，客户端据此画旗子）
       rx: h.rally ? Math.round(h.rally.x) : null,
       ry: h.rally ? Math.round(h.rally.y) : null,
-      // 第 6 项：总部防卫状态（锁定目标 / 前摇剩余毫秒）
+      // 第 6 项：总部防卫状态（锁定目标 / 前摇剩余毫秒 / 目标类别）
       atkId: h.atkId || 0,
+      atkKind: h.atkKind || 0,
       atkWindupMs: h.atkWindup > Date.now() ? Math.round(h.atkWindup - Date.now()) : 0,
       // 该玩家当前「单条产线」的生产间隔（毫秒，已计入加速）：客户端直接展示，不必自己算
       prodIntervalMs: Math.round(prodIntervalMs(game, h.owner)),
@@ -10358,25 +11506,29 @@ function setPlayerInput(game, playerId, data, now) {
     return n > 0;
   }
   if (cmd === 'hqAttack') {
-    // 选中总部后右键：敌方单位 / 中立或敌方工厂 → 切换防卫目标（不设集结点）
+    // 选中总部后右键：敌方单位 / 中立或敌方建筑（工厂、研究所、总部）→ 切换防卫目标（不设集结点）
     const hq = game.hqs.find((h) => h.owner === oi && !h.down);
     if (!hq) return false;
     const kind = String(d.kind || '');
-    if (kind !== 'u' && kind !== 'f') return false;
+    if (!['u', 'f', 'l', 'h'].includes(kind)) return false;
     const id = Number(d.id);
     if (!Number.isFinite(id)) return false;
     const tgt = lookupTarget(game, oi, kind, id);
     if (!tgt) return false;
-    const focus = kind === 'u' ? tgt.id : -tgt.id;
-    const switched = hq.atkFocus !== focus || hq.atkId !== focus;
-    hq.atkFocus = focus;
+    const focusKind = kind === 'u' ? 1 : kind === 'f' ? 2 : kind === 'l' ? 3 : 4;
+    const switched =
+      hq.atkFocusKind !== focusKind || hq.atkFocus !== tgt.id || hq.atkKind !== focusKind || hq.atkId !== tgt.id;
+    hq.atkFocusKind = focusKind;
+    hq.atkFocus = tgt.id;
     const inRange =
       dist(tgt.x, tgt.y, hq.x, hq.y) <= HQ_ATK_RANGE &&
       !losBlocked(game, hq.x, hq.y, tgt.x, tgt.y);
     if (inRange) {
       if (switched) hq.atkWindup = Date.now() + HQ_ATK_WINDUP_MS;
-      hq.atkId = focus;
+      hq.atkKind = focusKind;
+      hq.atkId = tgt.id;
     } else {
+      hq.atkKind = 0;
       hq.atkId = 0;
       hq.atkWindup = 0;
     }
@@ -10492,7 +11644,7 @@ function setPlayerInput(game, playerId, data, now) {
   if (cmd === 'labLine') {
     // 第 7 项：给研究所开拓研究产线 —— **点击即生效，没有二级选择项**
     // （不需要选兵种、也不需要选分支，一条命令直接开工）。
-    // 第 8 项：每座研究所最多开拓 1 条。
+    // 每座最多 LAB_MAX_LINES 条；每条每周期产出 +LAB_LINE_RP_BONUS。
     const lid = Math.round(Number(d.lid));
     if (!Number.isFinite(lid) || lid <= 0) return false;
     const l = game.labs.find((x) => x.id === lid);
@@ -10883,6 +12035,9 @@ module.exports = {
     fillShape,
     clampBlocked,
     clampShapes,
+    roundTerrainEdges,
+    despeckleEdges,
+    clearTinyBlobs,
     // N 重旋转对称（阶数 = 人数）
     symOrder,
     wedgeDims,
@@ -10897,6 +12052,10 @@ module.exports = {
     rngRange,
     dirChoices,
     ensureOpenTerrain,
+    openLanesAroundBuildings,
+    occupyR,
+    minCenterDist,
+    BUILD_LANE_PX,
     terrainAnchors,
     wideMask,
     wideRegions,
@@ -11026,7 +12185,7 @@ module.exports = {
       // 第 7/8 项：研究所研究产线
       LAB_LINE_COST,
       LAB_MAX_LINES,
-      LAB_LINE_RP_MUL,
+      LAB_LINE_RP_BONUS,
       // 第 9 项：产线在场名额与减速
       LINE_UNIT_CAP,
       LINE_SLOW_PER_UNIT,

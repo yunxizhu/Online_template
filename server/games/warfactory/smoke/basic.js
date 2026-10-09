@@ -797,6 +797,28 @@ for (const n of [3, 4]) {
   ok(laser.lockMul >= C.LASER_MAX_MUL - 0.01, `持续锁定后倍率封顶到 ${laser.lockMul.toFixed(2)} 倍`);
   ok(laser.lockMul <= C.LASER_MAX_MUL + 1e-6, `倍率不会超过上限 ${C.LASER_MAX_MUL} 倍`);
 
+  // 点击移动会清 target* 并等到下一轮扫瞄才重锁 —— 蓄能绝不能跟着被重置
+  {
+    const mulBeforeMove = laser.lockMul;
+    const lockBefore = laser.lockId;
+    const moved = setPlayerInput(
+      gl,
+      'p0',
+      { cmd: 'move', x: spot.x + 8, y: spot.y + 8, ids: [laser.id] },
+      cl.now
+    );
+    ok(moved, '移动指令已下达（激光仍咬着原目标）');
+    // 跨过至少一轮 SCAN_MS，复现「清目标 → 空窗 → 重锁」的路径
+    cl.run(gl, 400);
+    ok(
+      laser.lockId === lockBefore && laser.lockMul >= mulBeforeMove - 0.01,
+      `移动不重置蓄能：仍锁 ${lockBefore}，倍率 ${laser.lockMul.toFixed(2)}（移动前 ${mulBeforeMove.toFixed(2)}）`
+    );
+    laser.moveX = null;
+    laser.moveY = null;
+    laser.route = null;
+  }
+
   // 锁定是「死咬」的：更近的敌人进圈也抢不走锁定，蓄能不被打断（激光站得住的前提）
   const t3 = __test.spawnUnit(gl, { id: 903, owner: 1, level: 2 }, 'shield', spot.ex, spot.y);
   t3.moveX = null;
